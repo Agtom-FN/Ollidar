@@ -1,0 +1,220 @@
+#include "scanengine/slam/pushbroom/pushbroom_assembler.h"
+
+#include <cmath>
+
+#include "scanengine/core/log.h"
+#include "scanengine/poses/se3.h"
+
+namespace scanengine {
+namespace {
+constexpr const char* kMod = "pushbroom";
+}  // namespace
+
+D6PushbroomAssembler::D6PushbroomAssembler(PageStore* points, const PushbroomConfig& cfg)
+    : points_(points), cfg_(cfg) {
+  se3::mat4_identity(phone_from_lidar_);
+  batch_.reserve(cfg_.batch_points);
+}
+
+D6PushbroomAssembler::~D6PushbroomAssembler() = default;
+
+Status D6PushbroomAssembler::set_mount_extrinsics(const double phone_from_lidar[16]) {
+  if (phone_from_lidar == nullptr) {
+    return set_last_error(ScanError::kInvalidArgument, "pushbroom: null mount extrinsic");
+  }
+  if (!se3::mat4_is_rigid(phone_from_lidar, 1e-4)) {
+    // Loud on purpose. The two ways this fails in the field are a
+    // column-major matrix crossing JNI and an uninitialised buffer; both
+    // produce a plausible-looking but wrong cloud if we accept them.
+    return set_last_error(ScanError::kInvalidArgument,
+                          "pushbroom: mount extrinsic is not a rigid row-major 4x4 "
+                          "(check row/column-major at the caller)");
+  }
+  for (int i = 0; i < 16; ++i) phone_from_lidar_[i] = phone_from_lidar[i];
+  have_extrinsics_ = true;
+  return kOkStatus;
+}
+
+void D6PushbroomAssembler::get_mount_extrinsics(double phone_from_lidar[16]) const {
+  if (phone_from_lidar == nullptr) return;
+  for (int i = 0; i < 16; ++i) phone_from_lidar[i] = phone_from_lidar_[i];
+}
+
+void D6PushbroomAssembler::set_pose_source(const PoseInterpolator* poses) { poses_ = poses; }
+
+void D6PushbroomAssembler::reset() {
+  pending_.clear();
+  batch_.clear();
+  batch_t_ns_ = 0;
+  overflow_warned_ = false;
+  stats_ = PushbroomStats{};
+}
+
+Status D6PushbroomAssembler::push_point(const ProfilePoint& p) {
+  ++stats_.points_in;
+  if (stats_.t_first_ns == 0 || p.t_mono_ns < stats_.t_first_ns) stats_.t_first_ns = p.t_mono_ns;
+  if (p.t_mono_ns > stats_.t_last_ns) stats_.t_last_ns = p.t_mono_ns;
+
+  if (!(p.range_m >= cfg_.min_range_m) || !(p.range_m <= cfg_.max_range_m) ||
+      !std::isfinite(p.angle_deg)) {
+    ++stats_.dropped_range;
+    return kOkStatus;
+  }
+
+  pending_.push_back(p);
+  if (pending_.size() > cfg_.max_pending_points) {
+    const std::size_t excess = pending_.size() - cfg_.max_pending_points;
+    for (std::size_t i = 0; i < excess; ++i) pending_.pop_front();
+    stats_.dropped_overflow += excess;
+    // Once per overflow episode, not once per point: the queue sheds one
+    // point per push while it is full, and a log line per D6 return would be
+    // 4000 lines a second.
+    if (!overflow_warned_) {
+      overflow_warned_ = true;
+      SCAN_LOG_WARN(kMod,
+                    "pending queue full (%zu points) — no usable pose for the oldest points; "
+                    "shedding oldest. Check that the pose source is running.",
+                    cfg_.max_pending_points);
+    }
+  }
+  return kOkStatus;
+}
+
+Status D6PushbroomAssembler::push_profile(Span<const ProfilePoint> profile) {
+  for (std::size_t i = 0; i < profile.size(); ++i) {
+    SCAN_TRY(push_point(profile[i]));
+  }
+  if (cfg_.drain_on_push) return resolve_(false);
+  stats_.points_pending = pending_.size();
+  return kOkStatus;
+}
+
+Status D6PushbroomAssembler::push_profile(Span<const PointVertex> profile,
+                                          std::int64_t t_mono_ns) {
+  // The coarse seam: sensor-frame Cartesian points sharing one stamp. Invert
+  // D6Driver's polar→Cartesian so the rest of the pipeline has exactly one
+  // representation to reason about.
+  for (std::size_t i = 0; i < profile.size(); ++i) {
+    const PointVertex& v = profile[i];
+    ProfilePoint p;
+    p.t_mono_ns = t_mono_ns;
+    p.range_m = static_cast<float>(std::sqrt(static_cast<double>(v.x) * v.x +
+                                             static_cast<double>(v.y) * v.y));
+    // theta measured from +y toward +x, matching x = d·sin, y = d·cos.
+    double a = std::atan2(static_cast<double>(v.x), static_cast<double>(v.y)) * se3::kRadToDeg;
+    if (a < 0.0) a += 360.0;
+    p.angle_deg = static_cast<float>(a);
+    p.intensity = v.r;
+    p.high_reflectivity = (v.g > v.r) ? 1 : 0;
+    SCAN_TRY(push_point(p));
+  }
+  if (cfg_.drain_on_push) return resolve_(false);
+  stats_.points_pending = pending_.size();
+  return kOkStatus;
+}
+
+Status D6PushbroomAssembler::drain() { return resolve_(false); }
+
+Status D6PushbroomAssembler::flush() {
+  Status s = resolve_(true);
+  const Status f = flush_batch_(batch_t_ns_);
+  return s.ok() ? f : s;
+}
+
+void D6PushbroomAssembler::emit_(const PointVertex& v) { batch_.push_back(v); }
+
+Status D6PushbroomAssembler::flush_batch_(std::int64_t t_ns) {
+  if (batch_.empty()) return kOkStatus;
+  if (points_ == nullptr) {
+    stats_.points_out += batch_.size();
+    batch_.clear();
+    return kOkStatus;
+  }
+  std::uint32_t appended = 0;
+  const Status s = points_->append(cfg_.out_stream, Span<const PointVertex>(batch_.data(), batch_.size()),
+                                   t_ns, &appended);
+  stats_.points_out += appended;
+  if (appended < batch_.size()) stats_.dropped_page_full += batch_.size() - appended;
+  batch_.clear();
+  return s;
+}
+
+Status D6PushbroomAssembler::resolve_(bool force) {
+  if (poses_ == nullptr || !have_extrinsics_) {
+    // Nothing to resolve against yet. Points stay pending (bounded) so a
+    // capture that starts before the wizard's extrinsic is applied, or before
+    // the first ARCore pose lands, is not silently lost.
+    stats_.points_pending = pending_.size();
+    return kOkStatus;
+  }
+
+  Status result = kOkStatus;
+  while (!pending_.empty()) {
+    const ProfilePoint p = pending_.front();
+    const PoseSample s = poses_->sample_at(p.t_mono_ns);
+
+    if (s.retryable() && !force) {
+      // The queue is time-ordered, so if the OLDEST point is still in the
+      // future every point behind it is too. Stop; the caller will drain
+      // again once more poses have arrived.
+      break;
+    }
+
+    pending_.pop_front();
+
+    if (!s.has_pose) {
+      // kBeforeFirst (unresolvable), or kFuture/kNoData at flush().
+      ++stats_.dropped_no_pose;
+      continue;
+    }
+
+    switch (s.gate) {
+      case PoseGate::kTrackingLost: ++stats_.flagged_tracking_lost; break;
+      case PoseGate::kStale: ++stats_.flagged_stale_pose; break;
+      case PoseGate::kLowConfidence: ++stats_.flagged_low_confidence; break;
+      default: break;
+    }
+    const bool flagged = s.flagged();
+    if (flagged && cfg_.exclude_flagged) continue;
+
+    // world_from_lidar = world_from_phone(t) · phone_from_lidar
+    double world_from_phone[16];
+    se3::mat4_from_quat_pos(s.pose.orientation, s.pose.position, world_from_phone);
+    double world_from_lidar[16];
+    se3::mat4_mul(world_from_phone, phone_from_lidar_, world_from_lidar);
+
+    const double a = static_cast<double>(p.angle_deg) * se3::kDegToRad;
+    const double d = static_cast<double>(p.range_m);
+    const double p_lidar[3] = {d * std::sin(a), d * std::cos(a), 0.0};
+    double p_world[3];
+    se3::mat4_apply(world_from_lidar, p_lidar, p_world);
+
+    PointVertex v{};
+    v.x = static_cast<float>(p_world[0]);
+    v.y = static_cast<float>(p_world[1]);
+    v.z = static_cast<float>(p_world[2]);
+    // Same intensity/high-reflectivity convention D6Driver's live preview
+    // uses, so a colour mode written against one works on the other.
+    v.r = p.intensity;
+    v.g = p.high_reflectivity != 0 ? static_cast<std::uint8_t>(255) : p.intensity;
+    v.b = p.intensity;
+    v.a = flagged ? cfg_.flagged_alpha : static_cast<std::uint8_t>(255);
+    if (flagged) ++stats_.flagged_emitted;
+
+    emit_(v);
+    batch_t_ns_ = p.t_mono_ns;
+    if (batch_.size() >= cfg_.batch_points) {
+      const Status st = flush_batch_(batch_t_ns_);
+      if (!st.ok() && result.ok()) result = st;
+    }
+  }
+
+  stats_.points_pending = pending_.size();
+  if (force) {
+    const Status st = flush_batch_(batch_t_ns_);
+    if (!st.ok() && result.ok()) result = st;
+  }
+  return result;
+}
+
+}  // namespace scanengine
