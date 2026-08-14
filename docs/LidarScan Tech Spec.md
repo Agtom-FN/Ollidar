@@ -319,7 +319,7 @@ Filament everywhere: Vulkan on Android/Windows/Linux, Metal on macOS; embedded i
 | --- | --- | --- |
 | **Phase 1 scope** (~3× the v1.0 plan, now 4 OS targets) | **High** | Strict M1→M5 order keeps a working product at every gate; features behind flags; cut-line candidates: D2 cloud service (transfer covers it), B12, Windows/Linux may trail macOS within M1 without blocking M2 |
 | Windows toolchain (GTSAM/SDK2/Filament on MSVC) | High | Dedicated spike S7 **before** Phase 1 commit; clang-cl fallback; vendored pinned deps |
-| Filament-embedded-in-Qt stability (resize, multi-screen, driver quirks) | Med-High | Part of S3 exit criteria; GLES/OpenGL fallback path on desktop if a platform misbehaves |
+| Filament-embedded-in-Qt (S3 result: **GO on macOS** — 10M pts @138 fps on M4, 1,105 swapchain recreates crash-free; requires CAMetalLayer shim, not the NSView Filament documents; pin Filament v1.75.0) | Medium (was Med-High) | Residual: Windows/Linux Vulkan leg unproven — run with S7's first CI push before A1 closes; `gl_PointSize` needs an instanced-quad Vulkan fallback plan; multi-monitor DPI-change untested |
 | OEM USB-Ethernet variance (Mid-360 on Android) | High | Opus-assigned B3, self-test wizard, tested-device list; Phase 2 WiFi bridge is the universal fallback |
 | Live LIO thermals on mid-range phones | High | Hybrid degrades to Record-only; decimation budget; perf gates S3/A6 |
 | **Time-sync jitter** dominating colorization error (S6: at 15 ms jitter, sync alone eats 83% of the reprojection budget; extrinsic calibration itself is solved) | Med-High | A11 software mitigations: wizard clock-offset sweep, rolling-shutter row model, motion-gated keyframes; AR overlay unaffected (GO at all jitter levels) |
