@@ -38,6 +38,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -174,6 +175,71 @@ class NullRecordWriter final : public RecordWriter {
   RecordStats stats_{};
 };
 
+// --- file-backed writer (A5) -------------------------------------------------
+//
+// Directory skeleton created at open() (Tech Spec §3.11): manifest.json plus
+// the streams/, streams/frames/, processed/, merged/, exports/ directories.
+// Each streams/*.bin file is created lazily, on its first chunk, so e.g. a
+// D6-only capture never produces an empty imu.bin.
+//
+// Flush / fsync policy (the property that bounds the crash-loss window):
+//   * every write_chunk() appends framed bytes to the target stream's
+//     buffered FILE*; a chunk is never partially "visible" to a reader
+//     because RecordReader only trusts a chunk once its CRC verifies -- so a
+//     torn OS-buffer write reads back as "not written yet", never as silent
+//     corruption.
+//   * a stream auto-flushes (fflush + fsync/_commit) when EITHER
+//     kAutoFlushBytes have accumulated since its last flush OR
+//     kAutoFlushIntervalNs (1s) have elapsed since its last flush for that
+//     stream -- checked opportunistically on the next write_chunk() call,
+//     because record/ (like every module per DESIGN.md §2) owns no thread
+//     of its own.
+//   * DOCUMENTED DATA-LOSS WINDOW: under continuous input the window is
+//     bounded by kAutoFlushIntervalNs -- at most ~1s of un-fsync'd chunks
+//     lost on a hard crash. If input stalls completely with a nonempty
+//     buffer pending, that tail is NOT time-bounded until the next
+//     write_chunk() or an explicit flush() call -- a caller that must bound
+//     data loss through idle periods should call flush() from its own
+//     periodic timer (the Android/Qt capture UIs already poll engine state
+//     on a timer for other reasons; hooking flush() to the same cadence is
+//     the intended integration -- see docs/A5-lscan.md).
+//   * close() flushes+fsyncs everything and rewrites manifest.json with
+//     "sealed": true. A manifest still "sealed": false after a crash is a
+//     positive signal (not merely an absence of one) that the session ended
+//     abnormally; RecordReader does not require it to be true, but a UI may
+//     surface it.
+class FileRecordWriter final : public RecordWriter {
+ public:
+  static constexpr std::size_t kAutoFlushBytes = 1u * 1024u * 1024u;     // 1 MiB
+  static constexpr std::int64_t kAutoFlushIntervalNs = 1'000'000'000LL;  // 1 s
+
+  FileRecordWriter();
+  ~FileRecordWriter() override;
+  FileRecordWriter(const FileRecordWriter&) = delete;
+  FileRecordWriter& operator=(const FileRecordWriter&) = delete;
+
+  Status open(const std::string& lscan_dir) override;
+  Status write_chunk(ChunkType type, std::int64_t t_mono_ns, ByteSpan payload,
+                     std::uint16_t flags = kFlagNone) override;
+  Status flush() override;
+  Status close() override;
+  bool is_open() const override;
+  RecordStats stats() const override;
+
+  // Optional manifest fields; call before open(). Anything left unset is
+  // written as a documented placeholder -- mount calibration (A8) and CRS
+  // (A10) are always emitted as `null` until those tasks land, per Tech Spec
+  // §3.11.
+  void set_profile(const std::string& profile);
+  void add_sensor(const std::string& id, const std::string& kind, const std::string& model);
+
+  const std::string& path() const;
+
+ private:
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
+};
+
 // --- reader (A5) -------------------------------------------------------------
 // Declared so the replay harness and the cloud worker have a name to code
 // against. A5 implements it, including the truncated-tail rule above.
@@ -181,9 +247,80 @@ class RecordReader {
  public:
   virtual ~RecordReader() = default;
   virtual Status open(const std::string& lscan_dir) = 0;
+  // kOkStatus with a filled chunk, or ScanError::kAgain once every stream is
+  // exhausted (the same "not an error" convention as EventBus::poll() -- see
+  // core/error.h).
   virtual Status next_chunk(ChunkHeader* header, std::vector<std::uint8_t>* payload) = 0;
   virtual Status seek(std::int64_t t_mono_ns) = 0;
   virtual Status close() = 0;
+};
+
+// One stream file's shape, computed by FileRecordReader::open()'s validation
+// pass (i.e. only over chunks that passed CRC and were not truncated).
+struct StreamSummary {
+  StreamId stream = StreamId::kUnknown;
+  std::uint64_t chunk_count = 0;
+  std::uint64_t bytes = 0;  // payload bytes only, summed over valid chunks
+  std::int64_t t_first_ns = 0;
+  std::int64_t t_last_ns = 0;
+};
+
+// Crash-safety telemetry from the validation pass. Never a reason to fail
+// open() by itself -- see FileRecordReader's class comment.
+struct ReaderWarnings {
+  std::uint32_t truncated_tail_chunks = 0;  // framing ran past EOF, or an oversized/garbled header
+  std::uint32_t crc_mismatch_chunks = 0;    // header parsed; payload/trailer did not verify
+  std::uint32_t unreadable_streams = 0;     // a stream file's own 32-byte header was unreadable
+
+  std::uint32_t total_skipped() const { return truncated_tail_chunks + crc_mismatch_chunks; }
+};
+
+// Opens a .lscan directory written by FileRecordWriter (or any writer
+// honouring the same framing).
+//
+// Manifest handling: open() reads and structurally validates manifest.json
+// but a missing/corrupt manifest does NOT fail open() -- crash safety means
+// raw chunk data must outlive a half-written or absent manifest (the writer
+// creates manifest.json before any chunk, but a kill at the very first
+// syscall can still leave it empty). manifest_present()/manifest_ok() report
+// what was found; the data streams are read independently either way.
+//
+// Chunk iteration: next_chunk() performs a chronological k-way merge across
+// every stream file present on disk -- chunks come out in non-decreasing
+// t_mono_ns order across the whole container, which is what the replay
+// harness (record/replay.h) needs for a multi-sensor session. A stream stops
+// -- silently, from next_chunk()'s point of view -- at the first chunk whose
+// framing runs past EOF or whose CRC fails, per the format's truncated-tail
+// rule; that stop is detected once, during open()'s validation pass, and
+// surfaced through warnings().
+class FileRecordReader final : public RecordReader {
+ public:
+  FileRecordReader();
+  ~FileRecordReader() override;
+  FileRecordReader(const FileRecordReader&) = delete;
+  FileRecordReader& operator=(const FileRecordReader&) = delete;
+
+  Status open(const std::string& lscan_dir) override;
+  Status next_chunk(ChunkHeader* header, std::vector<std::uint8_t>* payload) override;
+  Status seek(std::int64_t t_mono_ns) override;
+  Status close() override;
+
+  // Which stream the chunk returned by the most recent next_chunk() came
+  // from. Valid only after a next_chunk() that returned kOkStatus.
+  StreamId last_stream() const;
+
+  const std::vector<StreamSummary>& stream_summaries() const;
+  const ReaderWarnings& warnings() const;
+
+  // Manifest diagnostics -- see the class comment for why a bad manifest
+  // does not fail open().
+  bool manifest_present() const;
+  bool manifest_ok() const;
+  const std::string& manifest_raw() const;  // "" if not present
+
+ private:
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
 };
 
 }  // namespace lscan
