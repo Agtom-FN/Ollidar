@@ -1,0 +1,247 @@
+=== 0. toolchain ===
+$ cmake --version
+cmake version 4.4.2
+
+CMake suite maintained and supported by Kitware (kitware.com/cmake).
+$ /Users/admin/lidarscan/desktop/build/engine/engine_cli --version
+scanengine 0.1.0 (clock: mach_absolute_time) (ABI 1)
+=== 1. synthetic COIN-D6 capture (S1 packet builder, via engine_cli) ===
+$ /Users/admin/lidarscan/desktop/build/engine/engine_cli --synth /Users/admin/lidarscan/desktop/evidence/synth-d6.bin 30 --noise
+wrote 394287 bytes (30.0 s, with noise) to /Users/admin/lidarscan/desktop/evidence/synth-d6.bin
+=== 2. import into a .lscan + unpaced replay + screenshot ===
+$ /Users/admin/lidarscan/desktop/build/lidarscan --project /Users/admin/lidarscan/desktop/evidence/synth.lscan --import-raw /Users/admin/lidarscan/desktop/evidence/synth-d6.bin --replay=0 --shot /Users/admin/lidarscan/desktop/evidence/01-replay-full.png --shot-delay 6 --quit-after 9
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan import' (pages: 64 × 1048576 pts)
+[scanengine][info][engine] idle -> starting
+[scanengine][info][record] file writer open at '/Users/admin/lidarscan/desktop/evidence/synth.lscan'
+[scanengine][info][engine] starting -> running
+[scanengine][info][engine] added device 1 (coin-d6)
+[scanengine][info][serial] started 'import' @ 230400 baud
+[scanengine][info][d6] device 1: idle -> starting
+[scanengine][info][record] opened stream file '/Users/admin/lidarscan/desktop/evidence/synth.lscan/streams/lidar.bin' (stream=lidar-d6)
+[scanengine][info][d6] device 1: starting -> streaming
+[scanengine][info][engine] running -> stopping
+[scanengine][info][d6] device 1: streaming -> stopping
+[scanengine][info][d6] device 1: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+[lidarscan] imported 394287 bytes -> 120300 points -> /Users/admin/lidarscan/desktop/evidence/synth.lscan
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] starting -> running
+[scanengine][info][engine] added device 1 (coin-d6)
+[scanengine][info][serial] started 'replay' @ 230400 baud
+[scanengine][info][d6] device 1: idle -> starting
+[lidarscan] replay started at 0x
+[scanengine][info][d6] device 1: starting -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[lidarscan] screenshot OK -> /Users/admin/lidarscan/desktop/evidence/01-replay-full.png | 120300 pts / 1 pages | 59.2 fps | cpu p95 0.23 ms | gpu p95 1.97 ms | 918x913 px dpr 1.00 | swapchains 0
+[scanengine][info][engine] running -> stopping
+[scanengine][info][d6] device 1: stalled -> stopping
+[scanengine][info][d6] device 1: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+FEngine (64 bits) created at 0x79265c000 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+=== 3. paced replay, screenshot taken MID-STREAM ===
+$ /Users/admin/lidarscan/desktop/build/lidarscan --project /Users/admin/lidarscan/desktop/evidence/synth.lscan --replay=4 --shot /Users/admin/lidarscan/desktop/evidence/02-replay-midway.png --shot-delay 3.5 --quit-after 7
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] starting -> running
+[scanengine][info][engine] added device 1 (coin-d6)
+[scanengine][info][serial] started 'replay' @ 230400 baud
+[scanengine][info][d6] device 1: idle -> starting
+[lidarscan] replay started at 4x
+[scanengine][info][d6] device 1: starting -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[lidarscan] screenshot OK -> /Users/admin/lidarscan/desktop/evidence/02-replay-midway.png | 75589 pts / 1 pages | 58.7 fps | cpu p95 0.05 ms | gpu p95 0.84 ms | 918x913 px dpr 1.00 | swapchains 0
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][d6] device 1: stalled -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[scanengine][info][engine] running -> stopping
+[scanengine][info][d6] device 1: stalled -> stopping
+[scanengine][info][d6] device 1: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+FEngine (64 bits) created at 0xb8f06e800 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+=== 4. display parameters via A14 from_json (intensity + thermal) ===
+$ /Users/admin/lidarscan/desktop/build/lidarscan --project /Users/admin/lidarscan/desktop/evidence/synth.lscan --replay=0 --display-params /Users/admin/lidarscan/desktop/scripts/display-params-intensity.json --shot /Users/admin/lidarscan/desktop/evidence/03-display-params.png --shot-delay 6 --quit-after 9
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] starting -> running
+[scanengine][info][engine] added device 1 (coin-d6)
+[scanengine][info][serial] started 'replay' @ 230400 baud
+[scanengine][info][d6] device 1: idle -> starting
+[lidarscan] replay started at 0x
+[scanengine][info][d6] device 1: starting -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[lidarscan] screenshot OK -> /Users/admin/lidarscan/desktop/evidence/03-display-params.png | 120300 pts / 1 pages | 59.5 fps | cpu p95 0.24 ms | gpu p95 2.05 ms | 918x913 px dpr 1.00 | swapchains 0
+[scanengine][info][engine] running -> stopping
+[scanengine][info][d6] device 1: stalled -> stopping
+[scanengine][info][d6] device 1: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+FEngine (64 bits) created at 0xbe9166800 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+=== 5. resize storm (S3 stability stress, productionized path) ===
+$ /Users/admin/lidarscan/desktop/build/lidarscan --project /Users/admin/lidarscan/desktop/evidence/synth.lscan --replay=0 --resize-storm 10 --shot /Users/admin/lidarscan/desktop/evidence/04-resize-storm.png --shot-delay 12 --quit-after 15
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] starting -> running
+[scanengine][info][engine] added device 1 (coin-d6)
+[scanengine][info][serial] started 'replay' @ 230400 baud
+[scanengine][info][d6] device 1: idle -> starting
+[lidarscan] replay started at 0x
+[scanengine][info][d6] device 1: starting -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[lidarscan] resize storm: 10.0 s, 373 resize events -> 249 swapchain recreates, still rendering at 37.9 fps (cpu p95 0.20 ms)
+[lidarscan] screenshot OK -> /Users/admin/lidarscan/desktop/evidence/04-resize-storm.png | 120300 pts / 1 pages | 40.6 fps | cpu p95 0.21 ms | gpu p95 1.94 ms | 918x913 px dpr 1.00 | swapchains 250
+[scanengine][info][engine] running -> stopping
+[scanengine][info][d6] device 1: stalled -> stopping
+[scanengine][info][d6] device 1: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+FEngine (64 bits) created at 0xae1072800 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+=== 6. .lscan re-read after everything ===
+$ find /Users/admin/lidarscan/desktop/evidence/synth.lscan -type f -exec ls -la {} +
+-rw-r--r--  1 admin  staff     311 15 Aug 04:34 /Users/admin/lidarscan/desktop/evidence/synth.lscan/manifest.json
+-rw-r--r--  1 admin  staff  398179 15 Aug 04:34 /Users/admin/lidarscan/desktop/evidence/synth.lscan/streams/lidar.bin
+verification complete — see /Users/admin/lidarscan/desktop/evidence
+[lidarscan] screenshot OK -> /Users/admin/lidarscan/desktop/evidence/05-hidpi-dpr2.png | 120300 pts / 1 pages | 59.7 fps | cpu p95 0.24 ms | gpu p95 1.93 ms | 960x1412 px dpr 2.00 | swapchains 0

@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "pointSize": {
+    "mode": "fixedPixels",
+    "fixedPx": 3.0,
+    "adaptiveMinPx": 1.0,
+    "adaptiveMaxPx": 6.0,
+    "adaptiveReferenceM": 5.0,
+    "worldSizeM": 0.01
+  },
+  "lodPointBudget": 20000000,
+  "colorMode": "intensity",
+  "intensity": {
+    "autoRange": false,
+    "manualMin": 0.04,
+    "manualMax": 0.15,
+    "gamma": 1.0,
+    "brightness": 1.0,
+    "colormap": "thermal",
+    "invert": false
+  },
+  "edl": {"enabled": false, "strength": 0.0},
+  "background": [10, 12, 16, 255],
+  "clipHeight": {"enabled": false, "min": 0.0, "max": 3.0},
+  "clipBox": {"enabled": false, "min": [-10, -10, -10], "max": [10, 10, 10]},
+  "overlays": {"trajectory": false, "poseGraph": false}
+}

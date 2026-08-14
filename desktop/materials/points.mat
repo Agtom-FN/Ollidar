@@ -1,0 +1,155 @@
+// LidarScan desktop — point-cloud material.
+//
+// PROVENANCE
+//   Harvested from spikes/s3-render/materials/points.mat, which proved
+//   PrimitiveType::POINTS + gl_PointSize + per-vertex RGBA8 through
+//   matc -a metal at 10M points / 138 fps on an M4.
+//
+// CONTRACT
+//   Every parameter below is a field of scanengine::DisplayParamsUniforms
+//   (engine/include/scanengine/cloud/display_params.h), bound individually by
+//   name because — as A14's header says — "Filament does not accept a raw UBO
+//   blob, so C1 binds these fields individually, by name, in this order".
+//   PagedCloudRenderer::applyDisplayParams() is the one place that does it.
+//
+//   The colour ramps are NOT reimplemented here. A14 exposes colormap_lut() as
+//   a 256-entry table precisely so a shader can sample it instead of
+//   re-deriving the closed form; the app uploads all three colormaps as one
+//   256x3 RGBA8 texture and this shader samples row `colormap`. That makes the
+//   shader agree with evaluate_point_color() BY CONSTRUCTION rather than by two
+//   copies of the same maths being kept in sync by hand.
+//
+// WHAT IS NOT HERE
+//   * EDL (§3.12). It is a full-screen post-process, not a point-material
+//     effect, and S3 §7 left its cost unmeasured. edl_enabled/edl_strength are
+//     carried in DisplayParams and surfaced (disabled) in the UI; the pass
+//     itself is C3/A14 work.
+//   * ColorMode::kTime and kFixQuality. PointVertex has no per-point time or
+//     fix field (16 bytes, fixed by A1/S3), so per A14's documented rule both
+//     degrade to the RGB pass-through — which is what the `else` branch does.
+//
+// PORTABILITY WARNING (S3 REPORT.md §8.3, restated in A14's header)
+//   gl_PointSize is verified on Metal only. On Vulkan it needs the device to
+//   expose `largePoints`, and Intel/AMD Linux drivers have historically clamped
+//   the range to 1.0. That is exactly why PointSizeMode::kWorldSize exists: it
+//   asks for a metric-consistent size, and the portable implementation of it is
+//   billboard-quad expansion instead of a point sprite. This file still uses
+//   gl_PointSize for all three modes; converting kWorldSize to instanced quads
+//   is the documented fallback and touches only this file plus
+//   PagedCloudRenderer's primitive type.
+material {
+    name : lidarscan_points,
+    shadingModel : unlit,
+    vertexDomain : object,
+    requires : [ color ],
+    parameters : [
+        // --- colour (DisplayParamsUniforms rows 0-1) ---
+        { type : int,       name : colorMode },
+        { type : int,       name : colormap },
+        { type : float,     name : gamma },
+        { type : int,       name : invert },
+        { type : float,     name : valueMin },
+        { type : float,     name : valueMax },
+        { type : float,     name : brightness },
+        { type : sampler2d, name : colormapLut },
+
+        // --- point size (row 2) ---
+        { type : int,   name : pointSizeMode },
+        { type : float, name : pointSizeMinPx },
+        { type : float, name : pointSizeMaxPx },
+        { type : float, name : adaptiveReferenceM },
+        { type : float, name : worldSizeM },
+        // px per metre at 1 m of depth = viewportHeightPx / (2 tan(fovY/2)).
+        // Supplied by the app instead of read out of Filament's frame uniforms
+        // so the vertex shader depends on nothing version-specific.
+        { type : float, name : pxPerMeterAt1m },
+        { type : float3, name : cameraPos },
+
+        // --- clipping (rows 5-7) ---
+        { type : int,    name : clipEnabledMask },  // bit0 box, bit1 height
+        { type : float,  name : clipHeightMin },
+        { type : float,  name : clipHeightMax },
+        { type : float3, name : clipBoxMin },
+        { type : float3, name : clipBoxMax }
+    ],
+    culling : none,
+    depthWrite : true,
+    depthCulling : true,
+    // `masked` rather than S3's `opaque` so a clipped point can be discarded by
+    // zeroing alpha. Points have no overdraw savings to lose from giving up
+    // early-Z.
+    blending : masked,
+    maskThreshold : 0.5
+}
+
+vertex {
+    void materialVertex(inout MaterialVertexInputs material) {
+        float d = max(length(material.worldPosition.xyz - materialParams.cameraPos), 1e-3);
+        float px;
+        if (materialParams.pointSizeMode == 0) {          // kFixedPixels
+            px = materialParams.pointSizeMinPx;
+        } else if (materialParams.pointSizeMode == 1) {   // kAdaptive
+            // == adaptive_min_px at adaptive_reference_m, larger closer in,
+            // clamped to [min, max] — A14's documented behaviour.
+            px = clamp(materialParams.pointSizeMinPx * (materialParams.adaptiveReferenceM / d),
+                       materialParams.pointSizeMinPx, materialParams.pointSizeMaxPx);
+        } else {                                          // kWorldSize
+            px = clamp(materialParams.worldSizeM * materialParams.pxPerMeterAt1m / d, 0.5, 64.0);
+        }
+        gl_PointSize = px;
+    }
+}
+
+fragment {
+    // COLOUR MANAGEMENT. Everything upstream of this shader — PointVertex's
+    // RGBA8, A14's colormap LUTs, evaluate_point_color()'s ground truth — is
+    // authored in DISPLAY (sRGB) space. Filament's pipeline treats
+    // material.baseColor as LINEAR and encodes to sRGB at the end, so handing it
+    // sRGB values unconverted washes the whole cloud out. Converting here is
+    // what makes the pixel Filament writes equal the byte A14 says the point is.
+    vec3 srgbToLinear(vec3 c) {
+        return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
+    }
+
+    void material(inout MaterialInputs material) {
+        prepareMaterial(material);
+
+        vec4 src = getColor();
+        vec3 world = getWorldPosition().xyz;
+
+        vec3 rgb;
+        int mode = materialParams.colorMode;
+        if (mode == 1 || mode == 2) {           // kHeight | kIntensity
+            float value = (mode == 1)
+                    ? world.z
+                    : dot(src.rgb, vec3(0.299, 0.587, 0.114));  // RGB-derived intensity
+            float span = max(materialParams.valueMax - materialParams.valueMin, 1e-6);
+            float t = clamp((value - materialParams.valueMin) / span, 0.0, 1.0);
+            if (materialParams.invert != 0) t = 1.0 - t;
+            t = pow(t, 1.0 / max(materialParams.gamma, 0.1));
+            // Row centre of the 256x3 LUT: (colormap + 0.5) / 3.
+            float row = (float(materialParams.colormap) + 0.5) / 3.0;
+            rgb = texture(materialParams_colormapLut, vec2(t, row)).rgb * materialParams.brightness;
+        } else {                                 // kRgb, and the documented
+            rgb = src.rgb;                       // degrade for kTime/kFixQuality
+        }
+
+        // Alpha is ALWAYS the vertex alpha (point_page.h reserves it for
+        // LOD-fade / selection), except when clipping discards the point.
+        float alpha = src.a;
+        int mask = materialParams.clipEnabledMask;
+        if ((mask & 2) != 0) {
+            if (world.z < materialParams.clipHeightMin || world.z > materialParams.clipHeightMax) {
+                alpha = 0.0;
+            }
+        }
+        if ((mask & 1) != 0) {
+            if (any(lessThan(world, materialParams.clipBoxMin)) ||
+                any(greaterThan(world, materialParams.clipBoxMax))) {
+                alpha = 0.0;
+            }
+        }
+
+        material.baseColor = vec4(srgbToLinear(clamp(rgb, 0.0, 1.0)), alpha);
+    }
+}

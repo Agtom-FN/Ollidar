@@ -1,0 +1,17 @@
+# Filament prebuilt release — fetched by tools/fetch_filament.sh, never committed
+# (44 MB tarball / 131 MB unpacked). Pinned to v1.75.0 per S3 REPORT.md §9 caveat 2.
+third_party/
+
+# build trees
+build/
+build-*/
+
+# matc output
+*.filamat
+
+# Verification artefacts. The screenshots and the log ARE the C1 evidence and are
+# tracked; the 394 KB synthetic byte stream and the .lscan it produces are
+# regenerable in seconds by scripts/verify.sh and are not.
+evidence/*-qtchrome.png
+evidence/synth-d6.bin
+evidence/synth.lscan/
