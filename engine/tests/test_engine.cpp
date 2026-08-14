@@ -689,3 +689,38 @@ TEST_CASE("engine/corrupt_checksums_degrade_the_device_but_keep_it_running") {
   CHECK(h.value().checksum_pass_rate < 0.995);
   CHECK(h.value().state == DeviceState::kDegraded);  // degraded, not faulted
 }
+
+TEST_CASE("engine/mid360_record_always_writes_raw_datagrams") {
+  // C2/C3 field finding: a Mid-360 capture streamed live but recorded 0
+  // chunks, because only D6's push_serial_bytes() reached the recorder. The
+  // raw shim now records every datagram, valid or not, exactly once.
+  auto engine = Engine::create(small_engine_config());
+  REQUIRE(engine.ok());
+  Engine& e = *engine.value();
+  e.set_recorder(std::make_unique<lscan::NullRecordWriter>());
+
+  DeviceConfig dc;
+  dc.kind = DeviceKind::kMid360;
+  dc.mid360.backend = Mid360Backend::kInject;
+  dc.mid360.internal_supervisor_thread = false;
+  dc.mid360.live_points_per_sec = 0;
+  auto id = e.add_device(dc);
+  REQUIRE(id.ok());
+
+  SessionConfig sc;
+  sc.lscan_dir = "/tmp/engine-test-mid360.lscan";  // NullRecordWriter touches no disk
+  sc.record = true;
+  REQUIRE(e.start_session(sc).ok());
+
+  const std::int64_t t0 = 1'000'000'000LL;
+  const auto pkt = mid360_point_packet(0, t0);
+  const auto imu = mid360_imu_packet(1, t0 + 5'000'000);
+  REQUIRE(e.push_serial_bytes(id.value(), ByteSpan(pkt.data(), pkt.size())).ok());
+  REQUIRE(e.push_serial_bytes(id.value(), ByteSpan(imu.data(), imu.size())).ok());
+
+  const lscan::RecordStats st = e.recorder().stats();
+  CHECK(st.chunks_written == 2);  // one kMid360Points + one kMid360Imu
+  CHECK(st.bytes_written ==
+        pkt.size() + imu.size() + 2 * lscan::kChunkOverheadBytes);
+  REQUIRE(e.stop_session().ok());
+}

@@ -54,8 +54,14 @@ struct Engine::Impl {
   // A5 seam (wired by orchestrator): defaults to the real on-disk writer;
   // tests that must not touch disk install a NullRecordWriter via
   // Engine::set_recorder().
+  //
+  // record_m serializes write_chunk() across producers: FileRecordWriter is
+  // not internally synchronized (record/ owns no thread), and since the
+  // Mid-360 raw shim landed, the D6 serial thread and the Mid-360 receive
+  // thread can both record concurrently.
   std::unique_ptr<lscan::RecordWriter> recorder =
       std::make_unique<lscan::FileRecordWriter>();
+  mutable std::mutex record_m;
 
   mutable std::mutex m;  // guards lifecycle + the device map
   EngineState state = EngineState::kIdle;
@@ -142,10 +148,20 @@ struct Engine::Impl {
     Mid360ImuSink user = nullptr;
     void* user_data = nullptr;
   };
+  // C2/C3 finding: without this shim a Mid-360 capture streamed live but
+  // recorded 0 chunks — only D6's push_serial_bytes() ever reached the
+  // recorder. Raw datagrams now land as kMid360Points/kMid360Imu chunks,
+  // replayable through Mid360Backend::kInject (one datagram per call).
+  struct Mid360RawShim {
+    Impl* self = nullptr;
+    Mid360RawSink user = nullptr;
+    void* user_data = nullptr;
+  };
   // Owned for the Engine's lifetime: a driver keeps the raw pointer, and a
   // device may be removed while its receive thread is still unwinding.
   std::vector<std::unique_ptr<D6ProfileShim>> d6_shims;
   std::vector<std::unique_ptr<Mid360ImuShim>> imu_shims;
+  std::vector<std::unique_ptr<Mid360RawShim>> raw_shims;
 
   static void on_d6_profile(float angle_deg, float range_m, std::uint8_t intensity,
                             std::uint8_t high_reflectivity, std::int64_t t_engine_ns, void* user) {
@@ -169,6 +185,20 @@ struct Engine::Impl {
     if (shim->user != nullptr) {
       shim->user(angle_deg, range_m, intensity, high_reflectivity, t_engine_ns, shim->user_data);
     }
+  }
+
+  static void on_mid360_raw(const std::uint8_t* data, std::size_t len, bool is_imu,
+                            std::int64_t t_arrival_ns, void* user) {
+    auto* shim = static_cast<Mid360RawShim*>(user);
+    Impl* self = shim->self;
+    {
+      std::lock_guard<std::mutex> lock(self->record_m);
+      if (self->recorder->is_open()) {
+        const auto type = is_imu ? lscan::ChunkType::kMid360Imu : lscan::ChunkType::kMid360Points;
+        (void)self->recorder->write_chunk(type, t_arrival_ns, ByteSpan(data, len));
+      }
+    }
+    if (shim->user != nullptr) shim->user(data, len, is_imu, t_arrival_ns, shim->user_data);
   }
 
   static void on_mid360_imu(const Mid360ImuSample* samples, std::size_t count, void* user) {
@@ -320,6 +350,7 @@ Status Engine::start_session(const SessionConfig& cfg) {
                     "raw streams will NOT be persisted (Tech Spec §3 rule 2)");
     } else {
       // A5 seam: the workflow profile flows into the manifest before open().
+      std::lock_guard<std::mutex> rlock(impl_->record_m);
       if (auto* fw = dynamic_cast<lscan::FileRecordWriter*>(impl_->recorder.get())) {
         fw->set_profile(cfg.profile);
       }
@@ -454,6 +485,14 @@ Result<DeviceId> Engine::add_device(const DeviceConfig& cfg) {
       mcfg.imu_sink = &Impl::on_mid360_imu;
       mcfg.imu_sink_user_data = shim.get();
       impl_->imu_shims.push_back(std::move(shim));
+      // Record-always for a driver that owns its own sockets (C2/C3 finding).
+      auto raw = std::make_unique<Impl::Mid360RawShim>();
+      raw->self = impl_.get();
+      raw->user = mcfg.raw_sink;
+      raw->user_data = mcfg.raw_sink_user_data;
+      mcfg.raw_sink = &Impl::on_mid360_raw;
+      mcfg.raw_sink_user_data = raw.get();
+      impl_->raw_shims.push_back(std::move(raw));
       driver = std::make_unique<Mid360Driver>(id, mcfg, ctx);
       break;
     }
@@ -524,9 +563,17 @@ Status Engine::push_serial_bytes(DeviceId id, ByteSpan bytes, TimePoint t_arriva
   //
   // Record-always: the raw bytes are handed to the recorder BEFORE they are
   // parsed, so a crash mid-parse still leaves the capture on disk.
-  if (impl_->recorder->is_open()) {
-    const std::int64_t t = t_arrival.nanos != 0 ? t_arrival.nanos : SteadyClock::now().nanos;
-    (void)impl_->recorder->write_chunk(lscan::ChunkType::kD6Raw, t, bytes);
+  //
+  // D6 only: Mid-360 datagrams (kInject replay or live sockets alike) are
+  // recorded by the driver-level raw shim as typed kMid360Points/kMid360Imu
+  // chunks — recording them here too would both mislabel them as kD6Raw and
+  // duplicate every datagram.
+  if (d->kind() == DeviceKind::kD6) {
+    std::lock_guard<std::mutex> rlock(impl_->record_m);
+    if (impl_->recorder->is_open()) {
+      const std::int64_t t = t_arrival.nanos != 0 ? t_arrival.nanos : SteadyClock::now().nanos;
+      (void)impl_->recorder->write_chunk(lscan::ChunkType::kD6Raw, t, bytes);
+    }
   }
   return d->push_bytes(bytes, t_arrival);
 }

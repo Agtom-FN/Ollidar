@@ -153,6 +153,15 @@ struct Mid360ImuSample {
 // unset, samples are still available through drain_imu().
 using Mid360ImuSink = void (*)(const Mid360ImuSample* samples, std::size_t count, void* user_data);
 
+// Raw-datagram sink: called once per received UDP datagram, BEFORE any
+// parsing, filtering or decimation, on the receive thread. `is_imu` is a
+// cheap header peek (kDataTypeImu), not a validity judgment — invalid
+// datagrams are delivered too, so a recording preserves exactly what the
+// wire carried (Tech Spec §3 record-always; chunks are replayable through
+// Mid360Backend::kInject, which takes one datagram per call).
+using Mid360RawSink = void (*)(const std::uint8_t* data, std::size_t len, bool is_imu,
+                               std::int64_t t_arrival_ns, void* user_data);
+
 struct Mid360Config {
   UdpConfig udp{};
 
@@ -175,6 +184,12 @@ struct Mid360Config {
   bool publish_imu = true;
   Mid360ImuSink imu_sink = nullptr;
   void* imu_sink_user_data = nullptr;
+
+  // INT-C2C3 finding: the Engine installs a shim here so raw datagrams reach
+  // the .lscan recorder (kMid360Points / kMid360Imu chunks) — the D6's
+  // record-before-parse guarantee, for a driver that owns its own sockets.
+  Mid360RawSink raw_sink = nullptr;
+  void* raw_sink_user_data = nullptr;
   std::uint32_t imu_ring_capacity = 2048;  // ~10 s at 200 Hz
 
   // PageStore batch size. S3 measured 200k pts/s ingest at 0.11 ms p95 with

@@ -242,6 +242,14 @@ void Mid360Driver::on_point_packet(const std::uint8_t* data, std::size_t len,
   const mid360::PacketView v = mid360::parse_packet(data, len);
   const std::int64_t t_ns = t_arrival.nanos;
 
+  // Record-always (Tech Spec §3 rule 2): every datagram reaches the raw sink
+  // verbatim, valid or not, exactly once. IMU-typed datagrams are routed below
+  // and recorded by on_imu_packet's own sink call instead.
+  const bool routed_imu = v.valid() && v.header->data_type == mid360::kDataTypeImu;
+  if (cfg_.raw_sink != nullptr && !routed_imu) {
+    cfg_.raw_sink(data, len, /*is_imu=*/false, t_arrival.nanos, cfg_.raw_sink_user_data);
+  }
+
   if (!v.valid() || (cfg_.verify_crc && !mid360::crc32_ok(v))) {
     std::lock_guard<std::mutex> lock(m_);
     ++st_.bad_packets;
@@ -372,6 +380,11 @@ void Mid360Driver::on_point_packet(const std::uint8_t* data, std::size_t len,
 
 void Mid360Driver::on_imu_packet(const std::uint8_t* data, std::size_t len,
                                  TimePoint t_arrival) {
+  // Record-always: the raw IMU datagram is recorded regardless of
+  // publish_imu — recording preserves the wire, publishing is a choice.
+  if (cfg_.raw_sink != nullptr) {
+    cfg_.raw_sink(data, len, /*is_imu=*/true, t_arrival.nanos, cfg_.raw_sink_user_data);
+  }
   if (!cfg_.publish_imu) return;
   const mid360::PacketView v = mid360::parse_packet(data, len);
   if (!v.valid() || v.header->data_type != mid360::kDataTypeImu) {
