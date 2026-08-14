@@ -95,6 +95,10 @@ class Engine {
   PageStore& points();
   TimeSync& timesync();
   lscan::RecordWriter& recorder();
+  // A5 seam: replace the recorder (e.g. NullRecordWriter in tests that must
+  // not touch disk). Only valid while no session is running; a null pointer
+  // is ignored.
+  void set_recorder(std::unique_ptr<lscan::RecordWriter> w);
 
   // The built-in subscription the C ABI's poll_event()/set_event_callback()
   // drive. C++ consumers should make their own subscription instead.

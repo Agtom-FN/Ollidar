@@ -55,7 +55,9 @@ must be documented here when it lands.
 | App serial-reader thread | app (Android JNI reader / Qt `readyRead`) | `push_serial_bytes()` → `UsbSerialSource::push` → D6 parser → point conversion → `PageStore::append` → `EventBus::publish`. The **entire decode path is synchronous on the caller's thread.** |
 | App control thread | app | `create/start_session/add_device/stop_session`. Serialized by one engine mutex. |
 | App consumer thread | app | `poll_event` / `wait_event` / `drain`, plus reading point pages for GPU upload. |
-| *(A3)* SDK2 receive thread | Livox SDK2 | Mid-360 points + IMU. Must reach the rest of the engine only through `PageStore` and `EventBus`. |
+| SDK2 receive threads *(A3, landed)* | Livox SDK2 | point + IMU callbacks → decode → `PageStore` / IMU ring. Reaches the rest of the engine only through `PageStore` and `EventBus`. |
+| Driver supervisor *(A3, landed)* | `Mid360Driver` | 20 Hz `tick()`: watchdog, reconnect, per-second health. One per driver. `internal_supervisor_thread = false` + manual `tick()` in unit tests. |
+| `UdpSource` receive *(A3, landed)* | `UdpSource` | raw-UDP backend only; one per bound port; blocking `recvfrom` with 100 ms timeout so `stop()` is prompt. Lock order `flush_m_` → `m_`; `PageStore::append` publishes with **no** driver lock held (see docs/A3-mid360-driver.md §6). |
 | *(A6)* LIO odometry thread | A6 | scan-to-map at 10 Hz, ≤ 2 big cores on Android. |
 | *(A15)* job workers | A15 | post pipeline, exports, uploads. |
 

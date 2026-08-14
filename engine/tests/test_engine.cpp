@@ -239,6 +239,9 @@ TEST_CASE("engine/record_always_writes_raw_bytes_before_parsing") {
   auto engine = Engine::create(small_engine_config());
   REQUIRE(engine.ok());
   Engine& e = *engine.value();
+  // The engine defaults to the real FileRecordWriter (A5 wiring); this test
+  // only checks record-before-parse ordering, so install the no-disk writer.
+  e.set_recorder(std::make_unique<lscan::NullRecordWriter>());
   auto id = e.add_device(d6_config());
   REQUIRE(id.ok());
 

@@ -22,7 +22,11 @@ struct Engine::Impl {
   EventBus bus;
   std::unique_ptr<PageStore> points;
   TimeSync timesync;
-  lscan::NullRecordWriter recorder;  // A5 swaps in the real writer
+  // A5 seam (wired by orchestrator): defaults to the real on-disk writer;
+  // tests that must not touch disk install a NullRecordWriter via
+  // Engine::set_recorder().
+  std::unique_ptr<lscan::RecordWriter> recorder =
+      std::make_unique<lscan::FileRecordWriter>();
 
   mutable std::mutex m;  // guards lifecycle + the device map
   EngineState state = EngineState::kIdle;
@@ -102,6 +106,9 @@ Result<std::unique_ptr<Engine>> Engine::create(const EngineConfig& cfg) {
     return set_last_error(ScanError::kUnknown, "engine: could not subscribe to the page store");
   }
 
+  // A4 seam: device-clock discontinuities reach the app as events.
+  e->impl_->timesync.set_event_bus(&e->impl_->bus);
+
   SCAN_LOG_INFO(kMod, "%s created for '%s' (pages: %u × %u pts)", engine_version_string(),
                 cfg.app_name.c_str(), e->impl_->points->config().max_pages,
                 e->impl_->points->config().page_capacity);
@@ -142,7 +149,11 @@ Status Engine::start_session(const SessionConfig& cfg) {
                     "session started with recording requested but no .lscan directory; "
                     "raw streams will NOT be persisted (Tech Spec §3 rule 2)");
     } else {
-      const Status s = impl_->recorder.open(cfg.lscan_dir);
+      // A5 seam: the workflow profile flows into the manifest before open().
+      if (auto* fw = dynamic_cast<lscan::FileRecordWriter*>(impl_->recorder.get())) {
+        fw->set_profile(cfg.profile);
+      }
+      const Status s = impl_->recorder->open(cfg.lscan_dir);
       if (!s.ok()) {
         impl_->set_state(EngineState::kFaulted);
         return s;
@@ -193,15 +204,15 @@ Status Engine::stop_session() {
     if (!s.ok()) SCAN_LOG_WARN(kMod, "device %u stop: %s", d->id(), error_str(s.error()));
   }
 
-  if (impl_->recorder.is_open()) {
-    (void)impl_->recorder.flush();
-    (void)impl_->recorder.close();
+  if (impl_->recorder->is_open()) {
+    (void)impl_->recorder->flush();
+    (void)impl_->recorder->close();
   }
 
   SessionStatePayload p{};
   p.recording = 0;
   p.session_id = session_id();
-  p.bytes_written = impl_->recorder.stats().bytes_written;
+  p.bytes_written = impl_->recorder->stats().bytes_written;
   impl_->bus.publish(EventType::kSessionState, p);
 
   impl_->set_state(EngineState::kIdle);
@@ -295,9 +306,9 @@ Status Engine::push_serial_bytes(DeviceId id, ByteSpan bytes, TimePoint t_arriva
   //
   // Record-always: the raw bytes are handed to the recorder BEFORE they are
   // parsed, so a crash mid-parse still leaves the capture on disk.
-  if (impl_->recorder.is_open()) {
+  if (impl_->recorder->is_open()) {
     const std::int64_t t = t_arrival.nanos != 0 ? t_arrival.nanos : SteadyClock::now().nanos;
-    (void)impl_->recorder.write_chunk(lscan::ChunkType::kD6Raw, t, bytes);
+    (void)impl_->recorder->write_chunk(lscan::ChunkType::kD6Raw, t, bytes);
   }
   return d->push_bytes(bytes, t_arrival);
 }
@@ -305,7 +316,11 @@ Status Engine::push_serial_bytes(DeviceId id, ByteSpan bytes, TimePoint t_arriva
 EventBus& Engine::events() { return impl_->bus; }
 PageStore& Engine::points() { return *impl_->points; }
 TimeSync& Engine::timesync() { return impl_->timesync; }
-lscan::RecordWriter& Engine::recorder() { return impl_->recorder; }
+lscan::RecordWriter& Engine::recorder() { return *impl_->recorder; }
+
+void Engine::set_recorder(std::unique_ptr<lscan::RecordWriter> w) {
+  if (w) impl_->recorder = std::move(w);
+}
 
 SubscriptionId Engine::app_subscription() const { return impl_->app_sub; }
 
