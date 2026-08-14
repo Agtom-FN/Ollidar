@@ -1,39 +1,35 @@
 name: engine-ci
 
-# S7 spike / E1 (Workstream E): the 5-target build matrix the Tech Spec's
-# §3 "Key rules" point 4 and workstream E1 require -- Windows (MSVC +
-# clang-cl), macOS universal, Linux x86_64, Android arm64 (build-only) --
-# proven against the engine-stub skeleton so the real engine (A1) inherits a
-# matrix that's already green. See spikes/s7-windows-toolchain/ for the
-# CMake project, vcpkg manifest, and TOOLCHAIN_NOTES.md this workflow drives.
+# The 5-target build matrix required by Tech Spec §3 "Key rules" point 4 and
+# workstream E1 — Windows (MSVC + clang-cl), macOS universal, Linux x86_64,
+# Android arm64 (build-only). Proven on the S7 stub first
+# (spikes/s7-windows-toolchain/, kept as the historical record); A1 moved the
+# real engine into engine/ and this workflow now builds that.
 
 on:
   push:
     paths:
-      - "spikes/s7-windows-toolchain/**"
+      - "engine/**"
       - ".github/workflows/engine-ci.yml"
-      # A1 will widen this to engine/** once the real engine tree replaces
-      # the stub; left narrow for now so this spike doesn't fire on
-      # unrelated pushes.
   pull_request:
     paths:
-      - "spikes/s7-windows-toolchain/**"
+      - "engine/**"
       - ".github/workflows/engine-ci.yml"
   workflow_dispatch: {}
 
 env:
   # Pinned to the same microsoft/vcpkg 2026.07.29 release commit as
-  # engine-stub/vcpkg.json's builtin-baseline, so the toolchain and the
-  # manifest baseline can never silently drift apart. Bump both together.
+  # engine/vcpkg.json's builtin-baseline, so the toolchain and the manifest
+  # baseline can never silently drift apart. Bump both together.
   VCPKG_COMMIT: 9e593bb18ea69cc5095e012465dcd675a822ed0d
-  SOURCE_DIR: spikes/s7-windows-toolchain/engine-stub
+  SOURCE_DIR: engine
 
 jobs:
   # ---------------------------------------------------------------------
   windows-msvc:
     name: windows-latest / MSVC x64
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -61,18 +57,20 @@ jobs:
         working-directory: ${{ env.SOURCE_DIR }}
         run: ctest --preset windows-msvc-x64
 
+      - name: Engine CLI selftest
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: ./build/windows-msvc-x64/engine_cli.exe --selftest
+
   # ---------------------------------------------------------------------
   windows-clangcl:
     name: windows-latest / clang-cl x64
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
-      # clang-cl still needs cl.exe's headers/libs/link.exe on PATH -- it's
-      # a frontend, not a full toolchain -- so we still enter the VS dev
-      # shell. See TOOLCHAIN_NOTES.md for the LLVM-version-vs-MSVC-STL
-      # compatibility note this depends on.
+      # clang-cl still needs cl.exe's headers/libs/link.exe on PATH — it is a
+      # frontend, not a full toolchain — so we still enter the VS dev shell.
       - name: Enable MSVC dev command prompt (x64)
         uses: ilammy/msvc-dev-cmd@v1
         with:
@@ -104,7 +102,7 @@ jobs:
   macos-universal:
     name: macos-latest / universal (arm64+x86_64)
     runs-on: macos-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -127,15 +125,27 @@ jobs:
         working-directory: ${{ env.SOURCE_DIR }}
         run: ctest --preset macos-universal
 
-      - name: Verify universal (fat) binary
+      - name: Verify universal (fat) binaries
         working-directory: ${{ env.SOURCE_DIR }}
-        run: lipo -info build/macos-universal/scanengine_tests
+        run: |
+          lipo -info build/macos-universal/libscanengine.a
+          lipo -info build/macos-universal/scanengine_tests
+          lipo -info build/macos-universal/engine_cli
+          # Fail the job if either slice went missing.
+          lipo -info build/macos-universal/libscanengine.a | grep -q "x86_64 arm64"
+
+      - name: Engine CLI selftest + replay round trip
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: |
+          ./build/macos-universal/engine_cli --selftest
+          ./build/macos-universal/engine_cli --synth /tmp/s1_synth.bin 2 --noise
+          ./build/macos-universal/engine_cli --replay /tmp/s1_synth.bin
 
   # ---------------------------------------------------------------------
   linux-x64:
     name: ubuntu-latest / x86_64
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -158,14 +168,20 @@ jobs:
         working-directory: ${{ env.SOURCE_DIR }}
         run: ctest --preset linux-x64
 
+      # The Linux build doubles as the cloud worker (§3 key rule 4 / D1), so
+      # the headless CLI must work here, not just the unit tests.
+      - name: Engine CLI selftest
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: ./build/linux-x64/engine_cli --selftest
+
   # ---------------------------------------------------------------------
   # Build-only: no Android device/emulator in this CI tier, so we cross-
-  # compile scanengine + scanengine_tests for arm64-v8a and stop there.
-  # Running the tests on-device/emulator is A1/B-workstream's job, not S7's.
+  # compile libscanengine + the test binary for arm64-v8a and stop there.
+  # Running the tests on-device is the B-workstream's job.
   android-arm64-build-only:
     name: ubuntu-latest / Android NDK arm64 (build-only)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -195,8 +211,10 @@ jobs:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: cmake --build --preset android-arm64
 
-      - name: Verify arm64 binary
+      - name: Verify arm64 artifacts
         working-directory: ${{ env.SOURCE_DIR }}
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
           file build/android-arm64/scanengine_tests || true
           "${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readobj" -h build/android-arm64/libscanengine.a 2>/dev/null | head -20 || true
