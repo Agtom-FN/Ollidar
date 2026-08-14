@@ -56,7 +56,13 @@ extern "C" {
  * Every addition is at the END of an existing struct or a new symbol, but the
  * struct layouts changed, so DESIGN.md §6 item 9 applies: this and
  * scanengine::kEngineAbiVersion move together. */
-#define SCAN_ABI_VERSION 2u
+/* 2 -> 3 (INT-29): A10's GNSS/RTK stack. NMEA in (scan_engine_push_nmea), the
+ * fix and its timeline out (scan_gnss_fix, scan_gnss_stats), the NTRIP client
+ * as a handle (scan_ntrip_*), the georeferencing solution and the session's
+ * CRS (scan_georef_solution, scan_engine_crs_wkt), two new event types with
+ * their payloads, and two new mirrored enums (FixType, NtripState). The
+ * scan_event union also gained the DEVICE_HEALTH case it never had. */
+#define SCAN_ABI_VERSION 3u
 
 /* --- errors: mirror of scanengine::ScanError --------------------------- */
 typedef int32_t scan_error_t;
@@ -160,6 +166,37 @@ enum {
   SCAN_CALIB_GATE_REJECT = 3   /* > 30 px: must redo the capture */
 };
 
+/* --- GNSS: mirror of gnss/gnss.h ---------------------------------------
+ *
+ * ORDERED, and the order is load-bearing: Tech Spec §3.4's capture gate is
+ * "at or above", so a UI compares these numerically. This is NOT the GGA
+ * quality digit (which numbers RTK-fixed 4 and RTK-float 5) — scan_gnss_fix
+ * keeps that separately as `quality_raw`. */
+enum {
+  SCAN_FIX_NONE = 0,
+  SCAN_FIX_SINGLE = 1,
+  SCAN_FIX_DGPS = 2,
+  SCAN_FIX_RTK_FLOAT = 3,
+  SCAN_FIX_RTK_FIXED = 4
+};
+
+/* --- NTRIP: mirror of gnss/ntrip_client.h -------------------------------- */
+enum {
+  SCAN_NTRIP_IDLE = 0,
+  SCAN_NTRIP_CONNECTING = 1,
+  SCAN_NTRIP_STREAMING = 2,
+  SCAN_NTRIP_STALLED = 3,     /* socket open, no RTCM for stall_timeout_ms */
+  SCAN_NTRIP_RECONNECTING = 4,
+  SCAN_NTRIP_FAILED = 5       /* terminal: auth, bad mountpoint, attempts gone */
+};
+
+/* Which trajectory the D6 pushbroom assembles against (§3.3). Same interface
+ * either way — this is configuration, not a code path. */
+enum {
+  SCAN_TRAJECTORY_EXTERNAL = 0, /* pushed poses: ARCore, or a replayed track */
+  SCAN_TRAJECTORY_GNSS = 1      /* the RTK rover's own trajectory */
+};
+
 enum {
   SCAN_LOG_TRACE = 0,
   SCAN_LOG_DEBUG = 1,
@@ -181,6 +218,8 @@ enum {
   SCAN_EVENT_ROTATION = 31,
   SCAN_EVENT_POSE_UPDATE = 40,
   SCAN_EVENT_GNSS_FIX = 50,
+  SCAN_EVENT_NTRIP_STATE = 51,
+  SCAN_EVENT_GEOREF_CONVERGED = 52,
   SCAN_EVENT_JOB_PROGRESS = 60,
   SCAN_EVENT_ERROR = 90
 };
@@ -216,11 +255,46 @@ typedef struct scan_event {
     } rotation;
     struct { int32_t error; uint32_t device; uint8_t stream; } error;
     struct {
+      uint32_t device;
+      uint8_t state;       /* SCAN_DEV_* */
+      uint64_t points_out;
+      double points_per_sec;
+      double checksum_pass_rate;
+    } health;
+    struct {
       uint8_t source;      /* scan_stream_id the pose came from */
       float position[3];
       float quaternion[4]; /* x, y, z, w */
       uint8_t quality;     /* 0 = invalid .. 255 = best */
     } pose;
+    /* SCAN_EVENT_GNSS_FIX — one closed NMEA epoch. */
+    struct {
+      uint8_t fix_type;        /* SCAN_FIX_* */
+      uint8_t satellites;
+      float hdop;
+      float correction_age_s;  /* GGA field 13: the ROVER's corrections age */
+      float sigma_h_m;         /* 1-sigma horizontal, from GST when available */
+      double lat_deg, lon_deg, alt_m; /* alt_m is ORTHOMETRIC, as GGA reports */
+    } gnss;
+    /* SCAN_EVENT_NTRIP_STATE — the corrections link. `correction_age_s` is the
+     * ENGINE's age (time since the last CRC-valid frame off the caster), which
+     * is NOT the rover's; -1 means "no frame yet on this connection". */
+    struct {
+      uint8_t state;    /* SCAN_NTRIP_* */
+      int32_t error;
+      int32_t backoff_ms;
+      uint64_t bytes_received;
+      float correction_age_s;
+    } ntrip;
+    /* SCAN_EVENT_GEOREF_CONVERGED — the session became (or stopped being)
+     * exportable in a real CRS. */
+    struct {
+      double cep95_m;
+      double horizontal_sigma_m;
+      uint32_t samples;
+      int32_t epsg;
+      uint8_t converged;
+    } georef;
     uint8_t raw[64];
   } payload;
 } scan_event;
@@ -305,6 +379,163 @@ typedef struct scan_mount_calib_result {
   double condition_number;
 } scan_mount_calib_result;
 
+/* --- GNSS: mirror of gnss/gnss.h + gnss/gnss_source.h -------------------- */
+typedef struct scan_gnss_fix {
+  int64_t t_mono_ns;    /* ENGINE time (A4-mapped), not UTC */
+  int64_t t_arrival_ns; /* raw arrival stamp, before the A4 mapping */
+  int64_t utc_unix_ns;  /* 0 until an RMC has supplied a date */
+
+  uint8_t fix;          /* SCAN_FIX_* */
+  uint8_t satellites;
+  uint8_t quality_raw;  /* GGA field 6 verbatim (3 = PPS, 8 = simulator, ...) */
+  uint8_t fix_dimension;/* GSA field 2: 1 none, 2 = 2D, 3 = 3D */
+  uint16_t station_id;  /* GGA field 14: which base is correcting us */
+
+  double lat_deg, lon_deg;
+  double alt_m;              /* ORTHOMETRIC (MSL), exactly as GGA reports it */
+  double geoid_sep_m;        /* GGA field 11 */
+  double height_ellipsoid_m; /* alt_m + geoid_sep_m — what the geodesy uses */
+  uint8_t has_geoid_sep;
+
+  float hdop, pdop, vdop;
+  float correction_age_s;
+
+  /* 1-sigma, metres. From GST when the receiver sends it, otherwise the
+   * fix-quality fallback table; `sigma_from_gst` says which, and a UI that
+   * quotes an accuracy should say so too. */
+  float sigma_east_m, sigma_north_m, sigma_up_m;
+  float sigma_horizontal_m;
+  uint8_t sigma_from_gst;
+
+  float speed_mps;
+  float course_deg;
+  uint8_t has_course;
+} scan_gnss_fix;
+
+/* The §3.4 fix-quality timeline B9's status strip and a session report show. */
+typedef struct scan_gnss_stats {
+  uint64_t bytes_in;
+  uint64_t sentences_ok;
+  uint64_t checksum_failed;
+  uint64_t malformed;
+  double checksum_pass_rate;
+
+  uint64_t epochs;
+  uint64_t fixes_published;
+  uint64_t poses_published;
+  uint64_t epochs_no_position;
+  uint64_t epochs_below_gate;
+  uint64_t gst_epochs;
+
+  /* Epoch counts indexed by SCAN_FIX_*. */
+  uint64_t by_fix[5];
+
+  uint8_t time_converged; /* A4: false for the first ~16 s of a 1 Hz stream */
+  int64_t time_uncertainty_ns;
+  uint8_t has_origin;
+  double origin_lat_deg, origin_lon_deg, origin_height_m;
+} scan_gnss_stats;
+
+/* --- NTRIP: mirror of gnss/gnss.h NtripConfig + ntrip_client.h ----------- */
+typedef struct scan_ntrip_config {
+  const char* host;      /* required */
+  uint16_t port;         /* 0 = 2101 */
+  const char* mountpoint;/* required for connect(), ignored by fetch_sourcetable */
+  const char* username;  /* may be NULL */
+  const char* password;  /* may be NULL */
+  const char* user_agent;/* may be NULL; forced to start with "NTRIP" */
+
+  int32_t ntrip_version;   /* 0 = default 2 */
+  uint8_t allow_v1_fallback_set; /* 0 = keep the default (fallback on) */
+  uint8_t allow_v1_fallback;
+
+  int32_t connect_timeout_ms; /* 0 = default */
+  int32_t stall_timeout_ms;   /* 0 = default 30000 */
+  int32_t gga_interval_ms;    /* <0 disables; 0 = default 10000 */
+
+  uint8_t auto_reconnect_set; /* 0 = keep the default (on) */
+  uint8_t auto_reconnect;
+  int32_t max_reconnect_attempts; /* 0 = forever */
+} scan_ntrip_config;
+
+typedef struct scan_ntrip_stats {
+  uint64_t connect_attempts;
+  uint64_t connects_ok;
+  uint64_t disconnects;
+  uint64_t reconnects;
+  uint64_t bytes_received;
+  uint64_t gga_sent;
+  uint64_t stalls;
+  uint64_t handshake_failures;
+
+  /* RTCM3 transport framing (gnss/rtcm3.h). `frames_crc_failed` is what
+   * separates "bad corrections" from "bad sky" — corruption on the Bluetooth
+   * hop leaves the rover silently in Float. */
+  uint64_t frames_ok;
+  uint64_t frames_crc_failed;
+  uint64_t rtcm_bytes;
+
+  int64_t t_connected_ns;
+  int64_t t_last_rtcm_ns;
+  int32_t backoff_ms;
+  int32_t http_status;      /* 200 / 401 / 404 / 0 */
+  int32_t ntrip_version_used;
+  int32_t last_error;
+  uint8_t state;            /* SCAN_NTRIP_* */
+  uint8_t receiving;        /* a CRC-valid frame on the CURRENT connection */
+  float correction_age_s;   /* -1 before the first frame: unknown != fresh */
+} scan_ntrip_stats;
+
+/* One sourcetable STR record. Strings are fixed-size so the array crosses the
+ * ABI by value — convention 3: no pointer here is owned by the callee. */
+typedef struct scan_ntrip_source {
+  char mountpoint[64];
+  char identifier[64];
+  char format[32];
+  char nav_system[64];
+  char country[8];
+  double lat_deg, lon_deg;
+  uint8_t needs_gga; /* a VRS mount that wants our GGA uploaded */
+  uint8_t fee;
+  int32_t carrier;   /* 0 none, 1 L1, 2 L1+L2 */
+  int32_t solution;  /* 0 single base, 1 network */
+  int32_t bitrate;
+} scan_ntrip_source;
+
+/* --- georeferencing: mirror of gnss/georef.h ----------------------------- */
+typedef struct scan_georef_solution {
+  uint8_t converged;
+  double yaw_deg;
+  double translation[3];
+  double scale;
+  double global_from_local[16]; /* ROW-MAJOR, se3.h convention */
+
+  uint32_t samples, inliers, rejected;
+  double residual_rms_m;
+  double residual_rms_h_m;
+  double gravity_residual_m;
+
+  double yaw_sigma_deg;
+  double translation_sigma_h_m;
+  double span_m;
+
+  /* What a UI should show. horizontal_sigma_m includes the fixes' OWN accuracy
+   * at full strength (they share a base-station error that does not average
+   * out), so it is deliberately conservative — docs/A10-gnss.md §5.1. */
+  double horizontal_sigma_m;
+  double vertical_sigma_m;
+  double cep50_m, cep95_m;
+  double mean_fix_sigma_m;
+
+  uint8_t best_fix, dominant_fix; /* SCAN_FIX_* */
+  int32_t epsg;                   /* 0 until the origin picks a zone */
+  int64_t t_first_ns, t_last_ns;
+
+  /* Why it is NOT converged, for a UI that has to say something. Empty when it
+   * is. Copied in, not a pointer into the engine. */
+  char blocker[64];
+} scan_georef_solution;
+
 typedef struct scan_device_health {
   uint32_t id;
   uint8_t kind;
@@ -349,6 +580,9 @@ typedef struct scan_session_config {
   /* Assemble D6 profiles into world points with the pushed pose stream. Needs
    * scan_engine_set_mount_extrinsics() first. */
   uint8_t pushbroom;
+  /* SCAN_TRAJECTORY_* — which pose stream the assembler interpolates against.
+   * 0 (external) is the ARCore default; 1 is §3.3's desktop RTK mode. */
+  uint8_t trajectory;
 } scan_session_config;
 
 typedef struct scan_device_config {
@@ -467,6 +701,86 @@ SCAN_API scan_error_t scan_mount_calib_add_observation(scan_mount_calib* calib,
                                                        double sigma_m);
 SCAN_API scan_error_t scan_mount_calib_solve(scan_mount_calib* calib, const double cad[16],
                                              scan_mount_calib_result* out);
+
+/* --- GNSS / RTK (A10) ----------------------------------------------------
+ *
+ * The rover's bytes. `device_id` must be a SCAN_DEVICE_RTK_ROVER device. Any
+ * chunk of the byte stream is fine — a fragment, a sentence, or several: the
+ * framer handles arbitrary chunking, which is what Bluetooth SPP's 20–990-byte
+ * MTU fragments require. Record-always applies: the bytes hit the .lscan as
+ * kGnssNmea chunks BEFORE they are parsed. t_mono_ns 0 = "stamp on arrival".
+ *
+ * This is scan_engine_push_serial_bytes() by another name, and both work; this
+ * one exists because "push NMEA" is what the JNI caller thinks it is doing, and
+ * because it can refuse a device that is not a rover instead of quietly
+ * feeding a D6 parser. */
+SCAN_API scan_error_t scan_engine_push_nmea(scan_engine* engine, uint32_t device_id,
+                                            const uint8_t* data, size_t len, int64_t t_mono_ns);
+
+/* The most recent closed epoch. Zero-filled with fix == SCAN_FIX_NONE before
+ * the first one — never an error, because "no fix yet" is a normal state a
+ * status strip has to render. */
+SCAN_API scan_error_t scan_engine_last_fix(scan_engine* engine, scan_gnss_fix* out);
+
+/* The fix-quality timeline (§3.4) plus the NMEA link health behind it. */
+SCAN_API scan_error_t scan_engine_gnss_stats(scan_engine* engine, scan_gnss_stats* out);
+
+/* The local -> global transform and how well it is known. Always writes *out;
+ * `converged == 0` with a non-empty `blocker` is the normal pre-convergence
+ * answer, not a failure. */
+SCAN_API scan_error_t scan_engine_georef_solution(scan_engine* engine,
+                                                  scan_georef_solution* out);
+
+/* The A9 export seam. UTF-8, engine-owned, valid until the next engine call ON
+ * THIS THREAD (convention 4) — copy it. Never NULL.
+ *
+ * Both are EMPTY until the georef transform converges. That is stricter than
+ * "the site's UTM zone is known", and deliberately so: until the transform
+ * converges the cloud is still in the LOCAL frame, and labelling it with a real
+ * CRS produces a file that opens fine and lands in the wrong place. Empty is
+ * exactly A9's documented "embed the local-frame placeholder" input.
+ * scan_engine_crs_epsg() returns "EPSG:32650" or "". */
+SCAN_API const char* scan_engine_crs_wkt(scan_engine* engine);
+SCAN_API const char* scan_engine_crs_epsg(scan_engine* engine);
+
+/* --- NTRIP client (A10) --------------------------------------------------
+ *
+ * scan_ntrip_create(engine, &c) BORROWS the engine's own client — the one whose
+ * GGA upload is the rover's own last sentence and whose forwarded frames are
+ * recorded. That is what an app wants. Passing NULL for `engine` creates a
+ * STANDALONE client instead, for a mountpoint picker or a diagnostic tool that
+ * has no engine. Either way scan_ntrip_destroy() is required, and it frees only
+ * what it owns.
+ *
+ * connect() performs the first handshake SYNCHRONOUSLY, so a wrong password is
+ * SCAN_ERR_PERMISSION_DENIED and an unknown mountpoint is SCAN_ERR_NOT_FOUND
+ * from this call — not an infinite reconnect loop under a "connecting..." UI.
+ * Both are treated as permanently fatal by the reconnect loop: retrying a
+ * rejected password forever is how an account gets banned from a caster. */
+typedef struct scan_ntrip scan_ntrip;
+
+/* RTCM3 to the rover: WHOLE, CRC-valid frames only. Runs on the NTRIP receive
+ * thread with no client lock held. It must be quick, must not re-enter the
+ * client, and (on Android) must attach the thread before touching the JVM. */
+typedef void (*scan_rtcm_cb)(const uint8_t* data, size_t len, void* user_data);
+
+SCAN_API scan_error_t scan_ntrip_create(scan_engine* engine, scan_ntrip** out);
+SCAN_API void scan_ntrip_destroy(scan_ntrip* client);
+SCAN_API scan_error_t scan_ntrip_connect(scan_ntrip* client, const scan_ntrip_config* cfg);
+SCAN_API scan_error_t scan_ntrip_disconnect(scan_ntrip* client);
+SCAN_API scan_error_t scan_ntrip_get_state(scan_ntrip* client, int32_t* out_state);
+SCAN_API scan_error_t scan_ntrip_get_stats(scan_ntrip* client, scan_ntrip_stats* out);
+SCAN_API scan_error_t scan_ntrip_set_rtcm_callback(scan_ntrip* client, scan_rtcm_cb cb,
+                                                   void* user_data);
+
+/* The mountpoint picker. A separate short-lived connection, so it works before
+ * connect() and while streaming. Writes at most `capacity` records and always
+ * reports the caster's true total in *out_count, so a caller can retry with a
+ * bigger array; SCAN_ERR_CAPACITY_EXCEEDED says it was truncated. Only `host`,
+ * `port` and the credentials of `cfg` are used. */
+SCAN_API scan_error_t scan_ntrip_fetch_sourcetable(const scan_ntrip_config* cfg,
+                                                   scan_ntrip_source* out, uint32_t capacity,
+                                                   uint32_t* out_count);
 
 /* Logging is process-global, not per engine. */
 SCAN_API void scan_engine_set_log_callback(scan_log_cb cb, void* user_data, int32_t min_level);

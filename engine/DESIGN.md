@@ -63,6 +63,7 @@ constructs but does not drive.
 | Driver supervisor *(A3, landed)* | `Mid360Driver` | 20 Hz `tick()`: watchdog, reconnect, per-second health. One per driver. `internal_supervisor_thread = false` + manual `tick()` in unit tests. |
 | `UdpSource` receive *(A3, landed)* | `UdpSource` | raw-UDP backend only; one per bound port; blocking `recvfrom` with 100 ms timeout so `stop()` is prompt. Lock order `flush_m_` → `m_`; `PageStore::append` publishes with **no** driver lock held (see docs/A3-mid360-driver.md §6). |
 | LIO odometry *(A6, landed)* | `LioOdometry` (only when `LioConfig::internal_thread`) | Drains the IMU/point queues, propagates, undistorts, runs the iterated update, inserts into the voxel map, appends to the `PageStore`, publishes the pose. One per instance; ~10 Hz scan-to-map, ≤ 2 big cores on Android. Lock order `proc_m` → `in_m`; `LioPoseSource` callbacks fire **outside** its lock, so a subscriber cannot deadlock the odometry from one. With `internal_thread = false` (the default, and what every test uses) the pipeline runs inline on the caller's thread — the engine's default posture. |
+| NTRIP receive *(A10, landed; wired INT-29)* | `TcpNtripClient` | blocking `recv` with a 1 s socket timeout so `disconnect()` is prompt; RTCM3 framing; the rover-write callback; periodic GGA upload; stall detection; reconnect with jittered exponential backoff. One per client, and the Engine owns exactly one client — but the thread exists only between `ntrip().connect()` and `disconnect()`, not for the Engine's lifetime. The rover callback runs **on this thread**, with **no client lock held**, so a slow Bluetooth write cannot deadlock the client; it must still be quick and must not re-enter the client (the general callback rule). |
 | *(A15)* job workers | A15 | post pipeline, exports, uploads. |
 
 ### Where the Engine's own consumers run (INT-24)
@@ -92,6 +93,26 @@ paths that already exist:
 * **Session teardown is ordered:** `stop_session()` stops every device *first*, so no
   producer can be inside either consumer, then flushes the assembler, then flushes, stops
   and releases the odometry — joining A6's thread — and only then closes the recorder.
+  Stopping the `kRtkRover` device is what **flushes the pending GNSS epoch**, which is the
+  only moment a 1 Hz receiver's last fix would otherwise be lost.
+
+### Where A10's GNSS stack runs (INT-29)
+
+* **`GnssSource`, `TcpNtripClient` and `GeorefFusion` are one each per Engine**, alive for
+  the Engine's whole lifetime rather than per session — the operator pairs the rover,
+  joins a caster and waits for RTK Fixed *before* pressing record, and §3.4's capture gate
+  is that pre-session decision. All three are internally synchronized.
+* **The fix path runs on the app's rover-reader thread**, inside `push_serial_bytes()`:
+  NMEA framing → epoch assembly → `GnssSource`'s fix callback → `GeorefFusion::add_fix()`
+  (which interpolates the local trajectory) → `kGnssFix` on the bus. The callback fires
+  with **no `GnssSource` lock held**, which is precisely what lets `add_fix()` turn around
+  and call `sample_at()` without deadlocking.
+* **The corrections path runs on the NTRIP receive thread**: whole CRC-valid frames →
+  the Engine's handler (record as a `kGnssRtcm` chunk under `record_m`) → the app's
+  `set_rtcm_sink()` callback, invoked **outside every engine lock**.
+* **`~Engine` joins the NTRIP thread first.** `Impl`'s members are destroyed in reverse
+  declaration order, which would otherwise free the recorder while that thread is still
+  writing to it.
 
 Why the decode runs on the caller's thread: it keeps the engine free of platform serial
 code (§3.1's per-OS matrix lives entirely in the apps), it makes replay bit-identical to

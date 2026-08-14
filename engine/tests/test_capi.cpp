@@ -24,7 +24,7 @@ TEST_CASE("capi/smoke_sequence_from_C_with_a_synthetic_D6_capture") {
 
 TEST_CASE("capi/abi_version_and_error_strings") {
   CHECK(scan_engine_abi_version() == SCAN_ABI_VERSION);
-  CHECK(SCAN_ABI_VERSION == 2u);  // moves with scanengine::kEngineAbiVersion
+  CHECK(SCAN_ABI_VERSION == 3u);  // moves with scanengine::kEngineAbiVersion
   CHECK(std::string(scan_error_str(SCAN_OK)) == "ok");
   CHECK(std::string(scan_error_str(SCAN_ERR_CHECKSUM)) == "checksum failed");
   CHECK(std::string(scan_error_str(9999)) == "unrecognized error code");
@@ -255,4 +255,202 @@ TEST_CASE("capi/mount_calibration_gates_an_undetermined_capture") {
   CHECK(scan_mount_calib_solve(calib, sheared, &r) == SCAN_ERR_INVALID_ARGUMENT);
 
   scan_mount_calib_destroy(calib);
+}
+
+// ===========================================================================
+// INT-29: the A10 GNSS/RTK surface, from C
+// ===========================================================================
+
+TEST_CASE("capi/gnss_and_ntrip_entry_points_reject_null_handles") {
+  scan_gnss_fix fix;
+  scan_gnss_stats gstats;
+  scan_georef_solution sol;
+  scan_ntrip_stats nstats;
+  scan_ntrip_config ncfg;
+  scan_ntrip_source sources[2];
+  std::uint32_t count = 0;
+  std::int32_t state = -1;
+  const std::uint8_t nmea[] = {'$', 'G', 'N', 'G', 'G', 'A'};
+
+  CHECK(scan_engine_push_nmea(nullptr, 1, nmea, sizeof(nmea), 0) == SCAN_ERR_INVALID_ARGUMENT);
+  CHECK(scan_engine_last_fix(nullptr, &fix) == SCAN_ERR_INVALID_ARGUMENT);
+  CHECK(scan_engine_gnss_stats(nullptr, &gstats) == SCAN_ERR_INVALID_ARGUMENT);
+  CHECK(scan_engine_georef_solution(nullptr, &sol) == SCAN_ERR_INVALID_ARGUMENT);
+  // The string accessors cannot fail — they return "", never NULL, so a JNI
+  // NewStringUTF() on the result is always safe.
+  CHECK(std::string(scan_engine_crs_wkt(nullptr)).empty());
+  CHECK(std::string(scan_engine_crs_epsg(nullptr)).empty());
+
+  CHECK(scan_ntrip_create(nullptr, nullptr) == SCAN_ERR_INVALID_ARGUMENT);
+  CHECK(scan_ntrip_connect(nullptr, &ncfg) == SCAN_ERR_INVALID_ARGUMENT);
+  CHECK(scan_ntrip_disconnect(nullptr) == SCAN_ERR_INVALID_ARGUMENT);
+  CHECK(scan_ntrip_get_state(nullptr, &state) == SCAN_ERR_INVALID_ARGUMENT);
+  CHECK(scan_ntrip_get_stats(nullptr, &nstats) == SCAN_ERR_INVALID_ARGUMENT);
+  CHECK(scan_ntrip_set_rtcm_callback(nullptr, nullptr, nullptr) == SCAN_ERR_INVALID_ARGUMENT);
+  CHECK(scan_ntrip_fetch_sourcetable(nullptr, sources, 2, &count) == SCAN_ERR_INVALID_ARGUMENT);
+  scan_ntrip_destroy(nullptr);  // must be a no-op
+
+  scan_engine* e = nullptr;
+  REQUIRE(scan_engine_create(nullptr, &e) == SCAN_OK);
+  CHECK(scan_engine_last_fix(e, nullptr) == SCAN_ERR_INVALID_ARGUMENT);
+  CHECK(scan_engine_gnss_stats(e, nullptr) == SCAN_ERR_INVALID_ARGUMENT);
+  CHECK(scan_engine_georef_solution(e, nullptr) == SCAN_ERR_INVALID_ARGUMENT);
+  // No such device, and no rover at all: an error, not a silent no-op.
+  CHECK(scan_engine_push_nmea(e, 99, nmea, sizeof(nmea), 1) == SCAN_ERR_NOT_FOUND);
+
+  // A D6 device is refused rather than being fed NMEA, which would otherwise
+  // read as a stream of malformed D6 packets and degrade the wrong device.
+  scan_device_config dev;
+  std::memset(&dev, 0, sizeof(dev));
+  dev.kind = SCAN_DEVICE_D6;
+  dev.serial_port_name = "capi";
+  std::uint32_t d6 = 0;
+  REQUIRE(scan_engine_add_device(e, &dev, &d6) == SCAN_OK);
+  CHECK(scan_engine_push_nmea(e, d6, nmea, sizeof(nmea), 1) == SCAN_ERR_INVALID_ARGUMENT);
+
+  // An unconfigured caster is an argument error, and it never touches a socket.
+  std::memset(&ncfg, 0, sizeof(ncfg));
+  scan_ntrip* client = nullptr;
+  REQUIRE(scan_ntrip_create(e, &client) == SCAN_OK);
+  REQUIRE(client != nullptr);
+  CHECK(scan_ntrip_connect(client, &ncfg) == SCAN_ERR_INVALID_ARGUMENT);
+  CHECK(scan_ntrip_fetch_sourcetable(&ncfg, sources, 2, &count) == SCAN_ERR_INVALID_ARGUMENT);
+  scan_ntrip_destroy(client);
+  scan_engine_destroy(e);
+}
+
+TEST_CASE("capi/rtk_fixes_and_the_georef_solution_cross_the_abi") {
+  scan_engine_config cfg;
+  std::memset(&cfg, 0, sizeof(cfg));
+  cfg.app_name = "capi-gnss";
+  cfg.log_level = SCAN_LOG_OFF;
+  cfg.page_capacity = 4096;
+  cfg.max_pages = 4;
+  cfg.event_queue_capacity = 4096;
+
+  scan_engine* e = nullptr;
+  REQUIRE(scan_engine_create(&cfg, &e) == SCAN_OK);
+
+  scan_device_config dev;
+  std::memset(&dev, 0, sizeof(dev));
+  dev.kind = SCAN_DEVICE_RTK_ROVER;
+  std::uint32_t rover = 0;
+  REQUIRE(scan_engine_add_device(e, &dev, &rover) == SCAN_OK);
+
+  scan_session_config session;
+  std::memset(&session, 0, sizeof(session));
+  session.record = 0;
+  REQUIRE(scan_engine_start(e, &session) == SCAN_OK);
+
+  // No fix yet is a NORMAL state a status strip renders, not an error.
+  scan_gnss_fix fix;
+  REQUIRE(scan_engine_last_fix(e, &fix) == SCAN_OK);
+  CHECK(fix.fix == SCAN_FIX_NONE);
+  CHECK(std::string(scan_engine_crs_wkt(e)).empty());
+
+  scan_georef_solution sol;
+  REQUIRE(scan_engine_georef_solution(e, &sol) == SCAN_OK);
+  CHECK(sol.converged == 0);
+
+  // Two RTK-Fixed epochs; the first closes when the second arrives.
+  static const char* kEpochs[] = {
+      "$GNGGA,000000.00,2216.980000,N,11409.510000,E,4,22,0.6,50.00,M,-2.0,M,,*64\r\n"
+      "$GNGST,000000.00,0.020,0.020,0.016,0.0,0.020,0.020,0.030*4D\r\n",
+      "$GNGGA,000001.00,2216.981000,N,11409.511000,E,4,21,0.7,50.10,M,-2.0,M,,*66\r\n"
+      "$GNGST,000001.00,0.020,0.020,0.016,0.0,0.020,0.020,0.030*4C\r\n",
+      "$GNGGA,000002.00,2216.982000,N,11409.512000,E,4,20,0.8,50.20,M,-2.0,M,,*68\r\n"};
+  std::int64_t t = 5'000'000'000LL;
+  for (const char* burst : kEpochs) {
+    REQUIRE(scan_engine_push_nmea(e, rover, reinterpret_cast<const std::uint8_t*>(burst),
+                                  std::strlen(burst), t) == SCAN_OK);
+    t += 1'000'000'000LL;
+  }
+
+  REQUIRE(scan_engine_last_fix(e, &fix) == SCAN_OK);
+  CHECK(fix.fix == SCAN_FIX_RTK_FIXED);
+  CHECK(fix.satellites == 21);
+  CHECK(fix.quality_raw == 4);
+  CHECK(fix.sigma_from_gst == 1);
+  CHECK(fix.sigma_horizontal_m == doctest::Approx(0.02f).epsilon(0.01));
+  CHECK(fix.lat_deg == doctest::Approx(22.28301667).epsilon(1e-6));
+  CHECK(fix.has_geoid_sep == 1);
+  CHECK(fix.height_ellipsoid_m == doctest::Approx(fix.alt_m + fix.geoid_sep_m));
+  CHECK(fix.t_mono_ns > 0);
+
+  scan_gnss_stats st;
+  REQUIRE(scan_engine_gnss_stats(e, &st) == SCAN_OK);
+  CHECK(st.epochs == 2);
+  CHECK(st.fixes_published == 2);
+  CHECK(st.checksum_failed == 0);
+  CHECK(st.checksum_pass_rate == doctest::Approx(1.0));
+  CHECK(st.by_fix[SCAN_FIX_RTK_FIXED] == 2);
+  CHECK(st.gst_epochs == 2);
+  CHECK(st.has_origin == 1);
+  CHECK(st.origin_lat_deg == doctest::Approx(22.283).epsilon(1e-6));
+
+  // The fix event, through the union case this ABI version added.
+  int fix_events = 0;
+  scan_event ev;
+  while (scan_engine_poll_event(e, &ev) == SCAN_OK) {
+    if (ev.type != SCAN_EVENT_GNSS_FIX) continue;
+    ++fix_events;
+    CHECK(ev.payload.gnss.fix_type == SCAN_FIX_RTK_FIXED);
+    CHECK(ev.payload.gnss.satellites >= 21);
+    CHECK(ev.payload.gnss.sigma_h_m == doctest::Approx(0.02f).epsilon(0.01));
+    CHECK(ev.payload.gnss.lat_deg > 22.0);
+  }
+  CHECK(fix_events == 2);
+
+  // Two fixes is far below the convergence floor, so the transform says so
+  // rather than inventing one, and the export CRS stays empty with it.
+  REQUIRE(scan_engine_georef_solution(e, &sol) == SCAN_OK);
+  CHECK(sol.converged == 0);
+  CHECK(std::string(scan_engine_crs_wkt(e)).empty());
+  CHECK(std::string(scan_engine_crs_epsg(e)).empty());
+
+  CHECK(scan_engine_stop(e) == SCAN_OK);
+  scan_engine_destroy(e);
+}
+
+TEST_CASE("capi/an_engine_backed_ntrip_handle_shares_the_engines_client") {
+  scan_engine* e = nullptr;
+  REQUIRE(scan_engine_create(nullptr, &e) == SCAN_OK);
+
+  scan_ntrip* a = nullptr;
+  scan_ntrip* b = nullptr;
+  REQUIRE(scan_ntrip_create(e, &a) == SCAN_OK);
+  REQUIRE(scan_ntrip_create(nullptr, &b) == SCAN_OK);  // standalone
+
+  std::int32_t state = -1;
+  REQUIRE(scan_ntrip_get_state(a, &state) == SCAN_OK);
+  CHECK(state == SCAN_NTRIP_IDLE);
+  REQUIRE(scan_ntrip_get_state(b, &state) == SCAN_OK);
+  CHECK(state == SCAN_NTRIP_IDLE);
+
+  scan_ntrip_stats st;
+  REQUIRE(scan_ntrip_get_stats(a, &st) == SCAN_OK);
+  CHECK(st.state == SCAN_NTRIP_IDLE);
+  CHECK(st.connect_attempts == 0);
+  CHECK(st.receiving == 0);
+  // -1, not 0: "no frame yet" and "fresh" are different claims and only one of
+  // them is reassuring (docs/A10-gnss.md §3).
+  CHECK(st.correction_age_s < 0.0f);
+
+  // Installing and clearing the rover sink is legal on both flavours, and
+  // disconnect on a client that never connected is a no-op, not an error.
+  CHECK(scan_ntrip_set_rtcm_callback(a, nullptr, nullptr) == SCAN_OK);
+  CHECK(scan_ntrip_set_rtcm_callback(b, nullptr, nullptr) == SCAN_OK);
+  CHECK(scan_ntrip_disconnect(a) == SCAN_OK);
+  CHECK(scan_ntrip_disconnect(b) == SCAN_OK);
+
+  // Destroying the borrowed handle must not take the engine's client with it,
+  // nor leave it holding a dangling callback.
+  scan_ntrip_destroy(a);
+  scan_ntrip* again = nullptr;
+  REQUIRE(scan_ntrip_create(e, &again) == SCAN_OK);
+  REQUIRE(scan_ntrip_get_state(again, &state) == SCAN_OK);
+  CHECK(state == SCAN_NTRIP_IDLE);
+  scan_ntrip_destroy(again);
+  scan_ntrip_destroy(b);
+  scan_engine_destroy(e);
 }

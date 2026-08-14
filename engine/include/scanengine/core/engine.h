@@ -10,9 +10,11 @@
 //   and PageStore. The Engine's own methods are safe to call from any
 //   thread; lifecycle calls (start_session/stop_session/add_device) are
 //   serialized by one mutex and are expected from the app's control thread.
-//   The one thread the Engine can cause to exist is A6's optional LIO
-//   odometry thread (SessionConfig::live_slam + LioConfig::internal_thread);
-//   it belongs to LioOdometry, not to the Engine. See DESIGN.md §2.
+//   The Engine can cause two threads to exist, and owns neither: A6's optional
+//   LIO odometry thread (SessionConfig::live_slam +
+//   LioConfig::internal_thread), which belongs to LioOdometry, and A10's NTRIP
+//   receive thread, which belongs to TcpNtripClient and exists only between
+//   ntrip().connect() and ntrip().disconnect(). See DESIGN.md §2.
 //
 // LIFECYCLE
 //   create() → kIdle → start_session() → kRunning → stop_session() → kIdle
@@ -36,6 +38,9 @@
 #include "scanengine/core/types.h"
 #include "scanengine/drivers/d6/d6_driver.h"
 #include "scanengine/drivers/mid360/mid360_driver.h"
+#include "scanengine/gnss/georef.h"
+#include "scanengine/gnss/gnss_source.h"
+#include "scanengine/gnss/ntrip_client.h"
 #include "scanengine/poses/external_pose_source.h"
 #include "scanengine/record/lscan.h"
 #include "scanengine/slam/lio.h"
@@ -47,7 +52,9 @@ namespace scanengine {
 
 // Bumped whenever the C ABI changes shape (see capi/scanengine_c.h).
 // 2 (INT-24): poses + pushbroom + mount calibration + live-SLAM session knobs.
-inline constexpr std::uint32_t kEngineAbiVersion = 2;
+// 3 (INT-29): A10's GNSS/RTK stack — NMEA in, fix/NTRIP/georef events, the
+//             NTRIP client handle, the georef solution and the session CRS.
+inline constexpr std::uint32_t kEngineAbiVersion = 3;
 const char* engine_version_string();  // "scanengine 0.1.0 (<clock backend>)"
 
 struct EngineConfig {
@@ -55,6 +62,16 @@ struct EngineConfig {
   LogLevel log_level = LogLevel::kInfo;
   PageStoreConfig points{};
   std::uint32_t event_queue_capacity = 1024;  // for the built-in app subscription
+
+  // --- A10: the GNSS/RTK stack -------------------------------------------
+  //
+  // Engine-lifetime, not per session, for the same reason the pose source is:
+  // an operator pairs the rover and watches the fix go Fixed BEFORE pressing
+  // record, and §3.4's capture gate is exactly that pre-session decision.
+  // `timesync`, `stream` and the georef estimator's local source are wiring
+  // and are overwritten by Engine::create(); everything else is the caller's.
+  GnssSourceConfig gnss{};
+  GeorefConfig georef{};
 };
 
 // The Engine's pushbroom defaults, which differ from PushbroomConfig's own in
@@ -67,6 +84,20 @@ inline PushbroomConfig engine_pushbroom_defaults() {
   c.out_stream = StreamId::kSlamMap;
   return c;
 }
+
+// Which trajectory the D6 pushbroom assembles against (Tech Spec §3.3).
+//
+//   kExternal  the pushed pose stream — ARCore on Android, a replayed track.
+//   kGnss      the RTK rover's own trajectory. §3.3's "Desktop D6 capture: no
+//              ARCore -> RTK-trajectory mode only". No new code path: GnssSource
+//              implements the same PoseInterpolator the assembler already
+//              consumes, so this is configuration (§3 key rule 3).
+enum class TrajectorySource : std::uint8_t {
+  kExternal = 0,
+  kGnss = 1,
+};
+
+const char* to_string(TrajectorySource s) noexcept;
 
 struct SessionConfig {
   // .lscan directory. Empty means "do not record" — legal, but it breaks
@@ -103,6 +134,11 @@ struct SessionConfig {
   // Also switchable mid-session with Engine::set_pushbroom_enabled().
   bool pushbroom = false;
   PushbroomConfig pushbroom_cfg = engine_pushbroom_defaults();
+
+  // Which pose stream the assembler interpolates against. Applied at
+  // start_session(); also switchable mid-session with
+  // Engine::set_trajectory_source() for a rig that walks out of the building.
+  TrajectorySource trajectory = TrajectorySource::kExternal;
 };
 
 struct DeviceConfig {
@@ -173,6 +209,71 @@ class Engine {
   Status pushbroom_flush();
   PushbroomStats pushbroom_stats() const;
 
+  // Swap the assembler's trajectory between the pushed pose stream and the
+  // RTK rover's. Takes effect for points assembled after the call; points
+  // already pending resolve against the NEW source, which is what an indoor →
+  // outdoor handover wants.
+  Status set_trajectory_source(TrajectorySource src);
+  TrajectorySource trajectory_source() const;
+
+  // --- GNSS / RTK (A10) ---------------------------------------------------
+  //
+  // One GnssSource, one TcpNtripClient and one GeorefFusion per Engine, all
+  // alive for the Engine's whole lifetime: an operator pairs the rover, joins
+  // a caster and waits for RTK Fixed BEFORE pressing record, and §3.4's
+  // capture gate is that pre-session decision.
+  //
+  // The three are wired to each other by Engine::create():
+  //   * every closed epoch's fix raises EventType::kGnssFix and is offered to
+  //     the georef fusion;
+  //   * the fusion's ENU frame is the GnssSource's, anchored on the first fix
+  //     at or above GnssSourceConfig::min_fix_for_origin;
+  //   * the NTRIP client uploads the rover's OWN last GGA verbatim;
+  //   * every NTRIP state change raises EventType::kNtripState, and the
+  //     session's first convergence raises EventType::kGeorefConverged.
+  //
+  // NMEA reaches the source through push_serial_bytes() on a kRtkRover device
+  // (record-always: the raw bytes hit the .lscan as kGnssNmea chunks before
+  // they are parsed). RTCM3 leaves through the NTRIP client's rover callback,
+  // which the app points at its Bluetooth socket; the engine records every
+  // forwarded frame as a kGnssRtcm chunk on the way past.
+  GnssSource& gnss();
+  const GnssSource& gnss() const;
+  TcpNtripClient& ntrip();
+  const TcpNtripClient& ntrip() const;
+  GeorefFusion& georef();
+  const GeorefFusion& georef() const;
+
+  // Where corrections go. The app supplies the one thing the engine cannot
+  // have: the write function to the rover's Bluetooth/serial socket. Whole,
+  // CRC-valid RTCM3 frames only, on the NTRIP receive thread, with no client
+  // lock held — it must be quick and must not re-enter the client.
+  //
+  // Install it HERE rather than on ntrip() directly: the Engine keeps its own
+  // handler on the client (that is what records the frames), and
+  // NtripClient::set_rtcm_callback() would replace it.
+  using RtcmSink = void (*)(ByteSpan rtcm, void* user_data);
+  void set_rtcm_sink(RtcmSink cb, void* user_data);
+
+  GnssFix last_fix() const;
+  GnssStats gnss_stats() const;
+  GeorefSolution georef_solution() const;
+
+  // The A9 export seam: hand straight to `ExportOptions::crs_wkt` /
+  // `crs_epsg`. Both are EMPTY until the georef transform converges — which is
+  // a stricter gate than georef().crs_wkt(), and on purpose. The fusion's
+  // version answers "what CRS is this site in" and needs only an origin; these
+  // two answer "what CRS may I LABEL this cloud with", and a cloud still in the
+  // local frame must not be labelled UTM. Empty is exactly the input A9
+  // documents as "embed the local-frame placeholder".
+  std::string crs_wkt() const;
+  std::string crs_epsg() const;  // "EPSG:32650"
+
+  // Where the georef fusion reads the LOCAL trajectory. Defaults to this
+  // Engine's ExternalPoseSource. It must NOT be the GnssSource — pairing GNSS
+  // against GNSS is degenerate by construction. Null restores the default.
+  void set_georef_local_source(const PoseInterpolator* src);
+
   // --- live SLAM (A6) -----------------------------------------------------
   //
   // Non-null only between start_session(live_slam = true) and stop_session().
@@ -206,6 +307,7 @@ class Engine {
  private:
   Engine();
   void publish_pose_(const Pose& pose);
+  void on_gnss_fix_(const GnssFix& fix);
 
   struct Impl;
   std::unique_ptr<Impl> impl_;

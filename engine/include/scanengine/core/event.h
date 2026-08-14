@@ -38,7 +38,9 @@ enum class EventType : std::uint16_t {
   kPointsAvailable = 30, // payload.points — the render-facing signal
   kRotation = 31,      // payload.rotation — D6 revolution completed
   kPoseUpdate = 40,    // payload.pose_update  — A4/A8/A10 fill
-  kGnssFix = 50,       // payload.gnss_fix     — A10 fills
+  kGnssFix = 50,       // payload.gnss        — A10, published per closed epoch
+  kNtripState = 51,    // payload.ntrip       — A10, the corrections link
+  kGeorefConverged = 52, // payload.georef    — A10, the session became exportable
   kJobProgress = 60,   // payload.job          — A15 fills
   kError = 90,         // payload.error — non-fatal, already logged
 };
@@ -103,11 +105,37 @@ struct PoseUpdatePayload {  // A4/A8/A10
 };
 
 struct GnssFixPayload {  // A10
-  std::uint8_t fix_type;      // 0 none, 1 single, 2 dgps, 4 rtk-fixed, 5 rtk-float
+  // FixType, not the GGA quality digit: 0 none, 1 single, 2 dgps,
+  // 3 rtk-float, 4 rtk-fixed. `GnssFix::quality_raw` keeps the wire digit for
+  // anyone who needs to tell a PPS fix from a simulator one; this field is the
+  // ordered vocabulary fix_at_least() gates on.
+  std::uint8_t fix_type;
   std::uint8_t satellites;
   float hdop;
+  float correction_age_s;   // GGA field 13 — the ROVER's corrections age
+  // 1-sigma horizontal, metres. From GST when the receiver sends it, else the
+  // fix-quality fallback table. B9's status strip shows this, not the DOP.
+  float sigma_h_m;
+  double lat_deg, lon_deg, alt_m;  // alt_m is ORTHOMETRIC, as GGA reports it
+};
+
+struct NtripStatePayload {  // A10
+  std::uint8_t state;            // NtripState
+  ScanError error;               // kOk unless state == kFailed/kReconnecting
+  std::int32_t backoff_ms;       // what the next reconnect will wait
+  std::uint64_t bytes_received;  // this session, across reconnects
+  // Time since the last CRC-valid RTCM3 frame off the CASTER. −1 means "no
+  // frame yet on this connection" — "unknown" and "fresh" are different
+  // claims (docs/A10-gnss.md §3) and only one of them is reassuring.
   float correction_age_s;
-  double lat_deg, lon_deg, alt_m;
+};
+
+struct GeorefConvergedPayload {  // A10
+  double cep95_m;
+  double horizontal_sigma_m;
+  std::uint32_t samples;   // inliers in the converged fit
+  std::int32_t epsg;       // 0 until the origin picks a UTM zone
+  std::uint8_t converged;  // 0/1 — a transform can also STOP converging
 };
 
 struct JobProgressPayload {  // A15
@@ -139,6 +167,8 @@ struct Event {
     RotationPayload rotation;
     PoseUpdatePayload pose;
     GnssFixPayload gnss;
+    NtripStatePayload ntrip;
+    GeorefConvergedPayload georef;
     JobProgressPayload job;
     ErrorPayload error;
     std::uint8_t raw[64];
@@ -158,7 +188,10 @@ enum class EventCategory : std::uint32_t {
   kEngine = 1u << 0,   // kEngineState, kSessionState
   kDevice = 1u << 1,   // kDeviceState, kDeviceHealth
   kPoints = 1u << 2,   // kPointsAvailable, kRotation
-  kPose = 1u << 3,     // kPoseUpdate, kGnssFix
+  // kPose covers the whole trajectory/geo group: a consumer that wants the
+  // pose stream wants the fix quality behind it, the corrections link that
+  // produced that quality, and the moment the session became georeferenced.
+  kPose = 1u << 3,     // kPoseUpdate, kGnssFix, kNtripState, kGeorefConverged
   kJobs = 1u << 4,     // kJobProgress
   kErrors = 1u << 5,   // kError
   kMeta = 1u << 6,     // kEventsDropped (always delivered regardless)

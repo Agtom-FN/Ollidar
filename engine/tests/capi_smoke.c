@@ -42,6 +42,29 @@ static scan_error_t on_serial_write(const uint8_t* data, size_t len, void* user)
   return SCAN_OK;
 }
 
+static int g_rtcm_frames;
+
+/* The rover write. In an app this is bluetoothSocket.write(); here it just
+ * counts, because the point is that the signature is callable from C. */
+static void on_rtcm(const uint8_t* data, size_t len, void* user) {
+  (void)data;
+  (void)user;
+  if (len > 0) ++g_rtcm_frames;
+}
+
+/* NMEA 0183 checksum: XOR of everything between '$' and '*'. Computed here
+ * rather than hard-coded so a mistyped sentence cannot pass silently. */
+static void nmea_gga(char* out, size_t cap, int second) {
+  char body[192];
+  unsigned char cs = 0;
+  size_t i;
+  snprintf(body, sizeof(body),
+           "GNGGA,0000%02d.00,2216.98%04d,N,11409.51%04d,E,4,22,0.6,50.00,M,-2.0,M,,",
+           second, second, second);
+  for (i = 0; body[i] != '\0'; ++i) cs = (unsigned char)(cs ^ (unsigned char)body[i]);
+  snprintf(out, cap, "$%s*%02X\r\n", body, cs);
+}
+
 static void normalize3(double v[3]) {
   const double n = sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
   if (n <= 0.0) return;
@@ -84,10 +107,23 @@ int scan_capi_smoke_run(const uint8_t* d6_bytes, size_t d6_len) {
   uint32_t i = 0;
   uint32_t k = 0;
   scan_error_t err;
+  /* --- A10 (INT-29) ------------------------------------------------------ */
+  scan_gnss_fix fix;
+  scan_gnss_stats gnss;
+  scan_georef_solution georef;
+  scan_ntrip* ntrip = NULL;
+  scan_ntrip_config ntrip_cfg;
+  scan_ntrip_stats ntrip_st;
+  scan_ntrip_source sources[4];
+  uint32_t source_count = 0;
+  int32_t ntrip_state = -1;
+  uint32_t rover_id = 0;
+  char burst[256];
 
   g_events_seen = 0;
   g_points_events = 0;
   g_log_lines = 0;
+  g_rtcm_frames = 0;
 
   if (scan_engine_abi_version() != SCAN_ABI_VERSION) return 1;
   if (scan_engine_version_string() == NULL) return 2;
@@ -203,6 +239,80 @@ int scan_capi_smoke_run(const uint8_t* d6_bytes, size_t d6_len) {
   if (scan_engine_pushbroom_stats(engine, &pb) != SCAN_OK) return 54;
   if (pb.points_pending != 0) return 55;
   if (scan_engine_pushbroom_enable(engine, 0) != SCAN_OK) return 56;
+
+  /* --- GNSS / RTK (A10) ---------------------------------------------------
+   *
+   * The rover call sequence, from C: add the device, push its NMEA, read the
+   * fix and the timeline, and ask for the export CRS. */
+  memset(&device, 0, sizeof(device));
+  device.kind = SCAN_DEVICE_RTK_ROVER;
+  if (scan_engine_add_device(engine, &device, &rover_id) != SCAN_OK) return 68;
+  if (rover_id == 0) return 69;
+
+  /* Nothing pushed yet: "no fix" is a state, not an error. */
+  if (scan_engine_last_fix(engine, &fix) != SCAN_OK) return 70;
+  if (fix.fix != SCAN_FIX_NONE) return 71;
+  if (scan_engine_crs_wkt(engine) == NULL) return 72;
+  if (scan_engine_crs_wkt(engine)[0] != '\0') return 73; /* nothing to label yet */
+
+  /* A D6 device is not a rover, and is refused rather than fed NMEA. */
+  if (scan_engine_push_nmea(engine, device_id, (const uint8_t*)"$GNGGA\r\n", 8, 1) !=
+      SCAN_ERR_INVALID_ARGUMENT) {
+    return 74;
+  }
+
+  /* Three epochs; each closes when the next arrives. Built with nmea_checksum()
+   * above rather than hard-coded, so a mistyped digit cannot pass silently. */
+  for (i = 0; i < 3; ++i) {
+    nmea_gga(burst, sizeof(burst), (int)i);
+    if (scan_engine_push_nmea(engine, rover_id, (const uint8_t*)burst, strlen(burst),
+                              5000000000LL + (int64_t)i * 1000000000LL) != SCAN_OK) {
+      return 75;
+    }
+  }
+  if (scan_engine_last_fix(engine, &fix) != SCAN_OK) return 76;
+  if (fix.fix != SCAN_FIX_RTK_FIXED) return 77;
+  if (fix.satellites != 22) return 78;
+  if (fix.t_mono_ns <= 0) return 79;
+  /* alt_m is orthometric and height_ellipsoid_m is what the geodesy uses: the
+   * two must differ by exactly the geoid separation the receiver reported. */
+  if (fix.has_geoid_sep == 0) return 80;
+  if (fabs(fix.height_ellipsoid_m - (fix.alt_m + fix.geoid_sep_m)) > 1e-9) return 81;
+
+  if (scan_engine_gnss_stats(engine, &gnss) != SCAN_OK) return 82;
+  if (gnss.epochs != 2) return 83;
+  if (gnss.by_fix[SCAN_FIX_RTK_FIXED] != 2) return 84;
+  if (gnss.checksum_failed != 0) return 85;
+  if (gnss.has_origin == 0) return 86;
+
+  /* Two fixes cannot converge a 4-parameter transform, and the solution says so
+   * instead of inventing one. */
+  if (scan_engine_georef_solution(engine, &georef) != SCAN_OK) return 87;
+  if (georef.converged != 0) return 88;
+  if (scan_engine_crs_epsg(engine)[0] != '\0') return 89;
+
+  /* --- NTRIP (A10) -------------------------------------------------------- */
+  if (scan_ntrip_create(engine, &ntrip) != SCAN_OK || ntrip == NULL) return 90;
+  if (scan_ntrip_get_state(ntrip, &ntrip_state) != SCAN_OK) return 91;
+  if (ntrip_state != SCAN_NTRIP_IDLE) return 92;
+  if (scan_ntrip_get_stats(ntrip, &ntrip_st) != SCAN_OK) return 93;
+  if (ntrip_st.connect_attempts != 0) return 94;
+  if (ntrip_st.correction_age_s >= 0.0f) return 95; /* -1 = unknown, not fresh */
+  if (scan_ntrip_set_rtcm_callback(ntrip, on_rtcm, NULL) != SCAN_OK) return 96;
+  /* An unconfigured caster is refused without touching a socket. */
+  memset(&ntrip_cfg, 0, sizeof(ntrip_cfg));
+  if (scan_ntrip_connect(ntrip, &ntrip_cfg) != SCAN_ERR_INVALID_ARGUMENT) return 97;
+  if (scan_ntrip_fetch_sourcetable(&ntrip_cfg, sources, 4, &source_count) !=
+      SCAN_ERR_INVALID_ARGUMENT) {
+    return 98;
+  }
+  if (source_count != 0) return 99;
+  if (scan_ntrip_disconnect(ntrip) != SCAN_OK) return 100; /* never connected: a no-op */
+  if (scan_ntrip_set_rtcm_callback(ntrip, NULL, NULL) != SCAN_OK) return 101;
+  scan_ntrip_destroy(ntrip);
+  ntrip = NULL;
+  /* Nothing connected, so nothing was ever forwarded to the rover. */
+  if (g_rtcm_frames != 0) return 102;
 
   /* Push mode: installing a callback discards the queue and delivers inline. */
   if (scan_engine_set_event_callback(engine, on_event, NULL) != SCAN_OK) return 31;

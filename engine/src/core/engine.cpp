@@ -5,6 +5,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <utility>
 
 #include "scanengine/core/log.h"
 
@@ -13,11 +14,124 @@ namespace {
 constexpr const char* kMod = "engine";
 }
 
+const char* to_string(TrajectorySource s) noexcept {
+  switch (s) {
+    case TrajectorySource::kExternal: return "external";
+    case TrajectorySource::kGnss: return "gnss";
+  }
+  return "?";
+}
+
 const char* engine_version_string() {
   static std::string s = std::string("scanengine " SCANENGINE_VERSION " (clock: ") +
                          SteadyClock::backend_name() + ")";
   return s.c_str();
 }
+
+namespace {
+
+// The kRtkRover device (docs/A10-gnss.md §9.3 item 1).
+//
+// It owns no transport and no decoder: the app reads the rover's Bluetooth SPP
+// / USB-serial link and pushes the bytes in, exactly as it does for the D6, and
+// the Engine's single GnssSource does the framing and the epoch assembly. So
+// this adapter is deliberately thin — it exists to give the rover a DeviceId,
+// a DeviceState and a health row, which is what the rest of the engine (and
+// B9's device list) is built around.
+//
+// Health mapping, and why it is the NMEA stats and not the fix state: this row
+// answers "is the LINK working", which is a different question from "is the sky
+// working". A rover sitting under a bridge streams perfect NMEA with fix 0, and
+// that is kStreaming with a health row full of good checksums — the fix quality
+// reaches the UI through EventType::kGnssFix and GnssStats::by_fix instead.
+class RtkRoverDriver final : public Driver {
+ public:
+  RtkRoverDriver(DeviceId id, GnssSource* gnss, const DriverContext& ctx)
+      : id_(id), gnss_(gnss), ctx_(ctx) {}
+
+  const char* name() const override { return "rtk-rover"; }
+  DeviceKind kind() const override { return DeviceKind::kRtkRover; }
+  DeviceId id() const override { return id_; }
+
+  Status start() override {
+    const Status s = gnss_->start();
+    if (!s.ok()) {
+      set_state_(DeviceState::kFault, s.error());
+      return s;
+    }
+    set_state_(DeviceState::kStarting, ScanError::kOk);
+    return kOkStatus;
+  }
+
+  Status stop() override {
+    // stop() flushes the pending epoch, which is the one place a 1 Hz
+    // receiver's last fix would otherwise be lost.
+    (void)gnss_->stop();
+    set_state_(DeviceState::kIdle, ScanError::kOk);
+    return kOkStatus;
+  }
+
+  DeviceState state() const override {
+    std::lock_guard<std::mutex> lock(m_);
+    return state_;
+  }
+
+  DeviceHealth health() const override {
+    const GnssStats gs = gnss_->stats();
+    DeviceHealth h{};
+    h.id = id_;
+    h.kind = DeviceKind::kRtkRover;
+    h.state = state();
+    h.last_error = last_error_;
+    h.bytes_in = gs.nmea.bytes_in;
+    h.packets_ok = gs.nmea.sentences_ok;
+    h.packets_bad = gs.nmea.checksum_failed + gs.nmea.malformed + gs.nmea.oversize;
+    h.points_out = gs.fixes_published;  // a rover's "points" are its fixes
+    h.drops = gs.overwritten;
+    h.checksum_pass_rate = gs.nmea.checksum_pass_rate();
+    h.t_last_data_ns = gs.nmea.t_last_sentence_ns;
+    return h;
+  }
+
+  Status push_bytes(ByteSpan bytes, TimePoint t_arrival) override {
+    const std::int64_t t = t_arrival.nanos != 0 ? t_arrival.nanos : ctx_.clock().nanos;
+    const Status s = gnss_->push_nmea(bytes, t);
+    // First bytes through: the device is streaming. A rover has no handshake,
+    // so arrival IS the transition.
+    if (s.ok()) set_state_(DeviceState::kStreaming, ScanError::kOk);
+    return s;
+  }
+
+ private:
+  void set_state_(DeviceState next, ScanError err) {
+    DeviceState prev;
+    {
+      std::lock_guard<std::mutex> lock(m_);
+      if (state_ == next) return;
+      prev = state_;
+      state_ = next;
+      last_error_ = err;
+    }
+    SCAN_LOG_INFO(kMod, "device %u (rtk-rover): %s -> %s", id_, to_string(prev), to_string(next));
+    if (ctx_.bus == nullptr) return;
+    DeviceStatePayload p{};
+    p.device = id_;
+    p.kind = DeviceKind::kRtkRover;
+    p.state = next;
+    p.previous = prev;
+    p.error = err;
+    ctx_.bus->publish(EventType::kDeviceState, p);
+  }
+
+  DeviceId id_;
+  GnssSource* gnss_;
+  DriverContext ctx_;
+  mutable std::mutex m_;
+  DeviceState state_ = DeviceState::kIdle;
+  ScanError last_error_ = ScanError::kOk;
+};
+
+}  // namespace
 
 struct Engine::Impl {
   EngineConfig cfg;
@@ -37,6 +151,26 @@ struct Engine::Impl {
   std::unique_ptr<D6PushbroomAssembler> pushbroom;
   mutable std::mutex pushbroom_m;
   std::atomic<bool> pushbroom_on{false};
+  std::atomic<TrajectorySource> trajectory{TrajectorySource::kExternal};
+
+  // --- A10: the GNSS/RTK stack --------------------------------------------
+  //
+  // All three are Engine-lifetime, like the pose source and for the same
+  // reason: the rover is paired, the caster joined and RTK Fixed reached
+  // BEFORE the session starts (§3.4's capture gate is that decision).
+  //
+  // Each object is internally synchronized, so no engine-level mutex guards
+  // them. `gnss_m` guards only the two pieces of engine-owned state hanging
+  // off their callbacks: the app's RTCM sink and the last published
+  // convergence, both of which are written from the NTRIP/GNSS threads and
+  // read from the control thread.
+  std::unique_ptr<GnssSource> gnss;
+  std::unique_ptr<TcpNtripClient> ntrip;
+  std::unique_ptr<GeorefFusion> georef;
+  mutable std::mutex gnss_m;
+  Engine::RtcmSink rtcm_sink = nullptr;
+  void* rtcm_user = nullptr;
+  bool georef_converged = false;
 
   // --- A4/A6: one estimator for the Mid-360's device clock ----------------
   //
@@ -225,6 +359,12 @@ Engine::~Engine() {
   // Order matters: stop producers, then unsubscribe the page bridge, then
   // close the bus so no callback can run against a half-destroyed engine.
   (void)stop_session();
+  // A10: the NTRIP worker is the one thread that outlives a session, and its
+  // RTCM handler reaches the recorder and the event bus. Join it FIRST —
+  // Impl's members are destroyed in reverse declaration order, which would
+  // otherwise free `recorder` while that thread is still writing to it.
+  if (impl_->ntrip) (void)impl_->ntrip->disconnect();
+  if (impl_->gnss) (void)impl_->gnss->stop();
   {
     std::lock_guard<std::mutex> lock(impl_->m);
     impl_->devices.clear();
@@ -270,6 +410,78 @@ Result<std::unique_ptr<Engine>> Engine::create(const EngineConfig& cfg) {
   // A4/A6: the Mid-360's one estimator (see Impl::imu).
   e->impl_->imu = std::make_unique<ImuIngest>(e->impl_->timesync, StreamId::kLidarMid360);
 
+  // --- A10: GnssSource + TcpNtripClient + GeorefFusion, wired together -----
+  //
+  // docs/A10-gnss.md §9.3. Three objects, four connections, and none of them
+  // needs a thread from the Engine: the fix callback runs on whichever thread
+  // pushed the NMEA, and the NTRIP client brings its own receive thread.
+  Engine* raw_engine = e.get();
+  {
+    GnssSourceConfig gc = cfg.gnss;
+    gc.stream = StreamId::kGnss;         // wiring, not a choice
+    gc.timesync = &e->impl_->timesync;   // §3.2: NMEA time via arrival correlation
+    e->impl_->gnss = std::make_unique<GnssSource>(gc);
+  }
+  e->impl_->georef = std::make_unique<GeorefFusion>(cfg.georef);
+  e->impl_->ntrip = std::make_unique<TcpNtripClient>();
+
+  // The local trajectory the transform is estimated against. Deliberately the
+  // ExternalPoseSource and not the GnssSource: pairing GNSS against GNSS is
+  // degenerate by construction. An integrator with A6's LIO track points this
+  // somewhere else with set_georef_local_source().
+  e->impl_->georef->set_local_source(e->impl_->poses.get());
+
+  e->impl_->gnss->set_fix_callback(
+      [raw_engine](const GnssFix& f) { raw_engine->on_gnss_fix_(f); });
+
+  // GGA upload: the rover's OWN last sentence, verbatim, so a VRS caster sees
+  // exactly what a stand-alone rover would send (docs/A10-gnss.md §8).
+  {
+    GnssSource* src = e->impl_->gnss.get();
+    e->impl_->ntrip->set_gga_provider([src](std::string* out) {
+      *out = src->last_gga_sentence();
+      return !out->empty();
+    });
+  }
+
+  // Corrections out. The engine records every frame it forwards (record-always
+  // applies to the RTCM leg too: a replay that re-runs the rover's RTK engine
+  // needs the same corrections the capture had) and then hands it to whatever
+  // the app installed with set_rtcm_sink().
+  {
+    Impl* impl = e->impl_.get();
+    e->impl_->ntrip->set_rtcm_handler([impl](ByteSpan rtcm) {
+      {
+        std::lock_guard<std::mutex> lock(impl->record_m);
+        if (impl->recorder->is_open()) {
+          (void)impl->recorder->write_chunk(lscan::ChunkType::kGnssRtcm,
+                                            SteadyClock::now().nanos, rtcm);
+        }
+      }
+      Engine::RtcmSink cb = nullptr;
+      void* user = nullptr;
+      {
+        std::lock_guard<std::mutex> lock(impl->gnss_m);
+        cb = impl->rtcm_sink;
+        user = impl->rtcm_user;
+      }
+      // Outside every engine lock: this is the app's Bluetooth write, and a
+      // slow one must not stall the recorder or the control thread.
+      if (cb != nullptr) cb(rtcm, user);
+    });
+    e->impl_->ntrip->set_state_callback([impl](NtripState s, ScanError err) {
+      const NtripStats st = impl->ntrip->stats();
+      NtripStatePayload p{};
+      p.state = static_cast<std::uint8_t>(s);
+      p.error = err;
+      p.backoff_ms = st.backoff_ms;
+      p.bytes_received = st.bytes_received;
+      p.correction_age_s = impl->ntrip->correction_age_s();
+      impl->bus.publish(EventType::kNtripState, p);
+    });
+  }
+  (void)e->impl_->gnss->start();
+
   SCAN_LOG_INFO(kMod, "%s created for '%s' (pages: %u × %u pts)", engine_version_string(),
                 cfg.app_name.c_str(), e->impl_->points->config().max_pages,
                 e->impl_->points->config().page_capacity);
@@ -313,7 +525,15 @@ Status Engine::start_session(const SessionConfig& cfg) {
     impl_->pushbroom->reset();
     PushbroomConfig pcfg = cfg.pushbroom_cfg;
     impl_->pushbroom->set_config(pcfg);
+    // A10 §9.3 item 3 / spec §3.3's "Desktop D6 capture: no ARCore →
+    // RTK-trajectory mode only". Not a code path: GnssSource IS a
+    // PoseInterpolator, so the assembler cannot tell the two apart.
+    impl_->pushbroom->set_pose_source(cfg.trajectory == TrajectorySource::kGnss
+                                          ? static_cast<const PoseInterpolator*>(impl_->gnss.get())
+                                          : static_cast<const PoseInterpolator*>(
+                                                impl_->poses.get()));
   }
+  impl_->trajectory.store(cfg.trajectory, std::memory_order_release);
   impl_->pushbroom_on.store(cfg.pushbroom, std::memory_order_release);
   if (cfg.pushbroom && !impl_->pushbroom->has_mount_extrinsics()) {
     SCAN_LOG_WARN(kMod,
@@ -497,8 +717,13 @@ Result<DeviceId> Engine::add_device(const DeviceConfig& cfg) {
       break;
     }
     case DeviceKind::kRtkRover:
-      return set_last_error(ScanError::kUnimplemented,
-                            "RTK rover ingestion is task A10");
+      // A10 §9.3 item 1: route it to the Engine's one GnssSource. There is no
+      // per-device GNSS config here on purpose — the source is Engine-lifetime
+      // (EngineConfig::gnss configures it) because the operator pairs the rover
+      // and waits for RTK Fixed before any session exists. A second rover would
+      // need the source keyed by DeviceId; the spec's rigs have one.
+      driver = std::make_unique<RtkRoverDriver>(id, impl_->gnss.get(), ctx);
+      break;
     case DeviceKind::kUnknown:
       return set_last_error(ScanError::kInvalidArgument, "device kind not set");
   }
@@ -568,11 +793,21 @@ Status Engine::push_serial_bytes(DeviceId id, ByteSpan bytes, TimePoint t_arriva
   // recorded by the driver-level raw shim as typed kMid360Points/kMid360Imu
   // chunks — recording them here too would both mislabel them as kD6Raw and
   // duplicate every datagram.
-  if (d->kind() == DeviceKind::kD6) {
+  //
+  // A10: the rover's NMEA takes the same route, as kGnssNmea chunks. The chunk
+  // is the pushed BUFFER, not one sentence — exactly the kD6Raw contract —
+  // because the Bluetooth SPP link hands the app 20–990-byte MTU fragments and
+  // re-framing them here would mean parsing before recording, which is the one
+  // thing record-always forbids. GnssSource::push_nmea frames arbitrary chunks,
+  // so a replay that feeds these back byte for byte reproduces the capture.
+  const DeviceKind kind = d->kind();
+  if (kind == DeviceKind::kD6 || kind == DeviceKind::kRtkRover) {
     std::lock_guard<std::mutex> rlock(impl_->record_m);
     if (impl_->recorder->is_open()) {
       const std::int64_t t = t_arrival.nanos != 0 ? t_arrival.nanos : SteadyClock::now().nanos;
-      (void)impl_->recorder->write_chunk(lscan::ChunkType::kD6Raw, t, bytes);
+      (void)impl_->recorder->write_chunk(
+          kind == DeviceKind::kD6 ? lscan::ChunkType::kD6Raw : lscan::ChunkType::kGnssNmea, t,
+          bytes);
     }
   }
   return d->push_bytes(bytes, t_arrival);
@@ -648,6 +883,118 @@ Status Engine::pushbroom_flush() {
 PushbroomStats Engine::pushbroom_stats() const {
   std::lock_guard<std::mutex> lock(impl_->pushbroom_m);
   return impl_->pushbroom->stats();
+}
+
+Status Engine::set_trajectory_source(TrajectorySource src) {
+  const PoseInterpolator* p = nullptr;
+  switch (src) {
+    case TrajectorySource::kGnss: p = impl_->gnss.get(); break;
+    case TrajectorySource::kExternal: p = impl_->poses.get(); break;
+  }
+  if (p == nullptr) return set_last_error(ScanError::kInvalidArgument, "unknown trajectory source");
+  {
+    std::lock_guard<std::mutex> lock(impl_->pushbroom_m);
+    impl_->pushbroom->set_pose_source(p);
+  }
+  impl_->trajectory.store(src, std::memory_order_release);
+  SCAN_LOG_INFO(kMod, "pushbroom trajectory -> %s", to_string(src));
+  return kOkStatus;
+}
+
+TrajectorySource Engine::trajectory_source() const {
+  return impl_->trajectory.load(std::memory_order_acquire);
+}
+
+// --- A10: GNSS / RTK --------------------------------------------------------
+
+// One closed epoch: the fix is already in the source's ring, and this runs on
+// whichever thread pushed the NMEA (the app's rover reader), with no GnssSource
+// lock held — which is what lets add_fix() turn around and interpolate the
+// local trajectory without deadlocking.
+void Engine::on_gnss_fix_(const GnssFix& fix) {
+  // The fusion's global frame is the source's ENU frame, anchored on the first
+  // fix at or above min_fix_for_origin and then never moved. It can only be
+  // installed once the origin exists, so this is checked per fix rather than at
+  // create() time.
+  if (!impl_->georef->has_frame() && impl_->gnss->has_origin()) {
+    (void)impl_->georef->set_enu_frame(impl_->gnss->enu_frame());
+  }
+  // kAgain simply means the local pose for this instant has not arrived yet;
+  // the fusion counts it (skipped_no_pose) and the next fix tries again.
+  (void)impl_->georef->add_fix(fix);
+
+  GnssFixPayload p{};
+  p.fix_type = static_cast<std::uint8_t>(fix.fix);
+  p.satellites = fix.satellites;
+  p.hdop = fix.hdop;
+  p.correction_age_s = fix.correction_age_s;
+  p.sigma_h_m = fix.sigma_horizontal_m;
+  p.lat_deg = fix.lat_deg;
+  p.lon_deg = fix.lon_deg;
+  p.alt_m = fix.alt_m;
+  impl_->bus.publish(EventType::kGnssFix, p, fix.t_mono_ns);
+
+  // The moment the session becomes exportable in a real CRS — and the moment it
+  // stops being, which matters just as much to a UI that already said it was.
+  const GeorefSolution sol = impl_->georef->solution();
+  bool changed = false;
+  {
+    std::lock_guard<std::mutex> lock(impl_->gnss_m);
+    if (sol.converged != impl_->georef_converged) {
+      impl_->georef_converged = sol.converged;
+      changed = true;
+    }
+  }
+  if (!changed) return;
+  GeorefConvergedPayload g{};
+  g.cep95_m = sol.cep95_m;
+  g.horizontal_sigma_m = sol.horizontal_sigma_m;
+  g.samples = static_cast<std::uint32_t>(sol.inliers);
+  g.epsg = impl_->georef->epsg();
+  g.converged = sol.converged ? 1 : 0;
+  impl_->bus.publish(EventType::kGeorefConverged, g, fix.t_mono_ns);
+  SCAN_LOG_INFO(kMod, "georef %s: CEP95 %.3f m over %u fixes (%s)",
+                sol.converged ? "converged" : "lost convergence", sol.cep95_m, g.samples,
+                sol.converged ? impl_->georef->epsg_string().c_str() : sol.blocker);
+}
+
+GnssSource& Engine::gnss() { return *impl_->gnss; }
+const GnssSource& Engine::gnss() const { return *impl_->gnss; }
+TcpNtripClient& Engine::ntrip() { return *impl_->ntrip; }
+const TcpNtripClient& Engine::ntrip() const { return *impl_->ntrip; }
+GeorefFusion& Engine::georef() { return *impl_->georef; }
+const GeorefFusion& Engine::georef() const { return *impl_->georef; }
+
+void Engine::set_rtcm_sink(RtcmSink cb, void* user_data) {
+  std::lock_guard<std::mutex> lock(impl_->gnss_m);
+  impl_->rtcm_sink = cb;
+  impl_->rtcm_user = user_data;
+}
+
+GnssFix Engine::last_fix() const { return impl_->gnss->last_fix(); }
+GnssStats Engine::gnss_stats() const { return impl_->gnss->stats(); }
+GeorefSolution Engine::georef_solution() const { return impl_->georef->solution(); }
+// Gated on convergence, and GeorefFusion::crs_wkt() is not — deliberately, and
+// the two answer different questions.
+//
+// `GeorefFusion::crs_wkt()` answers "what CRS is this SITE in", which is known
+// as soon as an ENU origin exists: the UTM zone is a property of where the
+// rover is standing. `Engine::crs_wkt()` is the A9 export seam, and it answers
+// "what CRS may I LABEL this cloud with" — which additionally needs the
+// local→global transform, because until that converges the points are still in
+// the local frame. Handing A9 a UTM WKT for a local-frame cloud would produce a
+// file that opens in QGIS, lands in the wrong hemisphere, and never says why.
+// Empty is exactly A9's documented "embed the local-frame placeholder" input.
+std::string Engine::crs_wkt() const {
+  return impl_->georef->converged() ? impl_->georef->crs_wkt() : std::string();
+}
+
+std::string Engine::crs_epsg() const {
+  return impl_->georef->converged() ? impl_->georef->epsg_string() : std::string();
+}
+
+void Engine::set_georef_local_source(const PoseInterpolator* src) {
+  impl_->georef->set_local_source(src != nullptr ? src : impl_->poses.get());
 }
 
 // --- A6: live SLAM ----------------------------------------------------------

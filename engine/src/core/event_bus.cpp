@@ -25,6 +25,8 @@ const char* to_string(EventType t) noexcept {
     case EventType::kRotation: return "rotation";
     case EventType::kPoseUpdate: return "pose-update";
     case EventType::kGnssFix: return "gnss-fix";
+    case EventType::kNtripState: return "ntrip-state";
+    case EventType::kGeorefConverged: return "georef-converged";
     case EventType::kJobProgress: return "job-progress";
     case EventType::kError: return "error";
   }
@@ -41,7 +43,9 @@ EventCategory category_of(EventType t) noexcept {
     case EventType::kPointsAvailable:
     case EventType::kRotation: return EventCategory::kPoints;
     case EventType::kPoseUpdate:
-    case EventType::kGnssFix: return EventCategory::kPose;
+    case EventType::kGnssFix:
+    case EventType::kNtripState:
+    case EventType::kGeorefConverged: return EventCategory::kPose;
     case EventType::kJobProgress: return EventCategory::kJobs;
     case EventType::kError: return EventCategory::kErrors;
     case EventType::kNone: return EventCategory::kNone;

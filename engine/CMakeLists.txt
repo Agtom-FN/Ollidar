@@ -252,4 +252,31 @@ if(ENGINE_BUILD_TESTS)
         message(STATUS "scanengine: Mid-360 simulator tests registered (ctest -L sim)")
     endif()
     unset(_s2_bin)
+
+    # --- optional: GNSS/RTK end-to-end against the S5 simulators (A10) -----
+    #     ctest -L sim-rtk      # ~40 s: live NMEA over TCP, live NTRIP
+    #     ctest -LE sim-rtk     # everything else
+    #
+    # docs/A10-gnss.md §9.1, verbatim: src/gnss/*.cpp and tests/test_gnss.cpp
+    # are already picked up by the globs above, so the 36 offline cases need no
+    # CMake at all. This registers only the two doctest::skip()-tagged live
+    # cases. Unlike A3's they bind PER-PROCESS ports (39000/40000 + pid % 900)
+    # and write per-process temp files, so two build trees on one host cannot
+    # interfere and RUN_SERIAL is not needed. They want python3 and the spike
+    # directory; either missing prints "SKIPPED: ..." which
+    # SKIP_REGULAR_EXPRESSION turns into a CTest skip rather than a false pass.
+    # SCANENGINE_S5_SIM_DIR is a hint only — the test also searches upwards
+    # from its CWD for spikes/s5-rtk-sim.
+    set(ENGINE_S5_SIM_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../spikes/s5-rtk-sim"
+        CACHE PATH "S5 RTK simulator spike (for the 'sim-rtk'-labelled ctest)")
+    if(ENGINE_SIM_TESTS AND EXISTS "${ENGINE_S5_SIM_DIR}/nmea_sim.py")
+        add_test(NAME gnss_rtk_sim_e2e
+                 COMMAND scanengine_tests --no-skip "--test-case=gnsssim/*" --success=false)
+        set_tests_properties(gnss_rtk_sim_e2e PROPERTIES
+            LABELS "sim-rtk"
+            TIMEOUT 300
+            SKIP_REGULAR_EXPRESSION "SKIPPED:"
+            ENVIRONMENT "SCANENGINE_S5_SIM_DIR=${ENGINE_S5_SIM_DIR}")
+        message(STATUS "scanengine: GNSS/RTK simulator tests registered (ctest -L sim-rtk)")
+    endif()
 endif()
