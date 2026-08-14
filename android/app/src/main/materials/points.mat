@@ -1,0 +1,153 @@
+// LidarScan Android — point-cloud material.
+//
+// PROVENANCE
+//   Ported from desktop/materials/points.mat (C1's Qt/Filament viewer),
+//   which itself was harvested from spikes/s3-render/materials/points.mat.
+//   Same PrimitiveType::POINTS + gl_PointSize + per-vertex RGBA8 approach;
+//   this file exists as a separate copy (not a shared include — matc has no
+//   #include across the app/desktop module boundary, and android/ owns this
+//   one) because it targets Filament's MOBILE feature tier and the Android
+//   AAR's pinned version (see android/scripts/fetch_filament_tools.sh) which
+//   is older than desktop's v1.75.0 native pin — the two .mat files must be
+//   allowed to diverge if either engine version requires a shader change.
+//
+// CONTRACT
+//   Every parameter below is a field of scanengine::DisplayParamsUniforms
+//   (engine/include/scanengine/cloud/display_params.h / engine/docs/A14-display.md
+//   §4), bound individually by name — Filament (both desktop and Android)
+//   takes named MaterialInstance parameters, not a raw UBO blob, so this is
+//   the same binding contract C1 uses, just from Kotlin instead of C++ (see
+//   PointCloudMaterial.kt's applyDisplayParams()).
+//
+//   Colour ramps are sampled from a 256x3 RGBA8 LUT texture (one row per
+//   scanengine::Colormap), uploaded once from colormap_lut() at renderer
+//   init — this shader does not re-derive the colormap math, so it agrees
+//   with evaluate_point_color() by construction, not by two copies of the
+//   same maths kept in sync by hand (same reasoning as the desktop file).
+//
+// WHAT IS NOT HERE (matches desktop's documented scope cut)
+//   * EDL — a full-screen post-process, not a point-material effect; S3 left
+//     its cost unmeasured and it is out of scope for B4.
+//   * ColorMode::kTime / kFixQuality — PointVertex carries neither a
+//     per-point time nor fix-quality field, so both degrade to the RGB
+//     pass-through per A14's documented rule (the `else` branch below).
+//
+// ANDROID PORTABILITY NOTE
+//   Compiled for BOTH the opengl and vulkan APIs (matc -a opengl -a vulkan)
+//   since Filament's default Android backend is OpenGL ES but Vulkan is
+//   selectable (Engine.Backend.VULKAN) and this app does not hard-pin one.
+//   gl_PointSize is exercised on both by S3/C1 already; Android additionally
+//   needs `-p mobile` for the ESSL/feature-level-1 shader variants a
+//   Pixel/Galaxy-class GPU actually runs (see android/app/build.gradle.kts's
+//   compileMaterials task for the exact matc invocation).
+material {
+    name : lidarscan_points,
+    shadingModel : unlit,
+    vertexDomain : object,
+    requires : [ color ],
+    parameters : [
+        // --- colour (DisplayParamsUniforms rows 0-1) ---
+        { type : int,       name : colorMode },
+        { type : int,       name : colormap },
+        { type : float,     name : gamma },
+        { type : int,       name : invert },
+        { type : float,     name : valueMin },
+        { type : float,     name : valueMax },
+        { type : float,     name : brightness },
+        { type : sampler2d, name : colormapLut },
+
+        // --- point size (row 2) ---
+        { type : int,   name : pointSizeMode },
+        { type : float, name : pointSizeMinPx },
+        { type : float, name : pointSizeMaxPx },
+        { type : float, name : adaptiveReferenceM },
+        { type : float, name : worldSizeM },
+        // px per metre at 1 m of depth = viewportHeightPx / (2 tan(fovY/2)),
+        // supplied by the app (PointCloudRenderer) rather than derived from
+        // Filament's own frame uniforms, so the vertex shader stays
+        // version-independent — same rationale as the desktop file.
+        { type : float, name : pxPerMeterAt1m },
+        { type : float3, name : cameraPos },
+
+        // --- clipping (rows 5-7) ---
+        { type : int,    name : clipEnabledMask },  // bit0 box, bit1 height
+        { type : float,  name : clipHeightMin },
+        { type : float,  name : clipHeightMax },
+        { type : float3, name : clipBoxMin },
+        { type : float3, name : clipBoxMax }
+    ],
+    culling : none,
+    depthWrite : true,
+    depthCulling : true,
+    // `masked` (not `opaque`) so a clipped point can be discarded by zeroing
+    // alpha — points have no overdraw savings to lose from giving up early-Z.
+    blending : masked,
+    maskThreshold : 0.5
+}
+
+vertex {
+    void materialVertex(inout MaterialVertexInputs material) {
+        float d = max(length(material.worldPosition.xyz - materialParams.cameraPos), 1e-3);
+        float px;
+        if (materialParams.pointSizeMode == 0) {          // kFixedPixels
+            px = materialParams.pointSizeMinPx;
+        } else if (materialParams.pointSizeMode == 1) {   // kAdaptive
+            px = clamp(materialParams.pointSizeMinPx * (materialParams.adaptiveReferenceM / d),
+                       materialParams.pointSizeMinPx, materialParams.pointSizeMaxPx);
+        } else {                                          // kWorldSize
+            px = clamp(materialParams.worldSizeM * materialParams.pxPerMeterAt1m / d, 0.5, 64.0);
+        }
+        gl_PointSize = px;
+    }
+}
+
+fragment {
+    // COLOUR MANAGEMENT: everything upstream (PointVertex's RGBA8, A14's
+    // colormap LUTs, evaluate_point_color()'s ground truth) is authored in
+    // DISPLAY (sRGB) space; Filament treats material.baseColor as LINEAR and
+    // encodes to sRGB at the end. Converting here is what makes the pixel
+    // Filament writes equal the byte A14 says the point is.
+    vec3 srgbToLinear(vec3 c) {
+        return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
+    }
+
+    void material(inout MaterialInputs material) {
+        prepareMaterial(material);
+
+        vec4 src = getColor();
+        vec3 world = getWorldPosition().xyz;
+
+        vec3 rgb;
+        int mode = materialParams.colorMode;
+        if (mode == 1 || mode == 2) {           // kHeight | kIntensity
+            float value = (mode == 1)
+                    ? world.z
+                    : dot(src.rgb, vec3(0.299, 0.587, 0.114));  // RGB-derived intensity
+            float span = max(materialParams.valueMax - materialParams.valueMin, 1e-6);
+            float t = clamp((value - materialParams.valueMin) / span, 0.0, 1.0);
+            if (materialParams.invert != 0) t = 1.0 - t;
+            t = pow(t, 1.0 / max(materialParams.gamma, 0.1));
+            // Row centre of the 256x3 LUT: (colormap + 0.5) / 3.
+            float row = (float(materialParams.colormap) + 0.5) / 3.0;
+            rgb = texture(materialParams_colormapLut, vec2(t, row)).rgb * materialParams.brightness;
+        } else {                                 // kRgb, and the documented
+            rgb = src.rgb;                       // degrade for kTime/kFixQuality
+        }
+
+        float alpha = src.a;
+        int mask = materialParams.clipEnabledMask;
+        if ((mask & 2) != 0) {
+            if (world.z < materialParams.clipHeightMin || world.z > materialParams.clipHeightMax) {
+                alpha = 0.0;
+            }
+        }
+        if ((mask & 1) != 0) {
+            if (any(lessThan(world, materialParams.clipBoxMin)) ||
+                any(greaterThan(world, materialParams.clipBoxMax))) {
+                alpha = 0.0;
+            }
+        }
+
+        material.baseColor = vec4(srgbToLinear(clamp(rgb, 0.0, 1.0)), alpha);
+    }
+}

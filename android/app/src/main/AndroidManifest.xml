@@ -4,6 +4,11 @@
     <!-- B2: D6 connect flow (Tech Spec §3.1 Android row — USB-C OTG serial). -->
     <uses-feature android:name="android.hardware.usb.host" android:required="true" />
 
+    <!-- B4: Filament's OpenGL backend needs ES 3.0+ (the min it links against);
+         declared so a store listing / device-compatibility check can filter
+         correctly rather than only finding out at Engine.create() time. -->
+    <uses-feature android:glEsVersion="0x00030000" android:required="true" />
+
     <application
         android:name=".LidarScanApplication"
         android:allowBackup="true"

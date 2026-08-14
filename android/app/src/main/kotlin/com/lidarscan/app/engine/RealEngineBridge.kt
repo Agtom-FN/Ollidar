@@ -1,5 +1,8 @@
 package com.lidarscan.app.engine
 
+import com.lidarscan.app.render.LiveEngineCloudSource
+import com.lidarscan.app.render.NativePointCloudProvider
+import com.lidarscan.app.render.PointCloudSource
 import com.lidarscan.app.usb.D6UsbConnectionRegistry
 import com.lidarscan.core.engine.CaptureState
 import com.lidarscan.core.engine.ConnectionState
@@ -41,7 +44,7 @@ import kotlinx.coroutines.withContext
 class RealEngineBridge(
     private val connectionRegistry: D6UsbConnectionRegistry,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
-) : EngineBridge, ScanEngineNative.EngineEventListener {
+) : EngineBridge, ScanEngineNative.EngineEventListener, NativePointCloudProvider {
 
     private val _connectionState = MutableStateFlow(ConnectionState.DISCONNECTED)
     override val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
@@ -154,11 +157,13 @@ class RealEngineBridge(
                 return@withContext Result.failure(IllegalStateException(message))
             }
             // Record-always (Tech Spec §3, key rule 2): `record` is always true
-            // here, independent of `liveSlam`. `liveSlam` itself has no
-            // scan_session_config equivalent in the C ABI today (start/stop
-            // only) — see android/NOTES.md's "C ABI gaps"; it is recorded only
-            // for this bridge's own status text until that lands.
-            val err = ScanEngineNative.nativeStartSession(engineHandle, projectDirectory, DEFAULT_PROFILE, true)
+            // here, independent of `liveSlam`. `liveSlam` now DOES bind
+            // scan_session_config.live_slam (B4, ABI 2 — see
+            // android/NOTES.md's B2 section for the ABI-1-era gap this
+            // closes; B2 could only record it for status text).
+            val err = ScanEngineNative.nativeStartSession(
+                engineHandle, projectDirectory, DEFAULT_PROFILE, true, liveSlam,
+            )
             if (err != ScanEngineNative.ErrorCode.OK) {
                 val message = "scan_engine_start failed: ${ScanEngineNative.nativeErrorStr(err)}"
                 _events.emit(EngineEvent.Fault("START_FAILED", message))
@@ -242,6 +247,15 @@ class RealEngineBridge(
             else -> Unit
         }
     }
+
+    /**
+     * B4: the Capture screen's live 3D view reads pages through this — a
+     * thin [LiveEngineCloudSource] over whatever `engineHandle` currently
+     * is (re-read on every call via the lambda, since it can go from 0 to a
+     * real handle across a [connect]).
+     */
+    override fun currentPointCloudSource(): PointCloudSource? =
+        if (engineHandle != 0L) LiveEngineCloudSource { engineHandle } else null
 
     private fun activeConnection() = lastDevicePath?.let { connectionRegistry.get(it) }
 

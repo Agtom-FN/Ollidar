@@ -39,23 +39,25 @@
 #include <unordered_map>
 
 #include "scanengine_c.h"
+#include "jni_shared.h"
 
 #define LOG_TAG "scanengine_jni"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
-namespace {
-
+// --- symbols shared with replay_jni.cpp (see jni_shared.h) -----------------
+// Defined here (not in an anonymous namespace) because JNI_OnLoad, the only
+// place that resolves them, lives in this file — replay_jni.cpp only reads
+// them through jni_shared.h's extern declarations.
+namespace lidarscan_jni {
 JavaVM* g_jvm = nullptr;
-
-// Cached in JNI_OnLoad.
 jclass g_health_class = nullptr;
 jmethodID g_health_ctor = nullptr;
-jclass g_serial_writer_class = nullptr;
-jmethodID g_serial_writer_write = nullptr;
-jclass g_event_listener_class = nullptr;
-jmethodID g_event_listener_on_event = nullptr;
+jclass g_point_page_class = nullptr;
+jmethodID g_point_page_ctor = nullptr;
+jclass g_replay_stats_class = nullptr;
+jmethodID g_replay_stats_ctor = nullptr;
 
 JNIEnv* AttachCurrentThreadOrGet(bool* did_attach) {
   JNIEnv* env = nullptr;
@@ -65,12 +67,29 @@ JNIEnv* AttachCurrentThreadOrGet(bool* did_attach) {
     return env;
   }
   if (g_jvm->AttachCurrentThread(&env, nullptr) != JNI_OK) {
-    LOGE("AttachCurrentThread failed");
+    __android_log_print(ANDROID_LOG_ERROR, "scanengine_jni", "AttachCurrentThread failed");
     return nullptr;
   }
   if (did_attach) *did_attach = true;
   return env;
 }
+}  // namespace lidarscan_jni
+
+using lidarscan_jni::AttachCurrentThreadOrGet;
+using lidarscan_jni::g_health_class;
+using lidarscan_jni::g_health_ctor;
+using lidarscan_jni::g_jvm;
+using lidarscan_jni::g_point_page_class;
+using lidarscan_jni::g_point_page_ctor;
+using lidarscan_jni::g_replay_stats_class;
+using lidarscan_jni::g_replay_stats_ctor;
+
+namespace {
+
+jclass g_serial_writer_class = nullptr;
+jmethodID g_serial_writer_write = nullptr;
+jclass g_event_listener_class = nullptr;
+jmethodID g_event_listener_on_event = nullptr;
 
 // --- serial write callback: JNI shim -> Kotlin SerialWriter -> USB I/O ----
 struct SerialWriterCtx {
@@ -266,6 +285,40 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     return JNI_ERR;
   }
 
+  // B4: point-page reads (both the live scan_engine* path below and
+  // replay_jni.cpp's standalone replay Engine share this one cached class).
+  jclass page_local = env->FindClass("com/lidarscan/app/engine/NativePointPage");
+  if (page_local == nullptr) {
+    LOGE("JNI_OnLoad: NativePointPage class not found");
+    return JNI_ERR;
+  }
+  g_point_page_class = static_cast<jclass>(env->NewGlobalRef(page_local));
+  g_point_page_ctor = env->GetMethodID(g_point_page_class, "<init>",
+                                        "(IIIIJJFFFFFFLjava/nio/ByteBuffer;)V");
+  if (g_point_page_ctor == nullptr) {
+    LOGE("JNI_OnLoad: NativePointPage constructor not found");
+    return JNI_ERR;
+  }
+
+  // B4: replay_jni.cpp's stats accessor. Cached here (not lazily in
+  // replay_jni.cpp) for the same reason as the two classes above: every
+  // *_native* entry point in this .so is invoked from a proper Java-created
+  // thread (a JNI call always is), so a lazy FindClass in replay_jni.cpp
+  // would in fact be safe too, but centralizing every class lookup in this
+  // one already-audited JNI_OnLoad keeps the "which thread may FindClass"
+  // reasoning in exactly one place.
+  jclass replay_stats_local = env->FindClass("com/lidarscan/app/engine/NativeReplayStats");
+  if (replay_stats_local == nullptr) {
+    LOGE("JNI_OnLoad: NativeReplayStats class not found");
+    return JNI_ERR;
+  }
+  g_replay_stats_class = static_cast<jclass>(env->NewGlobalRef(replay_stats_local));
+  g_replay_stats_ctor = env->GetMethodID(g_replay_stats_class, "<init>", "(JJIIZZI)V");
+  if (g_replay_stats_ctor == nullptr) {
+    LOGE("JNI_OnLoad: NativeReplayStats constructor not found");
+    return JNI_ERR;
+  }
+
   LOGI("scanengine_jni loaded; engine ABI version %u (%s)", scan_engine_abi_version(),
        scan_engine_version_string());
   return JNI_VERSION_1_6;
@@ -335,9 +388,16 @@ Java_com_lidarscan_app_engine_ScanEngineNative_nativeDestroyEngine(JNIEnv*, jcla
   scan_engine_destroy(reinterpret_cast<scan_engine*>(handle));
 }
 
+// B4: `live_slam` binds scan_session_config.live_slam (Tech Spec §3.1's
+// Live-SLAM/Record-only toggle), added to the C ABI in the INT-24 ABI bump
+// (SCAN_ABI_VERSION 2 — see scanengine_c.h's revision note at the top). B2
+// pinned against ABI 1, where this field did not exist yet, and documented
+// the gap in NOTES.md; B4 is pinned against ABI 2, where it does, so this is
+// that gap closing rather than a new workaround.
 JNIEXPORT jint JNICALL
 Java_com_lidarscan_app_engine_ScanEngineNative_nativeStartSession(
-    JNIEnv* env, jclass, jlong handle, jstring lscan_dir, jstring profile, jboolean record) {
+    JNIEnv* env, jclass, jlong handle, jstring lscan_dir, jstring profile, jboolean record,
+    jboolean live_slam) {
   auto* engine = reinterpret_cast<scan_engine*>(handle);
   const char* dir_utf = lscan_dir != nullptr ? env->GetStringUTFChars(lscan_dir, nullptr) : nullptr;
   const char* profile_utf = profile != nullptr ? env->GetStringUTFChars(profile, nullptr) : nullptr;
@@ -346,6 +406,7 @@ Java_com_lidarscan_app_engine_ScanEngineNative_nativeStartSession(
   cfg.lscan_dir = dir_utf;
   cfg.profile = profile_utf;
   cfg.record = record ? 1 : 0;
+  cfg.live_slam = live_slam ? 1 : 0;
 
   scan_error_t err = scan_engine_start(engine, &cfg);
 
@@ -513,6 +574,71 @@ Java_com_lidarscan_app_engine_ScanEngineNative_nativeStopEventPump(JNIEnv* env, 
   if (state->thread.joinable()) state->thread.join();
   env->DeleteGlobalRef(state->listener_global_ref);
   delete state;
+}
+
+// --- B4: point-page reads ---------------------------------------------------
+//
+// The minimal JNI this task needs to feed Filament's paged vertex buffers
+// (PointCloudRenderer.kt): enumerate pages, then hand back each one as a
+// DIRECT ByteBuffer over scan_point_page.data — the same zero-copy-across-
+// JNI approach nativePushSerialBytes already uses in the other direction.
+// scanengine_c.h's contract (`data` "stable for the page's lifetime") is
+// what makes this safe: the buffer stays valid until the PageStore is
+// cleared (a new session), which the Kotlin side never straddles a read
+// across (PointCloudRenderer re-syncs pages once per frame from page ids
+// enumerated fresh each time, mirroring desktop's PagedCloudRenderer::sync()
+// comment on why polling needs no lock).
+
+JNIEXPORT jint JNICALL
+Java_com_lidarscan_app_engine_ScanEngineNative_nativePageCount(JNIEnv*, jclass, jlong handle) {
+  auto* engine = reinterpret_cast<scan_engine*>(handle);
+  uint32_t count = 0;
+  if (scan_engine_page_count(engine, &count) != SCAN_OK) return 0;
+  return static_cast<jint>(count);
+}
+
+JNIEXPORT jint JNICALL
+Java_com_lidarscan_app_engine_ScanEngineNative_nativePageIdAt(JNIEnv*, jclass, jlong handle,
+                                                                 jint index) {
+  auto* engine = reinterpret_cast<scan_engine*>(handle);
+  uint32_t id = 0;
+  if (scan_engine_page_id_at(engine, static_cast<uint32_t>(index), &id) != SCAN_OK) return -1;
+  return static_cast<jint>(id);
+}
+
+JNIEXPORT jobject JNICALL
+Java_com_lidarscan_app_engine_ScanEngineNative_nativeGetPointPage(JNIEnv* env, jclass,
+                                                                     jlong handle, jint page_id) {
+  auto* engine = reinterpret_cast<scan_engine*>(handle);
+  scan_point_page page{};
+  if (scan_engine_get_point_page(engine, static_cast<uint32_t>(page_id), &page) != SCAN_OK) {
+    return nullptr;
+  }
+  // const_cast: NewDirectByteBuffer takes a non-const void*, but this shim
+  // never writes through it — the GPU upload on the Kotlin side only reads.
+  jobject buffer = env->NewDirectByteBuffer(
+      const_cast<void*>(static_cast<const void*>(page.data)),
+      static_cast<jlong>(page.count) * sizeof(scan_point_vertex));
+  if (buffer == nullptr) return nullptr;
+
+  return env->NewObject(g_point_page_class, g_point_page_ctor, static_cast<jint>(page.id),
+                         static_cast<jint>(page.stream), static_cast<jint>(page.count),
+                         static_cast<jint>(page.capacity), static_cast<jlong>(page.t_first_ns),
+                         static_cast<jlong>(page.t_last_ns),
+                         static_cast<jfloat>(page.bounds_min[0]),
+                         static_cast<jfloat>(page.bounds_min[1]),
+                         static_cast<jfloat>(page.bounds_min[2]),
+                         static_cast<jfloat>(page.bounds_max[0]),
+                         static_cast<jfloat>(page.bounds_max[1]),
+                         static_cast<jfloat>(page.bounds_max[2]), buffer);
+}
+
+JNIEXPORT jlong JNICALL
+Java_com_lidarscan_app_engine_ScanEngineNative_nativeTotalPoints(JNIEnv*, jclass, jlong handle) {
+  auto* engine = reinterpret_cast<scan_engine*>(handle);
+  uint64_t total = 0;
+  if (scan_engine_total_points(engine, &total) != SCAN_OK) return 0;
+  return static_cast<jlong>(total);
 }
 
 }  // extern "C"

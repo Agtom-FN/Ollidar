@@ -217,14 +217,15 @@ needs to change when that swap happens, since everything is coded against the
   check is the seam to extend. Rebind against the C ABI as it exists when B3
   starts (see "C ABI gaps found" above — the `DEVICE_HEALTH` event gap
   matters more for B3, since Mid-360 actually publishes it).
-- **B4 (Capture screen)**: the real destination now exists
-  (`ui/capture/CaptureScreen.kt`, `project/{projectId}/capture`) with
-  start/stop/pause/resume and live numeric stats wired to a real
-  `EngineBridge`; B4's job is the Filament live 3D / AR overlay view this
-  screen explicitly defers. `pointCountEstimate` on `ProjectManifest` is
-  still not populated on capture stop — worth wiring from
+- **B4 (Capture screen) — done**, see the "B4 — Filament capture screen +
+  live 3D rendering" section below: live 3D view (Filament/`SurfaceView`),
+  status strip, Live-SLAM toggle (now genuinely bound to
+  `scan_session_config.live_slam`, ABI 2), pause/resume/stop with a session
+  summary sheet, and the "Replay synthetic capture" debug acceptance path.
+  `pointCountEstimate` on `ProjectManifest` is **still** not populated on
+  capture stop (B4 didn't touch this either) — still worth wiring from
   `CaptureViewModel`'s final stats so the Projects list card stops showing
-  "No capture yet".
+  "No capture yet"; flagging again for whichever task picks up B5/B6.
 - **B5 (Profiles + Settings)**: extends `ui/settings/` — the units/theme
   DataStore plumbing already exists; profile *editing* (vs. just picking one
   at project-creation time, which B1 covers) is the new part.
@@ -525,6 +526,329 @@ modifying either:
    `EngineBridge` interface (B1) has no project-profile parameter on
    `startCapture` to thread `ProjectManifest.profile`
    (`WorkflowProfile`) through yet — B4/B5 territory.
+
+## B4 — Filament capture screen + live 3D rendering
+
+Task B4 (Tech Spec §3.12/§3.13, workstream B). Ownership strictly
+`android/**` — `engine/` read-only. Pinned against `SCAN_ABI_VERSION` **2**
+as observed in `engine/capi/scanengine_c.h` at task start (B2 had pinned
+against 1; the INT-24 ABI bump to 2 landed poses/pushbroom/mount-calibration
+*and* `scan_session_config.live_slam`, closing one of B2's own documented
+gaps — see "C ABI gaps found" above, item 2, and §4 below).
+
+### 1. Renderer: Filament, version-pinned separately from desktop
+
+`com.google.android.filament:filament-android` + `filament-utils-android`
+(for `Manipulator`'s orbit-camera math only — `filament-utils-android`
+transitively pulls in `gltfio-android`, which this app never calls; its
+`.so` just rides along in the APK, ~3 MB, not worth fighting the AAR's own
+dependency graph to strip). **Pinned to v1.71.5**, not desktop's v1.75.0:
+
+- Maven Central's `com.google.android.filament:filament-android` group only
+  publishes Android AARs up to **v1.71.5** as of this task (confirmed via
+  Maven Central's search API — no 1.72+ Android release exists there yet).
+  Desktop's v1.75.0 pin (`desktop/tools/fetch_filament.sh`) is a *native*
+  release with no Android AAR counterpart to match.
+- `matc` (the material compiler) is **version-matched to the AAR**, not
+  reused from desktop's v1.75.0 binary: `.filamat`'s binary format is
+  checked against the runtime engine version it loads into, so a
+  version-mismatched `matc` risks either a load-time rejection or (worse) a
+  silent miscompile. `android/scripts/fetch_filament_tools.sh` fetches the
+  **v1.71.5** `filament-<version>-mac.tgz`/`-linux.tgz` host-tools release
+  (same release family desktop's script uses, just the matching version) —
+  see that script's header comment for the full reasoning.
+
+**SurfaceView + `UiHelper`** is Filament's documented Android idiom (not a
+Compose-native surface — Filament doesn't have one): `PointCloudRenderer`
+(`app/src/main/kotlin/com/lidarscan/app/render/PointCloudRenderer.kt`) owns
+one `Engine`/`Renderer`/`Scene`/`View`/`Camera`, attaches a `UiHelper` to a
+plain `android.view.SurfaceView`, and drives rendering off a
+`Choreographer.FrameCallback` — line-for-line the same pattern as Filament's
+own `hello-triangle` Android sample. `PointCloudView.kt` wraps that in a
+`@Composable` via `AndroidView`, so `CaptureScreen` uses it like any other
+Compose element.
+
+### 2. Point-cloud pipeline: paged `VertexBuffer`s fed from JNI page reads
+
+Mirrors `desktop/src/render/PagedCloudRenderer.{h,cpp}` one layer down —
+same page-per-`VertexBuffer` approach, same "poll every frame, never trust
+an incremental event stream" reasoning (`page_store.h`'s "readers take no
+lock" contract; `EventType::kPointsAvailable` drives *stats* only, never
+GPU sync, exactly like desktop's own documented reasoning for why it
+polls). Two differences from desktop, both simplifications made explicitly
+for this task's time box, not correctness requirements:
+
+- **No real frustum culling** — every page's `RenderableManager` builds with
+  `.culling(false)`, always visible, instead of desktop's per-page AABB
+  culling. Worth adding as follow-up (the plumbing already computes and
+  sets each page's `Box` via `setAxisAlignedBoundingBox` every sync, so
+  flipping `.culling(true)` is a small, tested-independently change) — left
+  off because a stale/mis-set AABB silently hiding real points is a worse
+  failure mode to ship un-verified than the modest overdraw cost at the
+  point counts this task could actually test against (the bundled synthetic
+  capture, tens of thousands of points, not the 1M-pt/page desktop proved
+  at 10M+ points).
+- **One shared identity `IndexBuffer`** sized to the largest page capacity
+  seen (same reasoning as desktop: Filament requires an index buffer even
+  for `PrimitiveType.POINTS`, so sharing one across pages avoids
+  `4 bytes × capacity` per page).
+
+**The minimal JNI added for page reads** (`scanengine_jni.cpp`, live capture
+engine): `nativePageCount`/`nativePageIdAt`/`nativeGetPointPage`/
+`nativeTotalPoints`, thin wrappers over the C ABI's existing
+`scan_engine_page_count`/`page_id_at`/`get_point_page`/`total_points`
+(already in `scanengine_c.h` — B2 didn't need them, B4 does). The one
+interesting piece is `nativeGetPointPage`: it hands back a
+`NativePointPage` (`app/src/main/kotlin/.../engine/NativePointPage.kt`)
+wrapping a **direct `ByteBuffer` aliasing `scan_point_page.data` itself** —
+zero-copy from the engine's page memory straight into
+`VertexBuffer.setBufferAt(engine, 0, buffer, destOffsetInBytes, count)`,
+the same "zero-copy across the JNI boundary" property B2's
+`nativePushSerialBytes` already has in the write direction. Safe per
+`scanengine_c.h`'s own contract ("stable for the page's lifetime") and
+`page_store.h`'s ("a page allocates its full capacity once and never
+reallocates").
+
+`PointCloudSource` (`app/src/main/kotlin/.../render/PointCloudSource.kt`) is
+the interface `PointCloudRenderer` polls — `LiveEngineCloudSource` (over the
+functions above) and `ReplayEngineCloudSource` (§3 below) both implement it,
+so the renderer and `CaptureScreen` around it never need to know which one
+is driving the view.
+
+### 3. Replay path: a second, standalone `scanengine::Engine`
+
+The acceptance path ("Replay synthetic capture", a debug action on the
+Settings screen's existing "Engine (developer)" card) needs
+`scanengine::lscan::ReplaySource`, which takes a C++ `Engine&` —not
+something the C ABI's opaque `scan_engine*` exposes (its wrapping
+`EngineHandle` is a file-local implementation detail of `scanengine_c.cpp`,
+out of B4's read-only `engine/` scope to reach into). So replay gets its own
+`scanengine::Engine` instance, entirely separate from the live capture
+engine B2's `RealEngineBridge` owns:
+
+- **`android/app/src/main/cpp/replay_engine.{h,cpp}`** — a small C++ helper
+  (`lidarscan_jni::ReplayEngine`) that creates a standalone `Engine`, adds
+  one receive-only D6 device (`send_start_stop_commands=false`,
+  `require_start_ack=false`, mirroring
+  `desktop/src/app/ReplayController.cpp`'s own replay device config exactly),
+  and runs `ReplaySource::run()` on a detached thread. Links `scanengine`
+  statically (same static lib the C-ABI path already links) — allowed per
+  the task brief.
+- **`android/app/src/main/cpp/replay_jni.cpp`** — its JNI bindings, plus
+  page-read functions that call `engine_->points()` (a real `PageStore&`)
+  directly instead of going through `scan_engine_get_point_page`, since
+  there is no C-ABI handle for this engine. Field-for-field, byte-for-byte
+  the same `NativePointPage` marshalling as the live path.
+- **`android/app/src/main/cpp/jni_shared.h`** — the two cached JNI
+  classes/ctors (`NativeDeviceHealth`, `NativePointPage`) both
+  `scanengine_jni.cpp` and `replay_jni.cpp` need, resolved once in
+  `scanengine_jni.cpp`'s `JNI_OnLoad` (the only place a `.so` may define
+  it) and exposed via `extern` so `replay_jni.cpp` doesn't re-resolve (and
+  leak a second global-ref set for) the same classes.
+
+**Documented gap, not worked around**: `ReplaySource::run()` is a single
+blocking call with its own internal real-time pacing loop and no pause hook
+or seek-and-resume primitive in its public API (`ReplayConfig` has no
+start-offset field) — forking that loop would mean re-implementing engine/
+pacing logic, out of this task's read-only scope. `ReplayEngineBridge`'s
+`pauseCapture()`/`resumeCapture()` therefore fail cleanly
+(`Result.failure`, with a message explaining why) instead of faking a
+resume that would silently restart from t=0; `CaptureViewModel
+.isReplaySession` is what lets `CaptureScreen` hide the Pause button for a
+replay session rather than shipping a control that does nothing. Same
+spirit as B2's own documented "no pause/resume in the C ABI" gap, one layer
+further out.
+
+**The bundled synthetic capture**: `assets/replay/synth.lscan/` (396 KB —
+just `manifest.json` + `streams/lidar.bin`, copied from
+`desktop/evidence/synth.lscan/`, itself produced by S1's `d6synth` tool).
+Bundled as a plain asset rather than generated at build time — reusing a
+capture another task already produced and verified (per S1's own
+`REPORT.md`) is simpler and no less "real" than re-running `d6synth` from
+this task, and keeps `android/`'s build from gaining a dependency on
+`spikes/s1-d6-parser`'s CMake project. `SyntheticReplayAssets.kt` extracts
+it to `context.filesDir` on first use (idempotent) since
+`FileRecordReader::open()` needs a real filesystem directory, not an APK
+asset stream. `ReplayEngineBridge` (`app/src/main/kotlin/.../engine/
+ReplayEngineBridge.kt`) implements `:core`'s `EngineBridge` exactly like
+`RealEngineBridge` does, so the **same** `CaptureScreen`/`CaptureViewModel`
+drives a replay session live — no separate "replay UI." The debug action
+(`SettingsViewModel.replaySyntheticCapture`) find-or-creates a real
+"Synthetic Replay Demo" project via `ProjectStore` (visible in the Projects
+list like any other — deliberate, keeps the path fully inspectable) and
+navigates to a dedicated route (`Routes.REPLAY_CAPTURE`, same `CaptureRoute`
+composable, `isReplay = true`) rather than a query-param variant of the
+normal capture route.
+
+### 4. Live-SLAM toggle: closes B2's own documented ABI gap
+
+`scan_session_config.live_slam` exists as of `SCAN_ABI_VERSION` 2 (it did
+not at B2's ABI-1 pin). `nativeStartSession` gained a `liveSlam: Boolean`
+parameter wired straight into `cfg.live_slam`; `RealEngineBridge
+.startCapture` now threads its `liveSlam` argument through for real instead
+of only recording it for status text. The Capture screen's Live-SLAM /
+Record-only toggle (a `Switch`, editable only while `CaptureState.IDLE`)
+sits on `CaptureViewModel`'s own `liveSlam: StateFlow<Boolean>` so it
+survives rotation.
+
+### 5. Color modes — A14's uniform contract, ported field-for-field
+
+`android/app/src/main/materials/points.mat` is a from-scratch port of
+`desktop/materials/points.mat` (not a shared `#include` — `matc` has no
+cross-module include, and the two now target different Filament versions,
+so they're allowed to diverge if a future engine version needs a shader
+change on one side only). Same parameter names/types/order as
+`DisplayParamsUniforms` (`engine/include/scanengine/cloud/display_params.h`,
+`engine/docs/A14-display.md` §4), bound individually via
+`MaterialInstance.setParameter(name, ...)` from
+`PointCloudRenderer.applyDynamicMaterialParams()` — the same "Filament
+takes named parameters, not a raw UBO blob" binding style A14's own header
+documents for C1 (Qt/Filament), just from Kotlin. **RGB/height/intensity**
+implemented (the B4 brief's "at minimum"); `kTime`/`kFixQuality` degrade to
+the RGB pass-through per A14's own documented rule (`PointVertex` carries
+neither field) — same scope cut desktop's `points.mat` documents.
+
+**The colormap LUT is reimplemented in Kotlin, not fetched via JNI** —
+because there is nothing to fetch: `engine/capi/scanengine_c.h` has **no
+mirror at all** of `display_params.h`'s API (confirmed by reading the
+header end to end), so `colormap_lut()` never crosses the C ABI in either
+direction. `android/core/src/main/kotlin/com/lidarscan/core/render/
+Colormap.kt` (plain Kotlin, `:core`, so it's JVM-testable — see
+`ColormapLutTest.kt`, 6 new test cases) ports `grayscale_raw`/
+`spectrum_raw`/`thermal_raw` from `display_params.cpp` by formula, not
+approximation, so the shader's height/intensity colouring agrees with
+`evaluate_point_color()`'s ground truth by construction — A14's own stated
+goal, carried one hop further because the JNI boundary has no route for the
+LUT bytes themselves. `PointCloudRenderer` uploads
+`ColormapLut.buildTextureRgba8()` as one 256×3 RGBA8 `Texture` at init,
+sampled by row exactly like desktop's `points.mat` samples its own LUT
+texture.
+
+Point size: `PointSizeMode.FIXED_PIXELS` only (a `Slider`, 0.5–12 px,
+`CaptureViewModel.pointSizePx`) — adaptive/world-space modes are in the
+material (ported verbatim) and in `Colormap.kt`'s `PointSizeMode` enum, just
+not wired to a UI control yet; flagged as B10 display-params-panel
+follow-up, not a gap in the material contract itself.
+
+### 6. Orbit + follow camera
+
+**Orbit**: `filament-utils-android`'s `Manipulator` (`Mode.ORBIT`), fed
+`grabBegin`/`grabUpdate`/`grabEnd` from a `SurfaceView` touch listener and
+`scroll()` from a `ScaleGestureDetector` for pinch-zoom. Its target is
+anchored at the session's local-frame origin `(0,0,0)` — `Manipulator` has
+**no runtime retarget setter** (confirmed via `javap` against the actual
+v1.71.5 AAR classes, not assumed — its target is fixed at `Builder.build()`
+time), and a target that silently drifted to the growing point-cloud
+centroid every frame would fight the user's own drag input anyway, so
+anchoring at the fixed capture origin (`PointVertex`'s own coordinate
+frame) is the more usable behaviour, not just the expedient one.
+
+**Follow**: a simple chase cam — looks at the combined point-cloud bounds'
+centroid from a fixed elevated-behind offset that scales with the cloud's
+current span, recomputed every frame as pages grow. This is "follow the
+data," not a device-pose-driven AR follow (no ARCore in B4's scope; that is
+B7's mount-calibration work) — documented as such in
+`PointCloudRenderer.updateCamera()`'s own comment so it isn't mistaken for
+one.
+
+### 7. Build integration: `compileMaterials` Gradle task
+
+`android/app/build.gradle.kts` gains a `compileMaterials` task
+(`fetchFilamentTools` -> runs `matc -a opengl -a vulkan -p mobile` over
+every `.mat` in `src/main/materials/` -> `build/generated/materials/
+assets/materials/*.filamat`), wired as an asset source dir and as a
+dependency of every variant's `merge*Assets` task. `fetchFilamentTools`
+only runs when `android/third_party/filament-tools-v1.71.5/filament/bin/
+matc` doesn't already exist (network fetch, `android/.gitignore`d — same
+"fetched on demand, not committed" pattern as `desktop/tools/
+fetch_filament.sh` + `desktop/.gitignore`). Verified directly:
+`matc -a opengl -a vulkan -p mobile -o points.filamat points.mat` exits 0
+and `matinfo` confirms `Feature level: 1`, `Blending: masked`, all 20
+parameters present with the right types.
+
+### 8. Tests / verification
+
+**Verified in this environment** (fresh `JAVA_HOME`/`sdkmanager` setup
+needed — same posture as B1/B2; `./gradlew clean :core:test
+:app:assembleDebug`):
+
+- **`:core:test` — 28/28 tests, 0 failures**: the 22 from B1/B2 unchanged,
+  plus 6 new `ColormapLutTest` cases (grayscale/spectrum/thermal endpoint
+  values hand-computed from A14-display.md §3's formulas, thermal's
+  near-monotonic-luminance property checked exhaustively over all 256
+  entries, and the 256×3 texture layout).
+- **`:app:assembleDebug` — succeeds**, with the native build (not
+  skipped): `libscanengine_jni.so` now compiles `replay_engine.cpp` +
+  `replay_jni.cpp` alongside B2's `scanengine_jni.cpp` and the same ~10k
+  lines of `engine/`.
+- **APK contents verified with `unzip -l`** (arm64-v8a only, confirming
+  `abiFilters` still takes effect for the new Filament AARs' own native
+  libs too): `lib/arm64-v8a/libscanengine_jni.so` (grew from B2's 1.38 MB to
+  1.84 MB), `libfilament-jni.so` (3.0 MB), `libfilament-utils-jni.so`
+  (0.55 MB), `libgltfio-jni.so` (3.1 MB, transitively pulled in, unused —
+  see §1), `libc++_shared.so`; `assets/materials/points.filamat`
+  (44.7 KB); `assets/replay/synth.lscan/manifest.json` +
+  `assets/replay/synth.lscan/streams/lidar.bin` (398 KB). Debug APK grew
+  from B2's ~61 MB to ~72 MB, almost entirely the three Filament `.so`s.
+- **JNI symbol export verified with `llvm-nm -D`**: all 31
+  `Java_com_lidarscan_app_engine_ScanEngineNative_native*` entry points
+  present (15 from B2 unchanged + 4 live page-read + 12 replay), names
+  matching the Kotlin `external fun` declarations exactly.
+- A second, truly-independent `./gradlew clean :core:test :app:assembleDebug`
+  run (not just incremental) also passed clean.
+
+**Headless-emulator attempt — tried, did not finish in time**: per the
+task's instruction to attempt this "within a reasonable time box" before
+falling back to stating things honestly, this environment ran
+`sdkmanager --install "platform-tools" "emulator"
+"system-images;android-34;google_apis;arm64-v8a"`, then prepared an
+`avdmanager create avd` + headless `emulator -no-window -gpu
+swiftshader_indirect` + `adb wait-for-device`/boot-completed-poll/`adb
+install`/`adb shell am start`/`adb exec-out screencap` script
+(`scripts` were run from the scratchpad, not committed under `android/` —
+they're a one-off verification aid, not part of the app). `platform-tools`
+and `emulator` installed quickly; the `android-34/google_apis/arm64-v8a`
+system image (~1.5–2 GB) was still downloading, at roughly 1.4 GB and
+progressing slowly, when this task's implementation work concluded — this
+environment's outbound network throughput was the bottleneck, not anything
+about the AVD/emulator setup itself. **The emulator was never booted, no
+APK was installed on it, and no screenshot was taken.** This is stated
+plainly rather than fabricated: nothing below "APK contents verified with
+unzip/nm" was exercised on an actual device or emulator.
+
+**Explicitly NOT verified (device/emulator-deferred)**:
+
+- **Runtime `System.loadLibrary`/JNI_OnLoad success** — the new
+  `NativePointPage`/`NativeReplayStats` `FindClass`/`GetMethodID` cache
+  calls (exact constructor signatures like
+  `(IIIIJJFFFFFFLjava/nio/ByteBuffer;)V`) only a real classloader can
+  confirm; a typo there compiles fine on both sides and only fails at
+  `JNI_OnLoad` time — same class of risk B2's own NOTES flagged for
+  `NativeDeviceHealth`'s constructor.
+- **Filament actually initializing and rendering a frame** — `Filament
+  .init()`/`Engine.create()`/`UiHelper.attachTo()`/the `Choreographer`
+  frame loop compile against the real v1.71.5 AAR classes (confirmed via
+  `javap` for the trickier APIs — `Manipulator`, `RenderableManager`,
+  `VertexBuffer.setBufferAt`'s overloads — not just "it compiled"), but
+  none of it has executed: whether `matc`'s mobile-tier `.filamat` actually
+  loads and renders a point on a real Adreno/Mali GPU, whether the
+  `SurfaceView`/`UiHelper` surface-lifecycle callbacks fire as expected, and
+  whether the touch/pinch camera controls feel right are all unverified.
+- **The replay path end-to-end at runtime** — `SyntheticReplayAssets`
+  extracting the bundled `.lscan` from the APK's assets, `ReplayEngine`
+  actually decoding the bundled D6 bytes through the real driver and
+  populating `PageStore`, and the Capture screen rendering the result live —
+  all compiled and reasoned through against the engine's documented
+  contracts (§2/§3 above), none of it run.
+- **Any live D6/hardware interaction** — unchanged from B2's own posture;
+  this task added no hardware-facing code.
+- **Landscape/portrait rotation, the session-summary sheet, and the
+  device-health chip's colour thresholds** — implemented and read back
+  for logical correctness, not seen rendered.
+
+A future pass with a faster network path (or a pre-warmed SDK cache) should
+finish this exact script in a few more minutes — nothing about the attempt
+needs redoing, it just needs to finish downloading.
 
 ## Things intentionally deferred (not oversights)
 

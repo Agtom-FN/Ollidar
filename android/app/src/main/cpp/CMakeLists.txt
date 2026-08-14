@@ -57,8 +57,15 @@ endif()
 add_subdirectory("${LIDARSCAN_ENGINE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/scanengine")
 
 # --- the JNI shim itself -----------------------------------------------------
+# B4 adds replay_engine.{h,cpp} (a standalone scanengine::Engine + ReplaySource
+# helper — see replay_engine.h's header comment) and replay_jni.cpp (its JNI
+# bindings, plus the page-read functions in scanengine_jni.cpp). Both link
+# against engine/'s C++ API directly (not just capi/scanengine_c.h), which is
+# fine: `scanengine` (linked below) is the same static library either way.
 add_library(scanengine_jni SHARED
     scanengine_jni.cpp
+    replay_engine.cpp
+    replay_jni.cpp
 )
 
 target_link_libraries(scanengine_jni PRIVATE

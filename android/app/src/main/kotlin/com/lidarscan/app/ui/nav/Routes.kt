@@ -23,5 +23,14 @@ object Routes {
     const val CAPTURE = CAPTURE_PATTERN
     fun capture(projectId: String): String = "project/${Uri.encode(projectId)}/capture"
 
+    // B4: the "Replay synthetic capture" debug-drawer acceptance path — same
+    // Capture screen, backed by a ReplayEngineBridge instead of
+    // AppContainer.engineBridge. A distinct route (not a query param on
+    // CAPTURE) keeps CaptureRoute's two entry points structurally explicit
+    // in the NavHost rather than threading an optional-bool nav argument.
+    private const val REPLAY_CAPTURE_PATTERN = "project/{projectId}/capture/replay"
+    const val REPLAY_CAPTURE = REPLAY_CAPTURE_PATTERN
+    fun replayCapture(projectId: String): String = "project/${Uri.encode(projectId)}/capture/replay"
+
     const val CONNECT_WIZARD = "connect_wizard"
 }

@@ -4,6 +4,7 @@ import android.content.Context
 import com.lidarscan.app.BuildConfig
 import com.lidarscan.app.data.SettingsRepository
 import com.lidarscan.app.engine.RealEngineBridge
+import com.lidarscan.app.engine.ReplayEngineBridge
 import com.lidarscan.app.engine.ScanEngineNative
 import com.lidarscan.app.usb.D6UsbConnectionRegistry
 import com.lidarscan.core.engine.D6ConnectController
@@ -91,4 +92,13 @@ class AppContainer(context: Context) {
 
     /** Pure-Kotlin D6 connect-wizard state machine (`:core`), driving [engineBridge]. */
     val d6ConnectController = D6ConnectController(engineBridge, containerScope)
+
+    /**
+     * B4: a fresh [ReplayEngineBridge] for the "Replay synthetic capture"
+     * debug action — deliberately NOT [engineBridge]/[EngineBridgeProvider]
+     * (those stay pointed at the real/fake live-capture path); each replay
+     * session gets its own bridge instance + native `ReplayEngine` handle,
+     * created on demand rather than at container-construction time.
+     */
+    fun newReplayEngineBridge(): ReplayEngineBridge = ReplayEngineBridge(appContext, scope = containerScope)
 }

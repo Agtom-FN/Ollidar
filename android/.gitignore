@@ -1,0 +1,5 @@
+# B4: matc/Filament host tools fetched by scripts/fetch_filament_tools.sh —
+# same pattern as desktop/.gitignore's "third_party/" (a ~90MB unpacked
+# release tarball; not checked in, fetched on demand by the compileMaterials
+# Gradle task). See NOTES.md's "B4 — Filament renderer" section.
+third_party/

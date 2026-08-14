@@ -42,7 +42,16 @@ object ScanEngineNative {
 
     external fun nativeDestroyEngine(handle: Long)
 
-    external fun nativeStartSession(handle: Long, lscanDir: String?, profile: String?, record: Boolean): Int
+    // B4: `liveSlam` binds scan_session_config.live_slam (present in the C
+    // ABI as of SCAN_ABI_VERSION 2, the version this task is pinned against —
+    // see android/NOTES.md's B2 section for the ABI-1 gap this closes).
+    external fun nativeStartSession(
+        handle: Long,
+        lscanDir: String?,
+        profile: String?,
+        record: Boolean,
+        liveSlam: Boolean,
+    ): Int
     external fun nativeStopSession(handle: Long): Int
     external fun nativeEngineState(handle: Long): Int
 
@@ -65,6 +74,36 @@ object ScanEngineNative {
     // --- events ----------------------------------------------------------------
     external fun nativeStartEventPump(handle: Long, listener: EngineEventListener): Boolean
     external fun nativeStopEventPump(handle: Long)
+
+    // --- B4: point pages (live capture engine) ----------------------------------
+    // Minimal JNI added for B4's Filament pipeline: enumerate + read pages
+    // from the *live* `scan_engine*` this handle already owns, mirroring
+    // desktop's PagedCloudRenderer::sync() poll loop one layer down (see
+    // com.lidarscan.app.render.LiveEngineCloudSource).
+    external fun nativePageCount(handle: Long): Int
+    external fun nativePageIdAt(handle: Long, index: Int): Int
+    external fun nativeGetPointPage(handle: Long, pageId: Int): NativePointPage?
+    external fun nativeTotalPoints(handle: Long): Long
+
+    // --- B4: replay engine (synthetic-capture acceptance path) ------------------
+    // A *separate* handle space from the live `scan_engine*` above — see
+    // replay_engine.h's header comment for why replay needs its own
+    // scanengine::Engine rather than reusing the C-ABI one. `lscanDir` must
+    // be a real filesystem path (the bundled asset already extracted there —
+    // see com.lidarscan.app.replay.SyntheticReplayAssets), not an APK asset
+    // path.
+    external fun nativeReplayCreate(): Long
+    external fun nativeReplayDestroy(handle: Long)
+    external fun nativeReplayStart(handle: Long, lscanDir: String, speed: Double): Boolean
+    external fun nativeReplayStop(handle: Long)
+    external fun nativeReplayIsRunning(handle: Long): Boolean
+    external fun nativeReplayLastError(handle: Long): String
+    external fun nativeReplayStats(handle: Long): NativeReplayStats?
+    external fun nativeReplayDeviceHealth(handle: Long): NativeDeviceHealth?
+    external fun nativeReplayPageCount(handle: Long): Int
+    external fun nativeReplayPageIdAt(handle: Long, index: Int): Int
+    external fun nativeReplayGetPointPage(handle: Long, pageId: Int): NativePointPage?
+    external fun nativeReplayTotalPoints(handle: Long): Long
 
     /**
      * Engine → app write callback for D6's start/stop command bytes

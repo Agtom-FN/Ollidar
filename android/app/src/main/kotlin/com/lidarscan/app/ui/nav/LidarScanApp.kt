@@ -60,6 +60,7 @@ fun LidarScanApp(
             SettingsRoute(
                 container = container,
                 onBack = { navController.popBackStack() },
+                onReplaySyntheticCapture = { projectId -> navController.navigate(Routes.replayCapture(projectId)) },
             )
         }
 
@@ -73,6 +74,23 @@ fun LidarScanApp(
                 projectId = Uri.decode(encodedId),
                 onBack = { navController.popBackStack() },
                 onConnectDevice = { navController.navigate(Routes.CONNECT_WIZARD) },
+            )
+        }
+
+        // B4: "Replay synthetic capture" debug-drawer acceptance path — same
+        // CaptureRoute, isReplay = true (backed by ReplayEngineBridge, no
+        // connect wizard involved).
+        composable(
+            route = Routes.REPLAY_CAPTURE,
+            arguments = listOf(navArgument(Routes.PROJECT_ID_ARG) { type = NavType.StringType }),
+        ) { backStackEntry ->
+            val encodedId = backStackEntry.arguments?.getString(Routes.PROJECT_ID_ARG).orEmpty()
+            CaptureRoute(
+                container = container,
+                projectId = Uri.decode(encodedId),
+                isReplay = true,
+                onBack = { navController.popBackStack() },
+                onConnectDevice = {},
             )
         }
 

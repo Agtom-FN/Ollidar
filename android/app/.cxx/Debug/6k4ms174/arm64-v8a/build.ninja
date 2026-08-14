@@ -56,8 +56,22 @@ build CMakeFiles/scanengine_jni.dir/scanengine_jni.cpp.o: CXX_COMPILER__scanengi
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = CMakeFiles/scanengine_jni.dir
   OBJECT_FILE_DIR = CMakeFiles/scanengine_jni.dir
-  TARGET_COMPILE_PDB = CMakeFiles/scanengine_jni.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libscanengine_jni.pdb
+
+build CMakeFiles/scanengine_jni.dir/replay_engine.cpp.o: CXX_COMPILER__scanengine_jni_unscanned_Debug /Users/admin/lidarscan/android/app/src/main/cpp/replay_engine.cpp || cmake_object_order_depends_target_scanengine_jni
+  DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -Dscanengine_jni_EXPORTS
+  DEP_FILE = CMakeFiles/scanengine_jni.dir/replay_engine.cpp.o.d
+  FLAGS = -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=gnu++20 -fPIC -Wall -Wextra -pthread
+  INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
+  OBJECT_DIR = CMakeFiles/scanengine_jni.dir
+  OBJECT_FILE_DIR = CMakeFiles/scanengine_jni.dir
+
+build CMakeFiles/scanengine_jni.dir/replay_jni.cpp.o: CXX_COMPILER__scanengine_jni_unscanned_Debug /Users/admin/lidarscan/android/app/src/main/cpp/replay_jni.cpp || cmake_object_order_depends_target_scanengine_jni
+  DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -Dscanengine_jni_EXPORTS
+  DEP_FILE = CMakeFiles/scanengine_jni.dir/replay_jni.cpp.o.d
+  FLAGS = -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=gnu++20 -fPIC -Wall -Wextra -pthread
+  INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
+  OBJECT_DIR = CMakeFiles/scanengine_jni.dir
+  OBJECT_FILE_DIR = CMakeFiles/scanengine_jni.dir
 
 
 # =============================================================================
@@ -67,7 +81,7 @@ build CMakeFiles/scanengine_jni.dir/scanengine_jni.cpp.o: CXX_COMPILER__scanengi
 #############################################
 # Link the shared library /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libscanengine_jni.so
 
-build /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libscanengine_jni.so: CXX_SHARED_LIBRARY_LINKER__scanengine_jni_Debug CMakeFiles/scanengine_jni.dir/scanengine_jni.cpp.o | scanengine/libscanengine.a || scanengine/libscanengine.a
+build /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libscanengine_jni.so: CXX_SHARED_LIBRARY_LINKER__scanengine_jni_Debug CMakeFiles/scanengine_jni.dir/scanengine_jni.cpp.o CMakeFiles/scanengine_jni.dir/replay_engine.cpp.o CMakeFiles/scanengine_jni.dir/replay_jni.cpp.o | scanengine/libscanengine.a || scanengine/libscanengine.a
   DEP_FILE = CMakeFiles/scanengine_jni.dir/link.d
   LANGUAGE_COMPILE_FLAGS = -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info
   LINK_FLAGS = -Wl,--build-id=sha1 -Wl,--no-rosegment -Wl,--no-undefined-version -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments    -Xlinker --dependency-file=CMakeFiles/scanengine_jni.dir/link.d
@@ -77,9 +91,8 @@ build /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/
   PRE_LINK = :
   SONAME = libscanengine_jni.so
   SONAME_FLAG = -Wl,-soname,
-  TARGET_COMPILE_PDB = CMakeFiles/scanengine_jni.dir/
   TARGET_FILE = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libscanengine_jni.so
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libscanengine_jni.pdb
+  TARGET_PDB = scanengine_jni.so.dbg
 
 
 #############################################
@@ -168,8 +181,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/cloud/display_params.cpp.o: CXX_C
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/cloud
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/cloud/page_store.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/cloud/page_store.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -178,8 +189,38 @@ build scanengine/CMakeFiles/scanengine.dir/src/cloud/page_store.cpp.o: CXX_COMPI
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/cloud
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
+
+build scanengine/CMakeFiles/scanengine.dir/src/color/clock_sweep.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/color/clock_sweep.cpp || cmake_object_order_depends_target_scanengine
+  DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
+  DEP_FILE = scanengine/CMakeFiles/scanengine.dir/src/color/clock_sweep.cpp.o.d
+  FLAGS = -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread
+  INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
+  OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
+  OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/color
+
+build scanengine/CMakeFiles/scanengine.dir/src/color/colorizer.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/color/colorizer.cpp || cmake_object_order_depends_target_scanengine
+  DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
+  DEP_FILE = scanengine/CMakeFiles/scanengine.dir/src/color/colorizer.cpp.o.d
+  FLAGS = -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread
+  INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
+  OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
+  OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/color
+
+build scanengine/CMakeFiles/scanengine.dir/src/color/frames_idx.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/color/frames_idx.cpp || cmake_object_order_depends_target_scanengine
+  DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
+  DEP_FILE = scanengine/CMakeFiles/scanengine.dir/src/color/frames_idx.cpp.o.d
+  FLAGS = -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread
+  INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
+  OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
+  OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/color
+
+build scanengine/CMakeFiles/scanengine.dir/src/color/image_source.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/color/image_source.cpp || cmake_object_order_depends_target_scanengine
+  DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
+  DEP_FILE = scanengine/CMakeFiles/scanengine.dir/src/color/image_source.cpp.o.d
+  FLAGS = -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread
+  INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
+  OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
+  OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/color
 
 build scanengine/CMakeFiles/scanengine.dir/src/core/engine.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/core/engine.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -188,8 +229,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/core/engine.cpp.o: CXX_COMPILER__
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/core
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/core/error.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/core/error.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -198,8 +237,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/core/error.cpp.o: CXX_COMPILER__s
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/core
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/core/event_bus.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/core/event_bus.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -208,8 +245,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/core/event_bus.cpp.o: CXX_COMPILE
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/core
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/core/log.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/core/log.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -218,8 +253,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/core/log.cpp.o: CXX_COMPILER__sca
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/core
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/core/types.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/core/types.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -228,8 +261,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/core/types.cpp.o: CXX_COMPILER__s
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/core
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/drivers/d6/d6_driver.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/drivers/d6/d6_driver.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -238,8 +269,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/drivers/d6/d6_driver.cpp.o: CXX_C
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/drivers/d6
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/drivers/d6/d6_parser.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/drivers/d6/d6_parser.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -248,8 +277,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/drivers/d6/d6_parser.cpp.o: CXX_C
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/drivers/d6
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/drivers/mid360/mid360_driver.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/drivers/mid360/mid360_driver.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -258,8 +285,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/drivers/mid360/mid360_driver.cpp.
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/drivers/mid360
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/drivers/mid360/mid360_packets.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/drivers/mid360/mid360_packets.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -268,8 +293,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/drivers/mid360/mid360_packets.cpp
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/drivers/mid360
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/drivers/mid360/mid360_raw_udp.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/drivers/mid360/mid360_raw_udp.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -278,8 +301,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/drivers/mid360/mid360_raw_udp.cpp
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/drivers/mid360
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/drivers/mid360/mid360_sdk2.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/drivers/mid360/mid360_sdk2.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -288,8 +309,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/drivers/mid360/mid360_sdk2.cpp.o:
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/drivers/mid360
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/export/exporter.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/export/exporter.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -298,8 +317,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/export/exporter.cpp.o: CXX_COMPIL
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/export
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/export/las_writer.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/export/las_writer.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -308,8 +325,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/export/las_writer.cpp.o: CXX_COMP
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/export
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/export/pcd_writer.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/export/pcd_writer.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -318,8 +333,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/export/pcd_writer.cpp.o: CXX_COMP
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/export
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/export/ply_writer.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/export/ply_writer.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -328,8 +341,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/export/ply_writer.cpp.o: CXX_COMP
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/export
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/gnss/crs.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/gnss/crs.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -338,8 +349,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/gnss/crs.cpp.o: CXX_COMPILER__sca
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/gnss
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/gnss/georef.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/gnss/georef.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -348,8 +357,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/gnss/georef.cpp.o: CXX_COMPILER__
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/gnss
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/gnss/gnss_source.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/gnss/gnss_source.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -358,8 +365,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/gnss/gnss_source.cpp.o: CXX_COMPI
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/gnss
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/gnss/nmea.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/gnss/nmea.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -368,8 +373,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/gnss/nmea.cpp.o: CXX_COMPILER__sc
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/gnss
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/gnss/ntrip_client.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/gnss/ntrip_client.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -378,8 +381,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/gnss/ntrip_client.cpp.o: CXX_COMP
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/gnss
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/gnss/rtcm3.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/gnss/rtcm3.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -388,8 +389,126 @@ build scanengine/CMakeFiles/scanengine.dir/src/gnss/rtcm3.cpp.o: CXX_COMPILER__s
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/gnss
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
+
+build scanengine/CMakeFiles/scanengine.dir/src/jobs/cloud_submit.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/jobs/cloud_submit.cpp || cmake_object_order_depends_target_scanengine
+  DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
+  DEP_FILE = scanengine/CMakeFiles/scanengine.dir/src/jobs/cloud_submit.cpp.o.d
+  FLAGS = -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread
+  INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
+  OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
+  OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/jobs
+
+build scanengine/CMakeFiles/scanengine.dir/src/jobs/http_transport.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/jobs/http_transport.cpp || cmake_object_order_depends_target_scanengine
+  DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
+  DEP_FILE = scanengine/CMakeFiles/scanengine.dir/src/jobs/http_transport.cpp.o.d
+  FLAGS = -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread
+  INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
+  OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
+  OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/jobs
+
+build scanengine/CMakeFiles/scanengine.dir/src/jobs/job_queue.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/jobs/job_queue.cpp || cmake_object_order_depends_target_scanengine
+  DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
+  DEP_FILE = scanengine/CMakeFiles/scanengine.dir/src/jobs/job_queue.cpp.o.d
+  FLAGS = -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread
+  INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
+  OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
+  OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/jobs
+
+build scanengine/CMakeFiles/scanengine.dir/src/jobs/job_types.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/jobs/job_types.cpp || cmake_object_order_depends_target_scanengine
+  DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
+  DEP_FILE = scanengine/CMakeFiles/scanengine.dir/src/jobs/job_types.cpp.o.d
+  FLAGS = -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread
+  INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
+  OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
+  OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/jobs
+
+build scanengine/CMakeFiles/scanengine.dir/src/jobs/local_runner.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/jobs/local_runner.cpp || cmake_object_order_depends_target_scanengine
+  DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
+  DEP_FILE = scanengine/CMakeFiles/scanengine.dir/src/jobs/local_runner.cpp.o.d
+  FLAGS = -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread
+  INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
+  OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
+  OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/jobs
+
+build scanengine/CMakeFiles/scanengine.dir/src/jobs/transfer.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/jobs/transfer.cpp || cmake_object_order_depends_target_scanengine
+  DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
+  DEP_FILE = scanengine/CMakeFiles/scanengine.dir/src/jobs/transfer.cpp.o.d
+  FLAGS = -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread
+  INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
+  OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
+  OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/jobs
+
+build scanengine/CMakeFiles/scanengine.dir/src/plan/dxf_writer.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/plan/dxf_writer.cpp || cmake_object_order_depends_target_scanengine
+  DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
+  DEP_FILE = scanengine/CMakeFiles/scanengine.dir/src/plan/dxf_writer.cpp.o.d
+  FLAGS = -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread
+  INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
+  OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
+  OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/plan
+
+build scanengine/CMakeFiles/scanengine.dir/src/plan/floor_plan.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/plan/floor_plan.cpp || cmake_object_order_depends_target_scanengine
+  DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
+  DEP_FILE = scanengine/CMakeFiles/scanengine.dir/src/plan/floor_plan.cpp.o.d
+  FLAGS = -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread
+  INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
+  OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
+  OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/plan
+
+build scanengine/CMakeFiles/scanengine.dir/src/plan/occupancy.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/plan/occupancy.cpp || cmake_object_order_depends_target_scanengine
+  DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
+  DEP_FILE = scanengine/CMakeFiles/scanengine.dir/src/plan/occupancy.cpp.o.d
+  FLAGS = -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread
+  INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
+  OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
+  OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/plan
+
+build scanengine/CMakeFiles/scanengine.dir/src/plan/pdf_writer.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/plan/pdf_writer.cpp || cmake_object_order_depends_target_scanengine
+  DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
+  DEP_FILE = scanengine/CMakeFiles/scanengine.dir/src/plan/pdf_writer.cpp.o.d
+  FLAGS = -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread
+  INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
+  OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
+  OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/plan
+
+build scanengine/CMakeFiles/scanengine.dir/src/plan/plan_editor.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/plan/plan_editor.cpp || cmake_object_order_depends_target_scanengine
+  DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
+  DEP_FILE = scanengine/CMakeFiles/scanengine.dir/src/plan/plan_editor.cpp.o.d
+  FLAGS = -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread
+  INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
+  OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
+  OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/plan
+
+build scanengine/CMakeFiles/scanengine.dir/src/plan/plan_model.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/plan/plan_model.cpp || cmake_object_order_depends_target_scanengine
+  DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
+  DEP_FILE = scanengine/CMakeFiles/scanengine.dir/src/plan/plan_model.cpp.o.d
+  FLAGS = -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread
+  INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
+  OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
+  OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/plan
+
+build scanengine/CMakeFiles/scanengine.dir/src/plan/plan_text.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/plan/plan_text.cpp || cmake_object_order_depends_target_scanengine
+  DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
+  DEP_FILE = scanengine/CMakeFiles/scanengine.dir/src/plan/plan_text.cpp.o.d
+  FLAGS = -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread
+  INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
+  OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
+  OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/plan
+
+build scanengine/CMakeFiles/scanengine.dir/src/plan/rooms.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/plan/rooms.cpp || cmake_object_order_depends_target_scanengine
+  DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
+  DEP_FILE = scanengine/CMakeFiles/scanengine.dir/src/plan/rooms.cpp.o.d
+  FLAGS = -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread
+  INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
+  OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
+  OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/plan
+
+build scanengine/CMakeFiles/scanengine.dir/src/plan/wall_extract.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/plan/wall_extract.cpp || cmake_object_order_depends_target_scanengine
+  DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
+  DEP_FILE = scanengine/CMakeFiles/scanengine.dir/src/plan/wall_extract.cpp.o.d
+  FLAGS = -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread
+  INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
+  OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
+  OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/plan
 
 build scanengine/CMakeFiles/scanengine.dir/src/poses/external_pose_source.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/poses/external_pose_source.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -398,8 +517,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/poses/external_pose_source.cpp.o:
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/poses
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/record/lscan.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/record/lscan.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -408,8 +525,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/record/lscan.cpp.o: CXX_COMPILER_
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/record
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/record/replay.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/record/replay.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -418,8 +533,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/record/replay.cpp.o: CXX_COMPILER
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/record
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/record/zip.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/record/zip.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -428,8 +541,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/record/zip.cpp.o: CXX_COMPILER__s
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/record
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/slam/eskf.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/slam/eskf.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -438,8 +549,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/slam/eskf.cpp.o: CXX_COMPILER__sc
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/slam
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/slam/ivox.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/slam/ivox.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -448,8 +557,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/slam/ivox.cpp.o: CXX_COMPILER__sc
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/slam
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/slam/lio.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/slam/lio.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -458,8 +565,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/slam/lio.cpp.o: CXX_COMPILER__sca
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/slam
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/slam/lio_math.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/slam/lio_math.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -468,8 +573,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/slam/lio_math.cpp.o: CXX_COMPILER
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/slam
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/slam/lio_pose_source.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/slam/lio_pose_source.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -478,8 +581,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/slam/lio_pose_source.cpp.o: CXX_C
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/slam
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/slam/post/cloud_filter.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/slam/post/cloud_filter.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -488,8 +589,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/slam/post/cloud_filter.cpp.o: CXX
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/slam/post
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/slam/post/loop_closure.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/slam/post/loop_closure.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -498,8 +597,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/slam/post/loop_closure.cpp.o: CXX
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/slam/post
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/slam/post/pose_graph.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/slam/post/pose_graph.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -508,8 +605,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/slam/post/pose_graph.cpp.o: CXX_C
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/slam/post
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/slam/post/post_pipeline.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/slam/post/post_pipeline.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -518,8 +613,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/slam/post/post_pipeline.cpp.o: CX
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/slam/post
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/slam/post/progress.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/slam/post/progress.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -528,8 +621,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/slam/post/progress.cpp.o: CXX_COM
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/slam/post
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/slam/post/scan_context.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/slam/post/scan_context.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -538,8 +629,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/slam/post/scan_context.cpp.o: CXX
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/slam/post
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/slam/pushbroom/mount_calibration.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/slam/pushbroom/mount_calibration.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -548,8 +637,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/slam/pushbroom/mount_calibration.
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/slam/pushbroom
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/slam/pushbroom/pushbroom_assembler.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/slam/pushbroom/pushbroom_assembler.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -558,8 +645,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/slam/pushbroom/pushbroom_assemble
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/slam/pushbroom
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/timesync/imu_ingest.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/timesync/imu_ingest.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -568,8 +653,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/timesync/imu_ingest.cpp.o: CXX_CO
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/timesync
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/timesync/min_delay_estimator.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/timesync/min_delay_estimator.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -578,8 +661,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/timesync/min_delay_estimator.cpp.
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/timesync
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/timesync/offset_estimator.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/timesync/offset_estimator.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -588,8 +669,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/timesync/offset_estimator.cpp.o: 
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/timesync
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/transport/udp_source.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/transport/udp_source.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -598,8 +677,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/transport/udp_source.cpp.o: CXX_C
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/transport
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/src/transport/usb_serial_source.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/src/transport/usb_serial_source.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -608,8 +685,6 @@ build scanengine/CMakeFiles/scanengine.dir/src/transport/usb_serial_source.cpp.o
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/src/transport
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 build scanengine/CMakeFiles/scanengine.dir/capi/scanengine_c.cpp.o: CXX_COMPILER__scanengine_unscanned_Debug /Users/admin/lidarscan/engine/capi/scanengine_c.cpp || cmake_object_order_depends_target_scanengine
   DEFINES = -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\"0.1.0\"
@@ -618,8 +693,6 @@ build scanengine/CMakeFiles/scanengine.dir/capi/scanengine_c.cpp.o: CXX_COMPILER
   INCLUDES = -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   OBJECT_FILE_DIR = scanengine/CMakeFiles/scanengine.dir/capi
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
-  TARGET_PDB = scanengine/libscanengine.pdb
 
 
 # =============================================================================
@@ -629,14 +702,13 @@ build scanengine/CMakeFiles/scanengine.dir/capi/scanengine_c.cpp.o: CXX_COMPILER
 #############################################
 # Link the static library scanengine/libscanengine.a
 
-build scanengine/libscanengine.a: CXX_STATIC_LIBRARY_LINKER__scanengine_Debug scanengine/CMakeFiles/scanengine.dir/src/cloud/display_params.cpp.o scanengine/CMakeFiles/scanengine.dir/src/cloud/page_store.cpp.o scanengine/CMakeFiles/scanengine.dir/src/core/engine.cpp.o scanengine/CMakeFiles/scanengine.dir/src/core/error.cpp.o scanengine/CMakeFiles/scanengine.dir/src/core/event_bus.cpp.o scanengine/CMakeFiles/scanengine.dir/src/core/log.cpp.o scanengine/CMakeFiles/scanengine.dir/src/core/types.cpp.o scanengine/CMakeFiles/scanengine.dir/src/drivers/d6/d6_driver.cpp.o scanengine/CMakeFiles/scanengine.dir/src/drivers/d6/d6_parser.cpp.o scanengine/CMakeFiles/scanengine.dir/src/drivers/mid360/mid360_driver.cpp.o scanengine/CMakeFiles/scanengine.dir/src/drivers/mid360/mid360_packets.cpp.o scanengine/CMakeFiles/scanengine.dir/src/drivers/mid360/mid360_raw_udp.cpp.o scanengine/CMakeFiles/scanengine.dir/src/drivers/mid360/mid360_sdk2.cpp.o scanengine/CMakeFiles/scanengine.dir/src/export/exporter.cpp.o scanengine/CMakeFiles/scanengine.dir/src/export/las_writer.cpp.o scanengine/CMakeFiles/scanengine.dir/src/export/pcd_writer.cpp.o scanengine/CMakeFiles/scanengine.dir/src/export/ply_writer.cpp.o scanengine/CMakeFiles/scanengine.dir/src/gnss/crs.cpp.o scanengine/CMakeFiles/scanengine.dir/src/gnss/georef.cpp.o scanengine/CMakeFiles/scanengine.dir/src/gnss/gnss_source.cpp.o scanengine/CMakeFiles/scanengine.dir/src/gnss/nmea.cpp.o scanengine/CMakeFiles/scanengine.dir/src/gnss/ntrip_client.cpp.o scanengine/CMakeFiles/scanengine.dir/src/gnss/rtcm3.cpp.o scanengine/CMakeFiles/scanengine.dir/src/poses/external_pose_source.cpp.o scanengine/CMakeFiles/scanengine.dir/src/record/lscan.cpp.o scanengine/CMakeFiles/scanengine.dir/src/record/replay.cpp.o scanengine/CMakeFiles/scanengine.dir/src/record/zip.cpp.o scanengine/CMakeFiles/scanengine.dir/src/slam/eskf.cpp.o scanengine/CMakeFiles/scanengine.dir/src/slam/ivox.cpp.o scanengine/CMakeFiles/scanengine.dir/src/slam/lio.cpp.o scanengine/CMakeFiles/scanengine.dir/src/slam/lio_math.cpp.o scanengine/CMakeFiles/scanengine.dir/src/slam/lio_pose_source.cpp.o scanengine/CMakeFiles/scanengine.dir/src/slam/post/cloud_filter.cpp.o scanengine/CMakeFiles/scanengine.dir/src/slam/post/loop_closure.cpp.o scanengine/CMakeFiles/scanengine.dir/src/slam/post/pose_graph.cpp.o scanengine/CMakeFiles/scanengine.dir/src/slam/post/post_pipeline.cpp.o scanengine/CMakeFiles/scanengine.dir/src/slam/post/progress.cpp.o scanengine/CMakeFiles/scanengine.dir/src/slam/post/scan_context.cpp.o scanengine/CMakeFiles/scanengine.dir/src/slam/pushbroom/mount_calibration.cpp.o scanengine/CMakeFiles/scanengine.dir/src/slam/pushbroom/pushbroom_assembler.cpp.o scanengine/CMakeFiles/scanengine.dir/src/timesync/imu_ingest.cpp.o scanengine/CMakeFiles/scanengine.dir/src/timesync/min_delay_estimator.cpp.o scanengine/CMakeFiles/scanengine.dir/src/timesync/offset_estimator.cpp.o scanengine/CMakeFiles/scanengine.dir/src/transport/udp_source.cpp.o scanengine/CMakeFiles/scanengine.dir/src/transport/usb_serial_source.cpp.o scanengine/CMakeFiles/scanengine.dir/capi/scanengine_c.cpp.o
+build scanengine/libscanengine.a: CXX_STATIC_LIBRARY_LINKER__scanengine_Debug scanengine/CMakeFiles/scanengine.dir/src/cloud/display_params.cpp.o scanengine/CMakeFiles/scanengine.dir/src/cloud/page_store.cpp.o scanengine/CMakeFiles/scanengine.dir/src/color/clock_sweep.cpp.o scanengine/CMakeFiles/scanengine.dir/src/color/colorizer.cpp.o scanengine/CMakeFiles/scanengine.dir/src/color/frames_idx.cpp.o scanengine/CMakeFiles/scanengine.dir/src/color/image_source.cpp.o scanengine/CMakeFiles/scanengine.dir/src/core/engine.cpp.o scanengine/CMakeFiles/scanengine.dir/src/core/error.cpp.o scanengine/CMakeFiles/scanengine.dir/src/core/event_bus.cpp.o scanengine/CMakeFiles/scanengine.dir/src/core/log.cpp.o scanengine/CMakeFiles/scanengine.dir/src/core/types.cpp.o scanengine/CMakeFiles/scanengine.dir/src/drivers/d6/d6_driver.cpp.o scanengine/CMakeFiles/scanengine.dir/src/drivers/d6/d6_parser.cpp.o scanengine/CMakeFiles/scanengine.dir/src/drivers/mid360/mid360_driver.cpp.o scanengine/CMakeFiles/scanengine.dir/src/drivers/mid360/mid360_packets.cpp.o scanengine/CMakeFiles/scanengine.dir/src/drivers/mid360/mid360_raw_udp.cpp.o scanengine/CMakeFiles/scanengine.dir/src/drivers/mid360/mid360_sdk2.cpp.o scanengine/CMakeFiles/scanengine.dir/src/export/exporter.cpp.o scanengine/CMakeFiles/scanengine.dir/src/export/las_writer.cpp.o scanengine/CMakeFiles/scanengine.dir/src/export/pcd_writer.cpp.o scanengine/CMakeFiles/scanengine.dir/src/export/ply_writer.cpp.o scanengine/CMakeFiles/scanengine.dir/src/gnss/crs.cpp.o scanengine/CMakeFiles/scanengine.dir/src/gnss/georef.cpp.o scanengine/CMakeFiles/scanengine.dir/src/gnss/gnss_source.cpp.o scanengine/CMakeFiles/scanengine.dir/src/gnss/nmea.cpp.o scanengine/CMakeFiles/scanengine.dir/src/gnss/ntrip_client.cpp.o scanengine/CMakeFiles/scanengine.dir/src/gnss/rtcm3.cpp.o scanengine/CMakeFiles/scanengine.dir/src/jobs/cloud_submit.cpp.o scanengine/CMakeFiles/scanengine.dir/src/jobs/http_transport.cpp.o scanengine/CMakeFiles/scanengine.dir/src/jobs/job_queue.cpp.o scanengine/CMakeFiles/scanengine.dir/src/jobs/job_types.cpp.o scanengine/CMakeFiles/scanengine.dir/src/jobs/local_runner.cpp.o scanengine/CMakeFiles/scanengine.dir/src/jobs/transfer.cpp.o scanengine/CMakeFiles/scanengine.dir/src/plan/dxf_writer.cpp.o scanengine/CMakeFiles/scanengine.dir/src/plan/floor_plan.cpp.o scanengine/CMakeFiles/scanengine.dir/src/plan/occupancy.cpp.o scanengine/CMakeFiles/scanengine.dir/src/plan/pdf_writer.cpp.o scanengine/CMakeFiles/scanengine.dir/src/plan/plan_editor.cpp.o scanengine/CMakeFiles/scanengine.dir/src/plan/plan_model.cpp.o scanengine/CMakeFiles/scanengine.dir/src/plan/plan_text.cpp.o scanengine/CMakeFiles/scanengine.dir/src/plan/rooms.cpp.o scanengine/CMakeFiles/scanengine.dir/src/plan/wall_extract.cpp.o scanengine/CMakeFiles/scanengine.dir/src/poses/external_pose_source.cpp.o scanengine/CMakeFiles/scanengine.dir/src/record/lscan.cpp.o scanengine/CMakeFiles/scanengine.dir/src/record/replay.cpp.o scanengine/CMakeFiles/scanengine.dir/src/record/zip.cpp.o scanengine/CMakeFiles/scanengine.dir/src/slam/eskf.cpp.o scanengine/CMakeFiles/scanengine.dir/src/slam/ivox.cpp.o scanengine/CMakeFiles/scanengine.dir/src/slam/lio.cpp.o scanengine/CMakeFiles/scanengine.dir/src/slam/lio_math.cpp.o scanengine/CMakeFiles/scanengine.dir/src/slam/lio_pose_source.cpp.o scanengine/CMakeFiles/scanengine.dir/src/slam/post/cloud_filter.cpp.o scanengine/CMakeFiles/scanengine.dir/src/slam/post/loop_closure.cpp.o scanengine/CMakeFiles/scanengine.dir/src/slam/post/pose_graph.cpp.o scanengine/CMakeFiles/scanengine.dir/src/slam/post/post_pipeline.cpp.o scanengine/CMakeFiles/scanengine.dir/src/slam/post/progress.cpp.o scanengine/CMakeFiles/scanengine.dir/src/slam/post/scan_context.cpp.o scanengine/CMakeFiles/scanengine.dir/src/slam/pushbroom/mount_calibration.cpp.o scanengine/CMakeFiles/scanengine.dir/src/slam/pushbroom/pushbroom_assembler.cpp.o scanengine/CMakeFiles/scanengine.dir/src/timesync/imu_ingest.cpp.o scanengine/CMakeFiles/scanengine.dir/src/timesync/min_delay_estimator.cpp.o scanengine/CMakeFiles/scanengine.dir/src/timesync/offset_estimator.cpp.o scanengine/CMakeFiles/scanengine.dir/src/transport/udp_source.cpp.o scanengine/CMakeFiles/scanengine.dir/src/transport/usb_serial_source.cpp.o scanengine/CMakeFiles/scanengine.dir/capi/scanengine_c.cpp.o
   LANGUAGE_COMPILE_FLAGS = -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info
   OBJECT_DIR = scanengine/CMakeFiles/scanengine.dir
   POST_BUILD = :
   PRE_LINK = :
-  TARGET_COMPILE_PDB = scanengine/CMakeFiles/scanengine.dir/scanengine.pdb
   TARGET_FILE = scanengine/libscanengine.a
-  TARGET_PDB = scanengine/libscanengine.pdb
+  TARGET_PDB = scanengine.a.dbg
 
 
 #############################################
@@ -814,8 +886,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/single.cpp.o: CXX
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/eigen_blas_static.pdb
-  TARGET_PDB = _deps/eigen3-build/blas/libeigen_blas_static.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/double.cpp.o: CXX_COMPILER__eigen_blas_static_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/double.cpp || cmake_object_order_depends_target_eigen_blas_static
   DEP_FILE = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/double.cpp.o.d
@@ -823,8 +893,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/double.cpp.o: CXX
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/eigen_blas_static.pdb
-  TARGET_PDB = _deps/eigen3-build/blas/libeigen_blas_static.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/complex_single.cpp.o: CXX_COMPILER__eigen_blas_static_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/complex_single.cpp || cmake_object_order_depends_target_eigen_blas_static
   DEP_FILE = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/complex_single.cpp.o.d
@@ -832,8 +900,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/complex_single.cp
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/eigen_blas_static.pdb
-  TARGET_PDB = _deps/eigen3-build/blas/libeigen_blas_static.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/complex_double.cpp.o: CXX_COMPILER__eigen_blas_static_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/complex_double.cpp || cmake_object_order_depends_target_eigen_blas_static
   DEP_FILE = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/complex_double.cpp.o.d
@@ -841,8 +907,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/complex_double.cp
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/eigen_blas_static.pdb
-  TARGET_PDB = _deps/eigen3-build/blas/libeigen_blas_static.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/xerbla.cpp.o: CXX_COMPILER__eigen_blas_static_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/xerbla.cpp || cmake_object_order_depends_target_eigen_blas_static
   DEP_FILE = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/xerbla.cpp.o.d
@@ -850,8 +914,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/xerbla.cpp.o: CXX
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/eigen_blas_static.pdb
-  TARGET_PDB = _deps/eigen3-build/blas/libeigen_blas_static.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/srotm.c.o: C_COMPILER__eigen_blas_static_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/srotm.c || cmake_object_order_depends_target_eigen_blas_static
   DEP_FILE = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/srotm.c.o.d
@@ -859,8 +921,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/srotm.c.o: C_
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/eigen_blas_static.pdb
-  TARGET_PDB = _deps/eigen3-build/blas/libeigen_blas_static.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/srotmg.c.o: C_COMPILER__eigen_blas_static_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/srotmg.c || cmake_object_order_depends_target_eigen_blas_static
   DEP_FILE = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/srotmg.c.o.d
@@ -868,8 +928,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/srotmg.c.o: C
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/eigen_blas_static.pdb
-  TARGET_PDB = _deps/eigen3-build/blas/libeigen_blas_static.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/drotm.c.o: C_COMPILER__eigen_blas_static_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/drotm.c || cmake_object_order_depends_target_eigen_blas_static
   DEP_FILE = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/drotm.c.o.d
@@ -877,8 +935,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/drotm.c.o: C_
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/eigen_blas_static.pdb
-  TARGET_PDB = _deps/eigen3-build/blas/libeigen_blas_static.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/drotmg.c.o: C_COMPILER__eigen_blas_static_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/drotmg.c || cmake_object_order_depends_target_eigen_blas_static
   DEP_FILE = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/drotmg.c.o.d
@@ -886,8 +942,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/drotmg.c.o: C
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/eigen_blas_static.pdb
-  TARGET_PDB = _deps/eigen3-build/blas/libeigen_blas_static.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/lsame.c.o: C_COMPILER__eigen_blas_static_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/lsame.c || cmake_object_order_depends_target_eigen_blas_static
   DEP_FILE = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/lsame.c.o.d
@@ -895,8 +949,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/lsame.c.o: C_
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/eigen_blas_static.pdb
-  TARGET_PDB = _deps/eigen3-build/blas/libeigen_blas_static.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/dspmv.c.o: C_COMPILER__eigen_blas_static_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/dspmv.c || cmake_object_order_depends_target_eigen_blas_static
   DEP_FILE = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/dspmv.c.o.d
@@ -904,8 +956,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/dspmv.c.o: C_
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/eigen_blas_static.pdb
-  TARGET_PDB = _deps/eigen3-build/blas/libeigen_blas_static.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/ssbmv.c.o: C_COMPILER__eigen_blas_static_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/ssbmv.c || cmake_object_order_depends_target_eigen_blas_static
   DEP_FILE = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/ssbmv.c.o.d
@@ -913,8 +963,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/ssbmv.c.o: C_
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/eigen_blas_static.pdb
-  TARGET_PDB = _deps/eigen3-build/blas/libeigen_blas_static.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/chbmv.c.o: C_COMPILER__eigen_blas_static_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/chbmv.c || cmake_object_order_depends_target_eigen_blas_static
   DEP_FILE = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/chbmv.c.o.d
@@ -922,8 +970,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/chbmv.c.o: C_
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/eigen_blas_static.pdb
-  TARGET_PDB = _deps/eigen3-build/blas/libeigen_blas_static.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/sspmv.c.o: C_COMPILER__eigen_blas_static_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/sspmv.c || cmake_object_order_depends_target_eigen_blas_static
   DEP_FILE = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/sspmv.c.o.d
@@ -931,8 +977,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/sspmv.c.o: C_
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/eigen_blas_static.pdb
-  TARGET_PDB = _deps/eigen3-build/blas/libeigen_blas_static.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/zhbmv.c.o: C_COMPILER__eigen_blas_static_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/zhbmv.c || cmake_object_order_depends_target_eigen_blas_static
   DEP_FILE = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/zhbmv.c.o.d
@@ -940,8 +984,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/zhbmv.c.o: C_
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/eigen_blas_static.pdb
-  TARGET_PDB = _deps/eigen3-build/blas/libeigen_blas_static.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/chpmv.c.o: C_COMPILER__eigen_blas_static_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/chpmv.c || cmake_object_order_depends_target_eigen_blas_static
   DEP_FILE = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/chpmv.c.o.d
@@ -949,8 +991,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/chpmv.c.o: C_
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/eigen_blas_static.pdb
-  TARGET_PDB = _deps/eigen3-build/blas/libeigen_blas_static.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/dsbmv.c.o: C_COMPILER__eigen_blas_static_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/dsbmv.c || cmake_object_order_depends_target_eigen_blas_static
   DEP_FILE = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/dsbmv.c.o.d
@@ -958,8 +998,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/dsbmv.c.o: C_
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/eigen_blas_static.pdb
-  TARGET_PDB = _deps/eigen3-build/blas/libeigen_blas_static.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/zhpmv.c.o: C_COMPILER__eigen_blas_static_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/zhpmv.c || cmake_object_order_depends_target_eigen_blas_static
   DEP_FILE = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/zhpmv.c.o.d
@@ -967,8 +1005,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/zhpmv.c.o: C_
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/eigen_blas_static.pdb
-  TARGET_PDB = _deps/eigen3-build/blas/libeigen_blas_static.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/dtbmv.c.o: C_COMPILER__eigen_blas_static_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/dtbmv.c || cmake_object_order_depends_target_eigen_blas_static
   DEP_FILE = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/dtbmv.c.o.d
@@ -976,8 +1012,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/dtbmv.c.o: C_
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/eigen_blas_static.pdb
-  TARGET_PDB = _deps/eigen3-build/blas/libeigen_blas_static.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/stbmv.c.o: C_COMPILER__eigen_blas_static_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/stbmv.c || cmake_object_order_depends_target_eigen_blas_static
   DEP_FILE = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/stbmv.c.o.d
@@ -985,8 +1019,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/stbmv.c.o: C_
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/eigen_blas_static.pdb
-  TARGET_PDB = _deps/eigen3-build/blas/libeigen_blas_static.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/ctbmv.c.o: C_COMPILER__eigen_blas_static_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/ctbmv.c || cmake_object_order_depends_target_eigen_blas_static
   DEP_FILE = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/ctbmv.c.o.d
@@ -994,8 +1026,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/ctbmv.c.o: C_
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/eigen_blas_static.pdb
-  TARGET_PDB = _deps/eigen3-build/blas/libeigen_blas_static.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/ztbmv.c.o: C_COMPILER__eigen_blas_static_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/ztbmv.c || cmake_object_order_depends_target_eigen_blas_static
   DEP_FILE = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/ztbmv.c.o.d
@@ -1003,8 +1033,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/ztbmv.c.o: C_
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/eigen_blas_static.pdb
-  TARGET_PDB = _deps/eigen3-build/blas/libeigen_blas_static.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/d_cnjg.c.o: C_COMPILER__eigen_blas_static_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/d_cnjg.c || cmake_object_order_depends_target_eigen_blas_static
   DEP_FILE = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/d_cnjg.c.o.d
@@ -1012,8 +1040,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/d_cnjg.c.o: C
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/eigen_blas_static.pdb
-  TARGET_PDB = _deps/eigen3-build/blas/libeigen_blas_static.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/r_cnjg.c.o: C_COMPILER__eigen_blas_static_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/r_cnjg.c || cmake_object_order_depends_target_eigen_blas_static
   DEP_FILE = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/r_cnjg.c.o.d
@@ -1021,8 +1047,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/r_cnjg.c.o: C
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/eigen_blas_static.pdb
-  TARGET_PDB = _deps/eigen3-build/blas/libeigen_blas_static.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/complexdots.c.o: C_COMPILER__eigen_blas_static_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/complexdots.c || cmake_object_order_depends_target_eigen_blas_static
   DEP_FILE = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/complexdots.c.o.d
@@ -1030,8 +1054,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/complexdots.c
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/eigen_blas_static.pdb
-  TARGET_PDB = _deps/eigen3-build/blas/libeigen_blas_static.pdb
 
 
 # =============================================================================
@@ -1046,9 +1068,8 @@ build _deps/eigen3-build/blas/libeigen_blas_static.a: CXX_STATIC_LIBRARY_LINKER_
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir
   POST_BUILD = :
   PRE_LINK = :
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/eigen_blas_static.pdb
   TARGET_FILE = _deps/eigen3-build/blas/libeigen_blas_static.a
-  TARGET_PDB = _deps/eigen3-build/blas/libeigen_blas_static.pdb
+  TARGET_PDB = eigen_blas_static.a.dbg
 
 # =============================================================================
 # Object build statements for SHARED_LIBRARY target eigen_blas
@@ -1066,8 +1087,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/single.cpp.o: CXX_COMPIL
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_blas.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/double.cpp.o: CXX_COMPILER__eigen_blas_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/double.cpp || cmake_object_order_depends_target_eigen_blas
   DEFINES = -Deigen_blas_EXPORTS
@@ -1076,8 +1095,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/double.cpp.o: CXX_COMPIL
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_blas.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/complex_single.cpp.o: CXX_COMPILER__eigen_blas_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/complex_single.cpp || cmake_object_order_depends_target_eigen_blas
   DEFINES = -Deigen_blas_EXPORTS
@@ -1086,8 +1103,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/complex_single.cpp.o: CX
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_blas.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/complex_double.cpp.o: CXX_COMPILER__eigen_blas_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/complex_double.cpp || cmake_object_order_depends_target_eigen_blas
   DEFINES = -Deigen_blas_EXPORTS
@@ -1096,8 +1111,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/complex_double.cpp.o: CX
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_blas.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/xerbla.cpp.o: CXX_COMPILER__eigen_blas_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/xerbla.cpp || cmake_object_order_depends_target_eigen_blas
   DEFINES = -Deigen_blas_EXPORTS
@@ -1106,8 +1119,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/xerbla.cpp.o: CXX_COMPIL
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_blas.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/srotm.c.o: C_COMPILER__eigen_blas_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/srotm.c || cmake_object_order_depends_target_eigen_blas
   DEFINES = -Deigen_blas_EXPORTS
@@ -1116,8 +1127,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/srotm.c.o: C_COMPILE
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_blas.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/srotmg.c.o: C_COMPILER__eigen_blas_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/srotmg.c || cmake_object_order_depends_target_eigen_blas
   DEFINES = -Deigen_blas_EXPORTS
@@ -1126,8 +1135,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/srotmg.c.o: C_COMPIL
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_blas.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/drotm.c.o: C_COMPILER__eigen_blas_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/drotm.c || cmake_object_order_depends_target_eigen_blas
   DEFINES = -Deigen_blas_EXPORTS
@@ -1136,8 +1143,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/drotm.c.o: C_COMPILE
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_blas.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/drotmg.c.o: C_COMPILER__eigen_blas_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/drotmg.c || cmake_object_order_depends_target_eigen_blas
   DEFINES = -Deigen_blas_EXPORTS
@@ -1146,8 +1151,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/drotmg.c.o: C_COMPIL
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_blas.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/lsame.c.o: C_COMPILER__eigen_blas_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/lsame.c || cmake_object_order_depends_target_eigen_blas
   DEFINES = -Deigen_blas_EXPORTS
@@ -1156,8 +1159,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/lsame.c.o: C_COMPILE
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_blas.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/dspmv.c.o: C_COMPILER__eigen_blas_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/dspmv.c || cmake_object_order_depends_target_eigen_blas
   DEFINES = -Deigen_blas_EXPORTS
@@ -1166,8 +1167,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/dspmv.c.o: C_COMPILE
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_blas.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/ssbmv.c.o: C_COMPILER__eigen_blas_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/ssbmv.c || cmake_object_order_depends_target_eigen_blas
   DEFINES = -Deigen_blas_EXPORTS
@@ -1176,8 +1175,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/ssbmv.c.o: C_COMPILE
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_blas.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/chbmv.c.o: C_COMPILER__eigen_blas_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/chbmv.c || cmake_object_order_depends_target_eigen_blas
   DEFINES = -Deigen_blas_EXPORTS
@@ -1186,8 +1183,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/chbmv.c.o: C_COMPILE
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_blas.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/sspmv.c.o: C_COMPILER__eigen_blas_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/sspmv.c || cmake_object_order_depends_target_eigen_blas
   DEFINES = -Deigen_blas_EXPORTS
@@ -1196,8 +1191,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/sspmv.c.o: C_COMPILE
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_blas.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/zhbmv.c.o: C_COMPILER__eigen_blas_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/zhbmv.c || cmake_object_order_depends_target_eigen_blas
   DEFINES = -Deigen_blas_EXPORTS
@@ -1206,8 +1199,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/zhbmv.c.o: C_COMPILE
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_blas.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/chpmv.c.o: C_COMPILER__eigen_blas_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/chpmv.c || cmake_object_order_depends_target_eigen_blas
   DEFINES = -Deigen_blas_EXPORTS
@@ -1216,8 +1207,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/chpmv.c.o: C_COMPILE
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_blas.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/dsbmv.c.o: C_COMPILER__eigen_blas_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/dsbmv.c || cmake_object_order_depends_target_eigen_blas
   DEFINES = -Deigen_blas_EXPORTS
@@ -1226,8 +1215,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/dsbmv.c.o: C_COMPILE
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_blas.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/zhpmv.c.o: C_COMPILER__eigen_blas_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/zhpmv.c || cmake_object_order_depends_target_eigen_blas
   DEFINES = -Deigen_blas_EXPORTS
@@ -1236,8 +1223,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/zhpmv.c.o: C_COMPILE
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_blas.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/dtbmv.c.o: C_COMPILER__eigen_blas_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/dtbmv.c || cmake_object_order_depends_target_eigen_blas
   DEFINES = -Deigen_blas_EXPORTS
@@ -1246,8 +1231,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/dtbmv.c.o: C_COMPILE
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_blas.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/stbmv.c.o: C_COMPILER__eigen_blas_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/stbmv.c || cmake_object_order_depends_target_eigen_blas
   DEFINES = -Deigen_blas_EXPORTS
@@ -1256,8 +1239,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/stbmv.c.o: C_COMPILE
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_blas.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/ctbmv.c.o: C_COMPILER__eigen_blas_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/ctbmv.c || cmake_object_order_depends_target_eigen_blas
   DEFINES = -Deigen_blas_EXPORTS
@@ -1266,8 +1247,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/ctbmv.c.o: C_COMPILE
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_blas.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/ztbmv.c.o: C_COMPILER__eigen_blas_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/ztbmv.c || cmake_object_order_depends_target_eigen_blas
   DEFINES = -Deigen_blas_EXPORTS
@@ -1276,8 +1255,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/ztbmv.c.o: C_COMPILE
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_blas.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/d_cnjg.c.o: C_COMPILER__eigen_blas_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/d_cnjg.c || cmake_object_order_depends_target_eigen_blas
   DEFINES = -Deigen_blas_EXPORTS
@@ -1286,8 +1263,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/d_cnjg.c.o: C_COMPIL
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_blas.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/r_cnjg.c.o: C_COMPILER__eigen_blas_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/r_cnjg.c || cmake_object_order_depends_target_eigen_blas
   DEFINES = -Deigen_blas_EXPORTS
@@ -1296,8 +1271,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/r_cnjg.c.o: C_COMPIL
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_blas.pdb
 
 build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/complexdots.c.o: C_COMPILER__eigen_blas_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/complexdots.c || cmake_object_order_depends_target_eigen_blas
   DEFINES = -Deigen_blas_EXPORTS
@@ -1306,8 +1279,6 @@ build _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/complexdots.c.o: C_C
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_blas.pdb
 
 
 # =============================================================================
@@ -1327,9 +1298,8 @@ build /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/
   PRE_LINK = :
   SONAME = libeigen_blas.so
   SONAME_FLAG = -Wl,-soname,
-  TARGET_COMPILE_PDB = _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/
   TARGET_FILE = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_blas.so
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_blas.pdb
+  TARGET_PDB = eigen_blas.so.dbg
 
 
 #############################################
@@ -1423,8 +1393,6 @@ build _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir/single.cpp.o:
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/../blas
   OBJECT_DIR = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir
-  TARGET_COMPILE_PDB = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir/eigen_lapack_static.pdb
-  TARGET_PDB = _deps/eigen3-build/lapack/libeigen_lapack_static.pdb
 
 build _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir/double.cpp.o: CXX_COMPILER__eigen_lapack_static_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/double.cpp || cmake_object_order_depends_target_eigen_lapack_static
   DEP_FILE = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir/double.cpp.o.d
@@ -1432,8 +1400,6 @@ build _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir/double.cpp.o:
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/../blas
   OBJECT_DIR = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir
-  TARGET_COMPILE_PDB = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir/eigen_lapack_static.pdb
-  TARGET_PDB = _deps/eigen3-build/lapack/libeigen_lapack_static.pdb
 
 build _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir/complex_single.cpp.o: CXX_COMPILER__eigen_lapack_static_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/complex_single.cpp || cmake_object_order_depends_target_eigen_lapack_static
   DEP_FILE = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir/complex_single.cpp.o.d
@@ -1441,8 +1407,6 @@ build _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir/complex_singl
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/../blas
   OBJECT_DIR = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir
-  TARGET_COMPILE_PDB = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir/eigen_lapack_static.pdb
-  TARGET_PDB = _deps/eigen3-build/lapack/libeigen_lapack_static.pdb
 
 build _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir/complex_double.cpp.o: CXX_COMPILER__eigen_lapack_static_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/complex_double.cpp || cmake_object_order_depends_target_eigen_lapack_static
   DEP_FILE = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir/complex_double.cpp.o.d
@@ -1450,8 +1414,6 @@ build _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir/complex_doubl
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/../blas
   OBJECT_DIR = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir
-  TARGET_COMPILE_PDB = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir/eigen_lapack_static.pdb
-  TARGET_PDB = _deps/eigen3-build/lapack/libeigen_lapack_static.pdb
 
 build _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir/__/__/eigen3-src/blas/xerbla.cpp.o: CXX_COMPILER__eigen_lapack_static_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/xerbla.cpp || cmake_object_order_depends_target_eigen_lapack_static
   DEP_FILE = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir/__/__/eigen3-src/blas/xerbla.cpp.o.d
@@ -1459,8 +1421,6 @@ build _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir/__/__/eigen3-
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/../blas
   OBJECT_DIR = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir/__/__/eigen3-src/blas
-  TARGET_COMPILE_PDB = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir/eigen_lapack_static.pdb
-  TARGET_PDB = _deps/eigen3-build/lapack/libeigen_lapack_static.pdb
 
 
 # =============================================================================
@@ -1475,9 +1435,8 @@ build _deps/eigen3-build/lapack/libeigen_lapack_static.a: CXX_STATIC_LIBRARY_LIN
   OBJECT_DIR = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir
   POST_BUILD = :
   PRE_LINK = :
-  TARGET_COMPILE_PDB = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir/eigen_lapack_static.pdb
   TARGET_FILE = _deps/eigen3-build/lapack/libeigen_lapack_static.a
-  TARGET_PDB = _deps/eigen3-build/lapack/libeigen_lapack_static.pdb
+  TARGET_PDB = eigen_lapack_static.a.dbg
 
 # =============================================================================
 # Object build statements for SHARED_LIBRARY target eigen_lapack
@@ -1495,8 +1454,6 @@ build _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir/single.cpp.o: CXX_CO
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/../blas
   OBJECT_DIR = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir
-  TARGET_COMPILE_PDB = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_lapack.pdb
 
 build _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir/double.cpp.o: CXX_COMPILER__eigen_lapack_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/double.cpp || cmake_object_order_depends_target_eigen_lapack
   DEFINES = -Deigen_lapack_EXPORTS
@@ -1505,8 +1462,6 @@ build _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir/double.cpp.o: CXX_CO
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/../blas
   OBJECT_DIR = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir
-  TARGET_COMPILE_PDB = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_lapack.pdb
 
 build _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir/complex_single.cpp.o: CXX_COMPILER__eigen_lapack_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/complex_single.cpp || cmake_object_order_depends_target_eigen_lapack
   DEFINES = -Deigen_lapack_EXPORTS
@@ -1515,8 +1470,6 @@ build _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir/complex_single.cpp.o
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/../blas
   OBJECT_DIR = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir
-  TARGET_COMPILE_PDB = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_lapack.pdb
 
 build _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir/complex_double.cpp.o: CXX_COMPILER__eigen_lapack_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/complex_double.cpp || cmake_object_order_depends_target_eigen_lapack
   DEFINES = -Deigen_lapack_EXPORTS
@@ -1525,8 +1478,6 @@ build _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir/complex_double.cpp.o
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/../blas
   OBJECT_DIR = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir
-  TARGET_COMPILE_PDB = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_lapack.pdb
 
 build _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir/__/__/eigen3-src/blas/xerbla.cpp.o: CXX_COMPILER__eigen_lapack_unscanned_Debug /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/xerbla.cpp || cmake_object_order_depends_target_eigen_lapack
   DEFINES = -Deigen_lapack_EXPORTS
@@ -1535,8 +1486,6 @@ build _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir/__/__/eigen3-src/bla
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/../blas
   OBJECT_DIR = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir/__/__/eigen3-src/blas
-  TARGET_COMPILE_PDB = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_lapack.pdb
 
 
 # =============================================================================
@@ -1556,9 +1505,8 @@ build /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/
   PRE_LINK = :
   SONAME = libeigen_lapack.so
   SONAME_FLAG = -Wl,-soname,
-  TARGET_COMPILE_PDB = _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir/
   TARGET_FILE = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_lapack.so
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_lapack.pdb
+  TARGET_PDB = eigen_lapack.so.dbg
 
 
 #############################################
@@ -2007,8 +1955,6 @@ build _deps/eigen3-build/bench/spbench/CMakeFiles/spbenchsolver.dir/spbenchsolve
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/bench/spbench/CMakeFiles/spbenchsolver.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/bench/spbench/CMakeFiles/spbenchsolver.dir
-  TARGET_COMPILE_PDB = _deps/eigen3-build/bench/spbench/CMakeFiles/spbenchsolver.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/spbenchsolver.pdb
 
 
 # =============================================================================
@@ -2026,9 +1972,8 @@ build /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/
   OBJECT_DIR = _deps/eigen3-build/bench/spbench/CMakeFiles/spbenchsolver.dir
   POST_BUILD = :
   PRE_LINK = :
-  TARGET_COMPILE_PDB = _deps/eigen3-build/bench/spbench/CMakeFiles/spbenchsolver.dir/
   TARGET_FILE = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/spbenchsolver
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/spbenchsolver.pdb
+  TARGET_PDB = spbenchsolver.dbg
 
 # =============================================================================
 # Object build statements for EXECUTABLE target spsolver
@@ -2045,8 +1990,6 @@ build _deps/eigen3-build/bench/spbench/CMakeFiles/spsolver.dir/sp_solver.cpp.o: 
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/bench/spbench/CMakeFiles/spsolver.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/bench/spbench/CMakeFiles/spsolver.dir
-  TARGET_COMPILE_PDB = _deps/eigen3-build/bench/spbench/CMakeFiles/spsolver.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/spsolver.pdb
 
 
 # =============================================================================
@@ -2064,9 +2007,8 @@ build /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/
   OBJECT_DIR = _deps/eigen3-build/bench/spbench/CMakeFiles/spsolver.dir
   POST_BUILD = :
   PRE_LINK = :
-  TARGET_COMPILE_PDB = _deps/eigen3-build/bench/spbench/CMakeFiles/spsolver.dir/
   TARGET_FILE = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/spsolver
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/spsolver.pdb
+  TARGET_PDB = spsolver.dbg
 
 # =============================================================================
 # Object build statements for EXECUTABLE target test_sparseLU
@@ -2083,8 +2025,6 @@ build _deps/eigen3-build/bench/spbench/CMakeFiles/test_sparseLU.dir/test_sparseL
   INCLUDES = -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src
   OBJECT_DIR = _deps/eigen3-build/bench/spbench/CMakeFiles/test_sparseLU.dir
   OBJECT_FILE_DIR = _deps/eigen3-build/bench/spbench/CMakeFiles/test_sparseLU.dir
-  TARGET_COMPILE_PDB = _deps/eigen3-build/bench/spbench/CMakeFiles/test_sparseLU.dir/
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/test_sparseLU.pdb
 
 
 # =============================================================================
@@ -2102,9 +2042,8 @@ build /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/
   OBJECT_DIR = _deps/eigen3-build/bench/spbench/CMakeFiles/test_sparseLU.dir
   POST_BUILD = :
   PRE_LINK = :
-  TARGET_COMPILE_PDB = _deps/eigen3-build/bench/spbench/CMakeFiles/test_sparseLU.dir/
   TARGET_FILE = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/test_sparseLU
-  TARGET_PDB = /Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/test_sparseLU.pdb
+  TARGET_PDB = test_sparseLU.dbg
 
 
 #############################################
@@ -2314,14 +2253,14 @@ build /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/CMakeFile
 #############################################
 # Re-run CMake if any of its inputs changed.
 
-build build.ninja: RERUN_CMAKE /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/CMakeFiles/cmake.verify_globs | /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/CMakeFiles/VerifyGlobs.cmake /Users/admin/lidarscan/android/app/src/main/cpp/CMakeLists.txt /Users/admin/lidarscan/engine/CMakeLists.txt /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/BasicConfigVersion-SameMajorVersion.cmake.in /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeCCompiler.cmake.in /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeCCompilerABI.c /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeCInformation.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeCXXCompiler.cmake.in /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeCXXCompilerABI.cpp /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeCXXInformation.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeCheckCompilerFlagCommonPatterns.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeCommonLanguageInclude.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeCompilerIdDetection.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeDependentOption.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeDetermineCCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeDetermineCXXCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeDetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeDetermineCompilerABI.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeDetermineCompilerId.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeDetermineCompilerSupport.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeDetermineSystem.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeFindBinUtils.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeFindDependencyMacro.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeGenericSystem.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeInitializeConfigs.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeLanguageInformation.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakePackageConfigHelpers.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeParseImplicitIncludeInfo.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeParseImplicitLinkInfo.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeParseLibraryArchitecture.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakePushCheckState.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeSystem.cmake.in /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeSystemSpecificInformation.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeSystemSpecificInitialize.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeTestCCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeTestCXXCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeTestCompilerCommon.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckCSourceCompiles.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckCXXCompilerFlag.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckCXXSourceCompiles.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckCXXSymbolExists.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckIncludeFile.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckLanguage.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckLibraryExists.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckSourceCompiles.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckStructHasMember.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckSymbolExists.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/ADSP-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/ARMCC-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/ARMClang-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/AppleClang-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Borland-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Bruce-C-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/CMakeCommonCompilerMacros.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Clang-C.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Clang-CXX-CXXImportStd.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Clang-CXX.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Clang-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Clang-DetermineCompilerInternal.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Clang-FindBinUtils.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Clang.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Compaq-C-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Compaq-CXX-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Cray-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/CrayClang-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Embarcadero-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Fujitsu-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/FujitsuClang-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/GHS-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/GNU-C-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/GNU-CXX-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/GNU.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/HP-C-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/HP-CXX-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/IAR-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/IBMCPP-C-DetermineVersionInternal.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/IBMCPP-CXX-DetermineVersionInternal.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/IBMClang-C-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/IBMClang-CXX-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Intel-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/IntelLLVM-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/LCC-C-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/LCC-CXX-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/MSVC-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/NVHPC-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/NVIDIA-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/OpenWatcom-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/OrangeC-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/PGI-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/PathScale-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/SCO-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/SDCC-C-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/SunPro-C-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/SunPro-CXX-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/TI-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/TIClang-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Tasking-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/TinyCC-C-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/VisualAge-C-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/VisualAge-CXX-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Watcom-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/XL-C-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/XL-CXX-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/XLClang-C-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/XLClang-CXX-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/zOS-C-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/zOS-CXX-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/ExternalProject/shared_internal_commands.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/FetchContent.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/FetchContent/CMakeLists.cmake.in /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/FindPackageHandleStandardArgs.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/FindPackageMessage.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/FindPkgConfig.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/FindQt4.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/FindThreads.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/GNUInstallDirs.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Internal/CMakeCLinkerInformation.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Internal/CMakeCXXLinkerInformation.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Internal/CMakeCommonLinkerInformation.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Internal/CMakeDetermineLinkerId.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Internal/CheckCompilerFlag.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Internal/CheckFlagCommonConfig.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Internal/CheckSourceCompiles.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Internal/FeatureTesting.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Linker/GNU.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Linker/LLD-C.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Linker/LLD-CXX.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Linker/LLD.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/MacroAddFileDependencies.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Android-Clang-C.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Android-Clang-CXX.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Android-Clang.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Android-Determine-C.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Android-Determine-CXX.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Android-Determine.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Android-Initialize.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Android.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Android/Determine-Compiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linker/Android-LLD-C.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linker/Android-LLD-CXX.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linker/GNU.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linker/Linux-GNU.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linker/Linux-LLD-C.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linker/Linux-LLD-CXX.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linker/Linux-LLD.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linux-Initialize.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linux.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/UnixPaths.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/WriteBasicConfigVersionFile.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/abis.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/android-legacy.toolchain.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/android.toolchain.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/flags.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/hooks/pre/Android-Clang.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/hooks/pre/Android-Determine.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/hooks/pre/Android-Initialize.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/hooks/pre/Android.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/hooks/pre/Determine-Compiler.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/platforms.cmake CMakeCache.txt CMakeFiles/3.31.6-g38307f9/CMakeCCompiler.cmake CMakeFiles/3.31.6-g38307f9/CMakeCXXCompiler.cmake CMakeFiles/3.31.6-g38307f9/CMakeSystem.cmake _deps/eigen3-src/CMakeLists.txt _deps/eigen3-src/bench/spbench/CMakeLists.txt _deps/eigen3-src/blas/CMakeLists.txt _deps/eigen3-src/cmake/Eigen3Config.cmake.in _deps/eigen3-src/cmake/FindCHOLMOD.cmake _deps/eigen3-src/cmake/FindHWLOC.cmake _deps/eigen3-src/cmake/FindKLU.cmake _deps/eigen3-src/cmake/FindPASTIX.cmake _deps/eigen3-src/cmake/FindStandardMathLibrary.cmake _deps/eigen3-src/cmake/FindSuperLU.cmake _deps/eigen3-src/cmake/FindUMFPACK.cmake _deps/eigen3-src/demos/CMakeLists.txt _deps/eigen3-src/eigen3.pc.in _deps/eigen3-src/lapack/CMakeLists.txt _deps/eigen3-src/scripts/CMakeLists.txt _deps/eigen3-src/scripts/buildtests.in _deps/eigen3-src/scripts/cdashtesting.cmake.in _deps/eigen3-src/scripts/check.in _deps/eigen3-src/scripts/debug.in _deps/eigen3-src/scripts/release.in _deps/eigen3-src/unsupported/CMakeLists.txt _deps/eigen3-src/unsupported/Eigen/CMakeLists.txt _deps/eigen3-src/unsupported/Eigen/CXX11/CMakeLists.txt
+build build.ninja: RERUN_CMAKE /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/CMakeFiles/cmake.verify_globs | /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/CMakeFiles/VerifyGlobs.cmake /Users/admin/lidarscan/android/app/src/main/cpp/CMakeLists.txt /Users/admin/lidarscan/engine/CMakeLists.txt /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/BasicConfigVersion-SameMajorVersion.cmake.in /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeCInformation.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeCXXInformation.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeCheckCompilerFlagCommonPatterns.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeCommonLanguageInclude.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeDependentOption.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeFindDependencyMacro.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeGenericSystem.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeInitializeConfigs.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeLanguageInformation.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakePackageConfigHelpers.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakePushCheckState.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeSystemSpecificInformation.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeSystemSpecificInitialize.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckCSourceCompiles.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckCXXCompilerFlag.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckCXXSourceCompiles.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckCXXSymbolExists.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckIncludeFile.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckLanguage.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckLibraryExists.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckSourceCompiles.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckStructHasMember.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckSymbolExists.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/CMakeCommonCompilerMacros.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Clang-C.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Clang-CXX.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Clang.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/GNU.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/ExternalProject/shared_internal_commands.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/FetchContent.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/FetchContent/CMakeLists.cmake.in /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/FindPackageHandleStandardArgs.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/FindPackageMessage.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/FindPkgConfig.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/FindQt4.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/FindThreads.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/GNUInstallDirs.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Internal/CMakeCLinkerInformation.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Internal/CMakeCXXLinkerInformation.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Internal/CMakeCommonLinkerInformation.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Internal/CheckCompilerFlag.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Internal/CheckFlagCommonConfig.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Internal/CheckSourceCompiles.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Linker/GNU.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Linker/LLD-C.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Linker/LLD-CXX.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Linker/LLD.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/MacroAddFileDependencies.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Android-Clang-C.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Android-Clang-CXX.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Android-Clang.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Android-Initialize.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Android.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linker/Android-LLD-C.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linker/Android-LLD-CXX.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linker/GNU.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linker/Linux-GNU.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linker/Linux-LLD-C.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linker/Linux-LLD-CXX.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linker/Linux-LLD.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linux-Initialize.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linux.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/UnixPaths.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/WriteBasicConfigVersionFile.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/abis.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/android-legacy.toolchain.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/android.toolchain.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/flags.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/hooks/pre/Android-Clang.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/hooks/pre/Android-Initialize.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/hooks/pre/Android.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/platforms.cmake CMakeCache.txt CMakeFiles/3.31.6-g38307f9/CMakeCCompiler.cmake CMakeFiles/3.31.6-g38307f9/CMakeCXXCompiler.cmake CMakeFiles/3.31.6-g38307f9/CMakeSystem.cmake _deps/eigen3-src/CMakeLists.txt _deps/eigen3-src/bench/spbench/CMakeLists.txt _deps/eigen3-src/blas/CMakeLists.txt _deps/eigen3-src/cmake/Eigen3Config.cmake.in _deps/eigen3-src/cmake/FindCHOLMOD.cmake _deps/eigen3-src/cmake/FindHWLOC.cmake _deps/eigen3-src/cmake/FindKLU.cmake _deps/eigen3-src/cmake/FindPASTIX.cmake _deps/eigen3-src/cmake/FindStandardMathLibrary.cmake _deps/eigen3-src/cmake/FindSuperLU.cmake _deps/eigen3-src/cmake/FindUMFPACK.cmake _deps/eigen3-src/demos/CMakeLists.txt _deps/eigen3-src/eigen3.pc.in _deps/eigen3-src/lapack/CMakeLists.txt _deps/eigen3-src/scripts/CMakeLists.txt _deps/eigen3-src/scripts/buildtests.in _deps/eigen3-src/scripts/cdashtesting.cmake.in _deps/eigen3-src/scripts/check.in _deps/eigen3-src/scripts/debug.in _deps/eigen3-src/scripts/release.in _deps/eigen3-src/unsupported/CMakeLists.txt _deps/eigen3-src/unsupported/Eigen/CMakeLists.txt _deps/eigen3-src/unsupported/Eigen/CXX11/CMakeLists.txt
   pool = console
 
 
 #############################################
 # A missing CMake input file is not an error.
 
-build /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/CMakeFiles/VerifyGlobs.cmake /Users/admin/lidarscan/android/app/src/main/cpp/CMakeLists.txt /Users/admin/lidarscan/engine/CMakeLists.txt /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/BasicConfigVersion-SameMajorVersion.cmake.in /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeCCompiler.cmake.in /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeCCompilerABI.c /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeCInformation.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeCXXCompiler.cmake.in /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeCXXCompilerABI.cpp /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeCXXInformation.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeCheckCompilerFlagCommonPatterns.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeCommonLanguageInclude.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeCompilerIdDetection.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeDependentOption.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeDetermineCCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeDetermineCXXCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeDetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeDetermineCompilerABI.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeDetermineCompilerId.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeDetermineCompilerSupport.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeDetermineSystem.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeFindBinUtils.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeFindDependencyMacro.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeGenericSystem.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeInitializeConfigs.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeLanguageInformation.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakePackageConfigHelpers.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeParseImplicitIncludeInfo.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeParseImplicitLinkInfo.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeParseLibraryArchitecture.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakePushCheckState.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeSystem.cmake.in /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeSystemSpecificInformation.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeSystemSpecificInitialize.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeTestCCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeTestCXXCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeTestCompilerCommon.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckCSourceCompiles.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckCXXCompilerFlag.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckCXXSourceCompiles.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckCXXSymbolExists.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckIncludeFile.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckLanguage.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckLibraryExists.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckSourceCompiles.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckStructHasMember.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckSymbolExists.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/ADSP-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/ARMCC-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/ARMClang-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/AppleClang-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Borland-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Bruce-C-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/CMakeCommonCompilerMacros.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Clang-C.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Clang-CXX-CXXImportStd.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Clang-CXX.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Clang-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Clang-DetermineCompilerInternal.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Clang-FindBinUtils.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Clang.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Compaq-C-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Compaq-CXX-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Cray-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/CrayClang-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Embarcadero-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Fujitsu-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/FujitsuClang-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/GHS-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/GNU-C-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/GNU-CXX-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/GNU.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/HP-C-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/HP-CXX-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/IAR-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/IBMCPP-C-DetermineVersionInternal.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/IBMCPP-CXX-DetermineVersionInternal.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/IBMClang-C-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/IBMClang-CXX-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Intel-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/IntelLLVM-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/LCC-C-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/LCC-CXX-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/MSVC-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/NVHPC-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/NVIDIA-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/OpenWatcom-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/OrangeC-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/PGI-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/PathScale-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/SCO-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/SDCC-C-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/SunPro-C-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/SunPro-CXX-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/TI-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/TIClang-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Tasking-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/TinyCC-C-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/VisualAge-C-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/VisualAge-CXX-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Watcom-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/XL-C-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/XL-CXX-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/XLClang-C-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/XLClang-CXX-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/zOS-C-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/zOS-CXX-DetermineCompiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/ExternalProject/shared_internal_commands.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/FetchContent.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/FetchContent/CMakeLists.cmake.in /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/FindPackageHandleStandardArgs.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/FindPackageMessage.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/FindPkgConfig.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/FindQt4.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/FindThreads.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/GNUInstallDirs.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Internal/CMakeCLinkerInformation.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Internal/CMakeCXXLinkerInformation.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Internal/CMakeCommonLinkerInformation.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Internal/CMakeDetermineLinkerId.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Internal/CheckCompilerFlag.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Internal/CheckFlagCommonConfig.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Internal/CheckSourceCompiles.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Internal/FeatureTesting.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Linker/GNU.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Linker/LLD-C.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Linker/LLD-CXX.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Linker/LLD.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/MacroAddFileDependencies.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Android-Clang-C.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Android-Clang-CXX.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Android-Clang.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Android-Determine-C.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Android-Determine-CXX.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Android-Determine.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Android-Initialize.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Android.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Android/Determine-Compiler.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linker/Android-LLD-C.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linker/Android-LLD-CXX.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linker/GNU.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linker/Linux-GNU.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linker/Linux-LLD-C.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linker/Linux-LLD-CXX.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linker/Linux-LLD.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linux-Initialize.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linux.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/UnixPaths.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/WriteBasicConfigVersionFile.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/abis.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/android-legacy.toolchain.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/android.toolchain.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/flags.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/hooks/pre/Android-Clang.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/hooks/pre/Android-Determine.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/hooks/pre/Android-Initialize.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/hooks/pre/Android.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/hooks/pre/Determine-Compiler.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/platforms.cmake CMakeCache.txt CMakeFiles/3.31.6-g38307f9/CMakeCCompiler.cmake CMakeFiles/3.31.6-g38307f9/CMakeCXXCompiler.cmake CMakeFiles/3.31.6-g38307f9/CMakeSystem.cmake _deps/eigen3-src/CMakeLists.txt _deps/eigen3-src/bench/spbench/CMakeLists.txt _deps/eigen3-src/blas/CMakeLists.txt _deps/eigen3-src/cmake/Eigen3Config.cmake.in _deps/eigen3-src/cmake/FindCHOLMOD.cmake _deps/eigen3-src/cmake/FindHWLOC.cmake _deps/eigen3-src/cmake/FindKLU.cmake _deps/eigen3-src/cmake/FindPASTIX.cmake _deps/eigen3-src/cmake/FindStandardMathLibrary.cmake _deps/eigen3-src/cmake/FindSuperLU.cmake _deps/eigen3-src/cmake/FindUMFPACK.cmake _deps/eigen3-src/demos/CMakeLists.txt _deps/eigen3-src/eigen3.pc.in _deps/eigen3-src/lapack/CMakeLists.txt _deps/eigen3-src/scripts/CMakeLists.txt _deps/eigen3-src/scripts/buildtests.in _deps/eigen3-src/scripts/cdashtesting.cmake.in _deps/eigen3-src/scripts/check.in _deps/eigen3-src/scripts/debug.in _deps/eigen3-src/scripts/release.in _deps/eigen3-src/unsupported/CMakeLists.txt _deps/eigen3-src/unsupported/Eigen/CMakeLists.txt _deps/eigen3-src/unsupported/Eigen/CXX11/CMakeLists.txt: phony
+build /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/CMakeFiles/VerifyGlobs.cmake /Users/admin/lidarscan/android/app/src/main/cpp/CMakeLists.txt /Users/admin/lidarscan/engine/CMakeLists.txt /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/BasicConfigVersion-SameMajorVersion.cmake.in /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeCInformation.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeCXXInformation.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeCheckCompilerFlagCommonPatterns.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeCommonLanguageInclude.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeDependentOption.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeFindDependencyMacro.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeGenericSystem.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeInitializeConfigs.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeLanguageInformation.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakePackageConfigHelpers.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakePushCheckState.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeSystemSpecificInformation.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CMakeSystemSpecificInitialize.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckCSourceCompiles.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckCXXCompilerFlag.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckCXXSourceCompiles.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckCXXSymbolExists.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckIncludeFile.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckLanguage.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckLibraryExists.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckSourceCompiles.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckStructHasMember.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/CheckSymbolExists.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/CMakeCommonCompilerMacros.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Clang-C.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Clang-CXX.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/Clang.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Compiler/GNU.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/ExternalProject/shared_internal_commands.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/FetchContent.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/FetchContent/CMakeLists.cmake.in /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/FindPackageHandleStandardArgs.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/FindPackageMessage.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/FindPkgConfig.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/FindQt4.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/FindThreads.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/GNUInstallDirs.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Internal/CMakeCLinkerInformation.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Internal/CMakeCXXLinkerInformation.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Internal/CMakeCommonLinkerInformation.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Internal/CheckCompilerFlag.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Internal/CheckFlagCommonConfig.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Internal/CheckSourceCompiles.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Linker/GNU.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Linker/LLD-C.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Linker/LLD-CXX.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Linker/LLD.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/MacroAddFileDependencies.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Android-Clang-C.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Android-Clang-CXX.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Android-Clang.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Android-Initialize.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Android.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linker/Android-LLD-C.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linker/Android-LLD-CXX.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linker/GNU.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linker/Linux-GNU.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linker/Linux-LLD-C.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linker/Linux-LLD-CXX.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linker/Linux-LLD.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linux-Initialize.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/Linux.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/Platform/UnixPaths.cmake /opt/homebrew/share/android-commandlinetools/cmake/3.31.6/share/cmake-3.31/Modules/WriteBasicConfigVersionFile.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/abis.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/android-legacy.toolchain.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/android.toolchain.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/flags.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/hooks/pre/Android-Clang.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/hooks/pre/Android-Initialize.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/hooks/pre/Android.cmake /opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/platforms.cmake CMakeCache.txt CMakeFiles/3.31.6-g38307f9/CMakeCCompiler.cmake CMakeFiles/3.31.6-g38307f9/CMakeCXXCompiler.cmake CMakeFiles/3.31.6-g38307f9/CMakeSystem.cmake _deps/eigen3-src/CMakeLists.txt _deps/eigen3-src/bench/spbench/CMakeLists.txt _deps/eigen3-src/blas/CMakeLists.txt _deps/eigen3-src/cmake/Eigen3Config.cmake.in _deps/eigen3-src/cmake/FindCHOLMOD.cmake _deps/eigen3-src/cmake/FindHWLOC.cmake _deps/eigen3-src/cmake/FindKLU.cmake _deps/eigen3-src/cmake/FindPASTIX.cmake _deps/eigen3-src/cmake/FindStandardMathLibrary.cmake _deps/eigen3-src/cmake/FindSuperLU.cmake _deps/eigen3-src/cmake/FindUMFPACK.cmake _deps/eigen3-src/demos/CMakeLists.txt _deps/eigen3-src/eigen3.pc.in _deps/eigen3-src/lapack/CMakeLists.txt _deps/eigen3-src/scripts/CMakeLists.txt _deps/eigen3-src/scripts/buildtests.in _deps/eigen3-src/scripts/cdashtesting.cmake.in _deps/eigen3-src/scripts/check.in _deps/eigen3-src/scripts/debug.in _deps/eigen3-src/scripts/release.in _deps/eigen3-src/unsupported/CMakeLists.txt _deps/eigen3-src/unsupported/Eigen/CMakeLists.txt _deps/eigen3-src/unsupported/Eigen/CXX11/CMakeLists.txt: phony
 
 
 #############################################

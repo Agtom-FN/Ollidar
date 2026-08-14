@@ -5,6 +5,68 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+// --- B4: matc material compile pipeline -------------------------------------
+//
+// Filament materials (android/app/src/main/materials/*.mat) are text source;
+// the .filamat binary a MaterialInstance actually loads is compiled by
+// `matc`, Filament's own tool, at BUILD time — there is no runtime .mat
+// interpreter. matc ships in Filament's release tarball, not on Maven, so it
+// is fetched on demand (once, cached) rather than committed as a binary; see
+// android/scripts/fetch_filament_tools.sh for exactly why its version must
+// match the filament-android AAR version (libs.versions.toml's `filament`
+// entry), not desktop's separately-pinned native v1.75.0.
+val filamentToolsVersion = libs.versions.filament.get()
+val filamentToolsDir = file("$projectDir/../third_party/filament-tools-v$filamentToolsVersion")
+val filamentMatc: File
+    get() {
+        val exeName = "matc"
+        return File(filamentToolsDir, "filament/bin/$exeName")
+    }
+val materialsSrcDir = file("$projectDir/src/main/materials")
+val materialsOutDir = layout.buildDirectory.dir("generated/materials/assets/materials")
+
+val fetchFilamentTools by tasks.registering(Exec::class) {
+    description = "Downloads the matc material compiler matching the pinned Filament AAR version (see NOTES.md)."
+    val script = file("$projectDir/../scripts/fetch_filament_tools.sh")
+    val marker = File(filamentToolsDir, "filament/bin/matc")
+    inputs.file(script)
+    outputs.file(marker)
+    onlyIf { !marker.exists() }
+    commandLine("bash", script.absolutePath, "v$filamentToolsVersion")
+}
+
+val compileMaterials by tasks.registering {
+    description = "Compiles android/app/src/main/materials/*.mat to .filamat via matc, into an asset source dir."
+    dependsOn(fetchFilamentTools)
+    inputs.dir(materialsSrcDir)
+    outputs.dir(materialsOutDir)
+    doLast {
+        val outDir = materialsOutDir.get().asFile
+        outDir.mkdirs()
+        val matFiles = materialsSrcDir.listFiles { f -> f.extension == "mat" }.orEmpty()
+        if (matFiles.isEmpty()) {
+            logger.warn("compileMaterials: no .mat files found in $materialsSrcDir")
+        }
+        matFiles.forEach { matFile ->
+            val outFile = File(outDir, "${matFile.nameWithoutExtension}.filamat")
+            logger.lifecycle("matc: ${matFile.name} -> ${outFile.name}")
+            exec {
+                // Compiled for both backends (opengl default + vulkan, since
+                // this app does not hard-pin Engine.Backend) at the mobile
+                // feature tier — see points.mat's own header comment.
+                commandLine(
+                    filamentMatc.absolutePath,
+                    "-a", "opengl",
+                    "-a", "vulkan",
+                    "-p", "mobile",
+                    "-o", outFile.absolutePath,
+                    matFile.absolutePath,
+                )
+            }
+        }
+    }
+}
+
 android {
     namespace = "com.lidarscan.app"
     compileSdk = 36
@@ -69,6 +131,19 @@ android {
         }
     }
 
+    // B4: the compiled .filamat lands as a plain asset (materials/points.filamat),
+    // loaded at runtime via AssetManager + Engine.createMaterial(ByteBuffer) —
+    // no different from any other Filament Android sample's asset-based
+    // material loading.
+    sourceSets {
+        getByName("main") {
+            assets.srcDir(layout.buildDirectory.dir("generated/materials/assets"))
+            // B4 replay acceptance path: the bundled synthetic D6 capture
+            // (see assets/replay/synth.lscan/, sourced from S1's d6synth via
+            // desktop/evidence/synth.lscan — see NOTES.md).
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -104,6 +179,14 @@ android {
     }
 }
 
+// Every variant's asset-merge step needs the compiled .filamat(s) to exist
+// first; matched by name rather than a hard `tasks.named("mergeDebugAssets")`
+// reference so it also covers mergeReleaseAssets without duplicating this
+// block per build type.
+tasks.matching { it.name.matches(Regex("merge[A-Za-z]*Assets")) }.configureEach {
+    dependsOn(compileMaterials)
+}
+
 dependencies {
     implementation(project(":core"))
 
@@ -130,6 +213,12 @@ dependencies {
 
     // B2: D6 connect flow (CH340 USB-serial).
     implementation(libs.usbSerial)
+
+    // B4: live 3D point-cloud renderer (SurfaceView + Filament, see
+    // ui/capture/render/PointCloudView.kt). filament-utils-android is used
+    // for its Manipulator (orbit-camera math) only.
+    implementation(libs.filament.android)
+    implementation(libs.filament.utils.android)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

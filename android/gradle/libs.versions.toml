@@ -23,6 +23,16 @@ junit = "4.13.2"
 # mik3y's library is JitPack-distributed, not on Maven Central — see settings.gradle.kts
 # for the added repository.
 usbSerialForAndroid = "3.9.0"
+# B4: live 3D point-cloud renderer. The desktop app pins native Filament
+# v1.75.0 (desktop/tools/fetch_filament.sh), but Maven Central's
+# com.google.android.filament:filament-android AAR only goes up to v1.71.5
+# as of this task (confirmed via Maven Central's search API — no 1.72+
+# Android AAR is published there yet); v1.71.5 is what this pin follows, and
+# android/scripts/fetch_filament_tools.sh fetches the MATCHING v1.71.5 matc
+# (not desktop's v1.75.0 one — see that script's header for why a
+# version-matched matc matters). Bump this and the fetch script's default
+# together when a newer Android AAR ships.
+filament = "1.71.5"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -47,6 +57,11 @@ junit = { module = "junit:junit", version.ref = "junit" }
 # Named "usbSerial" (not "usb-serial-for-android") so the generated
 # libs.usbSerial accessor doesn't contain the Kotlin keyword "for".
 usbSerial = { module = "com.github.mik3y:usb-serial-for-android", version.ref = "usbSerialForAndroid" }
+# B4: Filament core (Engine/Renderer/View/Scene/VertexBuffer/MaterialInstance)
+# + filament-utils (Utils/KTXLoader/Manipulator — this app uses its
+# Manipulator for orbit-camera math only, not glTF loading).
+filament-android = { module = "com.google.android.filament:filament-android", version.ref = "filament" }
+filament-utils-android = { module = "com.google.android.filament:filament-utils-android", version.ref = "filament" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

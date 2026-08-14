@@ -39,12 +39,14 @@ import com.lidarscan.app.di.AppContainer
 fun SettingsRoute(
     container: AppContainer,
     onBack: () -> Unit,
+    onReplaySyntheticCapture: (projectId: String) -> Unit = {},
 ) {
     val viewModel: SettingsViewModel = viewModel(
         factory = viewModelFactory {
             initializer {
                 SettingsViewModel(
                     settingsRepository = container.settingsRepository,
+                    projectStore = container.projectStore,
                     storageLocation = container.projectsRootDir.absolutePath,
                 )
             }
@@ -59,6 +61,7 @@ fun SettingsRoute(
         onUnitsChange = viewModel::setUnits,
         onThemeModeChange = viewModel::setThemeMode,
         onUseFakeEngineChange = viewModel::setUseFakeEngine,
+        onReplaySyntheticCapture = { viewModel.replaySyntheticCapture(onReplaySyntheticCapture) },
         onBack = onBack,
     )
 }
@@ -72,6 +75,7 @@ fun SettingsScreen(
     onUnitsChange: (Units) -> Unit,
     onThemeModeChange: (ThemeMode) -> Unit,
     onUseFakeEngineChange: (Boolean) -> Unit,
+    onReplaySyntheticCapture: () -> Unit = {},
     onBack: () -> Unit,
 ) {
     Scaffold(
@@ -143,6 +147,34 @@ fun SettingsScreen(
                             enabled = nativeEngineAvailable,
                             onCheckedChange = onUseFakeEngineChange,
                         )
+                    }
+
+                    Spacer(Modifier.height(16.dp))
+                    androidx.compose.material3.HorizontalDivider()
+                    Spacer(Modifier.height(16.dp))
+
+                    // B4's acceptance path: drives the full Capture screen
+                    // (live 3D view, status strip, session summary) from the
+                    // bundled synthetic D6 capture (S1's d6synth output) via
+                    // ReplayEngineBridge — no hardware needed. Requires the
+                    // real native engine (same requirement as the switch
+                    // above); disabled with an explanatory line otherwise.
+                    Text("Replay synthetic capture", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        if (nativeEngineAvailable) {
+                            "Opens Capture driven by a bundled synthetic D6 recording — verifies the live 3D view end to end with no hardware."
+                        } else {
+                            "Native engine not loaded on this build — replay needs it, same as live capture."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    androidx.compose.material3.OutlinedButton(
+                        onClick = onReplaySyntheticCapture,
+                        enabled = nativeEngineAvailable,
+                    ) {
+                        Text("Replay synthetic capture")
                     }
                 }
             }
