@@ -456,3 +456,20 @@ NIC transport, real device clock, real scan pattern — must be re-run on the ph
 Mid-360 before M1. `scripts/run_soak.sh` is written so the identical soak can be pointed
 at the real device by swapping the config JSON, which is how S2 should be finally signed
 off.
+
+---
+
+## 10. Follow-up (2026-08-15): §8's three "closable in software now" items, closed
+
+All three of this section's own recommendations — link-drop/reconnect
+injection, an `.lvx2` replay source for the real scan pattern, and real-data
+E2 fixtures — have been implemented and verified against the real SDK2
+client. See **`FOLLOWUP_NOTES.md`** for the full write-up and
+**`FIXTURES.md`** for the fixture provenance/licensing detail. Headline: the
+link-fault work surfaced a genuinely new, load-bearing finding for A3 — the
+SDK **will not self-heal** from a device that loses its host configuration
+(e.g. a power-cycle), even though it keeps receiving that device's discovery
+broadcasts throughout; A3's health/reconnect design needs an explicit
+forced-reinit path, not just outage detection. `FOLLOWUP_NOTES.md` §1
+traces this to the exact line in `general_command_handler.cpp` that causes
+it.

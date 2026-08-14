@@ -26,6 +26,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <csignal>
+#include <ctime>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -36,6 +37,20 @@ using Clock = std::chrono::steady_clock;
 
 std::atomic<bool> g_run{true};
 void OnSignal(int) { g_run.store(false); }
+
+// Wall-clock timestamp, used only on the link-fault diagnostic lines so they
+// can be lined up against mid360_sim's own [sim] ... LINK DOWN/UP log by eye
+// without needing synchronized process start times.
+std::string NowWall() {
+  auto now = std::chrono::system_clock::now();
+  auto t = std::chrono::system_clock::to_time_t(now);
+  auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
+  char buf[16];
+  std::strftime(buf, sizeof(buf), "%H:%M:%S", std::localtime(&t));
+  char out[24];
+  std::snprintf(out, sizeof(out), "%s.%03lld", buf, static_cast<long long>(ms.count()));
+  return out;
+}
 
 struct Stats {
   std::atomic<uint64_t> point_packets{0};
@@ -60,6 +75,15 @@ struct Stats {
 
   std::atomic<uint32_t> handle{0};
   std::atomic<bool> connected{false};
+  // Reconnect-observability (A3 follow-up): does the SDK re-fire the
+  // info-change / info-push callbacks after a simulated link outage, or does
+  // it silently keep the original handle and just resume delivering data?
+  std::atomic<int> info_change_events{0};
+  std::atomic<int> info_push_events{0};
+  std::atomic<uint64_t> last_point_pkt_ms{0};    // steady-clock ms of most recent point packet
+  std::atomic<uint64_t> last_imu_pkt_ms{0};
+  std::atomic<uint64_t> last_push_ms{0};
+  std::atomic<uint64_t> t0_ms{0};
 
   // IMU sanity: mean |acc| should sit at ~1 g
   std::atomic<uint64_t> imu_acc_n{0};
@@ -69,6 +93,17 @@ struct Stats {
 
 Stats g_st;
 FILE* g_csv = nullptr;
+
+uint64_t SteadyMs() {
+  return static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch())
+          .count());
+}
+
+double SinceStartS(uint64_t now_ms) {
+  uint64_t t0 = g_st.t0_ms.load();
+  return t0 ? (now_ms - t0) / 1000.0 : 0.0;
+}
 
 size_t ResidentBytes() {
   mach_task_basic_info info{};
@@ -94,6 +129,7 @@ void PointCloudCallback(uint32_t handle, const uint8_t dev_type, LivoxLidarEther
   if (data == nullptr) return;
 
   g_st.point_packets.fetch_add(1, std::memory_order_relaxed);
+  g_st.last_point_pkt_ms.store(SteadyMs(), std::memory_order_relaxed);
 
   if (data->dot_num != 96) g_st.bad_dot_num.fetch_add(1, std::memory_order_relaxed);
   const uint16_t expect_len =
@@ -145,6 +181,7 @@ void PointCloudCallback(uint32_t handle, const uint8_t dev_type, LivoxLidarEther
 void ImuDataCallback(uint32_t, const uint8_t, LivoxLidarEthernetPacket* data, void*) {
   if (data == nullptr) return;
   g_st.imu_packets.fetch_add(1, std::memory_order_relaxed);
+  g_st.last_imu_pkt_ms.store(SteadyMs(), std::memory_order_relaxed);
   if (data->data_type == kLivoxLidarImuData && data->dot_num >= 1) {
     auto* s = reinterpret_cast<LivoxLidarImuRawPoint*>(data->data);
     double mag = std::sqrt(double(s->acc_x) * s->acc_x + double(s->acc_y) * s->acc_y +
@@ -175,12 +212,23 @@ void ImuEnableCallback(livox_status status, uint32_t handle, LivoxLidarAsyncCont
 
 void LidarInfoChangeCallback(const uint32_t handle, const LivoxLidarInfo* info, void*) {
   if (info == nullptr) return;
-  std::printf("[demo] CONNECTED handle=%u dev_type=%u sn=%s ip=%s\n", handle, info->dev_type,
-              info->sn, info->lidar_ip);
+  int n = g_st.info_change_events.fetch_add(1) + 1;
+  double t = SinceStartS(SteadyMs());
+  std::printf("[demo] %s CONNECTED (info-change event #%d, t=%.1fs) handle=%u dev_type=%u sn=%s "
+              "ip=%s\n",
+              NowWall().c_str(), n, t, handle, info->dev_type, info->sn, info->lidar_ip);
+  bool was_connected = g_st.connected.exchange(true);
+  if (n > 1) {
+    std::printf("[demo]   ^ this is a RE-fire of the info-change callback (was_connected=%d, "
+                "handle %s)\n",
+                was_connected, handle == g_st.handle.load() ? "UNCHANGED" : "CHANGED");
+  }
   g_st.handle.store(handle);
-  g_st.connected.store(true);
 
-  // Exactly what A3 will do on connect.
+  // Exactly what A3 will do on connect. Re-issued every time this callback
+  // fires -- if the SDK re-fires it after a reconnect, this is also how A3
+  // would discover it must re-apply config (the SDK does not remember these
+  // settings across a handle-losing event; see FOLLOWUP_NOTES.md).
   SetLivoxLidarPclDataType(handle, kLivoxLidarCartesianCoordinateHighData, PclTypeCallback,
                            nullptr);
   EnableLivoxLidarImuData(handle, ImuEnableCallback, nullptr);
@@ -190,6 +238,8 @@ void LidarInfoChangeCallback(const uint32_t handle, const LivoxLidarInfo* info, 
 void LidarInfoCallback(const uint32_t handle, const uint8_t dev_type, const char* info, void*) {
   static std::atomic<int> n{0};
   int i = n.fetch_add(1);
+  g_st.info_push_events.fetch_add(1, std::memory_order_relaxed);
+  g_st.last_push_ms.store(SteadyMs(), std::memory_order_relaxed);
   if (i < 2) {  // the push heartbeat carries a JSON blob; log the first couple
     std::printf("[demo] push state handle=%u dev_type=%u info=%.200s\n", handle, dev_type,
                 info ? info : "(null)");
@@ -201,7 +251,8 @@ void LidarInfoCallback(const uint32_t handle, const uint8_t dev_type, const char
 int main(int argc, char** argv) {
   if (argc < 2) {
     std::fprintf(stderr,
-                 "usage: %s <config.json> [--duration S] [--report-period S] [--csv FILE]\n",
+                 "usage: %s <config.json> [--duration S] [--report-period S] [--csv FILE] "
+                 "[--stall-threshold S]\n",
                  argv[0]);
     return 2;
   }
@@ -209,11 +260,13 @@ int main(int argc, char** argv) {
   int duration_s = 0;
   int report_s = 30;
   const char* csv_path = nullptr;
+  double stall_threshold_s = 1.0;  // gap in point-packet arrival that counts as "stalled"
   for (int i = 2; i < argc; ++i) {
     std::string a = argv[i];
     if (a == "--duration" && i + 1 < argc) duration_s = std::atoi(argv[++i]);
     else if (a == "--report-period" && i + 1 < argc) report_s = std::atoi(argv[++i]);
     else if (a == "--csv" && i + 1 < argc) csv_path = argv[++i];
+    else if (a == "--stall-threshold" && i + 1 < argc) stall_threshold_s = std::atof(argv[++i]);
   }
   if (csv_path) {
     g_csv = std::fopen(csv_path, "w");
@@ -241,6 +294,7 @@ int main(int argc, char** argv) {
     return 1;
   }
   std::printf("[demo] SDK2 started (config=%s), waiting for device...\n", cfg);
+  g_st.t0_ms.store(SteadyMs());
 
   auto t_start = Clock::now();
   auto t_last = t_start;
@@ -253,9 +307,69 @@ int main(int argc, char** argv) {
   uint64_t base_ts_ns = 0;
   double base_cpu = 0.0;
 
+  // Stream-gap (stall/resume) tracking -- the A3-relevant reconnect signal.
+  // The SDK exposes no explicit "link down" callback (checked against
+  // livox_lidar_api.h / livox_lidar_def.h: only info-change, the periodic
+  // info-push, and per-command timeouts exist), so a driver has to infer
+  // link health the same way this demo does: watch for the point stream
+  // (and/or the heartbeat) going quiet longer than expected.
+  bool point_stalled = false, imu_stalled = false, push_stalled = false;
+  uint64_t stall_started_ms = 0, imu_stall_started_ms = 0, push_stall_started_ms = 0;
+  int stall_count = 0;
+
   while (g_run.load()) {
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
     auto now = Clock::now();
+    uint64_t now_ms = SteadyMs();
+
+    if (measuring) {
+      double pt_gap = (g_st.last_point_pkt_ms.load() == 0)
+                          ? 0.0
+                          : (now_ms - g_st.last_point_pkt_ms.load()) / 1000.0;
+      if (!point_stalled && pt_gap > stall_threshold_s) {
+        point_stalled = true;
+        stall_started_ms = g_st.last_point_pkt_ms.load();
+        ++stall_count;
+        std::printf("[demo] %s STREAM STALLED: no point packets for >%.1fs (event #%d, t=%.1fs)\n",
+                    NowWall().c_str(), stall_threshold_s, stall_count, SinceStartS(now_ms));
+      } else if (point_stalled && pt_gap <= stall_threshold_s) {
+        point_stalled = false;
+        double gap_s = (g_st.last_point_pkt_ms.load() - stall_started_ms) / 1000.0;
+        std::printf("[demo] %s STREAM RESUMED: point packets flowing again after %.2fs gap "
+                    "(t=%.1fs)\n",
+                    NowWall().c_str(), gap_s, SinceStartS(now_ms));
+      }
+
+      double imu_gap = (g_st.last_imu_pkt_ms.load() == 0)
+                            ? 0.0
+                            : (now_ms - g_st.last_imu_pkt_ms.load()) / 1000.0;
+      if (!imu_stalled && imu_gap > stall_threshold_s) {
+        imu_stalled = true;
+        imu_stall_started_ms = g_st.last_imu_pkt_ms.load();
+        std::printf("[demo] %s IMU STALLED: no IMU packets for >%.1fs (t=%.1fs)\n",
+                    NowWall().c_str(), stall_threshold_s, SinceStartS(now_ms));
+      } else if (imu_stalled && imu_gap <= stall_threshold_s) {
+        imu_stalled = false;
+        double gap_s = (g_st.last_imu_pkt_ms.load() - imu_stall_started_ms) / 1000.0;
+        std::printf("[demo] %s IMU RESUMED after %.2fs gap (t=%.1fs)\n", NowWall().c_str(), gap_s,
+                    SinceStartS(now_ms));
+      }
+
+      double push_gap = (g_st.last_push_ms.load() == 0)
+                             ? 0.0
+                             : (now_ms - g_st.last_push_ms.load()) / 1000.0;
+      if (!push_stalled && push_gap > 2.5) {  // heartbeat is 1 Hz; 2.5 misses = stalled
+        push_stalled = true;
+        push_stall_started_ms = g_st.last_push_ms.load();
+        std::printf("[demo] %s HEARTBEAT STALLED: no push-state (0x0102) for >2.5s (t=%.1fs)\n",
+                    NowWall().c_str(), SinceStartS(now_ms));
+      } else if (push_stalled && push_gap <= 2.5) {
+        push_stalled = false;
+        double gap_s = (g_st.last_push_ms.load() - push_stall_started_ms) / 1000.0;
+        std::printf("[demo] %s HEARTBEAT RESUMED after %.2fs gap (t=%.1fs)\n", NowWall().c_str(),
+                    gap_s, SinceStartS(now_ms));
+      }
+    }
 
     if (!measuring && g_st.points.load() > 0) {
       measuring = true;
@@ -366,6 +480,10 @@ int main(int argc, char** argv) {
       "packets with bad length  : %" PRIu64 "\n"
       "RSS first / last / max   : %.1f / %.1f / %.1f MB\n"
       "process CPU time         : %.1f s (%.1f %% of one core)\n"
+      "info-change callback fires: %d  (1 = never re-fired; >1 = SDK treated a later event as a "
+      "new connection)\n"
+      "info-push (heartbeat) events: %d\n"
+      "point-stream stall events : %d\n"
       "=========================================================\n",
       total, pkts, pts, g_st.zero_points.load(), total > 0 ? pts / total : 0.0,
       total > 0 ? pkts / total : 0.0, imu, total > 0 ? imu / total : 0.0, imu_acc_mean,
@@ -375,7 +493,8 @@ int main(int argc, char** argv) {
       total - (last_ts - first_ts) / 1e9, g_st.ts_backwards.load(), g_st.dup_packets.load(),
       g_st.bad_dot_num.load(),
       g_st.bad_length.load(), rss_first / 1048576.0, rss_last / 1048576.0, rss_max / 1048576.0,
-      cpu_used, total > 0 ? cpu_used / total * 100.0 : 0.0);
+      cpu_used, total > 0 ? cpu_used / total * 100.0 : 0.0, g_st.info_change_events.load(),
+      g_st.info_push_events.load(), stall_count);
 
   if (g_csv) std::fclose(g_csv);
   LivoxLidarSdkUninit();

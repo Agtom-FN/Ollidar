@@ -27,6 +27,7 @@
 #include <cerrno>
 #include <chrono>
 #include <cinttypes>
+#include <ctime>
 #include <mutex>
 #include <cstdio>
 #include <cstdlib>
@@ -49,6 +50,23 @@ std::atomic<bool> g_run{true};
 bool g_verbose = false;
 void OnSignal(int) { g_run.store(false); }
 
+// Link-fault simulation. When false, every outbound socket write across all
+// five threads (detection, push/heartbeat, command acks, point, IMU) is
+// suppressed -- i.e. a cable pull, not a "the device stopped producing
+// data" fault. See LinkFaultThread.
+std::atomic<bool> g_link_up{true};
+
+std::string NowWall() {
+  auto now = std::chrono::system_clock::now();
+  auto t = std::chrono::system_clock::to_time_t(now);
+  auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
+  char buf[16];
+  std::strftime(buf, sizeof(buf), "%H:%M:%S", std::localtime(&t));
+  char out[24];
+  std::snprintf(out, sizeof(out), "%s.%03lld", buf, static_cast<long long>(ms.count()));
+  return out;
+}
+
 struct Options {
   std::string lidar_ip = "127.0.0.1";
   std::string host_ip = "127.0.0.1";  // fallback until the host tells us
@@ -66,6 +84,16 @@ struct Options {
   // always 0. "doc" reproduces the behaviour the published protocol table
   // describes (udp_cnt resets at frame start, frame_cnt increments).
   bool doc_frame_model = false;
+
+  // Link-drop / reconnect injection (A3 follow-up). See LinkFaultThread.
+  double drop_link_after_s = 0.0;  // 0 = disabled
+  double link_down_for_s = 0.0;
+  bool repeat_link_fault = false;
+  // On resume, also forget everything the host configured (host-IP dests,
+  // work mode, pcl type) -- simulates a power-cycle rather than a bare
+  // cable pull, so the SDK must re-discover and re-handshake, not just
+  // notice data resuming on a socket it already knows about.
+  bool restart_identity = false;
 };
 
 // ---------------------------------------------------------------------------
@@ -327,6 +355,12 @@ void CommandThread(int sock, Options opt, LidarState* st) {
       std::printf("[sim] dropped malformed control frame (%zd B)\n", n);
       continue;
     }
+    if (!g_link_up.load()) {
+      // Cable pull: the datagram physically never arrives, so we never reply.
+      // (We still read it off the socket above so the kernel receive buffer
+      // does not silently fill and start dropping other traffic.)
+      continue;
+    }
     if (h.cmd_type != kCmdTypeReq) continue;  // we only answer requests
     st->cmds_handled.fetch_add(1);
 
@@ -391,10 +425,12 @@ void DetectionThread(int sock, Options opt, uint16_t host_cmd_port) {
 
   uint32_t seq = 1;
   while (g_run.load()) {
-    std::vector<uint8_t> frame;
-    BuildCmdFrame(frame, seq++, kCmdIdSearch, kCmdTypeAck, kSenderLidar,
-                  reinterpret_cast<uint8_t*>(&d), sizeof(d));
-    ::sendto(sock, frame.data(), frame.size(), 0, reinterpret_cast<sockaddr*>(&dst), sizeof(dst));
+    if (g_link_up.load()) {
+      std::vector<uint8_t> frame;
+      BuildCmdFrame(frame, seq++, kCmdIdSearch, kCmdTypeAck, kSenderLidar,
+                    reinterpret_cast<uint8_t*>(&d), sizeof(d));
+      ::sendto(sock, frame.data(), frame.size(), 0, reinterpret_cast<sockaddr*>(&dst), sizeof(dst));
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
   }
 }
@@ -423,6 +459,8 @@ void PushMsgThread(int sock, Options opt, LidarState* st) {
     kv.AddScalar<uint16_t>(kKeyLidarDiagStatus, 0);
     kv.AddScalar<uint8_t>(kKeyFwType, 1);
     const std::vector<uint8_t>& body = kv.Finish();
+
+    if (!g_link_up.load()) continue;  // cable pull: heartbeat stops too
 
     std::vector<uint8_t> frame;
     BuildCmdFrame(frame, seq++, kCmdIdPushMsg, kCmdTypeReq, kSenderLidar, body.data(),
@@ -556,6 +594,13 @@ void PointThread(int sock, Options opt, LidarState* st) {
                          sizeof(uint64_t) + kPointsPerPacket * sizeof(CartesianHigh));
 
       ++packets;
+      if (!g_link_up.load()) {
+        // Cable pull: the device keeps digitizing and counting internally
+        // (a real ranging ASIC does not know the Ethernet link is down), but
+        // nothing reaches the wire. Same accounting path as injected loss.
+        st->point_packets_dropped.fetch_add(1);
+        continue;
+      }
       if (opt.loss_pct > 0.0 && unit(rng) * 100.0 < opt.loss_pct) {
         st->point_packets_dropped.fetch_add(1);
         continue;  // injected loss: counters advance, bytes never leave
@@ -635,6 +680,10 @@ void ImuThread(int sock, Options opt, LidarState* st) {
                          sizeof(uint64_t) + sizeof(ImuSample));
 
       ++n;
+      if (!g_link_up.load()) {
+        st->imu_packets_dropped.fetch_add(1);
+        continue;
+      }
       if (opt.loss_pct > 0.0 && unit(rng) * 100.0 < opt.loss_pct) {
         st->imu_packets_dropped.fetch_add(1);
         continue;
@@ -642,6 +691,77 @@ void ImuThread(int sock, Options opt, LidarState* st) {
       ::sendto(sock, pkt.data(), pkt.size(), 0, reinterpret_cast<sockaddr*>(&dst), sizeof(dst));
       st->imu_packets_sent.fetch_add(1);
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Link-fault injection (A3 follow-up: reconnect/health path).
+//
+// --drop-link-after SECS --link-down-for SECS [--repeat]
+//   Mid-stream, stop ALL outbound traffic on every port (point, IMU,
+//   heartbeat/push, discovery, and command-channel replies) for
+//   link-down-for seconds, then resume sending to the SAME destinations the
+//   host previously configured. This is a bare cable pull: the device's own
+//   session state survives, only the wire is cut.
+//
+// --restart-identity (modifier)
+//   On resume, additionally forget every host-taught destination and reset
+//   work mode / pcl type / imu-enable to power-on defaults before flipping
+//   the link back up -- a power-cycle, not just a cable pull. The host must
+//   re-discover and re-handshake (0x0101 / 0x0100) before any data flows
+//   again; a client that only watches for "did bytes stop" and resumes
+//   trusting the old session will get nothing back.
+// ---------------------------------------------------------------------------
+void SleepInterruptible(double seconds) {
+  double waited = 0.0;
+  while (waited < seconds && g_run.load()) {
+    double chunk = std::min(0.2, seconds - waited);
+    std::this_thread::sleep_for(std::chrono::duration<double>(chunk));
+    waited += chunk;
+  }
+}
+
+void LinkFaultThread(Options opt, LidarState* st) {
+  if (opt.drop_link_after_s <= 0.0) return;
+  while (g_run.load()) {
+    SleepInterruptible(opt.drop_link_after_s);
+    if (!g_run.load()) break;
+
+    std::printf("[sim] %s ===== LINK DOWN (simulated cable pull)%s =====\n", NowWall().c_str(),
+                opt.restart_identity ? ", will restart identity before resume" : "");
+    std::fflush(stdout);
+    g_link_up.store(false);
+
+    if (opt.restart_identity) {
+      // Held for the whole down window so any command datagram still in
+      // flight when the link drops is answered from the OLD state (matches
+      // a real cable pull: the device does not know it is about to lose
+      // power). The identity reset itself happens just before LINK UP,
+      // mimicking a power-cycle that occurs somewhere during the outage.
+    }
+
+    SleepInterruptible(opt.link_down_for_s);
+    if (!g_run.load()) break;
+
+    if (opt.restart_identity) {
+      std::lock_guard<std::mutex> lk(st->mtx);
+      st->have_state_dst = false;
+      st->have_point_dst = false;
+      st->have_imu_dst = false;
+      st->streaming.store(false);
+      st->imu_enabled.store(true);
+      st->pcl_data_type.store(1);
+      std::printf("[sim] %s identity reset (simulated power-cycle): host destinations "
+                  "forgotten, streaming stopped, work mode/pcl-type/imu-enable back to defaults\n",
+                  NowWall().c_str());
+      std::fflush(stdout);
+    }
+
+    g_link_up.store(true);
+    std::printf("[sim] %s ===== LINK UP (resumed) =====\n", NowWall().c_str());
+    std::fflush(stdout);
+
+    if (!opt.repeat_link_fault) break;
   }
 }
 
@@ -661,7 +781,15 @@ void Usage(const char* argv0) {
       "  --frame-model M      'real' (default, free-running udp_cnt, frame_cnt=0,\n"
       "                       as measured on a real Mid-360) or 'doc' (udp_cnt\n"
       "                       resets per frame, frame_cnt increments)\n"
-      "  --stats-period S     stats line period (default 30)\n",
+      "  --stats-period S     stats line period (default 30)\n"
+      "  --drop-link-after S  simulate a cable pull S seconds after start: stop ALL\n"
+      "                       outbound traffic (point/imu/heartbeat/discovery/cmd acks)\n"
+      "  --link-down-for S    how long the link stays down (required with --drop-link-after)\n"
+      "  --repeat             repeat the drop/resume cycle every --drop-link-after\n"
+      "                       seconds (measured from each resume) instead of once\n"
+      "  --restart-identity   on resume, also forget host-taught destinations and\n"
+      "                       reset work mode (simulates power-cycle, not just cable\n"
+      "                       pull -- forces re-discovery + re-handshake)\n",
       argv0);
 }
 
@@ -686,6 +814,10 @@ int main(int argc, char** argv) {
     else if (a == "--stats-period") opt.stats_period_s = std::stoi(next());
     else if (a == "--verbose") g_verbose = true;
     else if (a == "--frame-model") opt.doc_frame_model = (next() == "doc");
+    else if (a == "--drop-link-after") opt.drop_link_after_s = std::stod(next());
+    else if (a == "--link-down-for") opt.link_down_for_s = std::stod(next());
+    else if (a == "--repeat") opt.repeat_link_fault = true;
+    else if (a == "--restart-identity") opt.restart_identity = true;
     else { Usage(argv[0]); return a == "--help" ? 0 : 2; }
   }
 
@@ -718,11 +850,19 @@ int main(int argc, char** argv) {
       opt.host_ip.c_str(), host_cmd_port, opt.sn.c_str(), opt.point_rate, opt.imu_rate,
       opt.loss_pct, opt.jitter_ms, opt.doc_frame_model ? "doc" : "real");
 
+  if (opt.drop_link_after_s > 0.0) {
+    std::printf("[sim]   link-fault: drop after %.1fs, down for %.1fs%s%s\n",
+                opt.drop_link_after_s, opt.link_down_for_s,
+                opt.repeat_link_fault ? ", repeating" : ", once",
+                opt.restart_identity ? ", restart-identity on resume" : "");
+  }
+
   std::thread t_cmd(CommandThread, cmd_sock, opt, &st);
   std::thread t_det(DetectionThread, det_sock, opt, host_cmd_port);
   std::thread t_push(PushMsgThread, push_sock, opt, &st);
   std::thread t_point(PointThread, point_sock, opt, &st);
   std::thread t_imu(ImuThread, imu_sock, opt, &st);
+  std::thread t_fault(LinkFaultThread, opt, &st);
 
   auto start = Clock::now();
   auto last = start;
@@ -759,6 +899,7 @@ int main(int argc, char** argv) {
   t_push.join();
   t_point.join();
   t_imu.join();
+  t_fault.join();
 
   double total = std::chrono::duration<double>(Clock::now() - start).count();
   std::printf("[sim] final rss=%.1f MB, cpu=%.1fs (%.1f%% of one core)\n",

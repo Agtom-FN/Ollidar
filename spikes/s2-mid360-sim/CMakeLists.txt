@@ -37,6 +37,23 @@ find_package(Threads REQUIRED)
 target_link_libraries(mid360_sim PRIVATE Threads::Threads)
 
 # ---------------------------------------------------------------------------
+# lvx2_replay — streams a real Livox .lvx2 recording as real-time-paced UDP
+# packets in the same wire format mid360_sim emits (S2 follow-up, for A6).
+# Deliberately does NOT link the SDK, for the same reason mid360_sim doesn't.
+# ---------------------------------------------------------------------------
+add_executable(lvx2_replay
+  replay/lvx2_replay.cpp
+  ${SDK2_DIR}/3rdparty/FastCRC/FastCRCsw.cpp
+)
+target_include_directories(lvx2_replay PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/sim
+  ${SDK2_DIR}/include
+  ${SDK2_DIR}/3rdparty
+)
+target_compile_options(lvx2_replay PRIVATE -Wall -Wextra -Wno-unused-parameter)
+target_link_libraries(lvx2_replay PRIVATE Threads::Threads)
+
+# ---------------------------------------------------------------------------
 # sdk_client_demo — the real SDK2 client, used the way engine task A3 will.
 # ---------------------------------------------------------------------------
 add_executable(sdk_client_demo demo/sdk_client_demo.cpp)

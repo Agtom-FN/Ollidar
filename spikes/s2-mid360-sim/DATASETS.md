@@ -1,5 +1,11 @@
 # S2-sim — real Mid-360 recordings (stretch goal)
 
+> **Follow-up (2026-08-15):** small (<25 MB) slices of these datasets are now
+> extracted into `fixtures/` for E2's golden-dataset regression tests, and
+> `datasets/Indoor_sampledata.lvx2` can be streamed live via
+> `replay/lvx2_replay.cpp` against the real SDK2 client. See `FIXTURES.md`
+> and `FOLLOWUP_NOTES.md`.
+
 `datasets/` is **gitignored**. Re-fetch with the URLs below; every file is a direct
 HTTPS download with no account or click-through.
 

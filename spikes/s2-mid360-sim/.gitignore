@@ -13,3 +13,10 @@ results/*.csv
 log/
 .orig/
 .DS_Store
+
+# E2 fixtures (see FIXTURES.md). Only the CC-BY-4.0 Zenodo-derived fixture is
+# committable; everything derived from Livox's unlicensed sample data is
+# regenerate-only (scripts/make_fixtures.py) and gitignored here.
+fixtures/*.livoxdump
+!fixtures/outdoor_imu_ccby_6s.livoxdump
+fixtures/.zenodo_extract_tmp/
