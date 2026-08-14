@@ -1,0 +1,125 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "ENGINE_BUILD_TESTS": "ON"
+      }
+    },
+
+    {
+      "name": "windows-msvc-x64",
+      "displayName": "Windows x64 (MSVC / cl.exe)",
+      "description": "Run from a 'x64 Native Tools Command Prompt' or after ilammy/msvc-dev-cmd so cl.exe is on PATH.",
+      "inherits": "base",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-windows",
+        "CMAKE_CXX_COMPILER": "cl",
+        "CMAKE_C_COMPILER": "cl"
+      }
+    },
+
+    {
+      "name": "windows-clangcl-x64",
+      "displayName": "Windows x64 (clang-cl)",
+      "description": "Same x64-windows vcpkg triplet (its ports still build with cl.exe -- see TOOLCHAIN_NOTES.md on why that's fine to mix with a clang-cl-built engine); only the top-level project's compiler changes.",
+      "inherits": "base",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-windows",
+        "CMAKE_CXX_COMPILER": "clang-cl",
+        "CMAKE_C_COMPILER": "clang-cl"
+      }
+    },
+
+    {
+      "name": "macos-universal",
+      "displayName": "macOS universal (arm64 + x86_64)",
+      "inherits": "base",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "universal-osx",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake/triplets",
+        "CMAKE_OSX_ARCHITECTURES": "arm64;x86_64",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "12.0"
+      }
+    },
+
+    {
+      "name": "linux-x64",
+      "displayName": "Linux x86_64",
+      "inherits": "base",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-linux"
+      }
+    },
+
+    {
+      "name": "android-arm64",
+      "displayName": "Android arm64 (NDK, build-only)",
+      "description": "Requires ANDROID_NDK_HOME. Uses vcpkg's curated arm64-android triplet, which chainloads $ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake for both the vcpkg-built deps AND this project -- no separate -DCMAKE_TOOLCHAIN_FILE for the NDK is needed. Build-only: no Android host to run the test binary on in CI.",
+      "inherits": "base",
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "arm64-android",
+        "ANDROID_PLATFORM": "android-24",
+        "ENGINE_BUILD_TESTS": "ON"
+      }
+    }
+  ],
+
+  "buildPresets": [
+    { "name": "windows-msvc-x64", "configurePreset": "windows-msvc-x64" },
+    { "name": "windows-clangcl-x64", "configurePreset": "windows-clangcl-x64" },
+    { "name": "macos-universal", "configurePreset": "macos-universal" },
+    { "name": "linux-x64", "configurePreset": "linux-x64" },
+    { "name": "android-arm64", "configurePreset": "android-arm64" }
+  ],
+
+  "testPresets": [
+    {
+      "name": "windows-msvc-x64",
+      "configurePreset": "windows-msvc-x64",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "windows-clangcl-x64",
+      "configurePreset": "windows-clangcl-x64",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "macos-universal",
+      "configurePreset": "macos-universal",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "linux-x64",
+      "configurePreset": "linux-x64",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}

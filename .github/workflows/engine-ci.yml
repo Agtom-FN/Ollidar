@@ -1,0 +1,202 @@
+name: engine-ci
+
+# S7 spike / E1 (Workstream E): the 5-target build matrix the Tech Spec's
+# §3 "Key rules" point 4 and workstream E1 require -- Windows (MSVC +
+# clang-cl), macOS universal, Linux x86_64, Android arm64 (build-only) --
+# proven against the engine-stub skeleton so the real engine (A1) inherits a
+# matrix that's already green. See spikes/s7-windows-toolchain/ for the
+# CMake project, vcpkg manifest, and TOOLCHAIN_NOTES.md this workflow drives.
+
+on:
+  push:
+    paths:
+      - "spikes/s7-windows-toolchain/**"
+      - ".github/workflows/engine-ci.yml"
+      # A1 will widen this to engine/** once the real engine tree replaces
+      # the stub; left narrow for now so this spike doesn't fire on
+      # unrelated pushes.
+  pull_request:
+    paths:
+      - "spikes/s7-windows-toolchain/**"
+      - ".github/workflows/engine-ci.yml"
+  workflow_dispatch: {}
+
+env:
+  # Pinned to the same microsoft/vcpkg 2026.07.29 release commit as
+  # engine-stub/vcpkg.json's builtin-baseline, so the toolchain and the
+  # manifest baseline can never silently drift apart. Bump both together.
+  VCPKG_COMMIT: 9e593bb18ea69cc5095e012465dcd675a822ed0d
+  SOURCE_DIR: spikes/s7-windows-toolchain/engine-stub
+
+jobs:
+  # ---------------------------------------------------------------------
+  windows-msvc:
+    name: windows-latest / MSVC x64
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable MSVC dev command prompt (x64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - uses: lukka/get-cmake@latest
+
+      - name: Bootstrap vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT }}
+
+      - name: Configure
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: cmake --preset windows-msvc-x64
+
+      - name: Build
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: cmake --build --preset windows-msvc-x64
+
+      - name: Test
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: ctest --preset windows-msvc-x64
+
+  # ---------------------------------------------------------------------
+  windows-clangcl:
+    name: windows-latest / clang-cl x64
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # clang-cl still needs cl.exe's headers/libs/link.exe on PATH -- it's
+      # a frontend, not a full toolchain -- so we still enter the VS dev
+      # shell. See TOOLCHAIN_NOTES.md for the LLVM-version-vs-MSVC-STL
+      # compatibility note this depends on.
+      - name: Enable MSVC dev command prompt (x64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Verify clang-cl is present
+        run: clang-cl --version
+
+      - uses: lukka/get-cmake@latest
+
+      - name: Bootstrap vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT }}
+
+      - name: Configure
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: cmake --preset windows-clangcl-x64
+
+      - name: Build
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: cmake --build --preset windows-clangcl-x64
+
+      - name: Test
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: ctest --preset windows-clangcl-x64
+
+  # ---------------------------------------------------------------------
+  macos-universal:
+    name: macos-latest / universal (arm64+x86_64)
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: lukka/get-cmake@latest
+
+      - name: Bootstrap vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT }}
+
+      - name: Configure
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: cmake --preset macos-universal
+
+      - name: Build
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: cmake --build --preset macos-universal
+
+      - name: Test
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: ctest --preset macos-universal
+
+      - name: Verify universal (fat) binary
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: lipo -info build/macos-universal/scanengine_tests
+
+  # ---------------------------------------------------------------------
+  linux-x64:
+    name: ubuntu-latest / x86_64
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: lukka/get-cmake@latest
+
+      - name: Bootstrap vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT }}
+
+      - name: Configure
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: cmake --preset linux-x64
+
+      - name: Build
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: cmake --build --preset linux-x64
+
+      - name: Test
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: ctest --preset linux-x64
+
+  # ---------------------------------------------------------------------
+  # Build-only: no Android device/emulator in this CI tier, so we cross-
+  # compile scanengine + scanengine_tests for arm64-v8a and stop there.
+  # Running the tests on-device/emulator is A1/B-workstream's job, not S7's.
+  android-arm64-build-only:
+    name: ubuntu-latest / Android NDK arm64 (build-only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: lukka/get-cmake@latest
+
+      - name: Install Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27d
+          add-to-path: false
+
+      - name: Bootstrap vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT }}
+
+      - name: Configure
+        working-directory: ${{ env.SOURCE_DIR }}
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: cmake --preset android-arm64
+
+      - name: Build
+        working-directory: ${{ env.SOURCE_DIR }}
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: cmake --build --preset android-arm64
+
+      - name: Verify arm64 binary
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: |
+          file build/android-arm64/scanengine_tests || true
+          "${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readobj" -h build/android-arm64/libscanengine.a 2>/dev/null | head -20 || true

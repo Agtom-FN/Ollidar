@@ -1,0 +1,12 @@
+{
+  "name": "scanengine-stub",
+  "version": "0.1.0",
+  "description": "S7 spike: minimal scanengine skeleton — proves the vcpkg dependency-resolution path used by the real engine (Eigen now; GTSAM/Boost/Livox-SDK2/Filament follow in A1 per TOOLCHAIN_NOTES.md's onboarding order).",
+  "builtin-baseline": "9e593bb18ea69cc5095e012465dcd675a822ed0d",
+  "dependencies": [
+    {
+      "name": "eigen3",
+      "version>=": "3.4.0"
+    }
+  ]
+}
