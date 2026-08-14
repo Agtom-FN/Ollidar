@@ -52,6 +52,7 @@ fun ProjectDetailRoute(
     container: AppContainer,
     projectId: String,
     onBack: () -> Unit,
+    onOpenCapture: (String) -> Unit,
 ) {
     val viewModel: ProjectDetailViewModel = viewModel(
         factory = viewModelFactory {
@@ -60,7 +61,7 @@ fun ProjectDetailRoute(
     )
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
-    ProjectDetailScreen(uiState = uiState, onBack = onBack)
+    ProjectDetailScreen(uiState = uiState, onBack = onBack, onOpenCapture = onOpenCapture)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -68,6 +69,7 @@ fun ProjectDetailRoute(
 fun ProjectDetailScreen(
     uiState: ProjectDetailUiState,
     onBack: () -> Unit,
+    onOpenCapture: (String) -> Unit = {},
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -104,6 +106,7 @@ fun ProjectDetailScreen(
                 onArrivesWith = { workstream ->
                     scope.launch { snackbarHostState.showSnackbar("Arrives with $workstream") }
                 },
+                onOpenCapture = { onOpenCapture(uiState.project.id) },
             )
         }
     }
@@ -114,6 +117,7 @@ private fun ProjectDetailContent(
     project: Project,
     modifier: Modifier = Modifier,
     onArrivesWith: (String) -> Unit,
+    onOpenCapture: () -> Unit,
 ) {
     Column(
         modifier = modifier
@@ -127,13 +131,7 @@ private fun ProjectDetailContent(
         Spacer(Modifier.height(8.dp))
 
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            StubNavCard(
-                icon = Icons.Filled.CameraAlt,
-                title = "Capture",
-                subtitle = "Live 3D / AR overlay, live-SLAM vs record-only, RTK status strip.",
-                arrivesWith = "B4",
-                onClick = { onArrivesWith("B4") },
-            )
+            CaptureNavCard(onClick = onOpenCapture)
             StubNavCard(
                 icon = Icons.Filled.Build,
                 title = "Processing",
@@ -180,6 +178,32 @@ private fun ManifestRow(label: String, value: String) {
     ) {
         Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(value, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+@Composable
+private fun CaptureNavCard(onClick: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onClick,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.CameraAlt, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(12.dp))
+                Text("Capture", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(6.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Connect the D6, start/stop a real recording session, live pts/s and recording " +
+                    "size. Live 3D / AR overlay preview arrives with B4.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 

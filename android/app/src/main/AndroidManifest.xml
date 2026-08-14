@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- B2: D6 connect flow (Tech Spec §3.1 Android row — USB-C OTG serial). -->
+    <uses-feature android:name="android.hardware.usb.host" android:required="true" />
+
     <application
         android:name=".LidarScanApplication"
         android:allowBackup="true"
@@ -19,6 +22,18 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!-- B2: launch straight into the app when a D6/CH340 adapter is
+                 plugged in via USB-C OTG (Tech Spec §3.1's "permission/attach
+                 flow"). The already-running case (app in foreground) is
+                 handled by MainActivity's dynamically-registered receiver,
+                 not this filter — this one only fires a cold/background launch. -->
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
+                android:resource="@xml/usb_device_filter" />
         </activity>
     </application>
 

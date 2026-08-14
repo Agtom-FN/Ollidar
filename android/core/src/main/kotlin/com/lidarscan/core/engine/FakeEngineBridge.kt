@@ -38,6 +38,9 @@ class FakeEngineBridge(
     private val _events = MutableSharedFlow<EngineEvent>(extraBufferCapacity = 64)
     override val events: SharedFlow<EngineEvent> = _events.asSharedFlow()
 
+    private val _deviceHealth = MutableStateFlow<DeviceHealth?>(null)
+    override val deviceHealth: StateFlow<DeviceHealth?> = _deviceHealth.asStateFlow()
+
     private var statsJob: Job? = null
     private var pointsCaptured = 0L
     private var elapsedMillis = 0L
@@ -54,6 +57,7 @@ class FakeEngineBridge(
     override suspend fun disconnect() {
         stopCapture()
         _connectionState.value = ConnectionState.DISCONNECTED
+        _deviceHealth.value = null
         _events.emit(EngineEvent.StatusMessage("Disconnected"))
     }
 
@@ -109,6 +113,21 @@ class FakeEngineBridge(
             pointsCaptured += FAKE_POINTS_PER_TICK
             elapsedMillis += STATS_TICK_MS
             _events.emit(EngineEvent.CaptureStats(pointsCaptured, elapsedMillis))
+            _deviceHealth.value = DeviceHealth(
+                id = 0,
+                kind = 1, // SCAN_DEVICE_D6
+                state = 3, // SCAN_DEV_STREAMING
+                lastError = 0,
+                bytesIn = pointsCaptured * 16,
+                packetsOk = pointsCaptured / 96,
+                packetsBad = 0,
+                pointsOut = pointsCaptured,
+                drops = 0,
+                pointsPerSec = FAKE_POINTS_PER_TICK * (1000.0 / STATS_TICK_MS),
+                rotationHz = FAKE_ROTATION_HZ,
+                checksumPassRate = FAKE_CHECKSUM_PASS_RATE,
+                tLastDataNs = elapsedMillis * 1_000_000L,
+            )
         }
     }
 
@@ -116,5 +135,7 @@ class FakeEngineBridge(
         const val FAKE_CONNECT_DELAY_MS = 400L
         const val STATS_TICK_MS = 500L
         const val FAKE_POINTS_PER_TICK = 20_000L
+        const val FAKE_ROTATION_HZ = 10.0
+        const val FAKE_CHECKSUM_PASS_RATE = 0.999
     }
 }

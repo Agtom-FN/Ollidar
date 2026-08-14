@@ -29,6 +29,18 @@ interface EngineBridge {
     /** Point/status/error stream for UI surfaces like the capture status strip and health panels (B2/B4). */
     val events: Flow<EngineEvent>
 
+    /**
+     * Latest known health for the connected device, or `null` before a first
+     * sample arrives / after disconnect. Backs B2's connect-wizard health
+     * panel (pts/s, rotation Hz, checksum pass rate, state). Mirrors the C
+     * ABI's `scan_device_health` field-for-field (see
+     * `engine/capi/scanengine_c.h`) — [RealEngineBridge] polls
+     * `scan_engine_device_health` on an interval (that struct has no
+     * corresponding push event on the wire today; see android/NOTES.md's
+     * "C ABI gaps" for why) and republishes it here.
+     */
+    val deviceHealth: StateFlow<DeviceHealth?>
+
     /** Opens the sensor transport and brings the engine to [ConnectionState.CONNECTED]. */
     suspend fun connect(target: EngineTarget): Result<Unit>
 
@@ -82,3 +94,28 @@ sealed interface EngineEvent {
 
     data class Fault(val code: String, val message: String) : EngineEvent
 }
+
+/**
+ * Field-for-field mirror of `scan_device_health` (`engine/capi/scanengine_c.h`).
+ * Deliberately plain `Int`s for [kind]/[state]/[lastError] rather than a
+ * `:core`-owned enum — those numeric spaces belong to the C ABI (`SCAN_DEVICE_*`
+ * / `SCAN_DEV_*` / `scan_error_t`), which `:core` has no dependency on and
+ * should not re-encode. UI code that needs labels maps these ints against
+ * the ABI's constants (see `com.lidarscan.app.engine.ScanEngineNative`'s
+ * companion constants).
+ */
+data class DeviceHealth(
+    val id: Int,
+    val kind: Int,
+    val state: Int,
+    val lastError: Int,
+    val bytesIn: Long,
+    val packetsOk: Long,
+    val packetsBad: Long,
+    val pointsOut: Long,
+    val drops: Long,
+    val pointsPerSec: Double,
+    val rotationHz: Double,
+    val checksumPassRate: Double,
+    val tLastDataNs: Long,
+)

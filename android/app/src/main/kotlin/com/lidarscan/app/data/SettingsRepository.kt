@@ -20,12 +20,14 @@ class SettingsRepository(private val context: Context) {
     private object Keys {
         val UNITS = stringPreferencesKey("units")
         val THEME_MODE = stringPreferencesKey("theme_mode")
+        val USE_FAKE_ENGINE = androidx.datastore.preferences.core.booleanPreferencesKey("use_fake_engine")
     }
 
     val settings: Flow<AppSettings> = context.settingsDataStore.data.map { prefs ->
         AppSettings(
             units = prefs[Keys.UNITS]?.toEnumOrNull<Units>() ?: Units.METERS,
             themeMode = prefs[Keys.THEME_MODE]?.toEnumOrNull<ThemeMode>() ?: ThemeMode.SYSTEM,
+            useFakeEngine = prefs[Keys.USE_FAKE_ENGINE] ?: false,
         )
     }
 
@@ -35,6 +37,10 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setThemeMode(themeMode: ThemeMode) {
         context.settingsDataStore.edit { it[Keys.THEME_MODE] = themeMode.name }
+    }
+
+    suspend fun setUseFakeEngine(useFakeEngine: Boolean) {
+        context.settingsDataStore.edit { it[Keys.USE_FAKE_ENGINE] = useFakeEngine }
     }
 }
 

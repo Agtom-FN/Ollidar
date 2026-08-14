@@ -1,0 +1,662 @@
+[
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -Dscanengine_jni_EXPORTS -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=gnu++20 -fPIC -Wall -Wextra -pthread -o CMakeFiles/scanengine_jni.dir/scanengine_jni.cpp.o -c /Users/admin/lidarscan/android/app/src/main/cpp/scanengine_jni.cpp",
+  "file": "/Users/admin/lidarscan/android/app/src/main/cpp/scanengine_jni.cpp",
+  "output": "CMakeFiles/scanengine_jni.dir/scanengine_jni.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/cloud/display_params.cpp.o -c /Users/admin/lidarscan/engine/src/cloud/display_params.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/cloud/display_params.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/cloud/display_params.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/cloud/page_store.cpp.o -c /Users/admin/lidarscan/engine/src/cloud/page_store.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/cloud/page_store.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/cloud/page_store.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/core/engine.cpp.o -c /Users/admin/lidarscan/engine/src/core/engine.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/core/engine.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/core/engine.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/core/error.cpp.o -c /Users/admin/lidarscan/engine/src/core/error.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/core/error.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/core/error.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/core/event_bus.cpp.o -c /Users/admin/lidarscan/engine/src/core/event_bus.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/core/event_bus.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/core/event_bus.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/core/log.cpp.o -c /Users/admin/lidarscan/engine/src/core/log.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/core/log.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/core/log.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/core/types.cpp.o -c /Users/admin/lidarscan/engine/src/core/types.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/core/types.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/core/types.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/drivers/d6/d6_driver.cpp.o -c /Users/admin/lidarscan/engine/src/drivers/d6/d6_driver.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/drivers/d6/d6_driver.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/drivers/d6/d6_driver.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/drivers/d6/d6_parser.cpp.o -c /Users/admin/lidarscan/engine/src/drivers/d6/d6_parser.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/drivers/d6/d6_parser.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/drivers/d6/d6_parser.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/drivers/mid360/mid360_driver.cpp.o -c /Users/admin/lidarscan/engine/src/drivers/mid360/mid360_driver.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/drivers/mid360/mid360_driver.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/drivers/mid360/mid360_driver.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/drivers/mid360/mid360_packets.cpp.o -c /Users/admin/lidarscan/engine/src/drivers/mid360/mid360_packets.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/drivers/mid360/mid360_packets.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/drivers/mid360/mid360_packets.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/drivers/mid360/mid360_raw_udp.cpp.o -c /Users/admin/lidarscan/engine/src/drivers/mid360/mid360_raw_udp.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/drivers/mid360/mid360_raw_udp.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/drivers/mid360/mid360_raw_udp.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/drivers/mid360/mid360_sdk2.cpp.o -c /Users/admin/lidarscan/engine/src/drivers/mid360/mid360_sdk2.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/drivers/mid360/mid360_sdk2.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/drivers/mid360/mid360_sdk2.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/export/exporter.cpp.o -c /Users/admin/lidarscan/engine/src/export/exporter.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/export/exporter.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/export/exporter.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/export/las_writer.cpp.o -c /Users/admin/lidarscan/engine/src/export/las_writer.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/export/las_writer.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/export/las_writer.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/export/pcd_writer.cpp.o -c /Users/admin/lidarscan/engine/src/export/pcd_writer.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/export/pcd_writer.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/export/pcd_writer.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/export/ply_writer.cpp.o -c /Users/admin/lidarscan/engine/src/export/ply_writer.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/export/ply_writer.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/export/ply_writer.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/gnss/crs.cpp.o -c /Users/admin/lidarscan/engine/src/gnss/crs.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/gnss/crs.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/gnss/crs.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/gnss/georef.cpp.o -c /Users/admin/lidarscan/engine/src/gnss/georef.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/gnss/georef.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/gnss/georef.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/gnss/gnss_source.cpp.o -c /Users/admin/lidarscan/engine/src/gnss/gnss_source.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/gnss/gnss_source.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/gnss/gnss_source.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/gnss/nmea.cpp.o -c /Users/admin/lidarscan/engine/src/gnss/nmea.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/gnss/nmea.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/gnss/nmea.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/gnss/ntrip_client.cpp.o -c /Users/admin/lidarscan/engine/src/gnss/ntrip_client.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/gnss/ntrip_client.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/gnss/ntrip_client.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/gnss/rtcm3.cpp.o -c /Users/admin/lidarscan/engine/src/gnss/rtcm3.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/gnss/rtcm3.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/gnss/rtcm3.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/poses/external_pose_source.cpp.o -c /Users/admin/lidarscan/engine/src/poses/external_pose_source.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/poses/external_pose_source.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/poses/external_pose_source.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/record/lscan.cpp.o -c /Users/admin/lidarscan/engine/src/record/lscan.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/record/lscan.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/record/lscan.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/record/replay.cpp.o -c /Users/admin/lidarscan/engine/src/record/replay.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/record/replay.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/record/replay.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/record/zip.cpp.o -c /Users/admin/lidarscan/engine/src/record/zip.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/record/zip.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/record/zip.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/slam/eskf.cpp.o -c /Users/admin/lidarscan/engine/src/slam/eskf.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/slam/eskf.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/slam/eskf.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/slam/ivox.cpp.o -c /Users/admin/lidarscan/engine/src/slam/ivox.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/slam/ivox.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/slam/ivox.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/slam/lio.cpp.o -c /Users/admin/lidarscan/engine/src/slam/lio.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/slam/lio.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/slam/lio.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/slam/lio_math.cpp.o -c /Users/admin/lidarscan/engine/src/slam/lio_math.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/slam/lio_math.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/slam/lio_math.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/slam/lio_pose_source.cpp.o -c /Users/admin/lidarscan/engine/src/slam/lio_pose_source.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/slam/lio_pose_source.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/slam/lio_pose_source.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/slam/post/cloud_filter.cpp.o -c /Users/admin/lidarscan/engine/src/slam/post/cloud_filter.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/slam/post/cloud_filter.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/slam/post/cloud_filter.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/slam/post/loop_closure.cpp.o -c /Users/admin/lidarscan/engine/src/slam/post/loop_closure.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/slam/post/loop_closure.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/slam/post/loop_closure.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/slam/post/pose_graph.cpp.o -c /Users/admin/lidarscan/engine/src/slam/post/pose_graph.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/slam/post/pose_graph.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/slam/post/pose_graph.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/slam/post/post_pipeline.cpp.o -c /Users/admin/lidarscan/engine/src/slam/post/post_pipeline.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/slam/post/post_pipeline.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/slam/post/post_pipeline.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/slam/post/progress.cpp.o -c /Users/admin/lidarscan/engine/src/slam/post/progress.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/slam/post/progress.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/slam/post/progress.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/slam/post/scan_context.cpp.o -c /Users/admin/lidarscan/engine/src/slam/post/scan_context.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/slam/post/scan_context.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/slam/post/scan_context.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/slam/pushbroom/mount_calibration.cpp.o -c /Users/admin/lidarscan/engine/src/slam/pushbroom/mount_calibration.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/slam/pushbroom/mount_calibration.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/slam/pushbroom/mount_calibration.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/slam/pushbroom/pushbroom_assembler.cpp.o -c /Users/admin/lidarscan/engine/src/slam/pushbroom/pushbroom_assembler.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/slam/pushbroom/pushbroom_assembler.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/slam/pushbroom/pushbroom_assembler.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/timesync/imu_ingest.cpp.o -c /Users/admin/lidarscan/engine/src/timesync/imu_ingest.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/timesync/imu_ingest.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/timesync/imu_ingest.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/timesync/min_delay_estimator.cpp.o -c /Users/admin/lidarscan/engine/src/timesync/min_delay_estimator.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/timesync/min_delay_estimator.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/timesync/min_delay_estimator.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/timesync/offset_estimator.cpp.o -c /Users/admin/lidarscan/engine/src/timesync/offset_estimator.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/timesync/offset_estimator.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/timesync/offset_estimator.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/transport/udp_source.cpp.o -c /Users/admin/lidarscan/engine/src/transport/udp_source.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/transport/udp_source.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/transport/udp_source.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/transport/usb_serial_source.cpp.o -c /Users/admin/lidarscan/engine/src/transport/usb_serial_source.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/transport/usb_serial_source.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/transport/usb_serial_source.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/capi/scanengine_c.cpp.o -c /Users/admin/lidarscan/engine/capi/scanengine_c.cpp",
+  "file": "/Users/admin/lidarscan/engine/capi/scanengine_c.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/capi/scanengine_c.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -std=c++03 -pedantic -Wall -Wextra -Wundef -Wcast-align -Wchar-subscripts -Wnon-virtual-dtor -Wunused-local-typedefs -Wpointer-arith -Wwrite-strings -Wformat-security -Wshorten-64-to-32 -Wenum-conversion -Wc++11-extensions -Wdouble-promotion -Wshadow -Wno-psabi -Wno-variadic-macros -Wno-long-long -fno-check-new -fno-common -fstrict-aliasing -Qunused-arguments -ansi -pie -fPIE -fno-limit-debug-info  -std=c++20 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/single.cpp.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/single.cpp",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/single.cpp",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/single.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -std=c++03 -pedantic -Wall -Wextra -Wundef -Wcast-align -Wchar-subscripts -Wnon-virtual-dtor -Wunused-local-typedefs -Wpointer-arith -Wwrite-strings -Wformat-security -Wshorten-64-to-32 -Wenum-conversion -Wc++11-extensions -Wdouble-promotion -Wshadow -Wno-psabi -Wno-variadic-macros -Wno-long-long -fno-check-new -fno-common -fstrict-aliasing -Qunused-arguments -ansi -pie -fPIE -fno-limit-debug-info  -std=c++20 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/double.cpp.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/double.cpp",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/double.cpp",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/double.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -std=c++03 -pedantic -Wall -Wextra -Wundef -Wcast-align -Wchar-subscripts -Wnon-virtual-dtor -Wunused-local-typedefs -Wpointer-arith -Wwrite-strings -Wformat-security -Wshorten-64-to-32 -Wenum-conversion -Wc++11-extensions -Wdouble-promotion -Wshadow -Wno-psabi -Wno-variadic-macros -Wno-long-long -fno-check-new -fno-common -fstrict-aliasing -Qunused-arguments -ansi -pie -fPIE -fno-limit-debug-info  -std=c++20 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/complex_single.cpp.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/complex_single.cpp",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/complex_single.cpp",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/complex_single.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -std=c++03 -pedantic -Wall -Wextra -Wundef -Wcast-align -Wchar-subscripts -Wnon-virtual-dtor -Wunused-local-typedefs -Wpointer-arith -Wwrite-strings -Wformat-security -Wshorten-64-to-32 -Wenum-conversion -Wc++11-extensions -Wdouble-promotion -Wshadow -Wno-psabi -Wno-variadic-macros -Wno-long-long -fno-check-new -fno-common -fstrict-aliasing -Qunused-arguments -ansi -pie -fPIE -fno-limit-debug-info  -std=c++20 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/complex_double.cpp.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/complex_double.cpp",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/complex_double.cpp",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/complex_double.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -std=c++03 -pedantic -Wall -Wextra -Wundef -Wcast-align -Wchar-subscripts -Wnon-virtual-dtor -Wunused-local-typedefs -Wpointer-arith -Wwrite-strings -Wformat-security -Wshorten-64-to-32 -Wenum-conversion -Wc++11-extensions -Wdouble-promotion -Wshadow -Wno-psabi -Wno-variadic-macros -Wno-long-long -fno-check-new -fno-common -fstrict-aliasing -Qunused-arguments -ansi -pie -fPIE -fno-limit-debug-info  -std=c++20 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/xerbla.cpp.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/xerbla.cpp",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/xerbla.cpp",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/xerbla.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/srotm.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/srotm.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/srotm.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/srotm.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/srotmg.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/srotmg.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/srotmg.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/srotmg.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/drotm.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/drotm.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/drotm.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/drotm.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/drotmg.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/drotmg.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/drotmg.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/drotmg.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/lsame.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/lsame.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/lsame.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/lsame.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/dspmv.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/dspmv.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/dspmv.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/dspmv.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/ssbmv.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/ssbmv.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/ssbmv.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/ssbmv.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/chbmv.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/chbmv.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/chbmv.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/chbmv.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/sspmv.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/sspmv.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/sspmv.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/sspmv.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/zhbmv.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/zhbmv.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/zhbmv.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/zhbmv.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/chpmv.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/chpmv.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/chpmv.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/chpmv.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/dsbmv.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/dsbmv.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/dsbmv.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/dsbmv.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/zhpmv.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/zhpmv.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/zhpmv.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/zhpmv.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/dtbmv.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/dtbmv.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/dtbmv.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/dtbmv.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/stbmv.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/stbmv.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/stbmv.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/stbmv.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/ctbmv.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/ctbmv.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/ctbmv.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/ctbmv.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/ztbmv.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/ztbmv.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/ztbmv.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/ztbmv.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/d_cnjg.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/d_cnjg.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/d_cnjg.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/d_cnjg.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/r_cnjg.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/r_cnjg.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/r_cnjg.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/r_cnjg.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/complexdots.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/complexdots.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/complexdots.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas_static.dir/f2c/complexdots.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Deigen_blas_EXPORTS -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -std=c++03 -pedantic -Wall -Wextra -Wundef -Wcast-align -Wchar-subscripts -Wnon-virtual-dtor -Wunused-local-typedefs -Wpointer-arith -Wwrite-strings -Wformat-security -Wshorten-64-to-32 -Wenum-conversion -Wc++11-extensions -Wdouble-promotion -Wshadow -Wno-psabi -Wno-variadic-macros -Wno-long-long -fno-check-new -fno-common -fstrict-aliasing -Qunused-arguments -ansi -pie -fPIE -fno-limit-debug-info  -std=c++20 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/single.cpp.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/single.cpp",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/single.cpp",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/single.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Deigen_blas_EXPORTS -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -std=c++03 -pedantic -Wall -Wextra -Wundef -Wcast-align -Wchar-subscripts -Wnon-virtual-dtor -Wunused-local-typedefs -Wpointer-arith -Wwrite-strings -Wformat-security -Wshorten-64-to-32 -Wenum-conversion -Wc++11-extensions -Wdouble-promotion -Wshadow -Wno-psabi -Wno-variadic-macros -Wno-long-long -fno-check-new -fno-common -fstrict-aliasing -Qunused-arguments -ansi -pie -fPIE -fno-limit-debug-info  -std=c++20 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/double.cpp.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/double.cpp",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/double.cpp",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/double.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Deigen_blas_EXPORTS -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -std=c++03 -pedantic -Wall -Wextra -Wundef -Wcast-align -Wchar-subscripts -Wnon-virtual-dtor -Wunused-local-typedefs -Wpointer-arith -Wwrite-strings -Wformat-security -Wshorten-64-to-32 -Wenum-conversion -Wc++11-extensions -Wdouble-promotion -Wshadow -Wno-psabi -Wno-variadic-macros -Wno-long-long -fno-check-new -fno-common -fstrict-aliasing -Qunused-arguments -ansi -pie -fPIE -fno-limit-debug-info  -std=c++20 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/complex_single.cpp.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/complex_single.cpp",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/complex_single.cpp",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/complex_single.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Deigen_blas_EXPORTS -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -std=c++03 -pedantic -Wall -Wextra -Wundef -Wcast-align -Wchar-subscripts -Wnon-virtual-dtor -Wunused-local-typedefs -Wpointer-arith -Wwrite-strings -Wformat-security -Wshorten-64-to-32 -Wenum-conversion -Wc++11-extensions -Wdouble-promotion -Wshadow -Wno-psabi -Wno-variadic-macros -Wno-long-long -fno-check-new -fno-common -fstrict-aliasing -Qunused-arguments -ansi -pie -fPIE -fno-limit-debug-info  -std=c++20 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/complex_double.cpp.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/complex_double.cpp",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/complex_double.cpp",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/complex_double.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Deigen_blas_EXPORTS -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -std=c++03 -pedantic -Wall -Wextra -Wundef -Wcast-align -Wchar-subscripts -Wnon-virtual-dtor -Wunused-local-typedefs -Wpointer-arith -Wwrite-strings -Wformat-security -Wshorten-64-to-32 -Wenum-conversion -Wc++11-extensions -Wdouble-promotion -Wshadow -Wno-psabi -Wno-variadic-macros -Wno-long-long -fno-check-new -fno-common -fstrict-aliasing -Qunused-arguments -ansi -pie -fPIE -fno-limit-debug-info  -std=c++20 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/xerbla.cpp.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/xerbla.cpp",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/xerbla.cpp",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/xerbla.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Deigen_blas_EXPORTS -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/srotm.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/srotm.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/srotm.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/srotm.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Deigen_blas_EXPORTS -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/srotmg.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/srotmg.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/srotmg.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/srotmg.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Deigen_blas_EXPORTS -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/drotm.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/drotm.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/drotm.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/drotm.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Deigen_blas_EXPORTS -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/drotmg.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/drotmg.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/drotmg.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/drotmg.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Deigen_blas_EXPORTS -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/lsame.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/lsame.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/lsame.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/lsame.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Deigen_blas_EXPORTS -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/dspmv.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/dspmv.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/dspmv.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/dspmv.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Deigen_blas_EXPORTS -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/ssbmv.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/ssbmv.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/ssbmv.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/ssbmv.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Deigen_blas_EXPORTS -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/chbmv.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/chbmv.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/chbmv.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/chbmv.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Deigen_blas_EXPORTS -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/sspmv.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/sspmv.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/sspmv.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/sspmv.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Deigen_blas_EXPORTS -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/zhbmv.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/zhbmv.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/zhbmv.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/zhbmv.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Deigen_blas_EXPORTS -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/chpmv.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/chpmv.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/chpmv.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/chpmv.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Deigen_blas_EXPORTS -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/dsbmv.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/dsbmv.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/dsbmv.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/dsbmv.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Deigen_blas_EXPORTS -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/zhpmv.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/zhpmv.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/zhpmv.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/zhpmv.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Deigen_blas_EXPORTS -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/dtbmv.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/dtbmv.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/dtbmv.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/dtbmv.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Deigen_blas_EXPORTS -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/stbmv.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/stbmv.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/stbmv.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/stbmv.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Deigen_blas_EXPORTS -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/ctbmv.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/ctbmv.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/ctbmv.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/ctbmv.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Deigen_blas_EXPORTS -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/ztbmv.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/ztbmv.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/ztbmv.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/ztbmv.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Deigen_blas_EXPORTS -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/d_cnjg.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/d_cnjg.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/d_cnjg.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/d_cnjg.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Deigen_blas_EXPORTS -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/r_cnjg.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/r_cnjg.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/r_cnjg.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/r_cnjg.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Deigen_blas_EXPORTS -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu11 -fPIC -o _deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/complexdots.c.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/complexdots.c",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/f2c/complexdots.c",
+  "output": "_deps/eigen3-build/blas/CMakeFiles/eigen_blas.dir/f2c/complexdots.c.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/../blas -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -std=c++03 -pedantic -Wall -Wextra -Wundef -Wcast-align -Wchar-subscripts -Wnon-virtual-dtor -Wunused-local-typedefs -Wpointer-arith -Wwrite-strings -Wformat-security -Wshorten-64-to-32 -Wenum-conversion -Wc++11-extensions -Wdouble-promotion -Wshadow -Wno-psabi -Wno-variadic-macros -Wno-long-long -fno-check-new -fno-common -fstrict-aliasing -Qunused-arguments -ansi -pie -fPIE -fno-limit-debug-info  -std=c++20 -fPIC -o _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir/single.cpp.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/single.cpp",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/single.cpp",
+  "output": "_deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir/single.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/../blas -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -std=c++03 -pedantic -Wall -Wextra -Wundef -Wcast-align -Wchar-subscripts -Wnon-virtual-dtor -Wunused-local-typedefs -Wpointer-arith -Wwrite-strings -Wformat-security -Wshorten-64-to-32 -Wenum-conversion -Wc++11-extensions -Wdouble-promotion -Wshadow -Wno-psabi -Wno-variadic-macros -Wno-long-long -fno-check-new -fno-common -fstrict-aliasing -Qunused-arguments -ansi -pie -fPIE -fno-limit-debug-info  -std=c++20 -fPIC -o _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir/double.cpp.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/double.cpp",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/double.cpp",
+  "output": "_deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir/double.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/../blas -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -std=c++03 -pedantic -Wall -Wextra -Wundef -Wcast-align -Wchar-subscripts -Wnon-virtual-dtor -Wunused-local-typedefs -Wpointer-arith -Wwrite-strings -Wformat-security -Wshorten-64-to-32 -Wenum-conversion -Wc++11-extensions -Wdouble-promotion -Wshadow -Wno-psabi -Wno-variadic-macros -Wno-long-long -fno-check-new -fno-common -fstrict-aliasing -Qunused-arguments -ansi -pie -fPIE -fno-limit-debug-info  -std=c++20 -fPIC -o _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir/complex_single.cpp.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/complex_single.cpp",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/complex_single.cpp",
+  "output": "_deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir/complex_single.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/../blas -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -std=c++03 -pedantic -Wall -Wextra -Wundef -Wcast-align -Wchar-subscripts -Wnon-virtual-dtor -Wunused-local-typedefs -Wpointer-arith -Wwrite-strings -Wformat-security -Wshorten-64-to-32 -Wenum-conversion -Wc++11-extensions -Wdouble-promotion -Wshadow -Wno-psabi -Wno-variadic-macros -Wno-long-long -fno-check-new -fno-common -fstrict-aliasing -Qunused-arguments -ansi -pie -fPIE -fno-limit-debug-info  -std=c++20 -fPIC -o _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir/complex_double.cpp.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/complex_double.cpp",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/complex_double.cpp",
+  "output": "_deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir/complex_double.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/../blas -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -std=c++03 -pedantic -Wall -Wextra -Wundef -Wcast-align -Wchar-subscripts -Wnon-virtual-dtor -Wunused-local-typedefs -Wpointer-arith -Wwrite-strings -Wformat-security -Wshorten-64-to-32 -Wenum-conversion -Wc++11-extensions -Wdouble-promotion -Wshadow -Wno-psabi -Wno-variadic-macros -Wno-long-long -fno-check-new -fno-common -fstrict-aliasing -Qunused-arguments -ansi -pie -fPIE -fno-limit-debug-info  -std=c++20 -fPIC -o _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir/__/__/eigen3-src/blas/xerbla.cpp.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/xerbla.cpp",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/xerbla.cpp",
+  "output": "_deps/eigen3-build/lapack/CMakeFiles/eigen_lapack_static.dir/__/__/eigen3-src/blas/xerbla.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Deigen_lapack_EXPORTS -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/../blas -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -std=c++03 -pedantic -Wall -Wextra -Wundef -Wcast-align -Wchar-subscripts -Wnon-virtual-dtor -Wunused-local-typedefs -Wpointer-arith -Wwrite-strings -Wformat-security -Wshorten-64-to-32 -Wenum-conversion -Wc++11-extensions -Wdouble-promotion -Wshadow -Wno-psabi -Wno-variadic-macros -Wno-long-long -fno-check-new -fno-common -fstrict-aliasing -Qunused-arguments -ansi -pie -fPIE -fno-limit-debug-info  -std=c++20 -fPIC -o _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir/single.cpp.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/single.cpp",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/single.cpp",
+  "output": "_deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir/single.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Deigen_lapack_EXPORTS -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/../blas -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -std=c++03 -pedantic -Wall -Wextra -Wundef -Wcast-align -Wchar-subscripts -Wnon-virtual-dtor -Wunused-local-typedefs -Wpointer-arith -Wwrite-strings -Wformat-security -Wshorten-64-to-32 -Wenum-conversion -Wc++11-extensions -Wdouble-promotion -Wshadow -Wno-psabi -Wno-variadic-macros -Wno-long-long -fno-check-new -fno-common -fstrict-aliasing -Qunused-arguments -ansi -pie -fPIE -fno-limit-debug-info  -std=c++20 -fPIC -o _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir/double.cpp.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/double.cpp",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/double.cpp",
+  "output": "_deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir/double.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Deigen_lapack_EXPORTS -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/../blas -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -std=c++03 -pedantic -Wall -Wextra -Wundef -Wcast-align -Wchar-subscripts -Wnon-virtual-dtor -Wunused-local-typedefs -Wpointer-arith -Wwrite-strings -Wformat-security -Wshorten-64-to-32 -Wenum-conversion -Wc++11-extensions -Wdouble-promotion -Wshadow -Wno-psabi -Wno-variadic-macros -Wno-long-long -fno-check-new -fno-common -fstrict-aliasing -Qunused-arguments -ansi -pie -fPIE -fno-limit-debug-info  -std=c++20 -fPIC -o _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir/complex_single.cpp.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/complex_single.cpp",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/complex_single.cpp",
+  "output": "_deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir/complex_single.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Deigen_lapack_EXPORTS -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/../blas -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -std=c++03 -pedantic -Wall -Wextra -Wundef -Wcast-align -Wchar-subscripts -Wnon-virtual-dtor -Wunused-local-typedefs -Wpointer-arith -Wwrite-strings -Wformat-security -Wshorten-64-to-32 -Wenum-conversion -Wc++11-extensions -Wdouble-promotion -Wshadow -Wno-psabi -Wno-variadic-macros -Wno-long-long -fno-check-new -fno-common -fstrict-aliasing -Qunused-arguments -ansi -pie -fPIE -fno-limit-debug-info  -std=c++20 -fPIC -o _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir/complex_double.cpp.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/complex_double.cpp",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/complex_double.cpp",
+  "output": "_deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir/complex_double.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Deigen_lapack_EXPORTS -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/../blas -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -std=c++03 -pedantic -Wall -Wextra -Wundef -Wcast-align -Wchar-subscripts -Wnon-virtual-dtor -Wunused-local-typedefs -Wpointer-arith -Wwrite-strings -Wformat-security -Wshorten-64-to-32 -Wenum-conversion -Wc++11-extensions -Wdouble-promotion -Wshadow -Wno-psabi -Wno-variadic-macros -Wno-long-long -fno-check-new -fno-common -fstrict-aliasing -Qunused-arguments -ansi -pie -fPIE -fno-limit-debug-info  -std=c++20 -fPIC -o _deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir/__/__/eigen3-src/blas/xerbla.cpp.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/xerbla.cpp",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/xerbla.cpp",
+  "output": "_deps/eigen3-build/lapack/CMakeFiles/eigen_lapack.dir/__/__/eigen3-src/blas/xerbla.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -std=c++03 -pedantic -Wall -Wextra -Wundef -Wcast-align -Wchar-subscripts -Wnon-virtual-dtor -Wunused-local-typedefs -Wpointer-arith -Wwrite-strings -Wformat-security -Wshorten-64-to-32 -Wenum-conversion -Wc++11-extensions -Wdouble-promotion -Wshadow -Wno-psabi -Wno-variadic-macros -Wno-long-long -fno-check-new -fno-common -fstrict-aliasing -Qunused-arguments -ansi -pie -fPIE -fno-limit-debug-info  -std=c++20 -fPIE -o _deps/eigen3-build/bench/spbench/CMakeFiles/spbenchsolver.dir/spbenchsolver.cpp.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/bench/spbench/spbenchsolver.cpp",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/bench/spbench/spbenchsolver.cpp",
+  "output": "_deps/eigen3-build/bench/spbench/CMakeFiles/spbenchsolver.dir/spbenchsolver.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -std=c++03 -pedantic -Wall -Wextra -Wundef -Wcast-align -Wchar-subscripts -Wnon-virtual-dtor -Wunused-local-typedefs -Wpointer-arith -Wwrite-strings -Wformat-security -Wshorten-64-to-32 -Wenum-conversion -Wc++11-extensions -Wdouble-promotion -Wshadow -Wno-psabi -Wno-variadic-macros -Wno-long-long -fno-check-new -fno-common -fstrict-aliasing -Qunused-arguments -ansi -pie -fPIE -fno-limit-debug-info  -std=c++20 -fPIE -o _deps/eigen3-build/bench/spbench/CMakeFiles/spsolver.dir/sp_solver.cpp.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/bench/spbench/sp_solver.cpp",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/bench/spbench/sp_solver.cpp",
+  "output": "_deps/eigen3-build/bench/spbench/CMakeFiles/spsolver.dir/sp_solver.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -std=c++03 -pedantic -Wall -Wextra -Wundef -Wcast-align -Wchar-subscripts -Wnon-virtual-dtor -Wunused-local-typedefs -Wpointer-arith -Wwrite-strings -Wformat-security -Wshorten-64-to-32 -Wenum-conversion -Wc++11-extensions -Wdouble-promotion -Wshadow -Wno-psabi -Wno-variadic-macros -Wno-long-long -fno-check-new -fno-common -fstrict-aliasing -Qunused-arguments -ansi -pie -fPIE -fno-limit-debug-info  -std=c++20 -fPIE -o _deps/eigen3-build/bench/spbench/CMakeFiles/test_sparseLU.dir/test_sparseLU.cpp.o -c /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/bench/spbench/test_sparseLU.cpp",
+  "file": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/bench/spbench/test_sparseLU.cpp",
+  "output": "_deps/eigen3-build/bench/spbench/CMakeFiles/test_sparseLU.dir/test_sparseLU.cpp.o"
+}
+]

@@ -29,4 +29,8 @@ class SettingsViewModel(
     fun setThemeMode(themeMode: ThemeMode) {
         viewModelScope.launch { settingsRepository.setThemeMode(themeMode) }
     }
+
+    fun setUseFakeEngine(useFakeEngine: Boolean) {
+        viewModelScope.launch { settingsRepository.setUseFakeEngine(useFakeEngine) }
+    }
 }

@@ -16,4 +16,12 @@ enum class ThemeMode(val displayName: String) {
 data class AppSettings(
     val units: Units = Units.METERS,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    /**
+     * B2 dev-settings flag: force [com.lidarscan.core.engine.FakeEngineBridge]
+     * even when the real JNI bridge's native lib loaded successfully — lets a
+     * developer without a D6 attached still exercise Capture/connect UI.
+     * [com.lidarscan.app.di.AppContainer] applies this on top of its
+     * BuildConfig-driven default (see `BuildConfig.FORCE_FAKE_ENGINE`).
+     */
+    val useFakeEngine: Boolean = false,
 )

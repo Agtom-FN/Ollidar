@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  B2: CH340/CH341 USB-to-serial chip used by the COIN-D6 (Tech Spec §3.1
+  Android row). Referenced from AndroidManifest.xml's USB_DEVICE_ATTACHED
+  intent-filter meta-data so plugging the D6 in (via USB-C OTG) can launch
+  the app straight to the connect flow. Vendor/product ids match the S1
+  spike's bring-up (spikes/s1-d6-parser) and the common CH340 clone PIDs.
+-->
+<resources>
+    <!-- 0x1A86 / 0x7523 — the most common CH340 PID -->
+    <usb-device vendor-id="6790" product-id="29987" />
+    <!-- 0x1A86 / 0x5523 — CH341-in-serial-mode PID seen on some clones -->
+    <usb-device vendor-id="6790" product-id="21795" />
+</resources>

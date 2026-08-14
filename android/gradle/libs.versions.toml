@@ -19,6 +19,10 @@ datastore = "1.1.1"
 kotlinxSerialization = "1.7.3"
 kotlinxCoroutines = "1.9.0"
 junit = "4.13.2"
+# B2: D6 USB-serial transport (Tech Spec §3.1 Android row: "usb-serial-for-android (CH340)").
+# mik3y's library is JitPack-distributed, not on Maven Central — see settings.gradle.kts
+# for the added repository.
+usbSerialForAndroid = "3.9.0"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -40,6 +44,9 @@ kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-c
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "kotlinxCoroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinxCoroutines" }
 junit = { module = "junit:junit", version.ref = "junit" }
+# Named "usbSerial" (not "usb-serial-for-android") so the generated
+# libs.usbSerial accessor doesn't contain the Kotlin keyword "for".
+usbSerial = { module = "com.github.mik3y:usb-serial-for-android", version.ref = "usbSerialForAndroid" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

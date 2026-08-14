@@ -55,8 +55,10 @@ fun SettingsRoute(
     SettingsScreen(
         settings = settings,
         storageLocation = viewModel.storageLocation,
+        nativeEngineAvailable = com.lidarscan.app.engine.ScanEngineNative.isAvailable,
         onUnitsChange = viewModel::setUnits,
         onThemeModeChange = viewModel::setThemeMode,
+        onUseFakeEngineChange = viewModel::setUseFakeEngine,
         onBack = onBack,
     )
 }
@@ -66,8 +68,10 @@ fun SettingsRoute(
 fun SettingsScreen(
     settings: AppSettings,
     storageLocation: String,
+    nativeEngineAvailable: Boolean,
     onUnitsChange: (Units) -> Unit,
     onThemeModeChange: (ThemeMode) -> Unit,
+    onUseFakeEngineChange: (Boolean) -> Unit,
     onBack: () -> Unit,
 ) {
     Scaffold(
@@ -108,6 +112,37 @@ fun SettingsScreen(
                         shape = SegmentedButtonDefaults.itemShape(index = index, count = ThemeMode.entries.size),
                     ) {
                         Text(option.displayName)
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(24.dp))
+            Text("Engine (developer)", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(8.dp))
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Use simulated engine", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                if (nativeEngineAvailable) {
+                                    "Takes effect after restarting the app."
+                                } else {
+                                    "Native engine not loaded on this build — always simulated regardless of this switch."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        androidx.compose.material3.Switch(
+                            checked = settings.useFakeEngine || !nativeEngineAvailable,
+                            enabled = nativeEngineAvailable,
+                            onCheckedChange = onUseFakeEngineChange,
+                        )
                     }
                 }
             }

@@ -9,6 +9,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.lidarscan.app.di.AppContainer
+import com.lidarscan.app.ui.capture.CaptureRoute
+import com.lidarscan.app.ui.connect.ConnectWizardRoute
 import com.lidarscan.app.ui.detail.ProjectDetailRoute
 import com.lidarscan.app.ui.newproject.NewProjectRoute
 import com.lidarscan.app.ui.projects.ProjectsListRoute
@@ -50,6 +52,7 @@ fun LidarScanApp(
                 container = container,
                 projectId = Uri.decode(encodedId),
                 onBack = { navController.popBackStack() },
+                onOpenCapture = { pid -> navController.navigate(Routes.capture(pid)) },
             )
         }
 
@@ -57,6 +60,27 @@ fun LidarScanApp(
             SettingsRoute(
                 container = container,
                 onBack = { navController.popBackStack() },
+            )
+        }
+
+        composable(
+            route = Routes.CAPTURE,
+            arguments = listOf(navArgument(Routes.PROJECT_ID_ARG) { type = NavType.StringType }),
+        ) { backStackEntry ->
+            val encodedId = backStackEntry.arguments?.getString(Routes.PROJECT_ID_ARG).orEmpty()
+            CaptureRoute(
+                container = container,
+                projectId = Uri.decode(encodedId),
+                onBack = { navController.popBackStack() },
+                onConnectDevice = { navController.navigate(Routes.CONNECT_WIZARD) },
+            )
+        }
+
+        composable(Routes.CONNECT_WIZARD) {
+            ConnectWizardRoute(
+                container = container,
+                onBack = { navController.popBackStack() },
+                onConnected = { navController.popBackStack() },
             )
         }
     }

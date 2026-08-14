@@ -18,4 +18,10 @@ object Routes {
     const val PROJECT_ID_ARG = "projectId"
 
     fun projectDetail(projectId: String): String = "project/${Uri.encode(projectId)}"
+
+    private const val CAPTURE_PATTERN = "project/{projectId}/capture"
+    const val CAPTURE = CAPTURE_PATTERN
+    fun capture(projectId: String): String = "project/${Uri.encode(projectId)}/capture"
+
+    const val CONNECT_WIZARD = "connect_wizard"
 }
