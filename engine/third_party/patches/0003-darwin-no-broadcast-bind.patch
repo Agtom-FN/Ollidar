@@ -1,0 +1,50 @@
+Subject: [PATCH 0003] Do not bind() the limited-broadcast address on Darwin
+
+DeviceManager::CreateDetectionChannel() and CreateCommandChannel() create an
+extra UDP socket bound to the literal address 255.255.255.255. Linux permits
+this; macOS/Darwin returns EADDRNOTAVAIL, util::CreateSocket() returns -1, and
+DeviceManager::Init() therefore fails outright:
+
+    bind failed
+    [error] Create detection broadcast socket failed.  [device_manager.cpp:266]
+    [error] Create detection channel failed.           [device_manager.cpp:242]
+    [error] Create channel failed.                     [device_manager.cpp:169]
+    Livox Init Failed
+
+i.e. *unpatched Livox-SDK2 cannot start on macOS at all*, with or without real
+hardware. Both call sites are already wrapped in `#ifdef WIN32 / #else`, so the
+minimal fix is to treat Darwin like Win32. The broadcast-bound sockets are only
+an additional receive path for detection ACKs and pushed state; the sockets
+bound to the configured host IP still receive both by unicast, which is how a
+Mid-360 configured with an explicit host_ip actually talks.
+
+Consequence for A3: on macOS, zero-configuration "view mode" discovery of a
+lidar whose IP is not yet known will not work. A3 must require an explicit
+lidar IP in the config on macOS (which the LidarScan connect wizard does
+anyway, per spec 3.1).
+---
+--- a/sdk_core/device_manager.cpp
++++ b/sdk_core/device_manager.cpp
+@@ -259,7 +259,11 @@
+ }
+ 
+ bool DeviceManager::CreateDetectionChannel() {
+-#ifdef WIN32
++#if defined(WIN32) || defined(__APPLE__)
++  // macOS (Darwin) refuses bind(2) to the limited-broadcast address 255.255.255.255
++  // with EADDRNOTAVAIL, unlike Linux. The extra broadcast-bound socket is only an
++  // additional receive path for detection ACKs; the host-IP-bound detection socket
++  // created below already receives unicast ACKs. Skip it here, as WIN32 already does.
+ #else
+   detection_broadcast_socket_ = util::CreateSocket(kDetectionPort, true, true, true, "255.255.255.255", "");
+   if (detection_broadcast_socket_ < 0) {
+@@ -324,7 +328,8 @@
+     }
+   }
+ 
+-#ifdef WIN32
++#if defined(WIN32) || defined(__APPLE__)
++  // See CreateDetectionChannel(): Darwin cannot bind 255.255.255.255.
+ #else
+   if (dev_type == kLivoxLidarTypeMid360 || dev_type == kLivoxLidarTypeMid360s || dev_type == kLivoxLidarTypeAvia2) {
+     socket_t broadcast_socket = util::CreateSocket(host_net_info.push_msg_port, true, true, true, "255.255.255.255", "");

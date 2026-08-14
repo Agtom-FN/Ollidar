@@ -1,0 +1,33 @@
+Subject: [PATCH 0002] Drop -Werror for Clang/AppleClang in sdk_core
+
+sdk_core/CMakeLists.txt compiles with -Werror under (Apple)Clang. The vendored
+third-party headers (rapidjson, spdlog/fmt, FastCRC) and sdk_core/comm/define.h
+trip 11 diagnostics on Apple clang 21 (Xcode 26): -Wunknown-warning-option from
+rapidjson's malformed pragma strings, -Wdeprecated-literal-operator from the
+bundled fmt, -Wnon-c-typedef-for-linkage from define.h, and
+-Wunused-private-field from FastCRC. None are real defects; -Werror simply
+predates the compiler. Warnings are still enabled, just not fatal.
+
+Same fix will be needed for the S7 Windows/clang-cl leg and for A1's CI.
+---
+--- a/sdk_core/CMakeLists.txt
++++ b/sdk_core/CMakeLists.txt
+@@ -30,14 +30,14 @@
+ 
+ target_compile_options(${SDK_LIBRARY_STATIC}
+         PRIVATE $<$<CXX_COMPILER_ID:GNU>:-Wall>#-Wno-c++11-long-long>
+-        PRIVATE $<$<CXX_COMPILER_ID:AppleClang>:-Wno-unknown-pragmas -Wall -Werror -Wno-c++11-long-long>
+-        PRIVATE $<$<CXX_COMPILER_ID:Clang>:-Wno-unknown-pragmas -Wall -Werror -Wno-c++11-long-long>
++        PRIVATE $<$<CXX_COMPILER_ID:AppleClang>:-Wno-unknown-pragmas -Wall -Wno-c++11-long-long>
++        PRIVATE $<$<CXX_COMPILER_ID:Clang>:-Wno-unknown-pragmas -Wall -Wno-c++11-long-long>
+         )
+ 
+ target_compile_options(${SDK_LIBRARY_SHARED}
+         PRIVATE $<$<CXX_COMPILER_ID:GNU>:-Wall>#-Wno-c++11-long-long>
+-        PRIVATE $<$<CXX_COMPILER_ID:AppleClang>:-Wno-unknown-pragmas -Wall -Werror -Wno-c++11-long-long>
+-        PRIVATE $<$<CXX_COMPILER_ID:Clang>:-Wno-unknown-pragmas -Wall -Werror -Wno-c++11-long-long>
++        PRIVATE $<$<CXX_COMPILER_ID:AppleClang>:-Wno-unknown-pragmas -Wall -Wno-c++11-long-long>
++        PRIVATE $<$<CXX_COMPILER_ID:Clang>:-Wno-unknown-pragmas -Wall -Wno-c++11-long-long>
+         )
+ 
+ set(LIVOX_PRIVATE_INCLUDE_DIR 

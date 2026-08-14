@@ -109,7 +109,12 @@ TEST_CASE("engine/mid360_device_exists_but_start_is_task_A3") {
   auto h = e.device_health(id.value());
   REQUIRE(h.ok());
   CHECK(h.value().kind == DeviceKind::kMid360);
-  CHECK(h.value().last_error == ScanError::kUnimplemented);
+  // A3 landed: the driver is real, so a freshly added device is healthy-idle
+  // rather than kUnimplemented. It still cannot START here, because no
+  // host_ip is configured — the device is TOLD where to stream and there is
+  // no broadcast discovery on macOS (S2 REPORT.md §3), so an explicit host
+  // and lidar IP are mandatory.
+  CHECK(h.value().last_error == ScanError::kOk);
 
   // A failing device does not abort the session.
   SessionConfig sc;

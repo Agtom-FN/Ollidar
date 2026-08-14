@@ -1,0 +1,12 @@
+# Vendored, PATCHED Livox-SDK2 (task A3).
+#
+# The SDK source is NOT committed. It is reproducible from two things that
+# ARE committed: fetch_sdk2.sh (pinned tarball URL) and patches/ (the three
+# unified diffs S2 proved are required). Same policy the S2 spike used
+# (spikes/s2-mid360-sim/.gitignore), for the same reasons: the upstream tree
+# is ~9 MB of third-party source, its licence is MIT but its provenance is a
+# GitHub branch tarball, and vendoring the diff rather than the tree makes
+# "what did we change and why" reviewable in four screens instead of none.
+#
+# Bootstrap:  engine/third_party/fetch_sdk2.sh
+Livox-SDK2/
