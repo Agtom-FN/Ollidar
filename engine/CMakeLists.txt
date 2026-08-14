@@ -78,27 +78,9 @@ endif()
 # each one before assuming it builds).
 
 # --- library ---------------------------------------------------------------
+file(GLOB_RECURSE SCANENGINE_SOURCES CONFIGURE_DEPENDS src/*.cpp)
 add_library(scanengine STATIC
-    # core/ — lifecycle, errors, logging, events                       (A1)
-    src/core/engine.cpp
-    src/core/error.cpp
-    src/core/event_bus.cpp
-    src/core/log.cpp
-    src/core/types.cpp
-    # transport/ — bytes in                                        (A1/A2/A3)
-    src/transport/usb_serial_source.cpp
-    src/transport/udp_source.cpp
-    # drivers/ — protocol decode + health                          (A1/A2/A3)
-    src/drivers/d6/d6_parser.cpp
-    src/drivers/d6/d6_driver.cpp
-    src/drivers/mid360/mid360_driver.cpp
-    # timesync/ — clock + per-stream offsets                          (A1/A4)
-    src/timesync/offset_estimator.cpp
-    # record/ — .lscan container                                      (A1/A5)
-    src/record/lscan.cpp
-    # cloud/ — the render-facing point store                         (A1/A14)
-    src/cloud/page_store.cpp
-    # capi/ — the flat C ABI for JNI                                     (A1)
+    ${SCANENGINE_SOURCES}
     capi/scanengine_c.cpp
 )
 
@@ -149,16 +131,9 @@ if(ENGINE_BUILD_TESTS)
     enable_testing()
     include(CTest)
 
+    file(GLOB ENGINE_TEST_SOURCES CONFIGURE_DEPENDS tests/test_*.cpp)
     add_executable(scanengine_tests
-        tests/test_main.cpp
-        tests/test_core.cpp
-        tests/test_event_bus.cpp
-        tests/test_cloud.cpp
-        tests/test_record.cpp
-        tests/test_engine.cpp
-        tests/test_headers.cpp
-        tests/test_d6_parser.cpp
-        tests/test_capi.cpp
+        ${ENGINE_TEST_SOURCES}
         tests/capi_smoke.c        # compiled as C — see the file header
     )
     target_link_libraries(scanengine_tests PRIVATE scanengine)
