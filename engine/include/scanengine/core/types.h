@@ -42,6 +42,8 @@ enum class StreamId : std::uint8_t {
   kGnss = 5,         // NMEA sentences + fix state
   kCameraFrames = 6, // keyframe index (JPEGs live beside it)
   kPoseFused = 7,    // output of the pose fusion layer
+  kSlamMap = 8,      // registered world-frame map points (A6 output)
+  kPoseLio = 9,      // LIO pose track
 };
 
 const char* to_string(StreamId s) noexcept;

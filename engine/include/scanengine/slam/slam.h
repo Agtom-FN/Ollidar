@@ -56,12 +56,6 @@
 
 namespace scanengine {
 
-struct ImuSample {
-  std::int64_t t_mono_ns = 0;
-  float accel_mps2[3] = {0.f, 0.f, 0.f};
-  float gyro_radps[3] = {0.f, 0.f, 0.f};
-};
-
 // Live odometry (A6) — THE ABSTRACT SEAM, not the implementation. A6 ships
 // `LioOdometry` in slam/lio.h, which deliberately does not derive from this:
 // `push_imu` here takes the ImuSample above, and binding the shipped class to
@@ -70,7 +64,8 @@ struct ImuSample {
 // ImuSample question is settled, or re-declare it over the timesync sample.
 class LiveOdometry : public PoseSource {
  public:
-  virtual Status push_imu(const ImuSample& s) = 0;
+  virtual Status push_imu(std::int64_t t_engine_ns, const float gyro_radps[3],
+                          const float accel_mps2[3]) = 0;
   virtual Status push_points(Span<const PointVertex> points, std::int64_t t_mono_ns) = 0;
   virtual double cpu_budget_used() const = 0;  // 0..1 of the configured budget
 };

@@ -22,6 +22,8 @@ const char* to_string(StreamId s) noexcept {
     case StreamId::kGnss: return "gnss";
     case StreamId::kCameraFrames: return "camera-frames";
     case StreamId::kPoseFused: return "pose-fused";
+    case StreamId::kSlamMap: return "slam-map";
+    case StreamId::kPoseLio: return "pose-lio";
   }
   return "?";
 }

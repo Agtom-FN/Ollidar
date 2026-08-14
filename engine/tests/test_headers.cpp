@@ -61,7 +61,4 @@ TEST_CASE("headers/seam_types_are_usable") {
 
   CameraIntrinsics ci;
   CHECK(ci.rolling_shutter_row_time_ns == 0.f);
-
-  ImuSample imu;
-  CHECK(imu.t_mono_ns == 0);
 }
