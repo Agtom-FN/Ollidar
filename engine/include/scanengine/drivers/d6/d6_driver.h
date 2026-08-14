@@ -64,6 +64,20 @@
 
 namespace scanengine {
 
+// Optional zero-copy profile seam for A8's pushbroom assembler (requested in
+// docs/A8-pushbroom.md §7.2 item 3). One call per decoded return, in the POLAR
+// form the wire carries, so the sensor-frame convention is applied in exactly
+// one place — the assembler — instead of being applied here and un-applied
+// there. `t_engine_ns` is the carrying packet's arrival stamp (the D6 has no
+// device clock, so arrival IS engine time; see docs/A4-timesync.md).
+//
+// Called on the byte-pushing thread with no driver lock held: it must be quick
+// and must not re-enter the driver. Unset by default — the live preview path
+// (PageStore, sensor frame) is unchanged whether this is set or not.
+using D6ProfileSink = void (*)(float angle_deg, float range_m, std::uint8_t intensity,
+                               std::uint8_t high_reflectivity, std::int64_t t_engine_ns,
+                               void* user_data);
+
 struct D6Config {
   UsbSerialConfig serial{};
   d6::Config parser{};
@@ -89,6 +103,12 @@ struct D6Config {
   std::uint32_t max_batch_points = 4096;
 
   bool drop_zero_range_points = true;  // no-return samples are not geometry
+
+  // A8 pushbroom seam (see D6ProfileSink above). The Engine installs one of
+  // these when SessionConfig::pushbroom is on; an app driving the assembler
+  // itself may install its own.
+  D6ProfileSink profile_sink = nullptr;
+  void* profile_sink_user_data = nullptr;
 
   // --- A2: stall watchdog + restart policy ---------------------------------
   //

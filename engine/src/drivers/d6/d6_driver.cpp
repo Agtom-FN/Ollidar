@@ -373,6 +373,16 @@ void D6Driver::on_point(const d6::Point& p) {
 
   if (cfg_.drop_zero_range_points && p.distance_mm == 0) return;
 
+  // A8 seam: the polar return, before any frame convention is applied. The
+  // assembler needs the per-point time (a revolution spans 100 ms = 10 cm of
+  // rig travel at walking pace), which is why this is a per-point callback
+  // rather than a per-batch one.
+  if (cfg_.profile_sink != nullptr) {
+    cfg_.profile_sink(p.angle_deg, static_cast<float>(p.distance_mm) * 0.001f, p.intensity,
+                      p.high_reflectivity ? std::uint8_t{1} : std::uint8_t{0}, t_current_ns_,
+                      cfg_.profile_sink_user_data);
+  }
+
   const double a = static_cast<double>(p.angle_deg) * kDegToRad;
   const double d = static_cast<double>(p.distance_mm) * 0.001;  // mm → m
 

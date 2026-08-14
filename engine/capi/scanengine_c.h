@@ -50,7 +50,13 @@ extern "C" {
 #define SCAN_API __attribute__((visibility("default")))
 #endif
 
-#define SCAN_ABI_VERSION 1u
+/* 1 -> 2 (INT-24): poses in (scan_pose, push_pose/pose_at), the D6 pushbroom
+ * (mount extrinsics, enable/flush/stats), the mount-calibration solver handle,
+ * two new stream ids, the kPoseUpdate event payload, and two session flags.
+ * Every addition is at the END of an existing struct or a new symbol, but the
+ * struct layouts changed, so DESIGN.md §6 item 9 applies: this and
+ * scanengine::kEngineAbiVersion move together. */
+#define SCAN_ABI_VERSION 2u
 
 /* --- errors: mirror of scanengine::ScanError --------------------------- */
 typedef int32_t scan_error_t;
@@ -117,7 +123,41 @@ enum {
   SCAN_STREAM_POSE_AR = 4,
   SCAN_STREAM_GNSS = 5,
   SCAN_STREAM_CAMERA_FRAMES = 6,
-  SCAN_STREAM_POSE_FUSED = 7
+  SCAN_STREAM_POSE_FUSED = 7,
+  SCAN_STREAM_SLAM_MAP = 8,  /* registered world-frame points: A6's map, A8's
+                              * assembled pushbroom cloud */
+  SCAN_STREAM_POSE_LIO = 9
+};
+
+/* --- poses: mirror of poses/pose_source.h + pose_interpolator.h ---------- */
+enum {
+  SCAN_POSE_QUALITY_INVALID = 0, /* do not use; points here are flagged */
+  SCAN_POSE_QUALITY_POOR = 1,    /* ARCore limited tracking / GNSS single fix */
+  SCAN_POSE_QUALITY_FAIR = 2,    /* DGPS / RTK float / recovering VIO */
+  SCAN_POSE_QUALITY_GOOD = 3     /* healthy VIO / RTK fixed */
+};
+
+/* Why a sample is or is not usable. Collapsing these into one error code
+ * loses exactly the distinction Tech Spec §3.3 asks for ("points during
+ * tracking loss are flagged and excluded by default"), so scan_engine_pose_at
+ * reports the gate alongside the pose. */
+enum {
+  SCAN_POSE_GATE_OK = 0,
+  SCAN_POSE_GATE_NO_DATA = 1,        /* no poses pushed yet */
+  SCAN_POSE_GATE_BEFORE_FIRST = 2,   /* predates the stream — never resolvable */
+  SCAN_POSE_GATE_FUTURE = 3,         /* newer than the newest pose — retry */
+  SCAN_POSE_GATE_STALE = 4,          /* bracketing poses too far apart */
+  SCAN_POSE_GATE_TRACKING_LOST = 5,  /* a bracketing pose lost tracking */
+  SCAN_POSE_GATE_LOW_CONFIDENCE = 6  /* below the confidence/quality floor */
+};
+
+/* Mount-calibration verdict (WIZARD.md screen 4 bands). Gate on this, and on
+ * scan_mount_calib_result.split_half_px — NEVER on the reported sigmas. */
+enum {
+  SCAN_CALIB_GATE_UNKNOWN = 0, /* not computed (fewer than 4 observations) */
+  SCAN_CALIB_GATE_GOOD = 1,    /* <= 12 px at 3 m */
+  SCAN_CALIB_GATE_USABLE = 2,  /* <= 30 px */
+  SCAN_CALIB_GATE_REJECT = 3   /* > 30 px: must redo the capture */
 };
 
 enum {
@@ -175,6 +215,12 @@ typedef struct scan_event {
       double rotation_hz;
     } rotation;
     struct { int32_t error; uint32_t device; uint8_t stream; } error;
+    struct {
+      uint8_t source;      /* scan_stream_id the pose came from */
+      float position[3];
+      float quaternion[4]; /* x, y, z, w */
+      uint8_t quality;     /* 0 = invalid .. 255 = best */
+    } pose;
     uint8_t raw[64];
   } payload;
 } scan_event;
@@ -196,6 +242,68 @@ typedef struct scan_point_page {
   float bounds_min[3];
   float bounds_max[3];
 } scan_point_page;
+
+/* --- poses: mirror of poses/pose_source.h -------------------------------- */
+typedef struct scan_pose {
+  int64_t t_mono_ns;
+  double position[3];
+  double orientation[4]; /* x, y, z, w — unit quaternion */
+  float position_sigma_m;
+  float orientation_sigma_deg;
+  uint8_t source;        /* SCAN_STREAM_* */
+  uint8_t quality;       /* SCAN_POSE_QUALITY_* */
+  uint8_t tracking_lost; /* 0/1 (§3.3) */
+} scan_pose;
+
+/* --- pushbroom: mirror of slam/pushbroom/pushbroom_assembler.h ------------ */
+typedef struct scan_pushbroom_stats {
+  uint64_t points_in;
+  uint64_t points_out;     /* reached the PageStore */
+  uint64_t points_pending; /* waiting for a pose right now */
+
+  uint64_t dropped_range;     /* 0 / out-of-window returns */
+  uint64_t dropped_no_pose;   /* before the first pose, or unresolved at flush */
+  uint64_t dropped_overflow;  /* pending-queue bound hit */
+  uint64_t dropped_page_full; /* PageStore backpressure */
+
+  /* Broken out because they mean different things to a user: tracking loss is
+   * "walk back and rescan", stale is "your pose stream stuttered", low
+   * confidence is "ARCore was struggling". */
+  uint64_t flagged_tracking_lost;
+  uint64_t flagged_stale_pose;
+  uint64_t flagged_low_confidence;
+  uint64_t flagged_emitted; /* flagged AND kept */
+
+  int64_t t_first_ns;
+  int64_t t_last_ns;
+} scan_pushbroom_stats;
+
+/* --- mount calibration: mirror of slam/pushbroom/mount_calibration.h ------ */
+typedef struct scan_mount_calib_result {
+  double camera_from_lidar[16]; /* ROW-MAJOR; == phone_from_lidar */
+
+  uint8_t converged;
+  uint8_t degenerate; /* too few observations, or a rank-deficient solve */
+  int32_t iterations_l2;
+  int32_t iterations_robust;
+
+  uint64_t observations;
+  uint64_t residuals;
+  double rms_residual_m;
+  double final_cost;
+
+  /* THE GATE. Pixels of disagreement at gate_range_m between two half-solves.
+   * -1 when not computed. */
+  double split_half_px;
+  double gate_range_m;
+  uint8_t gate; /* SCAN_CALIB_GATE_* */
+
+  /* DIAGNOSTICS ONLY — the covariance cannot rank sessions (its coefficient of
+   * variation is 0.13 while the true error's is 1.83). Never gate on these. */
+  double sigma_rot_deg;
+  double sigma_trans_mm;
+  double condition_number;
+} scan_mount_calib_result;
 
 typedef struct scan_device_health {
   uint32_t id;
@@ -235,6 +343,12 @@ typedef struct scan_session_config {
   const char* lscan_dir; /* may be NULL/empty = do not record */
   const char* profile;   /* survey | floorplan | research | quickscan */
   uint8_t record;
+  /* Tech Spec §3.1's capture toggle: 0 = Record-only, 1 = Live-SLAM (one LIO
+   * for the session's Mid-360 stream, map on SCAN_STREAM_SLAM_MAP). */
+  uint8_t live_slam;
+  /* Assemble D6 profiles into world points with the pushed pose stream. Needs
+   * scan_engine_set_mount_extrinsics() first. */
+  uint8_t pushbroom;
 } scan_session_config;
 
 typedef struct scan_device_config {
@@ -295,6 +409,64 @@ SCAN_API scan_error_t scan_engine_page_id_at(scan_engine* engine, uint32_t index
 SCAN_API scan_error_t scan_engine_get_point_page(scan_engine* engine, uint32_t page_id,
                                                  scan_point_page* out);
 SCAN_API scan_error_t scan_engine_total_points(scan_engine* engine, uint64_t* out_points);
+
+/* --- poses in (A8) -------------------------------------------------------
+ *
+ * The ARCore path: once per camera frame, push the VIO pose, its tracking
+ * state and its confidence. Safe from the AR thread while points are decoded
+ * on another. `confidence` < 0 means "derive it from quality/tracking_lost".
+ * An out-of-order or non-finite pose is rejected with
+ * SCAN_ERR_INVALID_ARGUMENT rather than silently corrupting every
+ * interpolation that follows. Each accepted pose raises
+ * SCAN_EVENT_POSE_UPDATE. */
+SCAN_API scan_error_t scan_engine_push_pose(scan_engine* engine, const scan_pose* pose,
+                                            float confidence);
+
+/* Interpolated lookup. *out_gate is ALWAYS written (SCAN_POSE_GATE_*), even on
+ * failure. Returns SCAN_OK whenever a pose could be interpolated at all —
+ * including the flagged gates, where the geometry is real but must not be
+ * trusted silently — SCAN_ERR_AGAIN when `t` is newer than the newest pose
+ * (buffer and retry), and SCAN_ERR_NOT_FOUND when it predates the stream.
+ * `out` may be NULL if only the gate is wanted. */
+SCAN_API scan_error_t scan_engine_pose_at(scan_engine* engine, int64_t t_mono_ns,
+                                          scan_pose* out, uint8_t* out_gate);
+
+/* --- D6 pushbroom (A8) ---------------------------------------------------
+ *
+ * `phone_from_lidar` is a ROW-MAJOR rigid 4x4. A column-major matrix handed
+ * across JNI is REJECTED (SCAN_ERR_INVALID_ARGUMENT) instead of producing a
+ * plausible-looking mirrored cloud nobody notices until export. */
+SCAN_API scan_error_t scan_engine_set_mount_extrinsics(scan_engine* engine,
+                                                       const double phone_from_lidar[16]);
+/* Needs an extrinsic first, else SCAN_ERR_INVALID_STATE. */
+SCAN_API scan_error_t scan_engine_pushbroom_enable(scan_engine* engine, int on);
+/* Resolve every pending point the poses allow and push the batch out. Called
+ * automatically by scan_engine_stop(). */
+SCAN_API scan_error_t scan_engine_pushbroom_flush(scan_engine* engine);
+SCAN_API scan_error_t scan_engine_pushbroom_stats(scan_engine* engine,
+                                                  scan_pushbroom_stats* out);
+
+/* --- mount calibration (A8) ----------------------------------------------
+ *
+ * The wizard's solver, as a standalone handle: it needs no engine and no
+ * session, because the observations come from the app's checkerboard
+ * detection. Add >= 5 observations (the Zhang-Pless floor; < 3 is refused
+ * outright as undetermined), then solve from the bracket's CAD nominal. */
+typedef struct scan_mount_calib scan_mount_calib;
+
+SCAN_API scan_error_t scan_mount_calib_create(scan_mount_calib** out);
+SCAN_API void scan_mount_calib_destroy(scan_mount_calib* calib);
+/* `normal` must be unit length and `d` positive: the target plane AS THE
+ * CAMERA MEASURED IT, in the camera frame. `pts` are the lidar returns
+ * segmented onto the board, in the SENSOR frame. `sigma_m` is their 1-sigma
+ * range noise — it whitens the residual, so a capture mixing sensors or
+ * ranges is weighted correctly. */
+SCAN_API scan_error_t scan_mount_calib_add_observation(scan_mount_calib* calib,
+                                                       const double normal[3], double d,
+                                                       const scan_point_vertex* pts, uint32_t n,
+                                                       double sigma_m);
+SCAN_API scan_error_t scan_mount_calib_solve(scan_mount_calib* calib, const double cad[16],
+                                             scan_mount_calib_result* out);
 
 /* Logging is process-global, not per engine. */
 SCAN_API void scan_engine_set_log_callback(scan_log_cb cb, void* user_data, int32_t min_level);

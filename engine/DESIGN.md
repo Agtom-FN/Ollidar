@@ -33,8 +33,10 @@ engine/
 | `timesync/` | `clock.h` `offset_estimator.h/.cpp` | A1 / A4 | clock complete (S7 backends); `TimeSync` registry + passthrough estimator |
 | `record/` | `lscan.h/.cpp` | A1 / A5 | **format constants, CRC32 and framing codecs are real and tested**; writer is `NullRecordWriter` |
 | `cloud/` | `point_page.h` `page_store.h/.cpp` | A1 / A14 | complete — the render-facing contract |
-| `poses/` | `pose_source.h` | A1 / A8 / A10 | interface only |
-| `slam/` `gnss/` `color/` `plan/` `merge/` `export/` `jobs/` | one header each | A6–A15 | interface seams with the spike findings each owner must honour written into the header |
+| `poses/` | `pose_source.h` `pose_interpolator.h` `se3.h` `external_pose_source.h/.cpp` | A1 / **A8** / A10 | **implemented (A8)** — SE(3) vocabulary, gated interpolation, the ARCore/RTK/replay ingestion ring |
+| `slam/pushbroom/` | `pushbroom_assembler.h/.cpp` `mount_calibration.h/.cpp` | **A8** | **implemented** — D6 profiles × trajectory × mount extrinsic → world points; the S6 planar-checkerboard solver with the split-half gate |
+| `slam/` (live) | `lio.h` `eskf.h` `ivox.h` + `src/slam/*.cpp` | **A6** | **implemented** — ESKF lidar-inertial odometry, incremental voxel map, `LioPoseSource` |
+| `slam/` (seams) `gnss/` `color/` `plan/` `merge/` `export/` `jobs/` | one header each | A7–A15 | interface seams with the spike findings each owner must honour written into the header |
 
 Rule: **`src/<module>/x.cpp` implements `include/scanengine/<module>/x.h`.** Nothing in
 `src/` is included across module boundaries; modules talk through public headers only.
@@ -46,9 +48,11 @@ original `d6::` namespace so the S1 files stay byte-identical to the spike.
 
 ## 2. Threading model
 
-**The engine owns no threads in A1.** That is a deliberate starting point, not an
+**The engine owns no threads of its own.** That is a deliberate starting point, not an
 oversight: every thread that will exist gets introduced by the task that needs it, and
-must be documented here when it lands.
+must be documented here when it lands. The `Engine` itself still creates none — the one
+row below that it can *cause* to exist belongs to `LioOdometry`, which the Engine
+constructs but does not drive.
 
 | Thread | Owner | What runs on it |
 | --- | --- | --- |
@@ -58,8 +62,36 @@ must be documented here when it lands.
 | SDK2 receive threads *(A3, landed)* | Livox SDK2 | point + IMU callbacks → decode → `PageStore` / IMU ring. Reaches the rest of the engine only through `PageStore` and `EventBus`. |
 | Driver supervisor *(A3, landed)* | `Mid360Driver` | 20 Hz `tick()`: watchdog, reconnect, per-second health. One per driver. `internal_supervisor_thread = false` + manual `tick()` in unit tests. |
 | `UdpSource` receive *(A3, landed)* | `UdpSource` | raw-UDP backend only; one per bound port; blocking `recvfrom` with 100 ms timeout so `stop()` is prompt. Lock order `flush_m_` → `m_`; `PageStore::append` publishes with **no** driver lock held (see docs/A3-mid360-driver.md §6). |
-| *(A6)* LIO odometry thread | A6 | scan-to-map at 10 Hz, ≤ 2 big cores on Android. |
+| LIO odometry *(A6, landed)* | `LioOdometry` (only when `LioConfig::internal_thread`) | Drains the IMU/point queues, propagates, undistorts, runs the iterated update, inserts into the voxel map, appends to the `PageStore`, publishes the pose. One per instance; ~10 Hz scan-to-map, ≤ 2 big cores on Android. Lock order `proc_m` → `in_m`; `LioPoseSource` callbacks fire **outside** its lock, so a subscriber cannot deadlock the odometry from one. With `internal_thread = false` (the default, and what every test uses) the pipeline runs inline on the caller's thread — the engine's default posture. |
 | *(A15)* job workers | A15 | post pipeline, exports, uploads. |
+
+### Where the Engine's own consumers run (INT-24)
+
+Neither A8's assembler nor A6's odometry gets a thread from the Engine. Both hang off
+paths that already exist:
+
+* **`ExternalPoseSource`** (one per Engine, `StreamId::kPoseAr`) is internally
+  synchronized. `Engine::push_pose()` is called from the app's ARCore/JNI thread while
+  points are decoded elsewhere; that is the case it was built for.
+* **`D6PushbroomAssembler`** (one per Engine) is *not* internally synchronized — A8's
+  contract is "one D6 decode thread drives it". It is fed from `D6Config::profile_sink`,
+  i.e. on the app's serial-reader thread inside `push_serial_bytes()`, and the Engine
+  additionally holds one mutex around every touch of it, because `pushbroom_flush()` /
+  `pushbroom_stats()` arrive from the control thread.
+* **`LioOdometry`** is fed by two engine-owned sinks: `PageStore` updates on
+  `StreamId::kLidarMid360` (points) and `Mid360Config::imu_sink` → the Engine's single
+  `ImuIngest` (IMU). Both run on the Mid-360 receive thread. With
+  `internal_thread = true` — what the C ABI selects for a live capture —
+  `push_points()`/`push_imu()` only enqueue, so the receive thread never runs scan-to-map;
+  with `false` the odometry runs inline there, which is what makes the unit tests
+  deterministic.
+* **Re-entrancy is bounded and terminates.** The LIO appends its registered map back into
+  the same `PageStore` that is notifying it, so `Engine::Impl::on_page_update` re-enters
+  once, with `StreamId::kSlamMap`, and stops (only `kLidarMid360` is forwarded).
+  `PageStore::append()` notifies with no lock held, which is what makes that legal.
+* **Session teardown is ordered:** `stop_session()` stops every device *first*, so no
+  producer can be inside either consumer, then flushes the assembler, then flushes, stops
+  and releases the odometry — joining A6's thread — and only then closes the recorder.
 
 Why the decode runs on the caller's thread: it keeps the engine free of platform serial
 code (§3.1's per-OS matrix lives entirely in the apps), it makes replay bit-identical to
@@ -148,7 +180,17 @@ not use this header.
 Surface: create/destroy · start/stop/state · add_device/remove_device/device_health ·
 push_serial_bytes · poll_event/wait_event/set_event_callback ·
 page_count/page_id_at/get_point_page/total_points · last_error/error_str/version/abi ·
-set_log_callback.
+set_log_callback · **push_pose/pose_at · set_mount_extrinsics/pushbroom_enable/
+pushbroom_flush/pushbroom_stats · scan_mount_calib_create/add_observation/solve/destroy**
+(ABI 2, INT-24).
+
+The A8 additions follow the same rules and add one convention of their own: **a function
+that reports a gate always writes the gate, including when it returns an error.**
+`scan_engine_pose_at()` returns `SCAN_OK` whenever a pose could be interpolated *at all*
+— the flagged gates (`STALE` / `TRACKING_LOST` / `LOW_CONFIDENCE`) carry real geometry
+that the caller must decide about — `SCAN_ERR_AGAIN` for a time newer than the newest
+pose, and `SCAN_ERR_NOT_FOUND` for one that predates the stream. Collapsing those into a
+single error is exactly what `poses/pose_interpolator.h` exists to avoid.
 
 `tests/capi_smoke.c` is compiled **as C11** and is the reference call sequence for JNI.
 
@@ -172,7 +214,15 @@ exactly this layout.
   `kCapacityExceeded` with a `dropped_points` counter. A14 replaces the cap with an
   LOD/eviction policy — safe only because A5's recording keeps the raw data on disk.
 * One place turns page updates into events: the Engine subscribes to the PageStore, so
-  every producer (D6 now; Mid-360, SLAM, colorization later) gets identical semantics.
+  every producer (D6, Mid-360, A6's SLAM map, A8's assembled pushbroom cloud;
+  colorization later) gets identical semantics. That one subscriber is also where live
+  SLAM is fed from — see §2's INT-24 note — which is what makes the odometry consume
+  exactly the points the renderer sees.
+* **World-frame results go out on `StreamId::kSlamMap`**, raw sensor-frame previews on
+  their device's own stream. Pages are single-stream, so this separates the two clouds
+  into different pages, different events and different provenance in an export without
+  needing a second store — and a second store is not an option, because `PageId`s are
+  allocated per store and would collide across the C ABI's by-id page lookup.
 
 ---
 

@@ -80,6 +80,8 @@ bool TimeSync::stream_has_device_clock(StreamId stream) noexcept {
     case StreamId::kLidarD6:      // no device clock at all — arrival stamps
     case StreamId::kPoseAr:       // ARCore is already CLOCK_BOOTTIME
     case StreamId::kCameraFrames: // ARCore frame timestamps, same domain
+    case StreamId::kSlamMap:      // engine-produced, already in engine time
+    case StreamId::kPoseLio:      // engine-produced, already in engine time
     case StreamId::kPoseFused:    // produced in engine time
     case StreamId::kUnknown:
       return false;

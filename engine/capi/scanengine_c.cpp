@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "scanengine/core/engine.h"
+#include "scanengine/slam/pushbroom/mount_calibration.h"
 
 using namespace scanengine;
 
@@ -62,7 +63,35 @@ SCAN_CHECK_ENUM(SCAN_ENGINE_FAULTED, EngineState::kFaulted);
 
 SCAN_CHECK_ENUM(SCAN_STREAM_LIDAR_D6, StreamId::kLidarD6);
 SCAN_CHECK_ENUM(SCAN_STREAM_LIDAR_MID360, StreamId::kLidarMid360);
+SCAN_CHECK_ENUM(SCAN_STREAM_IMU, StreamId::kImu);
+SCAN_CHECK_ENUM(SCAN_STREAM_POSE_AR, StreamId::kPoseAr);
+SCAN_CHECK_ENUM(SCAN_STREAM_GNSS, StreamId::kGnss);
 SCAN_CHECK_ENUM(SCAN_STREAM_CAMERA_FRAMES, StreamId::kCameraFrames);
+SCAN_CHECK_ENUM(SCAN_STREAM_POSE_FUSED, StreamId::kPoseFused);
+SCAN_CHECK_ENUM(SCAN_STREAM_SLAM_MAP, StreamId::kSlamMap);
+SCAN_CHECK_ENUM(SCAN_STREAM_POSE_LIO, StreamId::kPoseLio);
+
+// A8's three new enums. The drift guard matters more here than usual: the
+// gates are what Tech Spec §3.3's "flagged and excluded by default" and
+// WIZARD.md's accept/reject bands are decided on, so a silent renumbering
+// would turn a rejected calibration into a good one.
+SCAN_CHECK_ENUM(SCAN_POSE_QUALITY_INVALID, PoseQuality::kInvalid);
+SCAN_CHECK_ENUM(SCAN_POSE_QUALITY_POOR, PoseQuality::kPoor);
+SCAN_CHECK_ENUM(SCAN_POSE_QUALITY_FAIR, PoseQuality::kFair);
+SCAN_CHECK_ENUM(SCAN_POSE_QUALITY_GOOD, PoseQuality::kGood);
+
+SCAN_CHECK_ENUM(SCAN_POSE_GATE_OK, PoseGate::kOk);
+SCAN_CHECK_ENUM(SCAN_POSE_GATE_NO_DATA, PoseGate::kNoData);
+SCAN_CHECK_ENUM(SCAN_POSE_GATE_BEFORE_FIRST, PoseGate::kBeforeFirst);
+SCAN_CHECK_ENUM(SCAN_POSE_GATE_FUTURE, PoseGate::kFuture);
+SCAN_CHECK_ENUM(SCAN_POSE_GATE_STALE, PoseGate::kStale);
+SCAN_CHECK_ENUM(SCAN_POSE_GATE_TRACKING_LOST, PoseGate::kTrackingLost);
+SCAN_CHECK_ENUM(SCAN_POSE_GATE_LOW_CONFIDENCE, PoseGate::kLowConfidence);
+
+SCAN_CHECK_ENUM(SCAN_CALIB_GATE_UNKNOWN, CalibGate::kUnknown);
+SCAN_CHECK_ENUM(SCAN_CALIB_GATE_GOOD, CalibGate::kGood);
+SCAN_CHECK_ENUM(SCAN_CALIB_GATE_USABLE, CalibGate::kUsable);
+SCAN_CHECK_ENUM(SCAN_CALIB_GATE_REJECT, CalibGate::kReject);
 
 SCAN_CHECK_ENUM(SCAN_LOG_TRACE, LogLevel::kTrace);
 SCAN_CHECK_ENUM(SCAN_LOG_ERROR, LogLevel::kError);
@@ -170,10 +199,16 @@ void convert_event(const Event& in, scan_event* out) {
       out->payload.error.device = in.payload.error.device;
       out->payload.error.stream = static_cast<std::uint8_t>(in.payload.error.stream);
       break;
+    case EventType::kPoseUpdate:
+      out->payload.pose.source = static_cast<std::uint8_t>(in.payload.pose.source);
+      for (int i = 0; i < 3; ++i) out->payload.pose.position[i] = in.payload.pose.position[i];
+      for (int i = 0; i < 4; ++i) out->payload.pose.quaternion[i] = in.payload.pose.quaternion[i];
+      out->payload.pose.quality = in.payload.pose.quality;
+      break;
     default:
-      // Types whose payload the ABI does not mirror yet (pose, gnss, job —
-      // A10/A15) travel as raw bytes; the consumer must not interpret them
-      // until this switch grows a case.
+      // Types whose payload the ABI does not mirror yet (gnss, job — A10/A15)
+      // travel as raw bytes; the consumer must not interpret them until this
+      // switch grows a case.
       std::memcpy(out->payload.raw, in.payload.raw, sizeof(out->payload.raw));
       break;
   }
@@ -252,6 +287,11 @@ scan_error_t scan_engine_start(scan_engine* engine, const scan_session_config* c
     if (cfg->lscan_dir != nullptr) sc.lscan_dir = cfg->lscan_dir;
     if (cfg->profile != nullptr) sc.profile = cfg->profile;
     sc.record = cfg->record != 0;
+    sc.live_slam = cfg->live_slam != 0;
+    sc.pushbroom = cfg->pushbroom != 0;
+    // A live capture is what the odometry thread exists for: the SDK's receive
+    // thread must never run scan-to-map inline (DESIGN §2).
+    sc.lio.internal_thread = true;
   }
   return to_c(handle_of(engine)->engine->start_session(sc));
   SCAN_GUARD_END
@@ -459,6 +499,166 @@ scan_error_t scan_engine_total_points(scan_engine* engine, uint64_t* out_points)
     return fail(ScanError::kInvalidArgument, "null argument");
   }
   *out_points = handle_of(engine)->engine->points().total_points();
+  return SCAN_OK;
+  SCAN_GUARD_END
+}
+
+// --- poses (A8) -------------------------------------------------------------
+
+scan_error_t scan_engine_push_pose(scan_engine* engine, const scan_pose* pose, float confidence) {
+  SCAN_GUARD_BEGIN
+  if (engine == nullptr || pose == nullptr) {
+    return fail(ScanError::kInvalidArgument, "null argument");
+  }
+  Pose p;
+  p.t_mono_ns = pose->t_mono_ns;
+  for (int i = 0; i < 3; ++i) p.position[i] = pose->position[i];
+  for (int i = 0; i < 4; ++i) p.orientation[i] = pose->orientation[i];
+  p.position_sigma_m = pose->position_sigma_m;
+  p.orientation_sigma_deg = pose->orientation_sigma_deg;
+  p.source = static_cast<StreamId>(pose->source);
+  p.quality = static_cast<PoseQuality>(pose->quality);
+  p.tracking_lost = pose->tracking_lost;
+  Engine& e = *handle_of(engine)->engine;
+  // Negative = "derive it", which is what an ARCore caller wants: it has a
+  // TrackingState, not a scalar.
+  return to_c(confidence < 0.0f ? e.push_pose(p) : e.push_pose(p, confidence));
+  SCAN_GUARD_END
+}
+
+scan_error_t scan_engine_pose_at(scan_engine* engine, int64_t t_mono_ns, scan_pose* out,
+                                 uint8_t* out_gate) {
+  SCAN_GUARD_BEGIN
+  if (engine == nullptr) return fail(ScanError::kInvalidArgument, "engine handle is null");
+  const PoseSample s = handle_of(engine)->engine->pose_at(t_mono_ns);
+  if (out_gate != nullptr) *out_gate = static_cast<std::uint8_t>(s.gate);
+  if (out != nullptr) {
+    std::memset(out, 0, sizeof(*out));
+    out->t_mono_ns = s.pose.t_mono_ns;
+    for (int i = 0; i < 3; ++i) out->position[i] = s.pose.position[i];
+    for (int i = 0; i < 4; ++i) out->orientation[i] = s.pose.orientation[i];
+    out->position_sigma_m = s.pose.position_sigma_m;
+    out->orientation_sigma_deg = s.pose.orientation_sigma_deg;
+    out->source = static_cast<std::uint8_t>(s.pose.source);
+    out->quality = static_cast<std::uint8_t>(s.pose.quality);
+    out->tracking_lost = s.pose.tracking_lost;
+  }
+  // has_pose, not gate == kOk: a flagged sample carries real geometry and the
+  // caller decides what to do with it — that is the whole point of the gate.
+  if (s.has_pose) return SCAN_OK;
+  if (s.gate == PoseGate::kFuture) return SCAN_ERR_AGAIN;
+  return to_c(set_last_error(ScanError::kNotFound, "no pose at %lld ns (%s)",
+                             static_cast<long long>(t_mono_ns), to_string(s.gate)));
+  SCAN_GUARD_END
+}
+
+// --- pushbroom (A8) ---------------------------------------------------------
+
+scan_error_t scan_engine_set_mount_extrinsics(scan_engine* engine,
+                                              const double phone_from_lidar[16]) {
+  SCAN_GUARD_BEGIN
+  if (engine == nullptr || phone_from_lidar == nullptr) {
+    return fail(ScanError::kInvalidArgument, "null argument");
+  }
+  return to_c(handle_of(engine)->engine->set_mount_extrinsics(phone_from_lidar));
+  SCAN_GUARD_END
+}
+
+scan_error_t scan_engine_pushbroom_enable(scan_engine* engine, int on) {
+  SCAN_GUARD_BEGIN
+  if (engine == nullptr) return fail(ScanError::kInvalidArgument, "engine handle is null");
+  return to_c(handle_of(engine)->engine->set_pushbroom_enabled(on != 0));
+  SCAN_GUARD_END
+}
+
+scan_error_t scan_engine_pushbroom_flush(scan_engine* engine) {
+  SCAN_GUARD_BEGIN
+  if (engine == nullptr) return fail(ScanError::kInvalidArgument, "engine handle is null");
+  return to_c(handle_of(engine)->engine->pushbroom_flush());
+  SCAN_GUARD_END
+}
+
+scan_error_t scan_engine_pushbroom_stats(scan_engine* engine, scan_pushbroom_stats* out) {
+  SCAN_GUARD_BEGIN
+  if (engine == nullptr || out == nullptr) {
+    return fail(ScanError::kInvalidArgument, "null argument");
+  }
+  const PushbroomStats s = handle_of(engine)->engine->pushbroom_stats();
+  std::memset(out, 0, sizeof(*out));
+  out->points_in = s.points_in;
+  out->points_out = s.points_out;
+  out->points_pending = s.points_pending;
+  out->dropped_range = s.dropped_range;
+  out->dropped_no_pose = s.dropped_no_pose;
+  out->dropped_overflow = s.dropped_overflow;
+  out->dropped_page_full = s.dropped_page_full;
+  out->flagged_tracking_lost = s.flagged_tracking_lost;
+  out->flagged_stale_pose = s.flagged_stale_pose;
+  out->flagged_low_confidence = s.flagged_low_confidence;
+  out->flagged_emitted = s.flagged_emitted;
+  out->t_first_ns = s.t_first_ns;
+  out->t_last_ns = s.t_last_ns;
+  return SCAN_OK;
+  SCAN_GUARD_END
+}
+
+// --- mount calibration (A8) -------------------------------------------------
+
+scan_error_t scan_mount_calib_create(scan_mount_calib** out) {
+  SCAN_GUARD_BEGIN
+  if (out == nullptr) return fail(ScanError::kInvalidArgument, "out handle is null");
+  *out = reinterpret_cast<scan_mount_calib*>(new MountCalibrationSolver());
+  return SCAN_OK;
+  SCAN_GUARD_END
+}
+
+void scan_mount_calib_destroy(scan_mount_calib* calib) {
+  if (calib == nullptr) return;
+  delete reinterpret_cast<MountCalibrationSolver*>(calib);
+}
+
+scan_error_t scan_mount_calib_add_observation(scan_mount_calib* calib, const double normal[3],
+                                              double d, const scan_point_vertex* pts, uint32_t n,
+                                              double sigma_m) {
+  SCAN_GUARD_BEGIN
+  if (calib == nullptr || normal == nullptr || (pts == nullptr && n != 0)) {
+    return fail(ScanError::kInvalidArgument, "null argument");
+  }
+  auto* solver = reinterpret_cast<MountCalibrationSolver*>(calib);
+  // scan_point_vertex is 16-byte-identical to PointVertex (static_asserted
+  // above) — this is the one place the ABI is allowed to alias rather than
+  // convert, and it is why the assert exists.
+  const auto* first = reinterpret_cast<const PointVertex*>(pts);
+  return to_c(solver->add_observation(normal, d, Span<const PointVertex>(first, n), sigma_m));
+  SCAN_GUARD_END
+}
+
+scan_error_t scan_mount_calib_solve(scan_mount_calib* calib, const double cad[16],
+                                    scan_mount_calib_result* out) {
+  SCAN_GUARD_BEGIN
+  if (calib == nullptr || cad == nullptr || out == nullptr) {
+    return fail(ScanError::kInvalidArgument, "null argument");
+  }
+  auto* solver = reinterpret_cast<MountCalibrationSolver*>(calib);
+  auto r = solver->solve(cad);
+  if (!r.ok()) return to_c(r.error());
+  const MountCalibResult& s = r.value();
+  std::memset(out, 0, sizeof(*out));
+  for (int i = 0; i < 16; ++i) out->camera_from_lidar[i] = s.camera_from_lidar[i];
+  out->converged = s.converged ? 1 : 0;
+  out->degenerate = s.degenerate ? 1 : 0;
+  out->iterations_l2 = s.iterations_l2;
+  out->iterations_robust = s.iterations_robust;
+  out->observations = s.observations;
+  out->residuals = s.residuals;
+  out->rms_residual_m = s.rms_residual_m;
+  out->final_cost = s.final_cost;
+  out->split_half_px = s.split_half_px;
+  out->gate_range_m = s.gate_range_m;
+  out->gate = static_cast<std::uint8_t>(s.gate);
+  out->sigma_rot_deg = s.sigma_rot_deg;
+  out->sigma_trans_mm = s.sigma_trans_mm;
+  out->condition_number = s.condition_number;
   return SCAN_OK;
   SCAN_GUARD_END
 }

@@ -6,6 +6,7 @@
 
 #include "mid360_backend.h"
 #include "scanengine/core/log.h"
+#include "scanengine/timesync/offset_estimator.h"  // TimeSync: driver.h only forward-declares it
 
 namespace scanengine {
 namespace {
@@ -253,6 +254,32 @@ void Mid360Driver::on_point_packet(const std::uint8_t* data, std::size_t len,
     return;
   }
 
+  // --- A4/A6: points and IMU share ONE offset estimator --------------------
+  //
+  // The Mid-360 stamps its point packets and its IMU packets from the SAME
+  // device clock (A3 §4), so both are mapped through the kLidarMid360
+  // estimator (docs/A6-lio.md §7.2: a second estimator would inject a few ms
+  // of independent estimation noise BETWEEN the two streams, which is exactly
+  // what motion undistortion is sensitive to). The IMU side of the pair is fed
+  // by the Engine's ImuIngest, which is constructed on this same stream.
+  //
+  // Arrival time still drives the watchdog and the health window — those are
+  // wall-clock questions about this host — but the stamp the points are STORED
+  // under is device time mapped into the engine domain, which is what A6/A8
+  // interpolate against. A packet whose device clock has not started yet
+  // (timestamp == 0, the first ~150 datagrams of a cold device) is withheld
+  // from the estimator but still counted by the LossTracker below.
+  std::int64_t t_data_ns = t_ns;
+  if (ctx_.timesync != nullptr) {
+    std::uint64_t t_dev_u = 0;
+    std::memcpy(&t_dev_u, &v.header->timestamp, sizeof(t_dev_u));
+    const std::int64_t t_dev = static_cast<std::int64_t>(t_dev_u);
+    if (t_dev > 0) {
+      ctx_.timesync->add_pair(StreamId::kLidarMid360, t_dev, t_arrival);
+      t_data_ns = ctx_.timesync->to_engine_time(StreamId::kLidarMid360, t_dev);
+    }
+  }
+
   bool need_flush = false;
   {
     std::lock_guard<std::mutex> lock(m_);
@@ -336,7 +363,7 @@ void Mid360Driver::on_point_packet(const std::uint8_t* data, std::size_t len,
     need_flush = batch_.size() >= cfg_.max_batch_points;
   }
 
-  if (need_flush) flush_points(t_ns);
+  if (need_flush) flush_points(t_data_ns);
 
   // First data promotes us out of kStarting; the watchdog in tick() handles
   // the end of a silent-link episode, so there is nothing to do here.

@@ -161,6 +161,10 @@ const char* stream_file_of(StreamId s) {
     case StreamId::kPoseFused: return kPoseArStreamFile;
     case StreamId::kGnss: return kGnssStreamFile;
     case StreamId::kCameraFrames: return kFrameIndexFile;
+    // Engine-internal streams (SLAM map, LIO pose track): if a caller ever
+    // records them, they land beside the lidar/pose streams they derive from.
+    case StreamId::kSlamMap: return kLidarStreamFile;
+    case StreamId::kPoseLio: return kPoseArStreamFile;
     case StreamId::kUnknown: return kLidarStreamFile;
   }
   return kLidarStreamFile;
