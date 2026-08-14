@@ -1,8 +1,8 @@
 # LidarScan — Technical Specification
 
 **Working title:** LidarScan (placeholder — rename before release)
-**Version:** 1.2 draft · 2026-08-14 (rev 2: desktop = macOS universal + Windows + Linux, one Qt codebase)
-**Status:** ⏳ Awaiting approval — no execution until signed off
+**Version:** 1.2.1 · 2026-08-15 (v1.2 approved 2026-08-14; .1 folds S6 spike findings into §3.3/§3.5/§5)
+**Status:** ✅ Approved — Phase 0 in execution
 **Scope of this spec:** Phase 0 (spikes) + Phase 1 (**Android app + Desktop app for macOS/Windows/Linux**)
 
 ---
@@ -146,7 +146,7 @@ Single monotonic engine clock (`CLOCK_BOOTTIME` / `mach_absolute_time` / `QueryP
 
 **Mid-360 post:** full-density LIO re-run → Scan Context loop candidates → GTSAM pose-graph optimization → re-integration → voxel dedup/outlier filter. Foreground service (Android) / background task (desktop), cancellable, progress-reported.
 
-**D6 pushbroom:** rigid phone+lidar mount; trajectory from the pose fusion layer (ARCore indoors, RTK outdoors, blended when both). Mount-extrinsics wizard (guided corner/doorframe capture + solver). Points during ARCore tracking loss are flagged and excluded by default. Desktop D6 capture: no ARCore → RTK-trajectory or fixed-position profile mode only (bench/tripod use), stated in UI.
+**D6 pushbroom:** rigid phone+lidar mount; trajectory from the pose fusion layer (ARCore indoors, RTK outdoors, blended when both). Mount-extrinsics wizard using a **planar checkerboard target** (S6 finding: corner/doorframe capture is geometrically unusable for a 2D scanner — the sampled slice slides along the corner line, so it is not a repeatable world point). Points during ARCore tracking loss are flagged and excluded by default. Desktop D6 capture: no ARCore → RTK-trajectory or fixed-position profile mode only (bench/tripod use), stated in UI.
 
 ### 3.4 GNSS/RTK + pose fusion (Phase 1)
 
@@ -158,7 +158,7 @@ Single monotonic engine clock (`CLOCK_BOOTTIME` / `mach_absolute_time` / `QueryP
 ### 3.5 Camera colorization
 
 - **Capture (Android):** CameraX shared with ARCore session; keyframes JPEG-recorded at 2–5 fps with poses + intrinsics into `.lscan/streams/frames/`.
-- **Calibration:** camera↔lidar extrinsics from the mount wizard (shared with D6 solver; checkerboard/corner refinement for Mid-360).
+- **Calibration:** camera↔lidar extrinsics from the mount wizard — **planar checkerboard target for both sensors** (A1 0.80×0.60 m minimum, ≥8 poses incl. roll variation; quality gate = split-half agreement, not solver covariance). S6 findings: Mid-360 colorization is GO with ≤5 ms sync jitter (≤15 ms with motion-gated keyframe selection); D6 colorization requires a bench calibration (~45 poses) and measured range noise ≤~10 mm 1σ — verify against S1 hardware measurement. Mitigations pulled into A11: constant clock-offset estimation in the wizard (8 s sweep), rolling-shutter per-row time model, motion-gated keyframe selection. Hardware time-sync stays out of Phase 1 (software mitigations dominate the budget).
 - **Processing (any platform):** per point, best-view keyframe selection (angle/distance/occlusion z-buffer), color sample, RGB into final cloud; exports carry RGB in PLY/LAS.
 - Desktop-captured sessions have no camera → colorization gracefully unavailable for them.
 
@@ -322,7 +322,7 @@ Filament everywhere: Vulkan on Android/Windows/Linux, Metal on macOS; embedded i
 | Filament-embedded-in-Qt stability (resize, multi-screen, driver quirks) | Med-High | Part of S3 exit criteria; GLES/OpenGL fallback path on desktop if a platform misbehaves |
 | OEM USB-Ethernet variance (Mid-360 on Android) | High | Opus-assigned B3, self-test wizard, tested-device list; Phase 2 WiFi bridge is the universal fallback |
 | Live LIO thermals on mid-range phones | High | Hybrid degrades to Record-only; decimation budget; perf gates S3/A6 |
-| Camera↔lidar calibration quality | Med-High | S6 quantifies before wizard design; per-project calib stored/reusable |
+| **Time-sync jitter** dominating colorization error (S6: at 15 ms jitter, sync alone eats 83% of the reprojection budget; extrinsic calibration itself is solved) | Med-High | A11 software mitigations: wizard clock-offset sweep, rolling-shutter row model, motion-gated keyframes; AR overlay unaffected (GO at all jitter levels) |
 | ARCore tracking loss (D6 indoors, overlay) | Medium | Confidence UX, flagged points; RTK takes over outdoors |
 | RTK/NMEA device variance | Medium | S5 bench validation; support matrix starts F9P + Emlid only |
 | Cloud service scope creep | Medium | §3.8 MVP boundaries are contractual |
