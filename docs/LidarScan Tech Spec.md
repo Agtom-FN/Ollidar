@@ -68,7 +68,7 @@ iOS (dropped) · WiFi bridges (Phase 2) · PPK (Phase 2) · bridge firmware (Pha
 
 | Property | Value |
 | --- | --- |
-| Interface | 100 Mbps Ethernet, UDP (Livox SDK2, C++; supports Windows/Linux/macOS hosts) — lidar on `192.168.1.1xx`, host static on `192.168.1.x` |
+| Interface | 100 Mbps Ethernet, UDP (Livox SDK2, C++). S2-sim findings: **stock SDK2 does not run on macOS** (broadcast-bind fails with EADDRNOTAVAIL) — engine vendors a 3-patch SDK2 (pinned, `spikes/s2-mid360-sim/patches/`), and macOS requires an **explicit lidar IP** (no broadcast discovery). Lidar on `192.168.1.1xx`, host static on `192.168.1.x`. **Protocol doc conflict:** real devices free-run `udp_cnt` and keep `frame_cnt`=0 (verified against Livox's own .lvx2 sample), contrary to the official table — loss detection in A3 must use the free-running model |
 | Data rate | ~200,000 pts/s (~22 Mbps sustained), 96-pt UDP packets |
 | IMU | Built-in 6-axis @ 200 Hz |
 | Power | 9–27 V, ~6.5 W — external battery required |
@@ -220,6 +220,8 @@ Filament everywhere: Vulkan on Android/Windows/Linux, Metal on macOS; embedded i
 ## 4. Execution plan — tasks with agent assignments
 
 **Delegation model:** Claude (this session) orchestrates and integrates; **Opus 5** takes architecture-critical / high-uncertainty tasks; **Sonnet 5** takes well-specified implementation against interfaces Opus has fixed; a rolling Opus review gate covers Sonnet engine-adjacent merges.
+
+> **Hardware-absent addendum (2026-08-15):** sensors are at a remote location. S2/S5 were executed as simulator variants (`s2-mid360-sim`: protocol-faithful Mid-360 simulator + patched SDK2 10-min loopback soak at 200k pts/s clean; `s5-rtk-sim`: NMEA/NTRIP/RTCM3 simulation infra, 10/10 self-tests). A remote-capture kit (`tools/remote-capture/lidarscan-capture-kit.zip`) collects real D6/Mid-360/GNSS data at the hardware site; returned captures close the remaining live exit criteria (S1 checksum variant + D6 noise σ, S2 real-transport soak, S5 real fixes). Public datasets (1.3 GB incl. Livox official .lvx2 and a CC-BY Mid-360+IMU set) downloaded for A6/E2 development against real scan patterns.
 
 ### Phase 0 — de-risk spikes (gate for Phase 1 build-out)
 
