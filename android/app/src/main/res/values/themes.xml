@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base application theme. Compose (see ui/theme/Theme.kt) owns the real
+         Material 3 theming; this XML theme only needs to exist so the
+         Activity has a valid android:theme before Compose content is set,
+         and to configure the system window look (edge-to-edge, no action bar). -->
+    <style name="Theme.LidarScan" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>
