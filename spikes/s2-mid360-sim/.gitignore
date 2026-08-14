@@ -1,0 +1,15 @@
+# Vendored SDK2 checkout (fetch with scripts/fetch_sdk2.sh, then apply patches/)
+third_party/Livox-SDK2/
+
+# Build trees
+build/
+
+# Downloaded sample recordings (see DATASETS.md for provenance)
+datasets/
+
+# Run artefacts
+results/*.log
+results/*.csv
+log/
+.orig/
+.DS_Store

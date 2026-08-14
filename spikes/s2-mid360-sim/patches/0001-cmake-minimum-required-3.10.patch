@@ -1,0 +1,97 @@
+Subject: [PATCH 0001] Raise cmake_minimum_required from 3.0 to 3.10
+
+CMake >= 4.0 removed compatibility with cmake_minimum_required(VERSION < 3.5),
+so Livox-SDK2 fails to configure at all with current CMake (4.4.2 as tested on
+macOS 26.5 / Homebrew). Bumping the floor to 3.10 is sufficient; the SDK relies
+on no policy behaviour that changes between 3.0 and 3.10.
+
+Applies to all 11 CMakeLists.txt in the tree.
+---
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-cmake_minimum_required(VERSION 3.0)
++cmake_minimum_required(VERSION 3.10)
+ 
+ project(livox_sdk2)
+ 
+--- a/samples/CMakeLists.txt
++++ b/samples/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-cmake_minimum_required(VERSION 3.0)
++cmake_minimum_required(VERSION 3.10)
+ 
+ project(livox_sdk2)
+ 
+--- a/samples/debug_point_cloud/CMakeLists.txt
++++ b/samples/debug_point_cloud/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-cmake_minimum_required(VERSION 3.0)
++cmake_minimum_required(VERSION 3.10)
+ 
+ set(DEMO_NAME debug_point_cloud)
+ add_executable(${DEMO_NAME} main.cpp)
+--- a/samples/lidar_cmd_observer/CMakeLists.txt
++++ b/samples/lidar_cmd_observer/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-cmake_minimum_required(VERSION 3.0)
++cmake_minimum_required(VERSION 3.10)
+ 
+ set(DEMO_NAME lidar_cmd_observer)
+ add_executable(${DEMO_NAME} main.cpp)
+--- a/samples/livox_lidar_info_get/CMakeLists.txt
++++ b/samples/livox_lidar_info_get/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-cmake_minimum_required(VERSION 3.0)
++cmake_minimum_required(VERSION 3.10)
+ 
+ set(DEMO_NAME livox_lidar_info_get)
+ add_executable(${DEMO_NAME} main.cpp)
+--- a/samples/livox_lidar_ip_set/CMakeLists.txt
++++ b/samples/livox_lidar_ip_set/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-cmake_minimum_required(VERSION 3.0)
++cmake_minimum_required(VERSION 3.10)
+ 
+ set(DEMO_NAME livox_lidar_ip_set)
+ add_executable(${DEMO_NAME} main.cpp)
+--- a/samples/livox_lidar_quick_start/CMakeLists.txt
++++ b/samples/livox_lidar_quick_start/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-cmake_minimum_required(VERSION 3.0)
++cmake_minimum_required(VERSION 3.10)
+ 
+ set(DEMO_NAME livox_lidar_quick_start)
+ add_executable(${DEMO_NAME} main.cpp)
+--- a/samples/livox_lidar_rmc_time_sync/CMakeLists.txt
++++ b/samples/livox_lidar_rmc_time_sync/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-cmake_minimum_required(VERSION 3.0)
++cmake_minimum_required(VERSION 3.10)
+ 
+ set(DEMO_NAME livox_lidar_rmc_time_sync)
+ if (WIN32)
+--- a/samples/logger/CMakeLists.txt
++++ b/samples/logger/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-cmake_minimum_required(VERSION 3.0)
++cmake_minimum_required(VERSION 3.10)
+ 
+ set(DEMO_NAME logger)
+ add_executable(${DEMO_NAME} main.cpp)
+--- a/samples/multi_lidars_upgrade/CMakeLists.txt
++++ b/samples/multi_lidars_upgrade/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-cmake_minimum_required(VERSION 3.0)
++cmake_minimum_required(VERSION 3.10)
+ 
+ set(DEMO_NAME multi_lidars_upgrade)
+ add_executable(${DEMO_NAME} main.cpp)
+--- a/sdk_core/CMakeLists.txt
++++ b/sdk_core/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-cmake_minimum_required(VERSION 3.0)
++cmake_minimum_required(VERSION 3.10)
+ 
+ set(SDK_LIBRARY_STATIC livox_lidar_sdk_static)
+ set(SDK_LIBRARY_SHARED livox_lidar_sdk_shared)
