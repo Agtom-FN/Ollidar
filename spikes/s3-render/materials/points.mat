@@ -1,0 +1,30 @@
+// S3 spike: point-cloud material.
+// Unlit, per-vertex RGB, uniform screen-space point size.
+// POINTS primitive -> gl_PointSize is translated to [[point_size]] by
+// Filament's GLSL->SPIR-V->MSL pipeline on the Metal backend.
+material {
+    name : points,
+    shadingModel : unlit,
+    vertexDomain : object,
+    requires : [ color ],
+    parameters : [
+        { type : float, name : pointSize }
+    ],
+    culling : none,
+    depthWrite : true,
+    depthCulling : true,
+    blending : opaque
+}
+
+vertex {
+    void materialVertex(inout MaterialVertexInputs material) {
+        gl_PointSize = materialParams.pointSize;
+    }
+}
+
+fragment {
+    void material(inout MaterialInputs material) {
+        prepareMaterial(material);
+        material.baseColor = getColor();
+    }
+}

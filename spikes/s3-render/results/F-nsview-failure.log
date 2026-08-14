@@ -1,0 +1,19 @@
+[s3] Host: macOS Tahoe (26.5.1) / Qt 6.11.1 / screen 1920x1080 @ 60 Hz, Qt devicePixelRatio 1
+[s3] QWindow::winId() -> NSView, view.layer is QContainerLayer
+[s3] native handle: raw NSView* (as documented in SwapChain.h)
+[s3] Metal device: Apple M4
+[s3] createSwapChain() OK
+[s3] points.filamat loaded (24852 bytes)
+[s3] init complete: 1280x773 px, dpr 1.000000, vsync on
+libc++abi: terminating due to uncaught exception of type utils::PreconditionPanic
+FEngine (64 bits) created at 0x9c0a08000 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
