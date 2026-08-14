@@ -1,0 +1,33 @@
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] starting -> running
+[scanengine][info][engine] added device 1 (livox-mid360)
+[scanengine][info][mid360] device 1: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_1_0.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 1: idle -> starting
+[scanengine][info][mid360] device 1: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[scanengine][info][mid360] device 1: connected (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] handle 16777343: configured (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] device 1: starting -> streaming
+[lidarscan] mid360-selftest PASSED — first packet after 1.63 s
+[scanengine][info][engine] running -> stopping
+[scanengine][info][mid360] device 1: streaming -> stopping
+[scanengine][info][mid360] device 1: SDK2 torn down
+[scanengine][info][mid360] device 1: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+[scanengine][info][engine] idle -> starting
+[scanengine][info][record] file writer open at '/Users/admin/lidarscan/desktop/evidence/mid360-capture.lscan'
+[scanengine][info][mid360] device 1: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_1_1.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 1: idle -> starting
+[scanengine][info][mid360] device 1: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[scanengine][info][engine] starting -> running
+[lidarscan] mid360-selftest: recording into /Users/admin/lidarscan/desktop/evidence/mid360-capture.lscan for 3 s
+[scanengine][info][mid360] device 1: starting -> streaming
+[scanengine][info][mid360] device 1: connected (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] handle 16777343: configured (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][engine] running -> stopping
+[scanengine][info][mid360] device 1: streaming -> stopping
+[scanengine][info][mid360] device 1: SDK2 torn down
+[scanengine][info][mid360] device 1: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+[lidarscan] mid360-selftest: recorded project — 0 chunks, 0 bytes, 0.00 s span, sealed=true

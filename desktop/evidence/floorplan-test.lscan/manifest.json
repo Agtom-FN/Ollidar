@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "formatVersion": 1,
+  "engineVersion": "0.1.0",
+  "createdAtUtcNs": 1786735403069890000,
+  "sealed": true,
+  "sealedAtUtcNs": 1786735403070096000,
+  "profile": "floorplan",
+  "sensors": [],
+  "mountCalibration": null,
+  "crs": null,
+  "streams": {}
+}

@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "formatVersion": 1,
+  "engineVersion": "0.1.0",
+  "createdAtUtcNs": 1786735299715900000,
+  "sealed": true,
+  "sealedAtUtcNs": 1786735302793365000,
+  "profile": "quickscan",
+  "sensors": [],
+  "mountCalibration": null,
+  "crs": null,
+  "streams": {}
+}

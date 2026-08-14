@@ -2,6 +2,7 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QCloseEvent>
 #include <QDateTime>
 #include <QDir>
 #include <QDockWidget>
@@ -27,6 +28,8 @@
 #include "app/CaptureWindow.h"
 #include "app/DisplayParamsDock.h"
 #include "app/EngineHost.h"
+#include "app/ExportDialog.h"
+#include "app/MeasureDock.h"
 #include "app/ReplayController.h"
 #include "render/ViewportWindow.h"
 
@@ -192,6 +195,12 @@ void MainWindow::buildUi() {
   });
   addDockWidget(Qt::RightDockWidgetArea, params_dock_);
 
+  // --- right dock (tabbed): measure tool (C3) ---
+  measure_dock_ = new MeasureDock(viewport_, this);
+  addDockWidget(Qt::RightDockWidgetArea, measure_dock_);
+  tabifyDockWidget(params_dock_, measure_dock_);
+  params_dock_->raise();
+
   // --- status bar ---
   status_engine_ = new QLabel("engine: starting");
   status_render_ = new QLabel("renderer: starting");
@@ -220,22 +229,15 @@ void MainWindow::buildMenus() {
     }
   });
   file->addSeparator();
+  file->addAction("&Export…", QKeySequence("Ctrl+E"), this, &MainWindow::onExport);
+  file->addSeparator();
   file->addAction("E&xit", QKeySequence::Quit, qApp, &QApplication::quit);
 
   auto* capture = menuBar()->addMenu("&Capture");
   capture->addAction("Open capture window…", this, [this] {
-    if (!capture_) {
-      capture_ = new CaptureWindow(host_, this);
-      connect(capture_, &CaptureWindow::captureStarted, this, [this](const QString& d) {
-        log_->appendPlainText("capture started into " + d);
-        viewport_->setPointStore(host_->points());
-      });
-      connect(capture_, &CaptureWindow::captureStopped, this,
-              [this] { log_->appendPlainText("capture stopped"); });
-    }
-    capture_->setProjectDir(project_.dir);
-    capture_->show();
-    capture_->raise();
+    captureWindow()->setProjectDir(project_.dir);
+    captureWindow()->show();
+    captureWindow()->raise();
   });
 
   auto* view = menuBar()->addMenu("&View");
@@ -249,6 +251,9 @@ void MainWindow::buildMenus() {
   connect(vsync, &QAction::toggled, this, [this](bool on) { viewport_->setVsync(on); });
   view->addSeparator();
   view->addAction("&Screenshot…", this, &MainWindow::onScreenshot);
+  view->addSeparator();
+  view->addAction(params_dock_->toggleViewAction());
+  view->addAction(measure_dock_->toggleViewAction());
 
   auto* help = menuBar()->addMenu("&Help");
   help->addAction("About", this, [this] {
@@ -260,8 +265,26 @@ void MainWindow::buildMenus() {
   });
 }
 
+CaptureWindow* MainWindow::captureWindow() {
+  if (!capture_) {
+    capture_ = new CaptureWindow(host_, this);
+    connect(capture_, &CaptureWindow::captureStarted, this, [this](const QString& d) {
+      log_->appendPlainText("capture started into " + d);
+      viewport_->setPointStore(host_->points());
+    });
+    connect(capture_, &CaptureWindow::captureStopped, this,
+            [this] { log_->appendPlainText("capture stopped"); });
+  }
+  return capture_;
+}
+
 bool MainWindow::openProject(const QString& dir, QString* err) {
   if (dir.isEmpty()) return false;
+  // Persist whatever the previous project's display parameters ended up as
+  // before switching the model out from under it (§3.9 "settings persist per
+  // project").
+  persistDisplayParamsIfProjectOpen();
+
   const ProjectInfo info = readProject(dir);
   if (!info.valid) {
     if (err) *err = QString("%1: %2").arg(dir, info.error);
@@ -270,7 +293,23 @@ bool MainWindow::openProject(const QString& dir, QString* err) {
   project_ = info;
   addRecent(info.dir);
   refreshProjectPanel();
-  params_dock_->loadFromProject(info.dir);
+  if (!params_dock_->loadFromProject(info.dir)) {
+    // No saved processed/display_params.json for this project yet — fall
+    // back to A14's profile_defaults() for whatever workflow profile the
+    // manifest declares (createProject()/FileRecordWriter::set_profile()),
+    // rather than leaving whatever the PREVIOUS project's parameters were on
+    // screen. Tech Spec §3.9: "profiles set defaults".
+    scanengine::DisplayProfile prof = scanengine::DisplayProfile::kQuickScan;
+    for (int i = 0; i < scanengine::kDisplayProfileCount; ++i) {
+      const auto p = static_cast<scanengine::DisplayProfile>(i);
+      if (info.profile.compare(scanengine::to_string(p), Qt::CaseInsensitive) == 0) {
+        prof = p;
+        break;
+      }
+    }
+    params_->set(scanengine::profile_defaults(prof));
+    params_dock_->refreshFromModel();
+  }
   viewport_->setDisplayParams(params_->get());
   setWindowTitle(QString("LidarScan — %1").arg(info.name));
   log_->appendPlainText(QString("opened %1 (%2 chunks, %3, %4 s)")
@@ -283,9 +322,23 @@ bool MainWindow::openProject(const QString& dir, QString* err) {
 
 void MainWindow::closeProject() {
   replay_->stop();
+  persistDisplayParamsIfProjectOpen();
   project_ = ProjectInfo{};
   refreshProjectPanel();
   setWindowTitle("LidarScan — Desktop");
+}
+
+void MainWindow::persistDisplayParamsIfProjectOpen() {
+  if (!project_.valid) return;
+  QString err;
+  if (!params_dock_->saveToProject(project_.dir, &err)) {
+    log_->appendPlainText("could not auto-persist display parameters: " + err);
+  }
+}
+
+void MainWindow::closeEvent(QCloseEvent* event) {
+  persistDisplayParamsIfProjectOpen();
+  QMainWindow::closeEvent(event);
 }
 
 bool MainWindow::startReplay(double speed, QString* err) {
@@ -449,6 +502,23 @@ void MainWindow::onScreenshot() {
   } else {
     log_->appendPlainText("screenshot written: " + path);
   }
+}
+
+void MainWindow::onExport() {
+  // A fresh dialog every time, not a cached singleton: the dialog snapshots
+  // the current DisplayParams (for "bounds from current clipping") and the
+  // current project directory at construction, and NOTES.md is explicit that
+  // is deliberately not a live binding — reusing one instance across opens
+  // would silently export against a stale clip/project from the first time
+  // this menu item was used.
+  if (export_dialog_) export_dialog_->deleteLater();
+  export_dialog_ = new ExportDialog(host_->points(), params_->get(),
+                                    project_.valid ? project_.dir : QDir::homePath(), this);
+  export_dialog_->setAttribute(Qt::WA_DeleteOnClose);
+  connect(export_dialog_, &QObject::destroyed, this, [this] { export_dialog_ = nullptr; });
+  export_dialog_->show();
+  export_dialog_->raise();
+  export_dialog_->activateWindow();
 }
 
 }  // namespace lidarscan

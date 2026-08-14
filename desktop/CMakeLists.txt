@@ -134,6 +134,8 @@ add_executable(lidarscan
     src/app/ReplayController.cpp
     src/app/DisplayParamsDock.cpp
     src/app/CaptureWindow.cpp
+    src/app/MeasureDock.cpp
+    src/app/ExportDialog.cpp
     src/app/MainWindow.cpp
     src/render/NativeSurface.cpp
     src/render/DisplayLinkFallback.cpp

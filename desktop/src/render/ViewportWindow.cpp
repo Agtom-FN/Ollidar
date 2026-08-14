@@ -14,11 +14,14 @@
 #include <QWheelEvent>
 #include <QWidget>
 
+#include <filament/Box.h>
 #include <filament/Camera.h>
 #include <filament/ColorGrading.h>
 #include <filament/Engine.h>
+#include <filament/IndexBuffer.h>
 #include <filament/Material.h>
 #include <filament/MaterialInstance.h>
+#include <filament/RenderableManager.h>
 #include <filament/Renderer.h>
 #include <filament/Scene.h>
 #include <filament/Skybox.h>
@@ -26,6 +29,7 @@
 #include <filament/Texture.h>
 #include <filament/TextureSampler.h>
 #include <filament/ToneMapper.h>
+#include <filament/VertexBuffer.h>
 #include <filament/View.h>
 #include <filament/Viewport.h>
 
@@ -43,6 +47,10 @@ namespace lidarscan {
 namespace {
 
 constexpr double kFovYDegrees = 60.0;
+// Measure-tool click tolerance, in screen pixels, converted to a world-space
+// radius at each candidate point's own depth (see ViewportWindow::pickPoint).
+constexpr double kPickTolerancePx = 10.0;
+constexpr int kMeasureLineSamples = 32;  // points drawn per completed segment
 
 double percentile(std::vector<double> v, double p) {
   if (v.empty()) return 0.0;
@@ -214,9 +222,11 @@ void ViewportWindow::initFilament() {
     return;
   }
   material_instance_ = material_->createInstance();
+  measure_material_ = material_->createInstance();
 
   buildColormapTexture();
   cloud_.init(fengine_, scene_, material_instance_);
+  pushMarkerMaterialParams();
   params_dirty_ = true;
 
   link_ = DisplayLink::create(this, [this] { renderFrame(); });
@@ -282,6 +292,8 @@ void ViewportWindow::destroyFilament() {
   }
   if (!fengine_) return;
   cloud_.shutdown();
+  destroyMeasureGeometry();
+  if (measure_material_) fengine_->destroy(measure_material_);
   if (colormap_tex_) fengine_->destroy(colormap_tex_);
   if (material_instance_) fengine_->destroy(material_instance_);
   if (material_) fengine_->destroy(material_);
@@ -382,6 +394,248 @@ void ViewportWindow::pushMaterialParams() {
     material_instance_->setParameter("colormapLut", colormap_tex_, sampler);
   }
   rebuildSkybox();
+}
+
+// --- measure tool ------------------------------------------------------------
+
+void ViewportWindow::pushMarkerMaterialParams() {
+  if (!measure_material_) return;
+  // A DisplayParams tuned so the marker/segment points render at a fixed,
+  // legible screen size in a fixed colour regardless of whatever the dock's
+  // current color mode / clipping / EDL settings are — a user placed these
+  // points on purpose, so clipping should not be able to hide them, and the
+  // colour must not depend on color_mode (else a marker painted through the
+  // "intensity" colormap could come out the same hue as the cloud around it).
+  scanengine::DisplayParams mp{};
+  mp.color_mode = scanengine::ColorMode::kRgb;
+  mp.point_size.mode = scanengine::PointSizeMode::kFixedPixels;
+  mp.point_size.fixed_px = 9.0f;
+  mp.edl_enabled = false;
+  mp.clip_height_enabled = false;
+  mp.clip_box_enabled = false;
+  scanengine::clamp_display_params(mp);
+  const auto u = scanengine::to_uniforms(mp);
+
+  measure_material_->setParameter("colorMode", u.color_mode);
+  measure_material_->setParameter("colormap", u.colormap);
+  measure_material_->setParameter("gamma", u.gamma);
+  measure_material_->setParameter("invert", u.invert);
+  measure_material_->setParameter("valueMin", u.value_min);
+  measure_material_->setParameter("valueMax", u.value_max);
+  measure_material_->setParameter("brightness", u.brightness);
+  measure_material_->setParameter("pointSizeMode", u.point_size_mode);
+  measure_material_->setParameter("pointSizeMinPx", u.point_size_min_px);
+  measure_material_->setParameter("pointSizeMaxPx", u.point_size_max_px);
+  measure_material_->setParameter("adaptiveReferenceM", u.adaptive_reference_m);
+  measure_material_->setParameter("worldSizeM", u.world_size_m);
+  measure_material_->setParameter("clipEnabledMask", u.clip_enabled_mask);
+  measure_material_->setParameter("clipHeightMin", u.clip_height_min);
+  measure_material_->setParameter("clipHeightMax", u.clip_height_max);
+  measure_material_->setParameter(
+      "clipBoxMin", math::float3{u.clip_box_min[0], u.clip_box_min[1], u.clip_box_min[2]});
+  measure_material_->setParameter(
+      "clipBoxMax", math::float3{u.clip_box_max[0], u.clip_box_max[1], u.clip_box_max[2]});
+  measure_material_->setParameter("cameraPos", math::float3{0.f, 0.f, 0.f});
+  measure_material_->setParameter("pxPerMeterAt1m", 1.0f);
+  if (colormap_tex_) {
+    TextureSampler sampler(TextureSampler::MinFilter::LINEAR, TextureSampler::MagFilter::LINEAR);
+    sampler.setWrapModeS(TextureSampler::WrapMode::CLAMP_TO_EDGE);
+    sampler.setWrapModeT(TextureSampler::WrapMode::CLAMP_TO_EDGE);
+    measure_material_->setParameter("colormapLut", colormap_tex_, sampler);
+  }
+}
+
+void ViewportWindow::setMeasureMode(bool on) {
+  measure_mode_ = on;
+  if (!on && has_pending_measure_point_) {
+    has_pending_measure_point_ = false;
+    rebuildMeasureGeometry();
+    Q_EMIT measurementsChanged();
+  }
+}
+
+void ViewportWindow::removeMeasurement(int index) {
+  if (index < 0 || size_t(index) >= measure_segments_.size()) return;
+  measure_segments_.erase(measure_segments_.begin() + index);
+  rebuildMeasureGeometry();
+  Q_EMIT measurementsChanged();
+}
+
+void ViewportWindow::clearMeasurements() {
+  measure_segments_.clear();
+  has_pending_measure_point_ = false;
+  rebuildMeasureGeometry();
+  Q_EMIT measurementsChanged();
+}
+
+void ViewportWindow::destroyMeasureGeometry() {
+  if (!fengine_) return;
+  if (!measure_entity_.isNull()) {
+    if (scene_) scene_->remove(measure_entity_);
+    fengine_->destroy(measure_entity_);
+    utils::EntityManager::get().destroy(measure_entity_);
+    measure_entity_ = {};
+  }
+  if (measure_vb_) {
+    fengine_->destroy(measure_vb_);
+    measure_vb_ = nullptr;
+  }
+  if (measure_ib_) {
+    fengine_->destroy(measure_ib_);
+    measure_ib_ = nullptr;
+  }
+}
+
+void ViewportWindow::rebuildMeasureGeometry() {
+  if (!fengine_ || !scene_ || !measure_material_) return;
+  destroyMeasureGeometry();
+
+  // Same 16-byte interleaved layout the cloud uses (cloud/point_page.h) —
+  // reusing PointVertex means no new vertex-attribute declaration and no risk
+  // of the marker geometry drifting from what points.mat actually expects.
+  std::vector<scanengine::PointVertex> verts;
+  const auto push = [&](float x, float y, float z, scanengine::RGBA8 c) {
+    scanengine::PointVertex v{};
+    v.x = x;
+    v.y = y;
+    v.z = z;
+    v.r = c.r;
+    v.g = c.g;
+    v.b = c.b;
+    v.a = c.a;
+    verts.push_back(v);
+  };
+  constexpr scanengine::RGBA8 kPendingColor{255, 210, 0, 255};   // yellow: in-progress pick
+  constexpr scanengine::RGBA8 kSegmentColor{0, 220, 255, 255};   // cyan: a completed segment
+
+  if (has_pending_measure_point_) {
+    push(pending_measure_point_[0], pending_measure_point_[1], pending_measure_point_[2],
+        kPendingColor);
+  }
+  for (const auto& seg : measure_segments_) {
+    for (int i = 0; i <= kMeasureLineSamples; ++i) {
+      const float t = float(i) / float(kMeasureLineSamples);
+      push(seg.a[0] + (seg.b[0] - seg.a[0]) * t, seg.a[1] + (seg.b[1] - seg.a[1]) * t,
+          seg.a[2] + (seg.b[2] - seg.a[2]) * t, kSegmentColor);
+    }
+  }
+  if (verts.empty()) return;
+
+  const std::uint32_t n = std::uint32_t(verts.size());
+  const size_t bytes = size_t(n) * sizeof(scanengine::PointVertex);
+
+  measure_vb_ = VertexBuffer::Builder()
+                    .vertexCount(n)
+                    .bufferCount(1)
+                    .attribute(VertexAttribute::POSITION, 0, VertexBuffer::AttributeType::FLOAT3,
+                              0, sizeof(scanengine::PointVertex))
+                    .attribute(VertexAttribute::COLOR, 0, VertexBuffer::AttributeType::UBYTE4,
+                              offsetof(scanengine::PointVertex, r),
+                              sizeof(scanengine::PointVertex))
+                    .normalized(VertexAttribute::COLOR)
+                    .build(*fengine_);
+  auto* vmem = std::malloc(bytes);
+  std::memcpy(vmem, verts.data(), bytes);
+  measure_vb_->setBufferAt(
+      *fengine_, 0,
+      VertexBuffer::BufferDescriptor(vmem, bytes, [](void* b, size_t, void*) { std::free(b); }));
+
+  auto* idx = static_cast<std::uint32_t*>(std::malloc(sizeof(std::uint32_t) * n));
+  for (std::uint32_t i = 0; i < n; ++i) idx[i] = i;
+  measure_ib_ = IndexBuffer::Builder().indexCount(n).bufferType(IndexBuffer::IndexType::UINT).build(
+      *fengine_);
+  measure_ib_->setBuffer(*fengine_,
+                         IndexBuffer::BufferDescriptor(
+                             idx, sizeof(std::uint32_t) * n,
+                             [](void* b, size_t, void*) { std::free(b); }));
+
+  measure_entity_ = utils::EntityManager::get().create();
+  RenderableManager::Builder(1)
+      .boundingBox(Box{{0, 0, 0}, {1000.f, 1000.f, 1000.f}})
+      .material(0, measure_material_)
+      .geometry(0, RenderableManager::PrimitiveType::POINTS, measure_vb_, measure_ib_, 0, n)
+      .culling(false)
+      .castShadows(false)
+      .receiveShadows(false)
+      .build(*fengine_, measure_entity_);
+  scene_->addEntity(measure_entity_);
+}
+
+bool ViewportWindow::pickPoint(const QPointF& widgetPos, float outWorld[3]) const {
+  if (!store_ || px_w_ <= 0 || px_h_ <= 0) return false;
+
+  const double px = widgetPos.x() * dpr_;
+  const double py = widgetPos.y() * dpr_;
+  const double ndc_x = (2.0 * px / double(px_w_)) - 1.0;
+  const double ndc_y = 1.0 - (2.0 * py / double(px_h_));  // Qt is y-down; NDC is y-up
+
+  const double ex = double(target_[0]) + double(distance_) * std::cos(elevation_) * std::cos(azimuth_);
+  const double ey = double(target_[1]) + double(distance_) * std::cos(elevation_) * std::sin(azimuth_);
+  const double ez = double(target_[2]) + double(distance_) * std::sin(elevation_);
+
+  double fwd[3] = {double(target_[0]) - ex, double(target_[1]) - ey, double(target_[2]) - ez};
+  const double flen = std::sqrt(fwd[0] * fwd[0] + fwd[1] * fwd[1] + fwd[2] * fwd[2]);
+  if (flen < 1e-9) return false;
+  fwd[0] /= flen;
+  fwd[1] /= flen;
+  fwd[2] /= flen;
+
+  // Z-up world (see updateCamera()'s comment on the engine's local frame).
+  const double up_world[3] = {0.0, 0.0, 1.0};
+  double right[3] = {fwd[1] * up_world[2] - fwd[2] * up_world[1],
+                     fwd[2] * up_world[0] - fwd[0] * up_world[2],
+                     fwd[0] * up_world[1] - fwd[1] * up_world[0]};
+  const double rlen = std::sqrt(right[0] * right[0] + right[1] * right[1] + right[2] * right[2]);
+  if (rlen < 1e-9) return false;
+  right[0] /= rlen;
+  right[1] /= rlen;
+  right[2] /= rlen;
+  const double up[3] = {right[1] * fwd[2] - right[2] * fwd[1], right[2] * fwd[0] - right[0] * fwd[2],
+                        right[0] * fwd[1] - right[1] * fwd[0]};
+
+  const double half_h = std::tan(kFovYDegrees * 0.5 * M_PI / 180.0);
+  const double aspect = double(px_w_) / double(std::max(1, px_h_));
+  const double half_w = half_h * aspect;
+
+  double dir[3];
+  for (int k = 0; k < 3; ++k) dir[k] = fwd[k] + right[k] * ndc_x * half_w + up[k] * ndc_y * half_h;
+  const double dlen = std::sqrt(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]);
+  if (dlen < 1e-9) return false;
+  dir[0] /= dlen;
+  dir[1] /= dlen;
+  dir[2] /= dlen;
+
+  bool found = false;
+  double best_t = 0.0;
+  float best[3] = {0.f, 0.f, 0.f};
+  for (scanengine::PageId id : store_->page_ids()) {
+    const scanengine::PageView view = store_->page_view(id);
+    if (!view.valid()) continue;
+    for (std::uint32_t i = 0; i < view.count; ++i) {
+      const auto& p = view.data[i];
+      const double to_p[3] = {double(p.x) - ex, double(p.y) - ey, double(p.z) - ez};
+      const double t = to_p[0] * dir[0] + to_p[1] * dir[1] + to_p[2] * dir[2];
+      if (t <= 0.0) continue;
+      const double cx = ex + dir[0] * t, cy = ey + dir[1] * t, cz = ez + dir[2] * t;
+      const double dx = double(p.x) - cx, dy = double(p.y) - cy, dz = double(p.z) - cz;
+      const double perp = std::sqrt(dx * dx + dy * dy + dz * dz);
+      const double world_per_px = t * half_h * 2.0 / double(std::max(1, px_h_));
+      if (perp > world_per_px * kPickTolerancePx) continue;
+      if (!found || t < best_t) {
+        found = true;
+        best_t = t;
+        best[0] = p.x;
+        best[1] = p.y;
+        best[2] = p.z;
+      }
+    }
+  }
+  if (found) {
+    outWorld[0] = best[0];
+    outWorld[1] = best[1];
+    outWorld[2] = best[2];
+  }
+  return found;
 }
 
 void ViewportWindow::renderFrame() {
@@ -591,6 +845,38 @@ bool ViewportWindow::captureScreenshot(const QString& path) {
 
 void ViewportWindow::mousePressEvent(QMouseEvent* e) {
   last_mouse_ = e->position();
+
+  if (measure_mode_ && e->button() == Qt::LeftButton) {
+    float world[3];
+    if (pickPoint(e->position(), world)) {
+      if (!has_pending_measure_point_) {
+        has_pending_measure_point_ = true;
+        pending_measure_point_[0] = world[0];
+        pending_measure_point_[1] = world[1];
+        pending_measure_point_[2] = world[2];
+      } else {
+        MeasureSegment seg;
+        seg.a[0] = pending_measure_point_[0];
+        seg.a[1] = pending_measure_point_[1];
+        seg.a[2] = pending_measure_point_[2];
+        seg.b[0] = world[0];
+        seg.b[1] = world[1];
+        seg.b[2] = world[2];
+        const double dx = double(seg.b[0]) - double(seg.a[0]);
+        const double dy = double(seg.b[1]) - double(seg.a[1]);
+        const double dz = double(seg.b[2]) - double(seg.a[2]);
+        seg.distance_m = std::sqrt(dx * dx + dy * dy + dz * dz);
+        measure_segments_.push_back(seg);
+        has_pending_measure_point_ = false;
+      }
+      rebuildMeasureGeometry();
+      Q_EMIT measurementsChanged();
+    }
+    dragging_ = false;
+    panning_ = false;
+    return;
+  }
+
   dragging_ = (e->button() == Qt::LeftButton);
   panning_ = (e->button() == Qt::MiddleButton) ||
              (e->button() == Qt::LeftButton && (e->modifiers() & Qt::ShiftModifier));
@@ -627,6 +913,15 @@ void ViewportWindow::keyPressEvent(QKeyEvent* e) {
   switch (e->key()) {
     case Qt::Key_Space: auto_orbit_ = !auto_orbit_; break;
     case Qt::Key_F: fitView(); break;
+    case Qt::Key_Escape:
+      // Clears the in-progress pick only; the completed segment list is
+      // MeasureDock's delete button's job (per-item, or "clear all").
+      if (has_pending_measure_point_) {
+        has_pending_measure_point_ = false;
+        rebuildMeasureGeometry();
+        Q_EMIT measurementsChanged();
+      }
+      break;
     default: QWindow::keyPressEvent(e); break;
   }
 }

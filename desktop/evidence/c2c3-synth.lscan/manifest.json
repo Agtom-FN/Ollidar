@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "formatVersion": 1,
+  "engineVersion": "0.1.0",
+  "createdAtUtcNs": 1786734963030791000,
+  "sealed": true,
+  "sealedAtUtcNs": 1786734963035123000,
+  "profile": "quickscan",
+  "sensors": [],
+  "mountCalibration": null,
+  "crs": null,
+  "streams": {"streams/lidar.bin": {"stream": 1}}
+}

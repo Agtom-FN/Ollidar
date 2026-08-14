@@ -20,6 +20,7 @@
 #include "scanengine/cloud/display_params.h"
 #include "app/Project.h"
 
+class QCloseEvent;
 class QLabel;
 class QListWidget;
 class QPlainTextEdit;
@@ -32,6 +33,8 @@ namespace lidarscan {
 class CaptureWindow;
 class DisplayParamsDock;
 class EngineHost;
+class ExportDialog;
+class MeasureDock;
 class ReplayController;
 class ViewportWindow;
 
@@ -42,6 +45,9 @@ class MainWindow : public QMainWindow {
   ~MainWindow() override;
 
   ViewportWindow* viewport() { return viewport_; }
+  // Lazily creates the capture window exactly like the "Capture" menu does.
+  // Public so main.cpp's --mid360-selftest CLI hook can drive it headlessly.
+  CaptureWindow* captureWindow();
 
   bool openProject(const QString& dir, QString* err = nullptr);
   void closeProject();
@@ -54,6 +60,9 @@ class MainWindow : public QMainWindow {
 
   const ProjectInfo& project() const { return project_; }
 
+ protected:
+  void closeEvent(QCloseEvent* event) override;
+
  private:
   void buildUi();
   void buildMenus();
@@ -65,11 +74,15 @@ class MainWindow : public QMainWindow {
   void onOpenProject();
   void onImportRaw();
   void onScreenshot();
+  void onExport();
+  void persistDisplayParamsIfProjectOpen();
 
   EngineHost* host_ = nullptr;
   ViewportWindow* viewport_ = nullptr;
   DisplayParamsDock* params_dock_ = nullptr;
+  MeasureDock* measure_dock_ = nullptr;
   CaptureWindow* capture_ = nullptr;
+  ExportDialog* export_dialog_ = nullptr;
   ReplayController* replay_ = nullptr;
 
   std::unique_ptr<scanengine::DisplayParamsController> params_;

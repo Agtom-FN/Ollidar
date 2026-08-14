@@ -24,7 +24,9 @@ desktop/
       Project.{h,cpp}         .lscan read / create / import, all through record/
       ReplayController.{h,cpp} lscan::ReplaySource on a worker thread
       DisplayParamsDock.{h,cpp} §3.9 panel bound to A14's DisplayParamsController
-      CaptureWindow.{h,cpp}   device setup (QSerialPort D6 / Mid-360 IP), start/stop
+      CaptureWindow.{h,cpp}   guided self-test → Record/Pause/Stop (C2, §8.1-8.3)
+      MeasureDock.{h,cpp}     C3 §3.13 measure panel: mode toggle, units, segment list (§8.4)
+      ExportDialog.{h,cpp}    C3 §3.13 export center: PLY/LAS/PCD, progress + cancel (§8.5)
     render/
       NativeSurface.h         per-OS swapchain-handle shim (the S3 recommendation)
       NativeSurface_mac.mm    CAMetalLayer path — the proven one
@@ -34,7 +36,8 @@ desktop/
       DisplayLink_mac.mm      CADisplayLink (macOS 14+) → CVDisplayLink → timer
       DisplayLink_generic.cpp Windows/Linux: the timer fallback, with the real
       DisplayLinkFallback.*   per-platform replacements documented
-      ViewportWindow.{h,cpp}  QWindow + Filament engine/view/renderer, resize, screenshots
+      ViewportWindow.{h,cpp}  QWindow + Filament engine/view/renderer, resize, screenshots,
+                               C3 measure-tool picking + marker rendering (§8.4)
       PagedCloudRenderer.*    GPU mirror of scanengine::PageStore
 ```
 
@@ -410,3 +413,400 @@ bar and log show it. It is left visible rather than suppressed.
 | **`points.filamat` is loaded from `applicationDirPath()`** | Fine for a dev build, wrong for a bundle — one line, and it is C8's to change. |
 | **No unit tests on the desktop side** | The verification here is an end-to-end run. A headless test of `Project.cpp` (read/create/import round trip) needs no GPU and is the obvious first one. |
 | **Record-only mode** | The toggle exists and is documented; what it does today is stop the viewport mirroring the PageStore. The engine still fills the PageStore, which for a long capture is the wrong behaviour — A14's eviction policy is the real fix. |
+
+---
+
+## 8. C2 (capture flows) + C3 (review workspace)
+
+New/changed files:
+
+```
+src/app/CaptureWindow.{h,cpp}   rewritten: guided self-test, Test/Record/Pause/Stop
+                                 state machine, auto-refreshing CH340-hinted port
+                                 picker, structured health line, per-project Mid-360
+                                 settings, session summary
+src/app/MeasureDock.{h,cpp}     new: C3 measure panel (mode toggle, units, segment
+                                 list + delete/clear, per DisplayParamsDock's shape)
+src/app/ExportDialog.{h,cpp}    new: C3 export center (PLY/LAS/PCD, options, progress
+                                 + cancel, open-containing-folder)
+src/render/ViewportWindow.{h,cpp}
+                                 + measure tool: CPU pick against PageStore, ESC
+                                 clears the pending pick, marker/segment rendering
+                                 reusing points.mat through a second MaterialInstance
+src/app/MainWindow.{h,cpp}      wires MeasureDock + Export…, profile-default-on-open,
+                                 auto-persist-on-close, captureWindow() accessor
+src/main.cpp                    CLI evidence hooks: --export, --measure-selftest,
+                                 --mid360-selftest, --mid360-record-into, --new-project
+scripts/verify_c2c3.sh          the evidence run in §8.5, end to end
+scripts/check_ply.py            from-scratch PLY reader (§8.5.2) — deliberately does
+                                 not reuse A9's writer or its own test-file reader
+```
+
+### 8.1 Capture flow: self-test before Record, not Start-means-Record
+
+The C1 skeleton had one `Start capture` button that opened the device and began
+recording in the same click. C2's guided flow is a small state machine
+(`CaptureWindow::Phase`): `kIdle -> kTesting -> kReady -> kRecording <-> kPaused`.
+
+* **Test device** starts a **live-preview session** (`EngineHost::startSession`
+  with an empty `lscan_dir`, `record=false` — the exact pattern
+  `ReplayController` already used), then opens the device (D6 serial /
+  Mid-360 `Mid360Config`). Because the session is already active,
+  `Engine::add_device()` auto-starts the driver immediately
+  (`core/engine.cpp`'s documented "a device added mid-session starts
+  immediately" rule) — no separate "start" call exists on the public API to
+  drive.
+* The self-test window polls `Engine::device_health()` on the existing 300 ms
+  timer. D6: pass if the observed rate over a 3 s window is **≥ 3,000 pts/s**
+  (a margin below the ~4,000 pts/s nominal rate the task's guided-step text
+  names, to tolerate rotation-speed variance). Mid-360: pass on **first
+  data**, fail on **no packet within the window** (8 s in the UI, matching
+  the self-test's own timeout — A3's own `connect_timeout_ms` default is
+  10 s for the *engine's* watchdog, which is a different, longer-horizon
+  timer).
+* **Record** stops the preview session and starts a real one at the chosen
+  `.lscan` directory (`record=true`). The device is **not** removed and
+  re-added — `Engine::start_session()` restarts every still-registered
+  device, so the serial port / UDP configuration is never redone between
+  phases. The same restart pattern is Pause (stop recording session, start a
+  new preview session — device keeps streaming to the viewport, nothing more
+  hits disk) and Resume (stop preview, start recording again at the **same**
+  directory). `record/lscan.h`'s writer appends on every `open()` and never
+  rewrites a completed chunk, so a paused capture's stream files simply grow
+  across each resume — the manifest's `sealed` flag toggling false/true each
+  time is A5's crash-signal contract working exactly as designed, not a bug
+  in this flow.
+
+### 8.2 Session summary: what it can and cannot honestly report
+
+`Engine::recorder().stats()` (`RecordStats`) is reset to zero by
+`FileRecordWriter::open()` (`src/record/lscan.cpp`), so a paused/resumed
+capture's stats do not accumulate across the pause boundary by themselves.
+`CaptureWindow::accumulateRecorderStats()` snapshots `stats()` immediately
+before each session switch and adds it into a running total
+(`cum_bytes_written_`/`cum_chunks_written_`), so the final summary is a true
+sum across every recording segment, not just the last one.
+
+**What "points" in the summary means, precisely.** The generic
+`DeviceHealth::points_out` counter is the driver's lifetime count, not
+"points written to disk" — it keeps incrementing while paused (the device
+keeps streaming to the viewport during a pause; it just is not being
+recorded). There is no per-driver "points actually recorded" counter on the
+public `Engine`/`Driver` API. The summary label says this explicitly
+("points decoded since Record ... device counters also include any paused
+time") rather than presenting a number with more precision than the API can
+back up.
+
+### 8.3 The generic `DeviceHealth` ceiling, found while wiring the health panel
+
+The task asked the capture window to poll "state, pts/s, rotation Hz,
+checksum rate, stall/restart counters" from the engine. The first four are
+on `core/types.h`'s `DeviceHealth` and are exactly what
+`CaptureWindow::updateHealth()` renders. **The fifth is not reachable.**
+`D6HealthSnapshot` (restart attempts, stall kind, checksum-variant verdict)
+and `Mid360Stats` (link state, watchdog trips, forced re-inits) are real,
+richer structs `D6Driver::snapshot()` / `Mid360Driver::stats()` expose —
+but `Engine` stores every device behind the base `Driver*` interface
+(`impl_->devices` in `core/engine.cpp`) with no accessor for the concrete
+driver type, and no C++ API method forwards those richer structs. So the
+desktop's health panel can show `DeviceState::kDegraded` plus
+`DeviceHealth::last_error` (which *is* enough to say "stalled" and give a
+reason) and `DeviceHealth::drops`, but cannot show a restart-attempt counter
+or `Mid360LinkState` by name. `CaptureWindow::updateHealth()`'s DEGRADED line
+says so inline rather than silently under-delivering. **This is a real,
+small seam for core/A2/A3 to close** — e.g. an
+`Engine::device_extended_health(id) -> variant<D6HealthSnapshot,
+Mid360Stats>` or two kind-specific accessors — not something C2 can add from
+`desktop/` (outside this task's ownership; `engine/` is being edited
+concurrently by two other agents this pass).
+
+### 8.4 Measure tool
+
+`ViewportWindow` gained the picking/state (`setMeasureMode`,
+`measurements()`, `removeMeasurement()`, `clearMeasurements()`); `MeasureDock`
+is a thin panel over it, the same split `DisplayParamsDock` uses against
+`DisplayParamsController`.
+
+* **Picking** is a plain O(N) nearest-point-to-ray scan over every resident
+  page (`ViewportWindow::pickPoint()`) — the ray is built by hand from
+  `azimuth_/elevation_/distance_/target_` and the vertical FOV (the same
+  numbers `updateCamera()` uses), not by extracting Filament's camera
+  matrices, so it has no dependency on which Filament APIs happen to expose
+  view/projection. Tolerance is a screen-pixel radius (10 px) converted to a
+  world-space radius at each candidate point's own depth. No spatial index:
+  fine at the scale this was verified against (120,300 points, sub-frame);
+  flagged in the header as the thing to revisit for a multi-million-point
+  cloud.
+* **Rendering** reuses `points.mat` through a **second `MaterialInstance`**
+  forced to `ColorMode::kRgb` + `PointSizeMode::kFixedPixels` (9 px)
+  regardless of the dock's live display parameters — built via a local
+  `DisplayParams` + `to_uniforms()`, not a hand-rolled parallel uniform list,
+  so it can never drift from what `points.mat` actually expects. A pending
+  pick is one yellow point; a completed segment is 32 cyan points linearly
+  interpolated between its endpoints (i.e. a point-sampled "line" — no new
+  material/shader, no `LINES` topology). No new `.filamat` was needed.
+* **ESC** (`ViewportWindow::keyPressEvent`) clears only the pending pick; the
+  completed segment list is `MeasureDock`'s delete/clear-all buttons' job, as
+  the task specified.
+* Units (m/ft) are a `QSettings` preference (`measure/imperial`) — there is
+  no engine or per-project concept of a display unit; `DisplayParams` and
+  `PointVertex` are metric-only by design.
+
+### 8.5 Export dialog
+
+`ExportDialog` drives `scanengine::export_points()` directly (the same entry
+point `Exporter`/`make_exporter()` delegate to internally, per
+`docs/A9-export.md`) on its own `std::thread`, polling an `atomic<float>`
+progress from a `QTimer` — the same shape `ReplayController` already uses
+for its worker thread, chosen for the same reason: the export thread must
+never touch a `QWidget`. Cancel is `ExportCancelToken::request_cancel()`,
+polled by the writer every 4096 raw points per A9's own doc.
+
+"Bounds from current clipping" snapshots the `DisplayParams` the dialog was
+constructed with (not a live binding to the dock — stated in the header and
+enforced by `MainWindow::onExport()` always constructing a **fresh**
+dialog rather than reusing a cached one, so a second "Export…" always
+reflects whatever is clipped *right now*). Box clipping maps straight onto
+`ExportOptions::bounds_filter`; height-only clipping maps onto a box with an
+effectively-unbounded X/Y extent and the height band on Z. The checkbox is
+disabled (with a tooltip explaining why) when neither clip is active.
+
+"Open containing folder" is per-OS: `open -R` (macOS, reveals + selects),
+`explorer.exe /select,` (Windows), `QDesktopServices::openUrl` on the parent
+directory (Linux — no reveal-and-select primitive there).
+
+### 8.6 Display parameters: profile default on open, auto-persist on close
+
+Both pieces already existed as manual actions in C1 (`loadFromProject`/
+`saveToProject`, and a File-menu "Save display parameters to project" action)
+— C2/C3's job was making them automatic:
+
+* `MainWindow::openProject()` now tries `params_dock_->loadFromProject()`
+  first; **only if that fails** (no `processed/display_params.json` yet —
+  i.e. a project that has never had its display parameters saved) does it
+  fall back to `scanengine::profile_defaults()` for whatever workflow
+  profile the manifest declares (`ProjectInfo::profile`, matched
+  case-insensitively against `to_string(DisplayProfile)`, exactly the
+  pattern `main.cpp`'s existing `--display-profile` flag already used),
+  defaulting to `kQuickScan` if the manifest names none/an unknown one.
+* `MainWindow::persistDisplayParamsIfProjectOpen()` is now called from
+  `closeProject()`, from `openProject()` (before swapping the model out from
+  under the *previous* project), and from a new `closeEvent()` override (so
+  quitting the app with a project open does not silently lose whatever the
+  dock ended up at).
+
+**Verified precisely** (§8.7.4): a fresh `floorplan`-profile project opened
+with no saved file gets **exactly** A14's documented Floor-plan defaults
+(fixed 1.5 px, 8 M budget, height/thermal colormap, height clip 1.0–1.5 m
+enabled, EDL on at 0.7, both overlays off) and that file is written on quit
+with no explicit save action; hand-editing one field and reopening proves
+`loadFromProject()` wins over the profile fallback once a file exists, and
+that the auto-save on the next quit does not clobber it back to defaults.
+
+### 8.7 Verification (2026-08-15, same host as §6: Apple M4, macOS 26.5.1)
+
+`scripts/verify_c2c3.sh` reproduces all of this; raw output is
+`evidence/verify_c2c3.log`. Two real bugs were caught and fixed by this run
+before it went green — noted here because they are exactly the kind of thing
+a headless CLI hook is for:
+
+* `scripts/check_ply.py` double-advanced its read offset (added `stride`
+  *and* the trailing property sizes again) — fixed; the corrected reader now
+  agrees with the writer's own accounting exactly.
+* `--measure-selftest`'s first version clicked two fixed screen pixels; a D6
+  capture at this stage is a thin room-*outline* trace (pushbroom assembly
+  is A8's job), so a fixed guess landed on empty space more often than not.
+  Replaced with an 8×8 screen-space grid walk that stops at the first two
+  hits — same `pickPoint()` code path, just not betting on one guess.
+
+**Build:** clean configure + build from scratch, zero warnings from any file
+under `desktop/src` (`-Wall -Wextra`); the 239 warnings the build does emit
+are all vendored (`engine/third_party/Livox-SDK2`), same as §6's baseline.
+
+**Engine tree churn during this task (report, not fix, per ownership rules):**
+`engine/` is being edited concurrently by two other agents this pass
+(core/capi, and A7's `slam/post/` + A10's `gnss/`). A clean rebuild from
+scratch hit three different transient breakages outside `desktop/` over the
+course of this task (`capi/scanengine_c.cpp`'s `SCAN_ABI_VERSION`
+mismatched mid-edit; `slam/post/post_pipeline.cpp` referencing a
+not-yet-added `corrected_pose_lookup_ok`; `gnss/ntrip_client.cpp` with a
+syntactically invalid placeholder alias declaration) — each resolved itself
+within the next few minutes of that agent's own work, and the final clean
+build above is green. None of these three files are under this task's
+ownership and none were touched to fix them.
+
+#### 8.7.1 Measure tool
+
+`--measure-selftest` sends two real `QMouseEvent`s through
+`ViewportWindow`'s actual event path (not a private-method call) against the
+C1 synthetic D6 capture (120,300 points, a ~4×3 m room outline at z=0):
+
+```
+[lidarscan] measure-selftest: segment (1.500,-1.500,0.000) -> (2.000,0.903,0.000) = 2.4541 m
+```
+
+`evidence/06-measure.png` (below) shows the resulting cyan point-sampled
+segment against the (very dim — raw D6 intensity at RGB colour mode, same
+reason §6's own screenshots don't try to make this cloud bright) room
+outline.
+
+#### 8.7.2 Export round trip
+
+The C1 synthetic capture, replayed (`--replay=0`) into the live PageStore
+and exported three ways via `--export FORMAT:PATH` (the exact
+`export_points()` call `ExportDialog` makes):
+
+| Format | Bytes | Notes |
+| --- | ---: | --- |
+| PLY (binary) | 1,925,061 | re-imported below |
+| LAS 1.4 | 3,128,653 | format 2 (RGB, no GPS time — `las_gps_time=false`, no real time source yet per A9-export.md) |
+| PCD (binary) | 2,406,200 | |
+
+`scripts/check_ply.py` (a reader written from the PLY spec, independent of
+A9's writer and of `test_export.cpp`'s own from-scratch reader — the same
+"two independent implementations must agree" principle one level up) against
+the PLY export:
+
+```
+OK: evidence/export-c2c3.ply: 120300 points, properties=['x', 'y', 'z', 'red', 'green', 'blue', 'intensity'],
+    bounds=(-2.001,-1.500,0.000)..(2.001,1.500,0.000)
+```
+
+120,300 exactly matches the import's own "120300 points decoded" report
+(§6); the body byte count matches the header's declared count and stride
+exactly (no truncation, no extra bytes); every x/y/z is finite and inside
+the capture's own bounds. `--expect-points 120300` was also passed and
+matched.
+
+#### 8.7.3 Mid-360 self-test + capture, against the S2 simulator on loopback
+
+Built `spikes/s2-mid360-sim`'s `mid360_sim` (already present in this tree —
+see engine/docs/A3-mid360-driver.md §7, which this run reproduces from the
+desktop side rather than through `ctest -L sim`). Loopback config per
+`engine/tests/test_mid360_driver.cpp`'s documented quirk: `lidar_ip =
+127.0.0.1`, `host_ip = 127.000.000.001` (numerically identical to
+`127.0.0.1`, a different *string*, which is what slips past the SDK's
+self-IP filter on loopback — **not for production config**).
+
+`--mid360-selftest 127.000.000.001:127.0.0.1` drives `CaptureWindow`'s real
+guided self-test (`engine add_device` + `start`, auto-started because the
+preview session is already active, first-data-or-timeout):
+
+```
+[scanengine][info][mid360] device 1: connected (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] handle 16777343: configured (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] device 1: starting -> streaming
+[lidarscan] mid360-selftest PASSED — first packet after 1.63 s
+```
+
+1.63 s matches A3's own measured loopback handshake time (§7: "Handshake to
+first packet: 1.45 s") to the same order of magnitude. Two runs, 1.59 s and
+1.63 s.
+
+**`--mid360-record-into` then drove the full guided flow — Test → Record →
+Stop — and found a real engine gap.** The session summary correctly reported
+what actually happened:
+
+```
+[lidarscan] mid360-selftest: recorded project — 0 chunks, 0 bytes, 0.00 s span, sealed=true
+```
+
+**This is not a desktop bug.** `Engine::push_serial_bytes()`
+(`core/engine.cpp`) is the *only* place anything calls
+`recorder().write_chunk()`, and it is D6-only
+(`lscan::ChunkType::kD6Raw`, unconditionally). The Mid-360 driver owns its
+own sockets and never goes through `push_serial_bytes()` — its point/IMU
+packets reach `PageStore` (confirmed live: `device_health().points_out`
+climbed during the self-test, which is how the 1.6 s pass time was measured
+at all) and the IMU sink, but nothing anywhere calls
+`recorder().write_chunk(ChunkType::kMid360Points, ...)` or
+`kMid360Imu`. `record/lscan.h` already reserves both chunk types and
+documents that ".lscan Mid-360 chunks are stored as unmodified datagrams"
+(`mid360_driver.h`'s own `kInject` backend doc), so the format side is
+ready — the wiring from driver packet callback (or a `PageStore`/event
+subscriber, the same shape the existing IMU shim in `core/engine.cpp` uses
+for `on_mid360_imu`) into `Engine::recorder()` is simply not there yet.
+
+**Net effect today:** a Mid-360 capture through this desktop app **streams
+live to the viewport correctly** (verified) but **does not persist raw data
+to the `.lscan`** (verified — a real, reproducible finding, not a guess).
+The D6 path has no such gap: `push_serial_bytes()` writes the chunk before
+parsing it, every time. **This is a core/A3 seam, flagged here rather than
+fixed** — `desktop/` cannot add engine-side recording wiring, and `engine/`
+is owned by other concurrently-running agents this pass. Whoever picks it up
+needs one of: a `PageStore` subscriber on `StreamId::kLidarMid360` that also
+writes raw chunks (loses "unmodified datagram" fidelity, since PageStore
+holds decoded `PointVertex`, not raw packets), or a driver-level raw-packet
+sink parallel to the existing `imu_sink` (matches `mid360_driver.h`'s own
+`kInject`-backend framing exactly, and is the natural fit for "unmodified
+datagrams").
+
+`evidence/mid360-selftest.log`, `evidence/mid360-sim-stdout.log`.
+
+**Known nondeterminism hazard, not a code bug:** `mid360_sim` and the SDK2
+backend bind fixed loopback ports (56100–56501). With five agents working
+this repo concurrently, another agent's own `ctest -L sim` /
+`lvx2_replay` run competing for the same ports produced transient `bind
+failed` on two attempts during this task; `scripts/verify_c2c3.sh` waits (up
+to ~7 minutes, polling `lsof`) rather than killing another agent's process.
+Real hardware would not have this problem — it is purely a same-machine,
+concurrent-simulator artefact.
+
+#### 8.7.4 Display-parameter profile-default-on-open / auto-persist-on-close
+
+`--new-project floorplan --project DIR` (a small CLI hook added for exactly
+this test) then opening `DIR` fresh (no saved `display_params.json` yet) and
+quitting:
+
+```json
+"pointSize": {"mode": "fixedPixels", "fixedPx": 1.5, ...},
+"lodPointBudget": 8000000,
+"colorMode": "height",
+"height": {..., "manualMin": 1, "manualMax": 1.5, "colormap": "thermal", ...},
+"edl": {"enabled": true, "strength": 0.7},
+"clipHeight": {"enabled": true, "min": 1, "max": 1.5},
+"overlays": {"trajectory": false, "poseGraph": false}
+```
+
+Matches `docs/A14-display.md` §5's Floor-plan row exactly (fixed 1.5 px,
+8 M, height/thermal, EDL on/0.7, height-clipped 1.0–1.5 m, no overlays) —
+this is `applyDisplayProfile()`'s fallback firing correctly on first open,
+and the file exists at all only because `closeEvent()` auto-saved it with no
+explicit user action. Hand-editing `lodPointBudget` to `12345678` and
+reopening + quitting again left it at `12345678` — proof
+`loadFromProject()` wins over the profile fallback once a file exists, and
+that auto-persist-on-close does not stomp a loaded (as opposed to
+freshly-defaulted) document back to profile defaults.
+
+### 8.8 Not verified / known gaps from this task
+
+* **D6 self-test/health panel against real hardware.** No COIN-D6 is present
+  (same as §6). The state machine, port auto-refresh, CH340 hint and the
+  self-test's D6-specific pts/s branch are real code exercised by the
+  self-test's *shared* lifecycle (`startPreviewSession`/
+  `startRecordingSession`/pause/resume/stop are identical code for both
+  tabs, and that lifecycle **was** proven end to end against the Mid-360
+  simulator, §8.7.3) — but "a real D6 self-test would pass at ~4k pts/s" is
+  still an expectation, not a measurement. No serial-loopback tool (`socat`)
+  was available on this machine to fake one.
+* **§8.3's `DeviceHealth` ceiling** — stall/restart counters are not on the
+  path the task asked for them to come from; see §8.3 for exactly what is
+  missing and where it would need to land.
+* **§8.7.3's Mid-360 recording gap** — live view works, `.lscan` persistence
+  does not yet, for this sensor only.
+* **CH340 hinting is untested against a real CH340 adapter** — the
+  vendor-ID match (`0x1A86`) is correct per WCH's own datasheet, but no
+  adapter was plugged in to confirm `QSerialPortInfo` actually reports that
+  VID on every OS this app targets.
+* **No 3D line rendering for measure segments** — a point-sampled line (32
+  points) reads clearly in a screenshot at this cloud's scale but is not a
+  continuous line primitive; a real `LINES`-topology renderable would need
+  its own tiny unlit `.mat` (deliberately not built — see §8.4, reuse over
+  new-material-surface-area).
+* **Export dialog's own UI thread path is not screenshotted** — `evidence/`
+  has the CLI (`--export`) path's output because that is what proves
+  `export_points()` end to end without a GPU-dependent interactive session;
+  the dialog's progress bar / cancel button were exercised by inspection and
+  by this task's author driving the real GUI, not captured as evidence
+  (`ViewportWindow::captureScreenshot()` is the viewport's readPixels path
+  and does not apply to a `QDialog`).

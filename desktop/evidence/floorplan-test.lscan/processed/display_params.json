@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "pointSize": {
+    "mode": "fixedPixels",
+    "fixedPx": 1.5,
+    "adaptiveMinPx": 1,
+    "adaptiveMaxPx": 6,
+    "adaptiveReferenceM": 5,
+    "worldSizeM": 0.00999999978
+  },
+  "lodPointBudget": 12345678,
+  "colorMode": "height",
+  "height": {
+    "autoRange": false,
+    "manualMin": 1,
+    "manualMax": 1.5,
+    "gamma": 1,
+    "brightness": 1,
+    "colormap": "thermal",
+    "invert": false
+  },
+  "intensity": {
+    "autoRange": true,
+    "manualMin": 0,
+    "manualMax": 1,
+    "gamma": 1,
+    "brightness": 1,
+    "colormap": "spectrum",
+    "invert": false
+  },
+  "time": {
+    "autoRange": true,
+    "manualMin": 0,
+    "manualMax": 1,
+    "gamma": 1,
+    "brightness": 1,
+    "colormap": "spectrum",
+    "invert": false
+  },
+  "fixQualityColors": [
+    [128, 128, 128, 255],
+    [214, 64, 64, 255],
+    [230, 150, 40, 255],
+    [230, 210, 40, 255],
+    [60, 190, 90, 255]
+  ],
+  "edl": {"enabled": true, "strength": 0.699999988},
+  "background": [18, 18, 22, 255],
+  "clipHeight": {"enabled": true, "min": 1, "max": 1.5},
+  "clipBox": {"enabled": false, "min": [-10, -10, -10], "max": [10, 10, 10]},
+  "overlays": {"trajectory": false, "poseGraph": false}
+}

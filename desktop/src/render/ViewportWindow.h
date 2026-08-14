@@ -59,6 +59,15 @@ namespace lidarscan {
 class DisplayLink;
 class NativeSurface;
 
+// One completed point-to-point measurement (C3 §3.13 "review workspace ...
+// measure"). Positions are in the session's local metric frame — the same
+// frame PointVertex/PageView use.
+struct MeasureSegment {
+  float a[3] = {0.f, 0.f, 0.f};
+  float b[3] = {0.f, 0.f, 0.f};
+  double distance_m = 0.0;
+};
+
 struct ViewportStats {
   double fps = 0.0;
   double cpu_ms_p95 = 0.0;
@@ -110,9 +119,32 @@ class ViewportWindow : public QWindow {
   // shell running CI may have no Screen Recording permission (REPORT.md §6).
   bool captureScreenshot(const QString& path);
 
+  // --- measure tool (C3) ---------------------------------------------------
+  //
+  // Click-pick against the resident PageStore pages: a straight O(N) nearest-
+  // point-to-ray scan over every uploaded point (see pickPoint() in the .cpp
+  // for the exact tolerance rule). No spatial index — fine at review-workspace
+  // scale (the synthetic captures this was verified against top out around
+  // 120k points; NOTES.md flags this as the thing to revisit for a
+  // multi-million-point cloud).
+  //
+  // First click sets the pending point (rendered as a small yellow marker);
+  // second click completes a segment (rendered as a cyan point-sampled line)
+  // and adds it to measurements(). ESC (keyPressEvent) clears a pending point
+  // without completing a segment. Toggling measure mode off also clears any
+  // pending point, but never touches the completed segment list — that is
+  // MeasureDock's "delete" button's job.
+  void setMeasureMode(bool on);
+  bool measureMode() const { return measure_mode_; }
+  bool hasPendingMeasurePoint() const { return has_pending_measure_point_; }
+  const std::vector<MeasureSegment>& measurements() const { return measure_segments_; }
+  void removeMeasurement(int index);
+  void clearMeasurements();
+
  Q_SIGNALS:
   void statusChanged(const QString& text);
   void initFailed(const QString& reason);
+  void measurementsChanged();
 
  protected:
   void exposeEvent(QExposeEvent*) override;
@@ -133,6 +165,12 @@ class ViewportWindow : public QWindow {
   void rebuildSkybox();
   void buildColormapTexture();
 
+  // measure tool
+  bool pickPoint(const QPointF& widgetPos, float outWorld[3]) const;
+  void rebuildMeasureGeometry();
+  void destroyMeasureGeometry();
+  void pushMarkerMaterialParams();
+
   QWidget* top_level_ = nullptr;
 
   std::unique_ptr<NativeSurface> surface_;
@@ -150,6 +188,20 @@ class ViewportWindow : public QWindow {
   filament::MaterialInstance* material_instance_ = nullptr;
   filament::Texture* colormap_tex_ = nullptr;
   utils::Entity camera_entity_;
+
+  // measure tool: a second, tiny renderable sharing `material_` (a second
+  // MaterialInstance so it can force colorMode=kRgb / a fixed marker point
+  // size regardless of the dock's current display parameters) and its own
+  // small vertex/index buffers, rebuilt from scratch on every change — a
+  // handful of clicks, never a per-frame cost.
+  filament::MaterialInstance* measure_material_ = nullptr;
+  filament::VertexBuffer* measure_vb_ = nullptr;
+  filament::IndexBuffer* measure_ib_ = nullptr;
+  utils::Entity measure_entity_;
+  bool measure_mode_ = false;
+  bool has_pending_measure_point_ = false;
+  float pending_measure_point_[3] = {0.f, 0.f, 0.f};
+  std::vector<MeasureSegment> measure_segments_;
 
   PagedCloudRenderer cloud_;
   const scanengine::PageStore* store_ = nullptr;

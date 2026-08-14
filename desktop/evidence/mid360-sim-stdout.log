@@ -1,0 +1,19 @@
+[sim] Livox Mid-360 simulator
+[sim]   lidar 127.0.0.1  cmd/56100 push/56200 point/56300 imu/56400  discovery->127.0.0.1:56101
+[sim]   sn=3GGDJ6K00100001  rate=200000 pts/s  imu=200 Hz  loss=0.00%  jitter=0.00 ms  frame-model=real
+[sim] 0x0101 get-internal-info: 1 key(s) -> ack 8 B
+[sim] host cfg key 0x0005 -> 127.0.0.1:56201 (lidar port 56200)
+[sim] host cfg key 0x0006 -> 127.0.0.1:56301 (lidar port 56300)
+[sim] host cfg key 0x0007 -> 127.0.0.1:56401 (lidar port 56400)
+[sim] pcl data type -> 1
+[sim] imu data enabled
+[sim] work mode 0x01 -> SAMPLING
+[sim] 0x0101 get-internal-info: 1 key(s) -> ack 8 B
+[sim] host cfg key 0x0005 -> 127.0.0.1:56201 (lidar port 56200)
+[sim] host cfg key 0x0006 -> 127.0.0.1:56301 (lidar port 56300)
+[sim] host cfg key 0x0007 -> 127.0.0.1:56401 (lidar port 56400)
+[sim] pcl data type -> 1
+[sim] imu data enabled
+[sim] work mode 0x01 -> SAMPLING
+[sim] final rss=1.4 MB, cpu=2.6s (9.8% of one core)
+[sim] shutdown after 26.1s: point pkts sent=46110 dropped=0, imu pkts sent=4425 dropped=0, cmd datagrams=10, cmds handled=10
