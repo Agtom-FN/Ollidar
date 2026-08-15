@@ -300,7 +300,8 @@ bool transcode_livoxdump(const std::string& src, const std::string& dst, std::ui
     ++n;
   }
   std::fclose(f);
-  w.close();
+  (void)w.close();  // best-effort: a close failure here would already have
+                     // surfaced as a write_chunk() failure above.
   if (records != nullptr) *records = n;
   return n > 0;
 }

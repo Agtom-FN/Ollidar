@@ -577,7 +577,7 @@ Result<std::unique_ptr<Engine>> Engine::create(const EngineConfig& cfg) {
   SCAN_LOG_INFO(kMod, "%s created for '%s' (pages: %u × %u pts)", engine_version_string(),
                 cfg.app_name.c_str(), e->impl_->points->config().max_pages,
                 e->impl_->points->config().page_capacity);
-  return std::move(e);
+  return e;
 }
 
 EngineState Engine::state() const {

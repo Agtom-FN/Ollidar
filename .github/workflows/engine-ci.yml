@@ -173,9 +173,16 @@ jobs:
         with:
           vcpkgGitCommitId: ${{ env.VCPKG_COMMIT }}
 
+      # -DENGINE_WARNINGS_AS_ERRORS=ON: the one CI leg that gates first-party
+      # -Wall -Wextra -Wshadow (scanengine target only; third_party/ is a
+      # separate target and stays unscoped, see engine/CMakeLists.txt) as
+      # -Werror on GCC, so a new warning fails the build instead of quietly
+      # accumulating. Verified clean on GCC 16 (macOS Homebrew) and Apple
+      # clang locally before this landed; this Linux/GCC leg is the
+      # permanent enforcement point.
       - name: Configure
         working-directory: ${{ env.SOURCE_DIR }}
-        run: cmake --preset linux-x64
+        run: cmake --preset linux-x64 -DENGINE_WARNINGS_AS_ERRORS=ON
 
       - name: Build
         working-directory: ${{ env.SOURCE_DIR }}

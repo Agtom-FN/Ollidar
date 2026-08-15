@@ -909,8 +909,11 @@ class Child {
     if (pid_ < 0) return false;
     if (pid_ == 0) {
       // Child: the simulator is chatty and its log is the cross-check for
-      // every number this test reports, so keep it.
-      ::freopen(log_path.c_str(), "w", stdout);
+      // every number this test reports, so keep it. Failure here just means
+      // the child's output goes to the parent's stdout instead of the log
+      // file; not worth aborting the child over (glibc marks freopen
+      // warn_unused_result under _FORTIFY_SOURCE, hence the void-cast).
+      (void)::freopen(log_path.c_str(), "w", stdout);
       ::dup2(1, 2);
       ::execv(c[0], c.data());
       ::_exit(127);

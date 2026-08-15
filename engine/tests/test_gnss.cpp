@@ -1883,7 +1883,11 @@ class Child {
     if (pid_ < 0) return false;
     if (pid_ == 0) {
       if (!cwd.empty()) { if (::chdir(cwd.c_str()) != 0) ::_exit(126); }
-      ::freopen(log.c_str(), "w", stdout);
+      // Failure here just means the child's output goes to the parent's
+      // stdout instead of the log file; not worth aborting the child over
+      // (glibc marks freopen warn_unused_result under _FORTIFY_SOURCE,
+      // hence the void-cast).
+      (void)::freopen(log.c_str(), "w", stdout);
       ::dup2(1, 2);
       ::execvp(c[0], c.data());
       ::_exit(127);

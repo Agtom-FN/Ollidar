@@ -860,18 +860,18 @@ Status PostSlamPipeline::run(const std::string& lscan_dir) {
             const float r2 = p.x * p.x + p.y * p.y + p.z * p.z;
             if (r2 < lo * lo || (hi > 0.f && r2 > hi * hi)) continue;
             const double u = static_cast<double>(i + 1) / static_cast<double>(n);
-            const std::int64_t t = t_prev + static_cast<std::int64_t>(span * u);
+            const std::int64_t t_pt = t_prev + static_cast<std::int64_t>(span * u);
             Pose at;
-            const Status ps = im.corrected.pose_at(t, &at);
+            const Status ps = im.corrected.pose_at(t_pt, &at);
             if (!ps.ok()) {
               // Clamp to the endpoint when the point is barely outside the
               // trajectory (the tail of a capture whose last partial scan
               // produced no pose); drop it otherwise.
               if (ps.error() == ScanError::kAgain && have_last &&
-                  t - last_pose.t_mono_ns <= kPoseClampSlackNs) {
+                  t_pt - last_pose.t_mono_ns <= kPoseClampSlackNs) {
                 at = last_pose;
               } else if (ps.error() == ScanError::kNotFound && have_first &&
-                         first_pose.t_mono_ns - t <= kPoseClampSlackNs) {
+                         first_pose.t_mono_ns - t_pt <= kPoseClampSlackNs) {
                 at = first_pose;
               } else {
                 ++im.stats.unposed_points;
