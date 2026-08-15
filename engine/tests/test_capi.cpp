@@ -1,18 +1,51 @@
 // C ABI tests. The heavy lifting is in capi_smoke.c, which is compiled as
 // C — this file feeds it a synthetic D6 capture and adds the checks that are
 // easier to express in C++ (mirror-struct sizes, event conversion).
+#include <atomic>
+#include <chrono>
+#include <cmath>
 #include <cstddef>
+#include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include "doctest.h"
 #include "packet_builder.h"
+#include "scanengine/color/frames_idx.h"
+#include "scanengine/core/event.h"
+#include "scanengine/jobs/job_types.h"
 
 extern "C" {
 #include "scanengine_c.h"
 int scan_capi_smoke_run(const uint8_t* d6_bytes, size_t d6_len);
 }
+
+namespace scanengine {
+namespace capi_test {
+// Defined in capi/scanengine_c.cpp — see the comment there. Not part of the
+// ABI and not declared in scanengine_c.h.
+void convert_event_for_test(const Event& in, scan_event* out);
+}  // namespace capi_test
+}  // namespace scanengine
+
+namespace {
+
+std::string capi_temp_dir(const char* tag) {
+  static std::atomic<long long> counter{0};
+  const auto n = counter.fetch_add(1, std::memory_order_relaxed);
+  const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+  const std::filesystem::path p =
+      std::filesystem::temp_directory_path() /
+      (std::string("capi_int34_") + tag + "_" + std::to_string(now) + "_" + std::to_string(n));
+  std::error_code ec;
+  std::filesystem::create_directories(p, ec);
+  return p.string();
+}
+
+}  // namespace
 
 TEST_CASE("capi/smoke_sequence_from_C_with_a_synthetic_D6_capture") {
   const std::vector<std::uint8_t> bytes =
@@ -24,7 +57,7 @@ TEST_CASE("capi/smoke_sequence_from_C_with_a_synthetic_D6_capture") {
 
 TEST_CASE("capi/abi_version_and_error_strings") {
   CHECK(scan_engine_abi_version() == SCAN_ABI_VERSION);
-  CHECK(SCAN_ABI_VERSION == 3u);  // moves with scanengine::kEngineAbiVersion
+  CHECK(SCAN_ABI_VERSION == 4u);  // moves with scanengine::kEngineAbiVersion
   CHECK(std::string(scan_error_str(SCAN_OK)) == "ok");
   CHECK(std::string(scan_error_str(SCAN_ERR_CHECKSUM)) == "checksum failed");
   CHECK(std::string(scan_error_str(9999)) == "unrecognized error code");
@@ -453,4 +486,329 @@ TEST_CASE("capi/an_engine_backed_ntrip_handle_shares_the_engines_client") {
   scan_ntrip_destroy(again);
   scan_ntrip_destroy(b);
   scan_engine_destroy(e);
+}
+
+// ===========================================================================
+// INT-34: ABI 4 — A11's colorization + keyframes, and A15's job progress
+// ===========================================================================
+
+TEST_CASE("capi/abi4_entry_points_reject_null_handles") {
+  // Same rule every ABI wave follows: an error, never a crash, on a null
+  // handle. JNI passes 0 for an unopened engine more often than anyone would
+  // like, and a colorizer is a second handle to get wrong.
+  CHECK(scan_engine_record_keyframe(nullptr, nullptr) == SCAN_ERR_INVALID_ARGUMENT);
+  CHECK(scan_colorizer_create(nullptr, nullptr) == SCAN_ERR_INVALID_ARGUMENT);
+  CHECK(scan_colorizer_load_keyframes(nullptr, "x") == SCAN_ERR_INVALID_ARGUMENT);
+  CHECK(scan_colorizer_set_extrinsics(nullptr, nullptr) == SCAN_ERR_INVALID_ARGUMENT);
+  CHECK(scan_colorizer_set_progress_callback(nullptr, nullptr, nullptr) ==
+        SCAN_ERR_INVALID_ARGUMENT);
+  CHECK(scan_colorizer_run(nullptr, nullptr) == SCAN_ERR_INVALID_ARGUMENT);
+  CHECK(scan_colorizer_cancel(nullptr) == SCAN_ERR_INVALID_ARGUMENT);
+  CHECK(scan_colorizer_stats(nullptr, nullptr) == SCAN_ERR_INVALID_ARGUMENT);
+  CHECK(scan_colorizer_progress(nullptr) == 0.f);
+  CHECK(scan_clock_sweep_estimate(nullptr, 0, nullptr, 0, nullptr) == SCAN_ERR_INVALID_ARGUMENT);
+  scan_colorizer_destroy(nullptr);  // must be a no-op, not a crash
+
+  // A null engine handle with a valid keyframe is still an argument error,
+  // and a valid engine with a null image_name is too — the string is the one
+  // field with no safe default.
+  scan_keyframe kf;
+  std::memset(&kf, 0, sizeof(kf));
+  CHECK(scan_engine_record_keyframe(nullptr, &kf) == SCAN_ERR_INVALID_ARGUMENT);
+}
+
+TEST_CASE("capi/keyframes_cross_the_abi_into_frames_idx") {
+  const std::string dir = capi_temp_dir("kf") + "/session.lscan";
+
+  scan_engine_config cfg;
+  std::memset(&cfg, 0, sizeof(cfg));
+  cfg.app_name = "capi-keyframes";
+  cfg.log_level = SCAN_LOG_OFF;
+  cfg.page_capacity = 1024;
+  cfg.max_pages = 4;
+  scan_engine* e = nullptr;
+  REQUIRE(scan_engine_create(&cfg, &e) == SCAN_OK);
+
+  scan_keyframe kf;
+  std::memset(&kf, 0, sizeof(kf));
+  kf.t_engine_ns = 1'700'000'000'000'000'000LL;
+  kf.position[0] = 2.5;
+  kf.position[1] = 0.5;
+  kf.position[2] = 1.25;
+  kf.orientation[3] = 1.0;  // identity, x y z w
+  kf.fx = kf.fy = 1200.f;
+  kf.cx = 960.f;
+  kf.cy = 540.f;
+  kf.width = 1920;
+  kf.height = 1080;
+  kf.rolling_shutter_row_time_ns = 18518.f;
+  kf.pose_quality = SCAN_POSE_QUALITY_GOOD;
+  kf.pose_source = SCAN_STREAM_POSE_AR;
+  kf.flags = SCAN_KEYFRAME_MOTION_VALID | SCAN_KEYFRAME_EXPOSURE_VALID;
+  kf.exposure_ns = 5'000'000;
+  kf.iso = 400.f;
+  kf.angular_rate_rad_s = 0.21f;
+  kf.linear_speed_m_s = 0.65f;
+  kf.image_bytes = 987654;
+  kf.image_name = "kf_000001.jpg";
+
+  // No recording session yet.
+  CHECK(scan_engine_record_keyframe(e, &kf) == SCAN_ERR_INVALID_STATE);
+  kf.image_name = nullptr;
+  CHECK(scan_engine_record_keyframe(e, &kf) == SCAN_ERR_INVALID_ARGUMENT);
+  kf.image_name = "kf_000001.jpg";
+
+  scan_session_config session;
+  std::memset(&session, 0, sizeof(session));
+  session.record = 1;
+  session.lscan_dir = dir.c_str();
+  REQUIRE(scan_engine_start(e, &session) == SCAN_OK);
+
+  REQUIRE(scan_engine_record_keyframe(e, &kf) == SCAN_OK);
+  kf.t_engine_ns += 250'000'000LL;
+  kf.image_name = "kf_000002.jpg";
+  REQUIRE(scan_engine_record_keyframe(e, &kf) == SCAN_OK);
+
+  // Refused, and not written: a non-unit quaternion cannot be projected, and
+  // an escaping name is the zip-slip class inside an index.
+  scan_keyframe bad = kf;
+  bad.orientation[3] = 0.25;
+  CHECK(scan_engine_record_keyframe(e, &bad) == SCAN_ERR_INVALID_ARGUMENT);
+  bad = kf;
+  bad.image_name = "../../../etc/passwd";
+  CHECK(scan_engine_record_keyframe(e, &bad) == SCAN_ERR_INVALID_ARGUMENT);
+
+  CHECK(scan_engine_stop(e) == SCAN_OK);
+  scan_engine_destroy(e);
+
+  // Read back with the C++ reader: the C path produces the same records the
+  // C++ path does, byte for byte, because it IS the same encoder.
+  std::vector<scanengine::Keyframe> back;
+  scanengine::color::FrameIndexStats st;
+  REQUIRE(scanengine::color::read_frame_index(dir, &back, &st).ok());
+  CHECK(st.records == 2);
+  CHECK(st.rejected_records == 0);
+  REQUIRE(back.size() == 2);
+  CHECK(back[0].image_path == "streams/frames/kf_000001.jpg");
+  CHECK(back[1].image_path == "streams/frames/kf_000002.jpg");
+  CHECK(back[1].intrinsics.width == 1920);
+  CHECK(back[1].intrinsics.cx == doctest::Approx(960.f));
+  CHECK(back[1].pose.position[0] == doctest::Approx(2.5));
+  CHECK(back[1].iso == doctest::Approx(400.f));
+  CHECK(back[1].image_bytes == 987654);
+  CHECK(back[1].pose.quality == scanengine::PoseQuality::kGood);
+
+  std::error_code ec;
+  std::filesystem::remove_all(std::filesystem::path(dir).parent_path(), ec);
+}
+
+TEST_CASE("capi/the_colorizer_handle_refuses_an_unsynchronised_session") {
+  scan_engine_config cfg;
+  std::memset(&cfg, 0, sizeof(cfg));
+  cfg.app_name = "capi-colorize";
+  cfg.log_level = SCAN_LOG_OFF;
+  cfg.page_capacity = 256;
+  cfg.max_pages = 4;
+  scan_engine* e = nullptr;
+  REQUIRE(scan_engine_create(&cfg, &e) == SCAN_OK);
+
+  scan_device_config dev;
+  std::memset(&dev, 0, sizeof(dev));
+  dev.kind = SCAN_DEVICE_D6;
+  dev.serial_port_name = "capi";
+  std::uint32_t device_id = 0;
+  REQUIRE(scan_engine_add_device(e, &dev, &device_id) == SCAN_OK);
+  scan_session_config session;
+  std::memset(&session, 0, sizeof(session));
+  session.record = 0;
+  REQUIRE(scan_engine_start(e, &session) == SCAN_OK);
+  const auto bytes = d6test::build_revolution(4, 20, 2000, 90);
+  REQUIRE(scan_engine_push_serial_bytes(e, device_id, bytes.data(), bytes.size(), 12345) ==
+          SCAN_OK);
+
+  // A .lscan with a real frames.idx and no JPEGs. That is enough: the gate
+  // refusal below happens BEFORE any image is decoded, which is exactly the
+  // property being asserted.
+  const std::string dir = capi_temp_dir("cam");
+  {
+    scanengine::color::KeyframeIndexWriter w;
+    REQUIRE(w.open(dir).ok());
+    for (int i = 0; i < 2; ++i) {
+      scanengine::Keyframe kf;
+      kf.t_mono_ns = 12345 + i * 100'000'000LL;
+      kf.image_path = "streams/frames/kf_" + std::to_string(i) + ".jpg";
+      kf.pose.t_mono_ns = kf.t_mono_ns;
+      kf.pose.position[2] = -3.0;
+      kf.pose.orientation[3] = 1.0;
+      kf.pose.quality = scanengine::PoseQuality::kGood;
+      kf.intrinsics.fx = kf.intrinsics.fy = 300.f;
+      kf.intrinsics.cx = 160.f;
+      kf.intrinsics.cy = 120.f;
+      kf.intrinsics.width = 320;
+      kf.intrinsics.height = 240;
+      REQUIRE(w.add(kf).ok());
+    }
+    REQUIRE(w.close().ok());
+  }
+
+  // A ZERO-INITIALIZED config is the "caller forgot to wire A4" case, and it
+  // must REFUSE — docs/A11-color.md §2. This is the single most important
+  // property of the whole colorization surface: the alternative is a
+  // silently mis-registered cloud.
+  scan_colorize_config cc;
+  std::memset(&cc, 0, sizeof(cc));
+  CHECK(cc.sync_quality == SCAN_SYNC_UNKNOWN);
+  scan_colorizer* c = nullptr;
+  REQUIRE(scan_colorizer_create(&c, &cc) == SCAN_OK);
+  REQUIRE(scan_colorizer_load_keyframes(c, dir.c_str()) == SCAN_OK);
+  CHECK(scan_colorizer_run(c, e) == SCAN_ERR_NOT_SUPPORTED);
+
+  scan_colorize_stats cs;
+  REQUIRE(scan_colorizer_stats(c, &cs) == SCAN_OK);
+  // Refused BEFORE any work: no image decoded, no keyframe considered, no
+  // point written (docs/A11-color.md §2's
+  // gate/an_unsynchronised_session_is_refused_before_any_work).
+  CHECK(cs.points_colorized == 0);
+  CHECK(cs.keyframes_used == 0);
+  CHECK(cs.keyframes_image_failed == 0);
+  CHECK(scan_colorizer_progress(c) == 0.f);
+
+  // The extrinsic is validated even when it is not used: A8 §4.4's
+  // column-major-across-JNI trap produces a mirrored cloud nobody notices
+  // until export.
+  double identity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+  CHECK(scan_colorizer_set_extrinsics(c, identity) == SCAN_OK);
+  double shear[16] = {1, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+  CHECK(scan_colorizer_set_extrinsics(c, shear) != SCAN_OK);
+
+  // A session with no camera at all is kNotFound, not corruption — §3.5's
+  // "gracefully unavailable", which a caller reports rather than fails on.
+  const std::string empty_dir = capi_temp_dir("nocam");
+  CHECK(scan_colorizer_load_keyframes(c, empty_dir.c_str()) == SCAN_ERR_NOT_FOUND);
+
+  CHECK(scan_colorizer_cancel(c) == SCAN_OK);
+  CHECK(scan_colorizer_set_progress_callback(c, nullptr, nullptr) == SCAN_OK);
+  scan_colorizer_destroy(c);
+
+  // With a real gate the run reaches the pipeline. The JPEGs do not exist, so
+  // every keyframe fails to decode — which is counted, not fatal, and leaves
+  // every point wearing its intensity-derived colour and flagged uncovered.
+  std::memset(&cc, 0, sizeof(cc));
+  cc.sync_quality = SCAN_SYNC_GOOD;
+  cc.occlusion_test = 1;
+  cc.rolling_shutter = 1;
+  scan_colorizer* c2 = nullptr;
+  REQUIRE(scan_colorizer_create(&c2, &cc) == SCAN_OK);
+  REQUIRE(scan_colorizer_load_keyframes(c2, dir.c_str()) == SCAN_OK);
+
+  int progress_calls = 0;
+  REQUIRE(scan_colorizer_set_progress_callback(
+              c2, [](float, void* u) { ++*static_cast<int*>(u); }, &progress_calls) == SCAN_OK);
+
+  CHECK(scan_colorizer_run(c2, e) == SCAN_OK);
+  REQUIRE(scan_colorizer_stats(c2, &cs) == SCAN_OK);
+  CHECK(cs.points_total == 81);
+  CHECK(cs.points_uncovered == 81);
+  CHECK(cs.points_colorized == 0);
+  CHECK(cs.keyframes_total == 2);
+  CHECK(cs.coverage_fraction == 0.f);
+  CHECK(progress_calls > 0);  // the C trampoline fired, no function-pointer cast
+  CHECK(scan_colorizer_progress(c2) == doctest::Approx(1.f));
+
+  // A recolour of a real page reaches the C consumer as a POINTS_AVAILABLE
+  // event carrying SCAN_PAGE_UPDATE_RECOLOURED — the distinction A14 needs to
+  // re-upload a GPU page without re-uploading its geometry, and the ABI half
+  // of docs/A11-color.md §8.1.
+  int recoloured = 0, appended = 0;
+  scan_event ev;
+  while (scan_engine_poll_event(e, &ev) == SCAN_OK) {
+    if (ev.type != SCAN_EVENT_POINTS_AVAILABLE) continue;
+    if (ev.payload.points.update_kind == SCAN_PAGE_UPDATE_RECOLOURED) ++recoloured;
+    if (ev.payload.points.update_kind == SCAN_PAGE_UPDATE_APPENDED) ++appended;
+  }
+  CHECK(appended > 0);
+  CHECK(recoloured > 0);
+
+  scan_colorizer_destroy(c2);
+  CHECK(scan_engine_stop(e) == SCAN_OK);
+  scan_engine_destroy(e);
+
+  std::error_code ec;
+  std::filesystem::remove_all(empty_dir, ec);
+  std::filesystem::remove_all(dir, ec);
+}
+
+TEST_CASE("capi/the_wizard_clock_sweep_crosses_the_abi") {
+  // WIZARD.md screen 3: ~1 sweep per second for 8 s, both sensors watching the
+  // same motion. The camera track is the lidar's, shifted and scaled — the
+  // normalised correlation removes the scale, which is what makes the
+  // estimator signal-agnostic.
+  const std::int64_t truth_ns = 23'000'000;  // camera reads 23 ms early
+  std::vector<scan_rate_sample> cam, lid;
+  for (int i = 0; i < 240; ++i) {  // 30 Hz for 8 s
+    const std::int64_t t = static_cast<std::int64_t>(i) * 33'333'333LL;
+    scan_rate_sample s;
+    s.t_ns = t - truth_ns;  // on the camera's own clock
+    s.value = std::sin(2.0 * 3.14159265358979 * 1.0 * static_cast<double>(t) * 1e-9);
+    cam.push_back(s);
+  }
+  for (int i = 0; i < 1600; ++i) {  // 200 Hz for 8 s
+    const std::int64_t t = static_cast<std::int64_t>(i) * 5'000'000LL;
+    scan_rate_sample s;
+    s.t_ns = t;
+    s.value = 1.7 * std::sin(2.0 * 3.14159265358979 * 1.0 * static_cast<double>(t) * 1e-9);
+    lid.push_back(s);
+  }
+
+  scan_clock_sweep_result r;
+  REQUIRE(scan_clock_sweep_estimate(cam.data(), static_cast<std::uint32_t>(cam.size()),
+                                    lid.data(), static_cast<std::uint32_t>(lid.size()),
+                                    &r) == SCAN_OK);
+  CHECK(r.accepted == 1);
+  CHECK(r.verdict == SCAN_SWEEP_ACCEPTED);
+  CHECK(r.correlation > 0.9);
+  CHECK(std::llabs(r.offset_ns - truth_ns) < 1'000'000);  // the +-1 ms target
+  CHECK(r.zero_crossings >= 4);
+  MESSAGE("clock sweep over the ABI: " << r.offset_ns << " ns (truth " << truth_ns
+                                       << "), sigma " << r.sigma_ns << " ns");
+
+  // A capture that did not move is a VERDICT, not an error: the wizard has to
+  // tell the operator what went wrong, and SCAN_OK + accepted == 0 is how.
+  std::vector<scan_rate_sample> flat = lid;
+  for (auto& s : flat) s.value = 1.0;
+  scan_clock_sweep_result r2;
+  CHECK(scan_clock_sweep_estimate(cam.data(), static_cast<std::uint32_t>(cam.size()),
+                                  flat.data(), static_cast<std::uint32_t>(flat.size()),
+                                  &r2) == SCAN_OK);
+  CHECK(r2.accepted == 0);
+  CHECK(r2.verdict == SCAN_SWEEP_NO_MOTION);
+
+  // Structurally bad input IS an error.
+  scan_clock_sweep_result r3;
+  CHECK(scan_clock_sweep_estimate(nullptr, 5, lid.data(),
+                                  static_cast<std::uint32_t>(lid.size()),
+                                  &r3) == SCAN_ERR_INVALID_ARGUMENT);
+}
+
+TEST_CASE("capi/job_progress_no_longer_crosses_the_abi_as_zeroed_bytes") {
+  // docs/A15-jobs.md §7.1: SCAN_EVENT_JOB_PROGRESS existed and was
+  // static_assert'ed since A1, but convert_event() had no case and
+  // scan_event had no `job` member, so every job-progress event reached a C
+  // consumer with a zeroed payload. ABI 4 closes it, and this is the case
+  // that would fail if the union member were ever dropped again.
+  scanengine::Event in;
+  in.type = scanengine::EventType::kJobProgress;
+  in.sequence = 77;
+  in.t_mono_ns = 4242;
+  in.payload.job.job_id = 0x0123456789ABCDEFull;
+  in.payload.job.progress = 0.625f;
+  in.payload.job.state = static_cast<std::uint8_t>(scanengine::jobs::JobState::kRunning);
+
+  scan_event out;
+  scanengine::capi_test::convert_event_for_test(in, &out);
+  CHECK(out.type == SCAN_EVENT_JOB_PROGRESS);
+  CHECK(out.sequence == 77);
+  CHECK(out.payload.job.job_id == 0x0123456789ABCDEFull);
+  CHECK(out.payload.job.progress == doctest::Approx(0.625f));
+  CHECK(out.payload.job.state == SCAN_JOB_RUNNING);
 }

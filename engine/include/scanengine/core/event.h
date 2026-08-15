@@ -88,6 +88,12 @@ struct PointsAvailablePayload {
   std::uint32_t count;
   StreamId stream;
   std::uint8_t page_created;  // 0/1 — renderer must allocate a GPU buffer
+  // PageUpdateKind (INT-34): 0 = the range is NEW, 1 = the range already
+  // existed and only its colours changed (colorization rewriting a finished
+  // cloud in place). A consumer that ignores this still behaves correctly —
+  // it re-uploads the range either way — but one that caches geometry
+  // separately can skip the position upload on a 1.
+  std::uint8_t update_kind;
 };
 
 struct RotationPayload {

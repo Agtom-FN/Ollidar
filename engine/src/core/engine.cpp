@@ -7,7 +7,9 @@
 #include <mutex>
 #include <utility>
 
+#include "scanengine/color/frames_idx.h"
 #include "scanengine/core/log.h"
+#include "scanengine/jobs/job_queue.h"
 
 namespace scanengine {
 namespace {
@@ -197,6 +199,15 @@ struct Engine::Impl {
       std::make_unique<lscan::FileRecordWriter>();
   mutable std::mutex record_m;
 
+  // --- A15's job queue, created on first Engine::jobs() (INT-34) ----------
+  //
+  // Lazy because it starts a worker thread and most engines never submit a
+  // job. Guarded by `m` for construction only; JobQueue is itself thread-safe
+  // afterwards. Destroyed explicitly at the top of ~Engine — a running job
+  // touches the bus, the page store and (through the post pipeline) the
+  // recorder, all of which are declared above it.
+  std::unique_ptr<jobs::JobQueue> job_queue;
+
   mutable std::mutex m;  // guards lifecycle + the device map
   EngineState state = EngineState::kIdle;
   SessionConfig session{};
@@ -244,7 +255,14 @@ struct Engine::Impl {
     p.count = u.count;
     p.stream = u.stream;
     p.page_created = u.page_created ? 1 : 0;
+    p.update_kind = static_cast<std::uint8_t>(u.kind);
     self->bus.publish(EventType::kPointsAvailable, p);
+
+    // A recolour republishes a range that already went through the odometry
+    // once (INT-34). Only the r/g/b/a bytes changed, and feeding the same
+    // points to the LIO a second time would insert duplicate geometry into
+    // the voxel map, so the forwarding below is append-only.
+    if (u.kind != PageUpdateKind::kAppended) return;
 
     // --- A6: the raw Mid-360 cloud is also the odometry's input ------------
     //
@@ -358,6 +376,13 @@ Engine::Engine() : impl_(new Impl) {}
 Engine::~Engine() {
   // Order matters: stop producers, then unsubscribe the page bridge, then
   // close the bus so no callback can run against a half-destroyed engine.
+  //
+  // A15's job worker goes FIRST (INT-34). A running job publishes progress on
+  // the bus and appends points into the page store, and a kPostProcess job
+  // reads the .lscan the recorder may still be writing — all of which are
+  // members declared before it and would otherwise be destroyed underneath
+  // it. ~JobQueue calls stop(), which drains the queue and joins the worker.
+  impl_->job_queue.reset();
   (void)stop_session();
   // A10: the NTRIP worker is the one thread that outlives a session, and its
   // RTCM handler reaches the recorder and the event bus. Join it FIRST —
@@ -1010,6 +1035,37 @@ const LioOdometry* Engine::live_slam() const {
 }
 
 ImuIngest& Engine::imu() { return *impl_->imu; }
+
+Status Engine::record_keyframe(const Keyframe& kf) {
+  // Encode (which validates) BEFORE taking the record lock: a rejected
+  // keyframe must not stall the three other producers behind it.
+  std::vector<std::uint8_t> rec;
+  SCAN_TRY(color::encode_keyframe_record(kf, &rec));
+
+  std::lock_guard<std::mutex> lock(impl_->record_m);
+  if (!impl_->recorder->is_open()) {
+    return set_last_error(ScanError::kInvalidState,
+                          "engine: record_keyframe with no recording session open");
+  }
+  // ChunkType::kCameraFrameIndex on StreamId::kCameraFrames —
+  // lscan::stream_file_of() already routes that to
+  // "streams/frames/frames.idx", so this is byte-identical to what A11's
+  // standalone KeyframeIndexWriter produces (asserted by test_color.cpp's
+  // fidx/is_byte_identical_to_what_A5s_recorder_writes).
+  return impl_->recorder->write_chunk(lscan::ChunkType::kCameraFrameIndex, kf.t_mono_ns,
+                                      ByteSpan(rec.data(), rec.size()));
+}
+
+jobs::JobQueue& Engine::jobs() {
+  std::lock_guard<std::mutex> lock(impl_->m);
+  if (!impl_->job_queue) {
+    // Constructed with this engine's bus, which is what makes
+    // EventType::kJobProgress land on the same subscription as every other
+    // event instead of on a second, app-invented one.
+    impl_->job_queue = std::make_unique<jobs::JobQueue>(&impl_->bus);
+  }
+  return *impl_->job_queue;
+}
 
 EventBus& Engine::events() { return impl_->bus; }
 PageStore& Engine::points() { return *impl_->points; }

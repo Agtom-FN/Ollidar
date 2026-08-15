@@ -340,12 +340,19 @@ struct FileRecordWriter::Impl {
   struct SensorInfo {
     std::string id, kind, model;
   };
+  // INT-34, additive: see FileRecordWriter::add_clock_offset() in lscan.h.
+  struct ClockOffsetInfo {
+    std::string bracket;
+    std::int64_t camera_to_engine_ns = 0;
+    double sigma_ns = 0.0;
+  };
 
   bool open_ = false;
   std::string path_;
   RecordStats stats_{};
   std::string profile_ = "quickscan";
   std::vector<SensorInfo> sensors_;
+  std::vector<ClockOffsetInfo> clock_offsets_;  // INT-34
   std::int64_t created_at_utc_ns_ = 0;
   std::map<StreamId, StreamFile> streams_;
 
@@ -421,6 +428,19 @@ struct FileRecordWriter::Impl {
     // the keys so consumers can rely on their presence from day one.
     j << "  \"mountCalibration\": null,\n";
     j << "  \"crs\": null,\n";
+    // --- INT-34, additive: A11 §8.4's per-bracket camera clock offset ------
+    // t_engine_ns = t_camera_ns + cameraToEngineNs. Always emitted, `{}` when
+    // nothing was set, so a consumer can rely on the key. See
+    // FileRecordWriter::add_clock_offset() in record/lscan.h for the whole
+    // rationale and the note about this being INT-34's one edit in A5's file.
+    j << "  \"clockOffsets\": {";
+    for (std::size_t i = 0; i < clock_offsets_.size(); ++i) {
+      if (i != 0) j << ", ";
+      const auto& co = clock_offsets_[i];
+      j << "\"" << json_escape(co.bracket) << "\": {\"cameraToEngineNs\": "
+        << co.camera_to_engine_ns << ", \"sigmaNs\": " << co.sigma_ns << "}";
+    }
+    j << "},\n";
     j << "  \"streams\": {";
     bool first = true;
     for (const auto& kv : streams_) {
@@ -581,6 +601,20 @@ void FileRecordWriter::set_profile(const std::string& profile) { impl_->profile_
 void FileRecordWriter::add_sensor(const std::string& id, const std::string& kind,
                                   const std::string& model) {
   impl_->sensors_.push_back(Impl::SensorInfo{id, kind, model});
+}
+
+// INT-34, additive — the only entry point added to A5's writer. See lscan.h.
+void FileRecordWriter::add_clock_offset(const std::string& bracket,
+                                        std::int64_t camera_to_engine_ns, double sigma_ns) {
+  const std::string key = bracket.empty() ? std::string("default") : bracket;
+  for (auto& co : impl_->clock_offsets_) {
+    if (co.bracket == key) {
+      co.camera_to_engine_ns = camera_to_engine_ns;
+      co.sigma_ns = sigma_ns;
+      return;
+    }
+  }
+  impl_->clock_offsets_.push_back(Impl::ClockOffsetInfo{key, camera_to_engine_ns, sigma_ns});
 }
 
 // --- FileRecordReader ---------------------------------------------------------

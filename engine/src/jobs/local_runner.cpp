@@ -46,18 +46,27 @@ Status run_colorize(const ColorizeParams& params, std::function<void(float)> pro
 
   if (progress_cb) progress_cb(0.f);
 
-  // Prefer A11's concrete implementation: real cancellation and
-  // fine-grained progress, plus its own frames.idx loader.
-  if (auto* pc = dynamic_cast<color::PointColorizer*>(params.colorizer)) {
-    if (cancel_token != nullptr) pc->set_cancel_token(cancel_token);
-    if (progress_cb) {
-      pc->set_progress_callback(
-          [progress_cb](const color::ColorProgress& p) { progress_cb(p.fraction); });
-    }
-    SCAN_TRY(pc->set_extrinsics(params.camera_from_lidar));
-    if (!params.keyframes.empty()) {
-      for (const Keyframe& kf : params.keyframes) SCAN_TRY(pc->add_keyframe(kf));
-    } else if (!params.lscan_dir.empty()) {
+  // INT-34 (docs/A15-jobs.md §7.6): cancellation and progress are now on the
+  // ABSTRACT Colorizer seam, so they are wired for EVERY implementation
+  // rather than only for the one this function could dynamic_cast to. Both
+  // hooks default to no-ops on the interface, so an implementation that does
+  // not override them behaves exactly as it did before — it simply still
+  // cannot be interrupted.
+  params.colorizer->set_cancel_token(cancel_token);
+  if (progress_cb) params.colorizer->set_progress_fn(progress_cb);
+
+  SCAN_TRY(params.colorizer->set_extrinsics(params.camera_from_lidar));
+
+  if (!params.keyframes.empty()) {
+    for (const Keyframe& kf : params.keyframes) SCAN_TRY(params.colorizer->add_keyframe(kf));
+  } else if (auto* pc = dynamic_cast<color::PointColorizer*>(params.colorizer)) {
+    // The one thing still specific to A11's implementation, and it is a
+    // CONVENIENCE rather than a capability: PointColorizer knows how to load
+    // its own keyframes (and install a FileImageSource) from a .lscan
+    // directory. The abstract seam has no such notion — a second
+    // implementation would source keyframes its own way — so this stays a
+    // dynamic_cast instead of becoming a virtual nobody else can answer.
+    if (!params.lscan_dir.empty()) {
       const Status ks = pc->load_keyframes(params.lscan_dir);
       if (!ks.ok()) {
         if (ks.error() == ScanError::kNotFound) {
@@ -69,19 +78,9 @@ Status run_colorize(const ColorizeParams& params, std::function<void(float)> pro
         return ks;
       }
     }
-    return pc->colorize(params.store.get());
   }
 
-  // Generic fallback for any other Colorizer (a test double, or a future
-  // second implementation): the plain abstract-seam sequence. No
-  // cancellation — see local_runner.h's comment — and only the two progress
-  // ticks already reported above and below.
-  SCAN_TRY(params.colorizer->set_extrinsics(params.camera_from_lidar));
-  for (const Keyframe& kf : params.keyframes) {
-    SCAN_TRY(params.colorizer->add_keyframe(kf));
-  }
   SCAN_TRY(params.colorizer->colorize(params.store.get()));
-
   if (progress_cb) progress_cb(1.f);
   return kOkStatus;
 }

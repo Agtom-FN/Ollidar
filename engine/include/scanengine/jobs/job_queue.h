@@ -30,11 +30,15 @@
 // the Colorizer* seam — see local_runner.h) kColorize too, ExportCancelToken
 // for kExportPoints, a plain atomic polled between chunks/polls for
 // kCloudSubmit; the job still finalizes from the worker thread once its
-// run() call unwinds. kTransferExport has a documented cancellation gap —
-// see transfer.h — because zip_export()/zip_import() expose no cancel hook
-// today. A kColorize job driven by a non-PointColorizer Colorizer* (e.g. a
-// test double against the bare abstract seam) has the same gap, for the
-// same reason.
+// run() call unwinds.
+//
+// INT-34 closed both cancellation gaps this comment used to describe:
+// kTransferExport now polls a lscan::ZipCancelToken from inside zip_export()
+// (docs/A15-jobs.md §7.4), and a kColorize job driven by ANY Colorizer gets
+// the token through the abstract seam's set_cancel_token() rather than
+// through a dynamic_cast to color::PointColorizer (§7.6). An implementation
+// that does not override that hook still cannot be interrupted — but that is
+// now its own choice, not the interface's limitation.
 //
 // CHAINING. A JobSpec's ColorizeParams/ExportPointsParams/CloudSubmitParams
 // may set `chain_from` to a prior job's id instead of supplying its input

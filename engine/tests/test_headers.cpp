@@ -4,7 +4,11 @@
 // in one of them would not be caught until A6–A15 opened the module.
 #include "scanengine/cloud/page_store.h"
 #include "scanengine/cloud/point_page.h"
+#include "scanengine/color/clock_sweep.h"
 #include "scanengine/color/colorize.h"
+#include "scanengine/color/colorizer.h"
+#include "scanengine/color/frames_idx.h"
+#include "scanengine/color/image_source.h"
 #include "scanengine/core/engine.h"
 #include "scanengine/core/error.h"
 #include "scanengine/core/event.h"
@@ -19,7 +23,9 @@
 #include "scanengine/drivers/mid360/mid360_driver.h"
 #include "scanengine/export/exporter.h"
 #include "scanengine/gnss/gnss.h"
+#include "scanengine/jobs/colorize_wiring.h"
 #include "scanengine/jobs/job.h"
+#include "scanengine/jobs/job_runner_adapter.h"
 #include "scanengine/merge/merge.h"
 #include "scanengine/plan/floor_plan.h"
 #include "scanengine/poses/external_pose_source.h"
@@ -27,6 +33,7 @@
 #include "scanengine/poses/pose_source.h"
 #include "scanengine/poses/se3.h"
 #include "scanengine/record/lscan.h"
+#include "scanengine/record/zip.h"
 #include "scanengine/slam/eskf.h"
 #include "scanengine/slam/ivox.h"
 #include "scanengine/slam/lio.h"
@@ -39,6 +46,8 @@
 #include "scanengine/transport/byte_source.h"
 #include "scanengine/transport/udp_source.h"
 #include "scanengine/transport/usb_serial_source.h"
+
+#include <type_traits>
 
 #include "doctest.h"
 
@@ -112,4 +121,65 @@ TEST_CASE("headers/A6_and_A8_types_are_usable") {
   double m[16];
   se3::mat4_identity(m);
   CHECK(se3::mat4_is_rigid(m));
+}
+
+// A11 §8.5 asked for the four color/ headers to join this list, and INT-34
+// added record/zip.h and the two new jobs/ headers alongside them. The point
+// is not that the modules compile — their own test files prove that — but
+// that each header compiles ALONE, as the first include of a translation
+// unit, which is the property a consumer opening one for the first time
+// depends on and the one nothing else checks.
+TEST_CASE("headers/A11_color_and_INT34_types_are_usable") {
+  color::ColorizeConfig cc;
+  // The default FAILS CLOSED: A4 §7 and A11 §2 — a caller who never wired
+  // the sync gate must be refused, not silently trusted.
+  CHECK(cc.sync_quality == SyncQuality::kUnknown);
+  CHECK(cc.pose_frame == color::KeyframePoseFrame::kCamera);
+  CHECK(cc.occlusion_test);
+  CHECK(cc.rolling_shutter);
+  CHECK(cc.depth_scale == 0.125f);  // §5.3's coarse-buffer default
+  CHECK(cc.w_motion == 2.0f);       // S6 §6.1: sync x turn rate dominates
+
+  const color::ColorizationPolicy unknown = color::policy_for(SyncQuality::kUnknown);
+  CHECK_FALSE(unknown.colorize);
+  const color::ColorizationPolicy gated = color::policy_for(SyncQuality::kGated);
+  CHECK(gated.colorize);
+  CHECK(gated.motion_gate_deg_s == 15.f);  // S6 T8
+
+  color::ClockSweepConfig sw;
+  CHECK(sw.max_offset_ns == 100'000'000);
+  CHECK(sw.resample_dt_ns == 2'000'000);
+
+  color::FrameIndexStats fis;
+  CHECK(fis.records == 0);
+  CHECK(color::kKeyframeRecordFixedBytes == 160);
+
+  color::DecodedImage img;
+  CHECK(img.width == 0);
+
+  Keyframe kf;
+  CHECK(kf.flags == 0);
+  CHECK_FALSE(kf.has_motion());
+
+  // The two hooks A15 §7.6 asked for, now on the ABSTRACT seam and defaulted
+  // to no-ops — which is what makes them additive.
+  CHECK(std::is_abstract<Colorizer>::value);
+
+  // INT-34's own headers.
+  lscan::ZipCancelToken zct;
+  CHECK_FALSE(zct.cancelled());
+  zct.request_cancel();
+  CHECK(zct.cancelled());
+
+  jobs::JobRunnerOptions jro;
+  CHECK(jro.priority == 0);
+  CHECK(jro.export_format == ExportFormat::kPlyBinary);
+  CHECK(jro.colorizer == nullptr);
+  CHECK(jro.camera_from_lidar[0] == 1.0);
+  CHECK(jro.camera_from_lidar[15] == 1.0);
+
+  jobs::ColorizeWiring cw;
+  CHECK(cw.timesync == nullptr);           // null leaves the refusal in place
+  CHECK(cw.sync_stream == StreamId::kLidarMid360);
+  CHECK(cw.imu_window_ns == 250'000'000);  // A11 §8.3's one-liner
 }

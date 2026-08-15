@@ -15,7 +15,11 @@
 
 #include <algorithm>
 
+#include "scanengine/color/clock_sweep.h"
+#include "scanengine/color/colorizer.h"
+#include "scanengine/color/frames_idx.h"
 #include "scanengine/core/engine.h"
+#include "scanengine/jobs/job_types.h"
 #include "scanengine/slam/pushbroom/mount_calibration.h"
 
 using namespace scanengine;
@@ -133,6 +137,50 @@ SCAN_CHECK_ENUM(SCAN_EVENT_GEOREF_CONVERGED, EventType::kGeorefConverged);
 SCAN_CHECK_ENUM(SCAN_EVENT_JOB_PROGRESS, EventType::kJobProgress);
 SCAN_CHECK_ENUM(SCAN_EVENT_ERROR, EventType::kError);
 
+// --- ABI 4: A11 colorization + A15 jobs -------------------------------------
+//
+// SyncQuality earns its guard the way FixType does: policy_for() switches on
+// it and the DEFAULT (kUnknown) is the one that REFUSES, so a value drifting
+// by one would turn "not converged, do not colorize" into "colorize".
+SCAN_CHECK_ENUM(SCAN_SYNC_UNKNOWN, SyncQuality::kUnknown);
+SCAN_CHECK_ENUM(SCAN_SYNC_GOOD, SyncQuality::kGood);
+SCAN_CHECK_ENUM(SCAN_SYNC_GATED, SyncQuality::kGated);
+SCAN_CHECK_ENUM(SCAN_SYNC_POOR, SyncQuality::kPoor);
+
+SCAN_CHECK_ENUM(SCAN_COVERAGE_NONE, color::ColorCoverage::kNone);
+SCAN_CHECK_ENUM(SCAN_COVERAGE_COLORIZED, color::ColorCoverage::kColorized);
+SCAN_CHECK_ENUM(SCAN_COVERAGE_LOW_CONFIDENCE, color::ColorCoverage::kLowConfidence);
+
+SCAN_CHECK_ENUM(SCAN_KEYFRAME_POSE_CAMERA, color::KeyframePoseFrame::kCamera);
+SCAN_CHECK_ENUM(SCAN_KEYFRAME_POSE_LIDAR_BODY, color::KeyframePoseFrame::kLidarBody);
+
+SCAN_CHECK_ENUM(SCAN_KEYFRAME_MOTION_VALID, kKeyframeFlagMotionValid);
+SCAN_CHECK_ENUM(SCAN_KEYFRAME_EXPOSURE_VALID, kKeyframeFlagExposureValid);
+SCAN_CHECK_ENUM(SCAN_KEYFRAME_TRACKING_LOST, kKeyframeFlagTrackingLost);
+SCAN_CHECK_ENUM(SCAN_KEYFRAME_AUTO_EXPOSURE_LOCKED, kKeyframeFlagAutoExposureLocked);
+
+SCAN_CHECK_ENUM(SCAN_SWEEP_ACCEPTED, color::ClockSweepVerdict::kAccepted);
+SCAN_CHECK_ENUM(SCAN_SWEEP_TOO_SHORT, color::ClockSweepVerdict::kTooShort);
+SCAN_CHECK_ENUM(SCAN_SWEEP_TOO_FEW_SAMPLES, color::ClockSweepVerdict::kTooFewSamples);
+SCAN_CHECK_ENUM(SCAN_SWEEP_NO_MOTION, color::ClockSweepVerdict::kNoMotion);
+SCAN_CHECK_ENUM(SCAN_SWEEP_NO_SWEEP, color::ClockSweepVerdict::kNoSweep);
+SCAN_CHECK_ENUM(SCAN_SWEEP_WEAK_CORRELATION, color::ClockSweepVerdict::kWeakCorrelation);
+SCAN_CHECK_ENUM(SCAN_SWEEP_AMBIGUOUS, color::ClockSweepVerdict::kAmbiguous);
+SCAN_CHECK_ENUM(SCAN_SWEEP_AT_SEARCH_EDGE, color::ClockSweepVerdict::kAtSearchEdge);
+
+// jobs::JobState, NOT the top-level scanengine::JobState: the payload
+// scan_event.payload.job.state carries is the one JobQueue publishes, which is
+// A15's five-value encoding (docs/A15-jobs.md §3). The two enums coexist on
+// purpose — see jobs/job_runner_adapter.h.
+SCAN_CHECK_ENUM(SCAN_JOB_QUEUED, jobs::JobState::kQueued);
+SCAN_CHECK_ENUM(SCAN_JOB_RUNNING, jobs::JobState::kRunning);
+SCAN_CHECK_ENUM(SCAN_JOB_CANCELLING, jobs::JobState::kCancelling);
+SCAN_CHECK_ENUM(SCAN_JOB_DONE, jobs::JobState::kDone);
+SCAN_CHECK_ENUM(SCAN_JOB_FAILED, jobs::JobState::kFailed);
+
+SCAN_CHECK_ENUM(SCAN_PAGE_UPDATE_APPENDED, PageUpdateKind::kAppended);
+SCAN_CHECK_ENUM(SCAN_PAGE_UPDATE_RECOLOURED, PageUpdateKind::kRecoloured);
+
 static_assert(sizeof(scan_point_vertex) == sizeof(PointVertex),
               "scan_point_vertex must match PointVertex (16 B, S3-proven layout)");
 static_assert(sizeof(scan_point_vertex) == 16, "scan_point_vertex must be 16 bytes");
@@ -167,6 +215,20 @@ struct EngineHandle {
 };
 
 EngineHandle* handle_of(scan_engine* e) { return reinterpret_cast<EngineHandle*>(e); }
+
+// The colorizer handle is a wrapper, not a bare PointColorizer, because the C
+// progress callback is (fn, user_data) and the C++ one is a std::function —
+// the pair has to live somewhere with the same lifetime as the colorizer.
+struct ColorizerHandle {
+  explicit ColorizerHandle(const color::ColorizeConfig& cfg) : impl(cfg) {}
+  color::PointColorizer impl;
+  scan_colorize_progress_cb progress_cb = nullptr;
+  void* progress_user = nullptr;
+};
+
+ColorizerHandle* colorizer_of(scan_colorizer* c) {
+  return reinterpret_cast<ColorizerHandle*>(c);
+}
 
 scan_error_t to_c(ScanError e) { return static_cast<scan_error_t>(e); }
 scan_error_t to_c(Status s) { return static_cast<scan_error_t>(s.error()); }
@@ -211,6 +273,7 @@ void convert_event(const Event& in, scan_event* out) {
       out->payload.points.count = in.payload.points.count;
       out->payload.points.stream = static_cast<std::uint8_t>(in.payload.points.stream);
       out->payload.points.page_created = in.payload.points.page_created;
+      out->payload.points.update_kind = in.payload.points.update_kind;
       break;
     case EventType::kRotation:
       out->payload.rotation.device = in.payload.rotation.device;
@@ -262,10 +325,19 @@ void convert_event(const Event& in, scan_event* out) {
       out->payload.georef.epsg = in.payload.georef.epsg;
       out->payload.georef.converged = in.payload.georef.converged;
       break;
+    // A15 gap, closed at ABI 4 (docs/A15-jobs.md §7.1): the type constant and
+    // its static_assert existed since A1, but there was no union member and no
+    // case, so every job-progress event reached a C consumer zeroed. B6's
+    // Android processing queue reads exactly this.
+    case EventType::kJobProgress:
+      out->payload.job.job_id = in.payload.job.job_id;
+      out->payload.job.progress = in.payload.job.progress;
+      out->payload.job.state = in.payload.job.state;
+      break;
     default:
-      // Types whose payload the ABI does not mirror yet (job — A15) travel as
-      // raw bytes; the consumer must not interpret them until this switch
-      // grows a case.
+      // Types whose payload the ABI does not mirror travel as raw bytes; the
+      // consumer must not interpret them until this switch grows a case.
+      // Every EventType declared today has one.
       std::memcpy(out->payload.raw, in.payload.raw, sizeof(out->payload.raw));
       break;
   }
@@ -449,6 +521,19 @@ void event_trampoline(const Event& ev, void* user) {
 }
 
 }  // namespace
+
+// TEST SEAM (INT-34). Not declared in scanengine_c.h, not exported as part of
+// the ABI, and not callable from C: convert_event() is static, and the only
+// producer of a kJobProgress event is the engine's own bus — which nothing in
+// the C surface can publish onto, because ABI 4 deliberately gives A15's job
+// queue no C entry point (an app drives it through Engine::jobs()). Without
+// this, the kJobProgress union case added at ABI 4 could only be verified by
+// the first JNI consumer to hit it. tests/test_capi.cpp declares it.
+namespace scanengine {
+namespace capi_test {
+void convert_event_for_test(const Event& in, scan_event* out) { convert_event(in, out); }
+}  // namespace capi_test
+}  // namespace scanengine
 
 // Every entry point goes through this: no exception may cross the ABI.
 #define SCAN_GUARD_BEGIN try {
@@ -1080,6 +1165,209 @@ scan_error_t scan_ntrip_fetch_sourcetable(const scan_ntrip_config* cfg, scan_ntr
                                *out_count));
   }
   return SCAN_OK;
+  SCAN_GUARD_END
+}
+
+// --- camera keyframes (A11 / B8), ABI 4 -------------------------------------
+
+scan_error_t scan_engine_record_keyframe(scan_engine* engine, const scan_keyframe* kf) {
+  SCAN_GUARD_BEGIN
+  if (engine == nullptr) return fail(ScanError::kInvalidArgument, "engine handle is null");
+  if (kf == nullptr) return fail(ScanError::kInvalidArgument, "keyframe is null");
+  if (kf->image_name == nullptr) {
+    return fail(ScanError::kInvalidArgument, "keyframe image_name is null");
+  }
+
+  // Field by field, never a reinterpret_cast: scan_keyframe is laid out for C
+  // callers and Keyframe carries a std::string.
+  Keyframe out;
+  out.t_mono_ns = kf->t_engine_ns;
+  // colorize.h defines Keyframe::image_path relative to the .lscan ROOT;
+  // scan_keyframe::image_name is relative to streams/frames/, which is the
+  // directory the app writes into and what the on-disk record stores. The
+  // codec decomposes it again on the way out, so this composition is the
+  // inverse of what read_frame_index() does.
+  out.image_path = std::string("streams/frames/") + kf->image_name;
+  out.pose.t_mono_ns = kf->t_engine_ns;
+  for (int i = 0; i < 3; ++i) out.pose.position[i] = kf->position[i];
+  for (int i = 0; i < 4; ++i) out.pose.orientation[i] = kf->orientation[i];
+  out.pose.position_sigma_m = kf->position_sigma_m;
+  out.pose.orientation_sigma_deg = kf->orientation_sigma_deg;
+  out.pose.source = static_cast<StreamId>(kf->pose_source);
+  out.pose.quality = static_cast<PoseQuality>(kf->pose_quality);
+  out.pose.tracking_lost = kf->tracking_lost;
+  out.intrinsics.fx = kf->fx;
+  out.intrinsics.fy = kf->fy;
+  out.intrinsics.cx = kf->cx;
+  out.intrinsics.cy = kf->cy;
+  for (int i = 0; i < 5; ++i) out.intrinsics.distortion[i] = kf->distortion[i];
+  out.intrinsics.width = kf->width;
+  out.intrinsics.height = kf->height;
+  out.intrinsics.rolling_shutter_row_time_ns = kf->rolling_shutter_row_time_ns;
+  out.flags = kf->flags;
+  out.exposure_duration_ns = kf->exposure_ns;
+  out.iso = kf->iso;
+  out.angular_rate_rad_s = kf->angular_rate_rad_s;
+  out.linear_speed_m_s = kf->linear_speed_m_s;
+  out.image_bytes = kf->image_bytes;
+
+  return to_c(handle_of(engine)->engine->record_keyframe(out));
+  SCAN_GUARD_END
+}
+
+// --- colorization (A11), ABI 4 ----------------------------------------------
+
+scan_error_t scan_colorizer_create(scan_colorizer** out, const scan_colorize_config* cfg) {
+  SCAN_GUARD_BEGIN
+  if (out == nullptr) return fail(ScanError::kInvalidArgument, "out handle is null");
+  color::ColorizeConfig c;  // S6-derived defaults for everything not exposed
+  if (cfg != nullptr) {
+    c.sync_quality = static_cast<SyncQuality>(cfg->sync_quality);
+    c.allow_poor_sync = cfg->allow_poor_sync != 0;
+    c.pose_frame = static_cast<color::KeyframePoseFrame>(cfg->pose_frame);
+    c.motion_gate_deg_s = cfg->motion_gate_deg_s;
+    c.motion_reject_deg_s = cfg->motion_reject_deg_s;
+    c.camera_clock_offset_ns = cfg->camera_clock_offset_ns;
+    // 0 means "keep the default" for the two ranges: a zero-initialized
+    // struct must not silently become "min_range 0, max_range 0", which
+    // colours nothing and looks like a bug in the colorizer.
+    if (cfg->min_range_m > 0.f) c.min_range_m = cfg->min_range_m;
+    if (cfg->max_range_m > 0.f) c.max_range_m = cfg->max_range_m;
+    c.occlusion_test = cfg->occlusion_test != 0;
+    c.rolling_shutter = cfg->rolling_shutter != 0;
+    c.estimate_normals = cfg->estimate_normals != 0;
+    c.low_confidence_alpha = cfg->low_confidence_alpha;
+    c.uncovered_alpha = cfg->uncovered_alpha;
+  }
+  *out = reinterpret_cast<scan_colorizer*>(new ColorizerHandle(c));
+  return SCAN_OK;
+  SCAN_GUARD_END
+}
+
+void scan_colorizer_destroy(scan_colorizer* c) {
+  if (c == nullptr) return;
+  delete colorizer_of(c);
+}
+
+scan_error_t scan_colorizer_load_keyframes(scan_colorizer* c, const char* lscan_dir) {
+  SCAN_GUARD_BEGIN
+  if (c == nullptr || lscan_dir == nullptr) {
+    return fail(ScanError::kInvalidArgument, "null argument");
+  }
+  return to_c(colorizer_of(c)->impl.load_keyframes(lscan_dir));
+  SCAN_GUARD_END
+}
+
+scan_error_t scan_colorizer_set_extrinsics(scan_colorizer* c, const double camera_from_lidar[16]) {
+  SCAN_GUARD_BEGIN
+  if (c == nullptr || camera_from_lidar == nullptr) {
+    return fail(ScanError::kInvalidArgument, "null argument");
+  }
+  return to_c(colorizer_of(c)->impl.set_extrinsics(camera_from_lidar));
+  SCAN_GUARD_END
+}
+
+scan_error_t scan_colorizer_set_progress_callback(scan_colorizer* c, scan_colorize_progress_cb cb,
+                                                  void* user_data) {
+  SCAN_GUARD_BEGIN
+  if (c == nullptr) return fail(ScanError::kInvalidArgument, "colorizer handle is null");
+  ColorizerHandle* h = colorizer_of(c);
+  h->progress_cb = cb;
+  h->progress_user = user_data;
+  if (cb == nullptr) {
+    h->impl.set_progress_fn(nullptr);
+  } else {
+    // A trampoline, never a function-pointer cast (DESIGN.md §4): the C
+    // callback takes (float, void*) and the C++ one a std::function<void(float)>.
+    h->impl.set_progress_fn([h](float f) { h->progress_cb(f, h->progress_user); });
+  }
+  return SCAN_OK;
+  SCAN_GUARD_END
+}
+
+scan_error_t scan_colorizer_run(scan_colorizer* c, scan_engine* engine) {
+  SCAN_GUARD_BEGIN
+  if (c == nullptr || engine == nullptr) {
+    return fail(ScanError::kInvalidArgument, "null argument");
+  }
+  return to_c(colorizer_of(c)->impl.colorize(&handle_of(engine)->engine->points()));
+  SCAN_GUARD_END
+}
+
+scan_error_t scan_colorizer_cancel(scan_colorizer* c) {
+  SCAN_GUARD_BEGIN
+  if (c == nullptr) return fail(ScanError::kInvalidArgument, "colorizer handle is null");
+  colorizer_of(c)->impl.cancel();
+  return SCAN_OK;
+  SCAN_GUARD_END
+}
+
+float scan_colorizer_progress(scan_colorizer* c) {
+  if (c == nullptr) return 0.f;
+  return colorizer_of(c)->impl.progress();
+}
+
+scan_error_t scan_colorizer_stats(scan_colorizer* c, scan_colorize_stats* out) {
+  SCAN_GUARD_BEGIN
+  if (c == nullptr || out == nullptr) return fail(ScanError::kInvalidArgument, "null argument");
+  const color::ColorizeStats& s = colorizer_of(c)->impl.stats();
+  std::memset(out, 0, sizeof(*out));
+  out->points_total = s.points_total;
+  out->points_colorized = s.points_colorized;
+  out->points_low_confidence = s.points_low_confidence;
+  out->points_uncovered = s.points_uncovered;
+  out->keyframes_total = s.keyframes_total;
+  out->keyframes_used = s.keyframes_used;
+  out->keyframes_rejected_motion = s.keyframes_rejected_motion;
+  out->keyframes_rejected_pose = s.keyframes_rejected_pose;
+  out->keyframes_outside_cloud = s.keyframes_outside_cloud;
+  out->keyframes_image_failed = s.keyframes_image_failed;
+  out->ms_total = s.ms_total;
+  out->coverage_fraction = s.coverage_fraction();
+  return SCAN_OK;
+  SCAN_GUARD_END
+}
+
+// --- the wizard's clock sweep (A11, for B7), ABI 4 ---------------------------
+
+scan_error_t scan_clock_sweep_estimate(const scan_rate_sample* camera, uint32_t n_camera,
+                                       const scan_rate_sample* lidar, uint32_t n_lidar,
+                                       scan_clock_sweep_result* out) {
+  SCAN_GUARD_BEGIN
+  if (out == nullptr) return fail(ScanError::kInvalidArgument, "out is null");
+  std::memset(out, 0, sizeof(*out));
+  out->verdict = SCAN_SWEEP_TOO_FEW_SAMPLES;
+  if ((camera == nullptr && n_camera != 0) || (lidar == nullptr && n_lidar != 0)) {
+    return fail(ScanError::kInvalidArgument, "null rate track");
+  }
+
+  std::vector<color::RateSample> cam(n_camera), lid(n_lidar);
+  for (uint32_t i = 0; i < n_camera; ++i) {
+    cam[i].t_ns = camera[i].t_ns;
+    cam[i].value = camera[i].value;
+  }
+  for (uint32_t i = 0; i < n_lidar; ++i) {
+    lid[i].t_ns = lidar[i].t_ns;
+    lid[i].value = lidar[i].value;
+  }
+
+  color::ClockSweepResult r;
+  const Status st = color::estimate_clock_offset(
+      Span<const color::RateSample>(cam.data(), cam.size()),
+      Span<const color::RateSample>(lid.data(), lid.size()), color::ClockSweepConfig(), &r);
+  // A REFUSED CAPTURE IS NOT AN ERROR: the verdict is what the wizard shows
+  // the operator ("you did not sweep"), so it is written out either way and
+  // only structurally bad input returns non-OK.
+  out->offset_ns = r.offset_ns;
+  out->correlation = r.correlation;
+  out->rival_correlation = r.rival_correlation;
+  out->sigma_ns = r.sigma_ns;
+  out->grid_samples = r.grid_samples;
+  out->zero_crossings = r.zero_crossings;
+  out->overlap_ns = r.overlap_ns;
+  out->accepted = r.accepted ? 1 : 0;
+  out->verdict = static_cast<std::uint8_t>(r.verdict);
+  return to_c(st);
   SCAN_GUARD_END
 }
 

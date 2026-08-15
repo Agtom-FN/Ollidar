@@ -1,6 +1,6 @@
 // engine_cli — the engine's headless front end.
 //
-// Three jobs today:
+// Jobs today:
 //   --selftest              build an engine, run a synthetic D6 capture
 //                           through it, assert the whole path works. This is
 //                           what CI (and a developer on a new machine) runs
@@ -9,26 +9,53 @@
 //                           d6synth room: 4x3 m with a reflective post).
 //   --replay <file>         push a capture through the real engine and print
 //                           decoded statistics.
+//   --post <lscan-dir>      HEADLESS POST-PROCESSING (INT-34). This is the
+//                           D1 cloud-worker entry point: A7's pipeline (and
+//                           optionally A9's export) driven through A15's job
+//                           queue, progress on stderr, a real exit code.
+//   --synth-lscan <dir>     write a tiny synthetic Mid-360 .lscan, so --post
+//                           has something to chew on with no capture rig.
+//   --post-selftest         the two above, back to back, in a temp dir. What
+//                           ctest runs.
 //
 // It grows into workstream D1's containerized worker CLI (headless Linux
 // build running the post pipeline on an uploaded .lscan), which is why it
 // links the engine exactly the way an app does — no privileged access, no
 // test-only hooks.
+//
+// EXIT CODES (a worker's caller reads these, not the text):
+//   0  success
+//   1  the work failed — a bad .lscan, an unwritable output, a pipeline error
+//   2  usage: a missing or unrecognized argument
+//   3  cancelled
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "packet_builder.h"
 #include "scanengine/core/engine.h"
+#include "scanengine/drivers/mid360/mid360_packets.h"
+#include "scanengine/jobs/job_runner_adapter.h"
+#include "scanengine/record/lscan.h"
 
 using namespace scanengine;
 
 namespace {
 
 constexpr double kPi = 3.14159265358979323846;
+
+// Exit codes, named where they are produced.
+constexpr int kExitOk = 0;
+constexpr int kExitFailed = 1;
+constexpr int kExitUsage = 2;
+constexpr int kExitCancelled = 3;
 
 int usage() {
   std::printf(
@@ -37,8 +64,14 @@ int usage() {
       "  engine_cli --selftest [--quiet]\n"
       "  engine_cli --synth <out.bin> [seconds] [--noise]\n"
       "  engine_cli --replay <capture.bin> [--chunk N]\n"
-      "  engine_cli --version\n");
-  return 2;
+      "  engine_cli --post <lscan-dir> [--out <dir>] [--no-loops] [--no-outlier]\n"
+      "                                [--dedup <metres>] [--quiet]\n"
+      "  engine_cli --synth-lscan <dir> [seconds]\n"
+      "  engine_cli --post-selftest [--quiet]\n"
+      "  engine_cli --version\n"
+      "\n"
+      "exit: 0 ok, 1 failed, 2 usage, 3 cancelled\n");
+  return kExitUsage;
 }
 
 // Ray-cast the S1 synthetic room: 4 x 3 m, reflective post at (0.8, 0.6).
@@ -259,6 +292,268 @@ int cmd_replay(const char* path, std::size_t chunk) {
   return r.health.packets_ok > 0 ? 0 : 1;
 }
 
+// --- a tiny synthetic Mid-360 .lscan ---------------------------------------
+//
+// Deliberately the SAME shape tests/test_jobs.cpp writes: a stationary
+// sensor, gravity-only IMU at 200 Hz, and point packets on a fixed 3 m sphere
+// shell. It is not a scene — it is the smallest input that makes A7's
+// pipeline run end to end in well under a second, which is what a smoke test
+// wants and what a developer with no Mid-360 on the desk needs.
+void put_mid360_header(std::uint8_t* buf, std::uint16_t len, std::uint16_t dot_num,
+                       std::uint16_t udp_cnt, std::uint8_t data_type, std::uint64_t timestamp) {
+  mid360::DataHeader h{};
+  std::memset(&h, 0, sizeof(h));
+  h.version = 0;
+  h.length = len;
+  h.time_interval = 5;
+  h.dot_num = dot_num;
+  h.udp_cnt = udp_cnt;
+  h.frame_cnt = 0;
+  h.data_type = data_type;
+  h.time_type = 0;
+  h.crc32 = 0;
+  h.timestamp = timestamp;
+  std::memcpy(buf, &h, sizeof(h));
+}
+
+bool write_synth_lscan(const std::string& dir, double duration_s) {
+  lscan::FileRecordWriter w;
+  if (!w.open(dir).ok()) {
+    std::fprintf(stderr, "synth-lscan: cannot open '%s': %s\n", dir.c_str(), last_error_message());
+    return false;
+  }
+  w.set_profile("quickscan");
+  w.add_sensor("mid360-0", "lidar", "Livox Mid-360");
+  // A11 §8.4 / INT-34: the manifest now carries the camera clock offset, so a
+  // synthetic session exercises that key too.
+  w.add_clock_offset("default", 0, 0.0);
+
+  const std::int64_t t0 = 1'700'000'000'000'000'000LL;
+  const double points_per_sec = 4000.0;
+  const double dt_pkt = static_cast<double>(mid360::kPointsPerPacket) / points_per_sec;
+  const double dt_imu = 1.0 / 200.0;
+
+  std::vector<std::uint8_t> pbuf(mid360::kPointPacketBytes);
+  std::vector<std::uint8_t> ibuf(mid360::kImuPacketBytes);
+  std::uint16_t udp_cnt = 0;
+  double t_pkt = 0.0, t_imu = 0.0;
+  bool ok = true;
+
+  while (ok && (t_pkt < duration_s || t_imu < duration_s)) {
+    if (t_imu <= t_pkt) {
+      put_mid360_header(ibuf.data(), static_cast<std::uint16_t>(mid360::kImuPacketBytes), 1,
+                        udp_cnt++, mid360::kDataTypeImu,
+                        static_cast<std::uint64_t>(t_imu * 1e9) + 1);
+      const mid360::ImuRaw raw{0.f, 0.f, 0.f, 0.f, 0.f, 1.f};  // stationary, +1 g on z
+      std::memcpy(ibuf.data() + sizeof(mid360::DataHeader), &raw, sizeof(raw));
+      ok = w.write_chunk(lscan::ChunkType::kMid360Imu,
+                         t0 + static_cast<std::int64_t>(t_imu * 1e9) + 1,
+                         ByteSpan(ibuf.data(), ibuf.size()))
+               .ok();
+      t_imu += dt_imu;
+      continue;
+    }
+    put_mid360_header(pbuf.data(), static_cast<std::uint16_t>(mid360::kPointPacketBytes),
+                      mid360::kPointsPerPacket, udp_cnt++, mid360::kDataTypeCartesianHigh,
+                      static_cast<std::uint64_t>(t_pkt * 1e9) + 1);
+    auto* pts = reinterpret_cast<mid360::CartesianHigh*>(pbuf.data() + sizeof(mid360::DataHeader));
+    for (std::uint32_t i = 0; i < mid360::kPointsPerPacket; ++i) {
+      const double az = std::fmod(static_cast<double>(i) * 2.399963, 2.0 * kPi);
+      const double el = (-7.0 + 59.0 * std::fmod(static_cast<double>(i) * 0.0173, 1.0)) * kPi / 180.0;
+      pts[i].x = static_cast<std::int32_t>(std::cos(el) * std::cos(az) * 3000.0);
+      pts[i].y = static_cast<std::int32_t>(std::cos(el) * std::sin(az) * 3000.0);
+      pts[i].z = static_cast<std::int32_t>(std::sin(el) * 3000.0);
+      pts[i].reflectivity = 120;
+      pts[i].tag = 0;
+    }
+    ok = w.write_chunk(lscan::ChunkType::kMid360Points,
+                       t0 + static_cast<std::int64_t>(t_pkt * 1e9) + 1,
+                       ByteSpan(pbuf.data(), pbuf.size()))
+             .ok();
+    t_pkt += dt_pkt;
+  }
+  if (!ok) {
+    std::fprintf(stderr, "synth-lscan: write failed: %s\n", last_error_message());
+    (void)w.close();
+    return false;
+  }
+  return w.close().ok();
+}
+
+int cmd_synth_lscan(const char* dir, double seconds) {
+  if (!write_synth_lscan(dir, seconds)) return kExitFailed;
+  std::printf("wrote a %.1f s synthetic Mid-360 .lscan to %s\n", seconds, dir);
+  return kExitOk;
+}
+
+// --- --post ----------------------------------------------------------------
+
+// Post-processing, headless, through the same job queue an app uses. Nothing
+// here is CLI-specific: `Engine::jobs()` is the queue, `QueueJobRunner` is
+// A1's JobRunner seam over it, and the request is the one B6's mode chooser
+// would build. That is the point — the cloud worker must run the SAME path a
+// phone runs, or "one pipeline in three places" (§3.8) is a slogan.
+// The knobs a worker genuinely chooses per input. Everything else in A7's
+// PostConfig is a measured default, not a per-run decision.
+struct PostOptions {
+  bool detect_loops = true;
+  bool outlier_filter = true;
+  double dedup_voxel_m = 0.0;  // 0 = A7's default
+};
+
+int cmd_post(const std::string& lscan_dir, const std::string& out_dir, const PostOptions& po,
+             bool quiet) {
+  std::error_code ec;
+  if (!std::filesystem::is_directory(lscan_dir, ec)) {
+    std::fprintf(stderr, "post: '%s' is not a directory\n", lscan_dir.c_str());
+    return kExitFailed;
+  }
+  if (!out_dir.empty()) {
+    std::filesystem::create_directories(out_dir, ec);
+    if (ec) {
+      std::fprintf(stderr, "post: cannot create output directory '%s': %s\n", out_dir.c_str(),
+                   ec.message().c_str());
+      return kExitFailed;
+    }
+  }
+
+  EngineConfig cfg;
+  cfg.app_name = "engine_cli";
+  cfg.log_level = quiet ? LogLevel::kWarn : LogLevel::kInfo;
+  auto engine = Engine::create(cfg);
+  if (!engine.ok()) {
+    std::fprintf(stderr, "post: engine create failed: %s\n", last_error_message());
+    return kExitFailed;
+  }
+  Engine& e = *engine.value();
+
+  jobs::JobRunnerOptions opts;
+  // A cloud worker's defaults are A7's defaults: loop detection on, full
+  // density, statistical outlier filter on. --no-loops / --no-outlier /
+  // --dedup exist because a caller who knows its input (a short stationary
+  // capture, a synthetic fixture) knows better; nothing here silently
+  // deviates from A7.
+  opts.post_config.detect_loops = po.detect_loops;
+  opts.post_config.outlier.enabled = po.outlier_filter;
+  if (po.dedup_voxel_m > 0.0) opts.post_config.dedup.voxel_size_m = po.dedup_voxel_m;
+  // Route the pipeline at a store this process owns, so the summary below can
+  // report what was actually produced rather than what happens to be in the
+  // Engine's (live-capture) store, which a headless run never fills.
+  opts.store = std::make_shared<PageStore>();
+  opts.export_format = ExportFormat::kPlyBinary;
+  opts.export_basename = "cloud";
+  jobs::QueueJobRunner runner(&e.jobs(), opts);
+
+  JobRequest req;
+  req.mode = JobMode::kLocal;
+  req.lscan_dir = lscan_dir;
+  req.output_dir = out_dir;
+  // With an --out, the request is "post then export"; without one it is
+  // "post" and the result stays in the process's PageStore, which is what a
+  // caller wanting only a validity check (or a chained in-process step)
+  // wants.
+  req.pipeline = out_dir.empty() ? "post" : "export";
+
+  auto id = runner.submit(req);
+  if (!id.ok()) {
+    std::fprintf(stderr, "post: submit failed: %s\n", last_error_message());
+    return kExitFailed;
+  }
+
+  // Progress on STDERR, results on STDOUT: a worker's stdout is its product
+  // and must stay machine-readable when it is piped.
+  int last_pct = -1;
+  JobStatus st;
+  for (;;) {
+    st = runner.status(id.value());
+    const int pct = static_cast<int>(st.progress * 100.f + 0.5f);
+    if (!quiet && (pct != last_pct)) {
+      std::fprintf(stderr, "post: %3d%%  %s\n", pct, st.message.c_str());
+      last_pct = pct;
+    }
+    if (st.state == JobState::kDone || st.state == JobState::kFailed ||
+        st.state == JobState::kCancelled) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  }
+
+  if (st.state == JobState::kCancelled) {
+    std::fprintf(stderr, "post: cancelled\n");
+    return kExitCancelled;
+  }
+  if (st.state == JobState::kFailed) {
+    std::fprintf(stderr, "post: FAILED (%s): %s\n", error_str(st.error), st.message.c_str());
+    return kExitFailed;
+  }
+
+  std::printf("post: %s\n", lscan_dir.c_str());
+  std::printf("  points published    : %llu\n",
+              static_cast<unsigned long long>(opts.store->total_points()));
+  std::printf("  pages               : %zu\n", opts.store->page_count());
+  if (!out_dir.empty()) {
+    const std::string path = out_dir + "/cloud.ply";
+    const std::uintmax_t sz = std::filesystem::file_size(path, ec);
+    std::printf("  exported            : %s (%llu bytes)\n", path.c_str(),
+                ec ? 0ull : static_cast<unsigned long long>(sz));
+    if (ec) {
+      std::fprintf(stderr, "post: the job reported success but '%s' is unreadable\n", path.c_str());
+      return kExitFailed;
+    }
+  }
+  std::printf("post: OK\n");
+  return kExitOk;
+}
+
+// Synthesize, post-process, export, verify, clean up. Registered as the
+// `engine_cli_post` ctest — the only way to smoke-test --post without
+// committing a binary .lscan fixture.
+int cmd_post_selftest(bool quiet) {
+  std::error_code ec;
+  const auto root = std::filesystem::temp_directory_path() /
+                    ("engine_cli_post_" + std::to_string(
+                        std::chrono::steady_clock::now().time_since_epoch().count()));
+  const std::string lscan = (root / "session.lscan").string();
+  const std::string out = (root / "out").string();
+  std::filesystem::create_directories(lscan, ec);
+
+  std::printf("%s\n", engine_version_string());
+  std::printf("post-selftest: synthesize -> --post --out -> verify\n");
+
+  int rc = kExitFailed;
+  if (write_synth_lscan(lscan, 2.2)) {
+    PostOptions po;
+    // The synthetic capture's 96 points per packet repeat identically at
+    // every keyframe and dedup down to ~96 points thinly scattered over a 3 m
+    // sphere shell — far too sparse for cloud_filter.h's k-NN distance
+    // distribution to mean anything, so it would delete the whole cloud. Off
+    // here for exactly the reason tests/test_jobs.cpp turns it off: this is a
+    // plumbing test, and tests/test_post.cpp owns the accuracy claims.
+    po.outlier_filter = false;
+    po.detect_loops = false;
+    po.dedup_voxel_m = 0.05;
+    rc = cmd_post(lscan, out, po, quiet);
+
+    // The whole point of the smoke test: a REAL cloud came out the far end.
+    if (rc == kExitOk) {
+      const std::uintmax_t sz = std::filesystem::file_size(out + "/cloud.ply", ec);
+      if (ec || sz < 512) {
+        std::fprintf(stderr,
+                     "post-selftest: cloud.ply is %llu bytes — the pipeline ran but produced "
+                     "no points\n",
+                     ec ? 0ull : static_cast<unsigned long long>(sz));
+        rc = kExitFailed;
+      }
+    }
+  } else {
+    std::fprintf(stderr, "post-selftest: could not write the synthetic .lscan\n");
+  }
+
+  std::filesystem::remove_all(root, ec);
+  std::printf("post-selftest: %s\n", rc == kExitOk ? "PASS" : "FAIL");
+  return rc;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -290,5 +585,24 @@ int main(int argc, char** argv) {
     if (chunk == 0) chunk = 512;
     return cmd_replay(argv[2], chunk);
   }
+  if (cmd == "--post") {
+    if (argc < 3 || argv[2][0] == '-') return usage();
+    std::string out_dir;
+    PostOptions po;
+    for (int i = 3; i < argc; ++i) {
+      if (std::strcmp(argv[i], "--no-loops") == 0) po.detect_loops = false;
+      if (std::strcmp(argv[i], "--no-outlier") == 0) po.outlier_filter = false;
+      if (i + 1 >= argc) continue;
+      if (std::strcmp(argv[i], "--out") == 0) out_dir = argv[i + 1];
+      if (std::strcmp(argv[i], "--dedup") == 0) po.dedup_voxel_m = std::atof(argv[i + 1]);
+    }
+    return cmd_post(argv[2], out_dir, po, quiet);
+  }
+  if (cmd == "--synth-lscan") {
+    if (argc < 3 || argv[2][0] == '-') return usage();
+    const double seconds = (argc > 3 && argv[3][0] != '-') ? std::atof(argv[3]) : 2.2;
+    return cmd_synth_lscan(argv[2], seconds);
+  }
+  if (cmd == "--post-selftest") return cmd_post_selftest(quiet);
   return usage();
 }

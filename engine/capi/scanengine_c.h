@@ -62,7 +62,21 @@ extern "C" {
  * CRS (scan_georef_solution, scan_engine_crs_wkt), two new event types with
  * their payloads, and two new mirrored enums (FixType, NtripState). The
  * scan_event union also gained the DEVICE_HEALTH case it never had. */
-#define SCAN_ABI_VERSION 3u
+/* 3 -> 4 (INT-34): A11's colorization and A15's jobs.
+ *   * scan_engine_record_keyframe + scan_keyframe — B8's capture-side write
+ *     path for streams/frames/frames.idx.
+ *   * the scan_colorizer_* handle — create/configure/load/run/cancel/stats,
+ *     with a progress callback.
+ *   * scan_clock_sweep_estimate + scan_rate_sample/scan_clock_sweep_result —
+ *     B7's wizard sweep.
+ *   * SCAN_EVENT_JOB_PROGRESS finally has a real union case (it used to cross
+ *     as zeroed opaque bytes — docs/A15-jobs.md §7.1) and the SCAN_JOB_*
+ *     state mirror behind it.
+ *   * scan_event.payload.points gained `update_kind`, so a recolour is
+ *     distinguishable from an append (docs/A11-color.md §8.1).
+ * The scan_event union changed layout, so per DESIGN.md §6 item 9 this and
+ * scanengine::kEngineAbiVersion move together. */
+#define SCAN_ABI_VERSION 4u
 
 /* --- errors: mirror of scanengine::ScanError --------------------------- */
 typedef int32_t scan_error_t;
@@ -190,6 +204,80 @@ enum {
   SCAN_NTRIP_FAILED = 5       /* terminal: auth, bad mountpoint, attempts gone */
 };
 
+/* --- colorization: mirrors of color/ (A11), ABI 4 ------------------------
+ *
+ * The go/no-go input. Mirror of timesync/offset_estimator.h's SyncQuality,
+ * and it FAILS CLOSED: SCAN_SYNC_UNKNOWN is what an unconverged estimator
+ * reports and what a caller who never wired A4 gets, and the colorizer
+ * refuses both (SCAN_ERR_NOT_SUPPORTED). Gate on this, NEVER on a jitter
+ * figure — docs/A4-timesync.md §7. */
+enum {
+  SCAN_SYNC_UNKNOWN = 0, /* not converged: refuse */
+  SCAN_SYNC_GOOD = 1,    /* <= 5 ms  : colorize, gate 30 deg/s */
+  SCAN_SYNC_GATED = 2,   /* <= 15 ms : colorize, gate 15 deg/s */
+  SCAN_SYNC_POOR = 3     /* > 15 ms  : refuse unless allow_poor_sync */
+};
+
+/* What happened to one point's colour. */
+enum {
+  SCAN_COVERAGE_NONE = 0,           /* no acceptable view; keeps its old colour */
+  SCAN_COVERAGE_COLORIZED = 1,
+  SCAN_COVERAGE_LOW_CONFIDENCE = 2  /* only fast-turn frames saw it (S6 §6.3) */
+};
+
+/* Which frame the recorded keyframe poses are in. */
+enum {
+  SCAN_KEYFRAME_POSE_CAMERA = 0,    /* world_from_camera — what B8 records */
+  SCAN_KEYFRAME_POSE_LIDAR_BODY = 1 /* world_from_lidar_body — A6/A7 output */
+};
+
+/* Keyframe flags, bit-identical to the frames.idx record's. */
+enum {
+  SCAN_KEYFRAME_MOTION_VALID = 1,
+  SCAN_KEYFRAME_EXPOSURE_VALID = 2,
+  SCAN_KEYFRAME_TRACKING_LOST = 4,
+  SCAN_KEYFRAME_AUTO_EXPOSURE_LOCKED = 8
+};
+
+/* Why the wizard's clock sweep was refused. SCAN_SWEEP_ACCEPTED is the only
+ * value that means "use the offset"; the rest are things the wizard must SAY
+ * to the operator, which is why they are a verdict and not an error code. */
+enum {
+  SCAN_SWEEP_ACCEPTED = 0,
+  SCAN_SWEEP_TOO_SHORT = 1,
+  SCAN_SWEEP_TOO_FEW_SAMPLES = 2,
+  SCAN_SWEEP_NO_MOTION = 3,        /* the rig did not move */
+  SCAN_SWEEP_NO_SWEEP = 4,         /* moved, but not back and forth */
+  SCAN_SWEEP_WEAK_CORRELATION = 5,
+  SCAN_SWEEP_AMBIGUOUS = 6,        /* a whole period fits in the search window */
+  SCAN_SWEEP_AT_SEARCH_EDGE = 7
+};
+
+/* --- jobs: mirror of jobs/job_types.h's JobState (A15), ABI 4 -------------
+ *
+ * FIVE states, not six. A cancelled job settles into SCAN_JOB_FAILED with
+ * error == SCAN_ERR_CANCELLED, the same convention Status/SCAN_TRY use
+ * everywhere else in the engine — a UI does not need a second code path to
+ * notice a cancellation, it reads the error. This is the encoding
+ * scan_event.payload.job.state carries. */
+enum {
+  SCAN_JOB_QUEUED = 0,
+  SCAN_JOB_RUNNING = 1,
+  SCAN_JOB_CANCELLING = 2, /* cancel() landed; the cooperative unwind is in flight */
+  SCAN_JOB_DONE = 3,
+  SCAN_JOB_FAILED = 4
+};
+
+/* How a page's points changed (mirror of cloud/point_page.h's PageUpdateKind,
+ * ABI 4). A consumer that ignores this is still correct — both kinds carry
+ * the same [first, first+count) range and both want a re-upload — but one
+ * that caches geometry apart from colour can skip the position upload on a
+ * RECOLOURED. */
+enum {
+  SCAN_PAGE_UPDATE_APPENDED = 0,  /* the range is NEW */
+  SCAN_PAGE_UPDATE_RECOLOURED = 1 /* the range existed; only r/g/b/a changed */
+};
+
 /* Which trajectory the D6 pushbroom assembles against (§3.3). Same interface
  * either way — this is configuration, not a code path. */
 enum {
@@ -246,6 +334,7 @@ typedef struct scan_event {
       uint32_t count;
       uint8_t stream;
       uint8_t page_created;
+      uint8_t update_kind; /* SCAN_PAGE_UPDATE_* (ABI 4) */
     } points;
     struct {
       uint32_t device;
@@ -295,6 +384,15 @@ typedef struct scan_event {
       int32_t epsg;
       uint8_t converged;
     } georef;
+    /* SCAN_EVENT_JOB_PROGRESS — A15's queue, one update per progress tick of
+     * every job kind. `state` is SCAN_JOB_*. Before ABI 4 this event crossed
+     * with a ZEROED payload (docs/A15-jobs.md §7.1): the type constant and
+     * the static_assert existed, the union case did not. */
+    struct {
+      uint64_t job_id;
+      float progress; /* 0..1, monotone within one run */
+      uint8_t state;  /* SCAN_JOB_* */
+    } job;
     uint8_t raw[64];
   } payload;
 } scan_event;
@@ -781,6 +879,180 @@ SCAN_API scan_error_t scan_ntrip_set_rtcm_callback(scan_ntrip* client, scan_rtcm
 SCAN_API scan_error_t scan_ntrip_fetch_sourcetable(const scan_ntrip_config* cfg,
                                                    scan_ntrip_source* out, uint32_t capacity,
                                                    uint32_t* out_count);
+
+/* --- camera keyframes (A11), ABI 4 ---------------------------------------
+ *
+ * ONE record of `streams/frames/frames.idx`, the index B8's capture path
+ * writes and any platform reads. docs/A11-color.md §3 is the format; this
+ * struct is its in-memory face.
+ *
+ * `t_engine_ns` is the exposure time of image ROW 0 (not the frame centre),
+ * on the engine clock — that convention is what makes the rolling-shutter
+ * model need no second reference point: row r is exposed at
+ * t_engine_ns + r * rolling_shutter_row_time_ns.
+ *
+ * `position`/`orientation` are world_from_camera; the quaternion is x, y, z, w
+ * and must be unit length. `image_name` is RELATIVE TO streams/frames/ (a bare
+ * "kf_000123.jpg"), forward slashes, no "..", not absolute — the same
+ * zip-slip class zip_import() defends against, because an index is just as
+ * attacker-supplied as an archive. Convention 3 holds: the string is copied
+ * before this call returns. */
+typedef struct scan_keyframe {
+  int64_t t_engine_ns;
+  double position[3];
+  double orientation[4]; /* x, y, z, w — unit */
+  float fx, fy, cx, cy;
+  float distortion[5];   /* k1, k2, p1, p2, k3 — OpenCV/ARCore order */
+  uint32_t width, height;
+  float rolling_shutter_row_time_ns; /* 0 = global shutter */
+  float position_sigma_m, orientation_sigma_deg;
+  uint8_t pose_quality;   /* SCAN_POSE_QUALITY_* */
+  uint8_t tracking_lost;  /* 0/1 */
+  uint8_t pose_source;    /* SCAN_STREAM_* */
+  uint32_t flags;         /* SCAN_KEYFRAME_* */
+  int64_t exposure_ns;
+  float iso, angular_rate_rad_s, linear_speed_m_s;
+  uint32_t image_bytes;   /* JPEG size on disk; 0 = unknown */
+  const char* image_name; /* NUL-terminated UTF-8; NULL is refused */
+} scan_keyframe;
+
+/* Encodes `kf` and writes it to the session's recorder as a
+ * kCameraFrameIndex chunk — exactly encode_keyframe_record() +
+ * write_chunk(), which is what makes B8 a capture task rather than a format
+ * task (docs/A11-color.md §3.1). Requires a running session that is
+ * recording; SCAN_ERR_INVALID_STATE otherwise. A keyframe that could not be
+ * projected (non-unit quaternion, principal point outside the image, an
+ * absolute name or one with a ".." component, ...) is SCAN_ERR_INVALID_ARGUMENT and is
+ * NOT written: an unusable record on disk can only be skipped silently
+ * later. */
+SCAN_API scan_error_t scan_engine_record_keyframe(scan_engine* engine, const scan_keyframe* kf);
+
+/* --- colorization (A11), ABI 4 -------------------------------------------
+ *
+ * The knobs a caller actually chooses. Everything else in
+ * color::ColorizeConfig keeps its C++ default — those are S6-derived
+ * constants (the 75 deg incidence cut, the 1/8 depth scale, the slope bias,
+ * the scoring weights), not per-session choices, and exposing them here would
+ * invite a JNI caller to tune away a measured result.
+ *
+ * ZERO-INITIALIZING THIS STRUCT IS SAFE AND REFUSES: sync_quality 0 is
+ * SCAN_SYNC_UNKNOWN, which fails closed (docs/A11-color.md §2). Non-zero
+ * motion_gate_deg_s / motion_reject_deg_s override the policy the sync
+ * quality selects; 0 takes the policy's. */
+typedef struct scan_colorize_config {
+  uint8_t sync_quality;    /* SCAN_SYNC_* — from scan_engine timesync/A4 */
+  uint8_t allow_poor_sync; /* 0/1 — the operator override behind SCAN_SYNC_POOR */
+  uint8_t pose_frame;      /* SCAN_KEYFRAME_POSE_* */
+  float motion_gate_deg_s;
+  float motion_reject_deg_s;
+  int64_t camera_clock_offset_ns; /* t_engine = t_camera + this */
+  float min_range_m;              /* 0 = keep the default (0.30) */
+  float max_range_m;              /* 0 = keep the default (30.0) */
+  uint8_t occlusion_test;         /* 0/1 */
+  uint8_t rolling_shutter;        /* 0/1 */
+  uint8_t estimate_normals;       /* 0/1 */
+  uint8_t low_confidence_alpha;   /* 0 = leave alpha alone (A8/A14 own it) */
+  uint8_t uncovered_alpha;        /* 0 = leave alpha alone */
+} scan_colorize_config;
+
+typedef struct scan_colorize_stats {
+  uint64_t points_total;
+  uint64_t points_colorized;
+  uint64_t points_low_confidence;
+  uint64_t points_uncovered;
+  uint32_t keyframes_total;
+  uint32_t keyframes_used;
+  uint32_t keyframes_rejected_motion;
+  uint32_t keyframes_rejected_pose;
+  uint32_t keyframes_outside_cloud;
+  uint32_t keyframes_image_failed;
+  double ms_total;
+  float coverage_fraction;
+} scan_colorize_stats;
+
+/* Progress, 0..1, monotone within one run. Invoked ON THE THREAD INSIDE
+ * scan_colorizer_run() — which is the caller's thread, since the run is
+ * blocking. Quick, no re-entry, and on Android attach before touching the
+ * JVM. */
+typedef void (*scan_colorize_progress_cb)(float fraction, void* user_data);
+
+typedef struct scan_colorizer scan_colorizer;
+
+/* A NULL `cfg` means "all defaults", which refuses (SCAN_SYNC_UNKNOWN). */
+SCAN_API scan_error_t scan_colorizer_create(scan_colorizer** out,
+                                            const scan_colorize_config* cfg);
+SCAN_API void scan_colorizer_destroy(scan_colorizer* c);
+
+/* Loads every keyframe from <lscan_dir>/streams/frames/frames.idx and installs
+ * a file-backed image source rooted at lscan_dir. SCAN_ERR_NOT_FOUND means the
+ * session has no camera — Tech Spec §3.5's "gracefully unavailable", which a
+ * caller should REPORT, not treat as a failure. */
+SCAN_API scan_error_t scan_colorizer_load_keyframes(scan_colorizer* c, const char* lscan_dir);
+
+/* The mount extrinsic, ROW-MAJOR 4x4 and rigid. Used when
+ * pose_frame == SCAN_KEYFRAME_POSE_LIDAR_BODY; validated (and refused if
+ * non-rigid) either way — a column-major matrix handed across JNI produces a
+ * plausible-looking mirrored cloud nobody notices until export. */
+SCAN_API scan_error_t scan_colorizer_set_extrinsics(scan_colorizer* c,
+                                                    const double camera_from_lidar[16]);
+
+SCAN_API scan_error_t scan_colorizer_set_progress_callback(scan_colorizer* c,
+                                                           scan_colorize_progress_cb cb,
+                                                           void* user_data);
+
+/* BLOCKING: colours every page of `engine`'s PageStore in place, on the
+ * CALLING thread, and then notifies the store's subscribers that the colours
+ * changed so a live renderer re-uploads. Call it from a worker thread — an
+ * app that wants a queue should drive a Colorize job through the C++
+ * jobs::JobQueue instead (there is no C surface for the queue at ABI 4).
+ *
+ * SCAN_ERR_NOT_SUPPORTED when the sync gate refuses — before any image is
+ * decoded and any point is touched. SCAN_ERR_CANCELLED after
+ * scan_colorizer_cancel(), with the points left exactly as they were. */
+SCAN_API scan_error_t scan_colorizer_run(scan_colorizer* c, scan_engine* engine);
+
+/* Safe from another thread while run() is in flight — that is the whole
+ * point. Sticky: a colorizer cancelled once stays cancelled. */
+SCAN_API scan_error_t scan_colorizer_cancel(scan_colorizer* c);
+SCAN_API float scan_colorizer_progress(scan_colorizer* c);
+SCAN_API scan_error_t scan_colorizer_stats(scan_colorizer* c, scan_colorize_stats* out);
+
+/* --- the wizard's clock sweep (A11, for B7), ABI 4 ------------------------
+ *
+ * One sample of "how fast the thing is turning", on that sensor's own clock.
+ * The units are arbitrary and are normalised away: in the wizard these are
+ * the target's bearing rate in the camera against its bearing rate in the
+ * lidar; on a bench they can be ARCore's gyro against the Mid-360's IMU. */
+typedef struct scan_rate_sample {
+  int64_t t_ns;
+  double value;
+} scan_rate_sample;
+
+/* SIGN CONVENTION, asserted by a test rather than a comment:
+ *     t_engine_ns = t_camera_ns + offset_ns
+ * i.e. a positive offset means the camera clock reads EARLY relative to the
+ * lidar's. Feed it back as scan_colorize_config::camera_clock_offset_ns. */
+typedef struct scan_clock_sweep_result {
+  int64_t offset_ns;
+  double correlation;
+  double rival_correlation;
+  double sigma_ns; /* honest to an order of magnitude — the wizard's "+-2 ms" */
+  uint32_t grid_samples;
+  uint32_t zero_crossings;
+  int64_t overlap_ns;
+  uint8_t accepted;
+  uint8_t verdict; /* SCAN_SWEEP_* */
+} scan_clock_sweep_result;
+
+/* Both tracks must be sorted by t_ns and finite. Returns SCAN_OK with
+ * `accepted == 0` and a verdict when the CAPTURE was not good enough — "the
+ * user did not sweep" is something the wizard must say, not an error to
+ * propagate. SCAN_ERR_INVALID_ARGUMENT is reserved for structurally bad
+ * input (unsorted, empty, non-finite). Uses the estimator's default config
+ * (+-100 ms search, 2 ms grid, 4 s minimum overlap). */
+SCAN_API scan_error_t scan_clock_sweep_estimate(const scan_rate_sample* camera, uint32_t n_camera,
+                                                const scan_rate_sample* lidar, uint32_t n_lidar,
+                                                scan_clock_sweep_result* out);
 
 /* Logging is process-global, not per engine. */
 SCAN_API void scan_engine_set_log_callback(scan_log_cb cb, void* user_data, int32_t min_level);

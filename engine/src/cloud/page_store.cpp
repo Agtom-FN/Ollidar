@@ -162,6 +162,51 @@ Status PageStore::append(StreamId stream, Span<const PointVertex> points,
   return kOkStatus;
 }
 
+const char* to_string(PageUpdateKind k) noexcept {
+  switch (k) {
+    case PageUpdateKind::kAppended: return "appended";
+    case PageUpdateKind::kRecoloured: return "recoloured";
+  }
+  return "unknown";
+}
+
+PointVertex* PageStore::page_data_mutable(PageId id) {
+  std::lock_guard<std::mutex> lock(impl_->m);
+  Page* p = impl_->find(id);
+  return p == nullptr ? nullptr : p->data.get();
+}
+
+Status PageStore::notify_recoloured(PageId page, std::uint32_t first, std::uint32_t count) {
+  if (count == 0) return kOkStatus;
+
+  PageUpdate u;
+  std::vector<Impl::Sub> subs_copy;
+  {
+    std::lock_guard<std::mutex> lock(impl_->m);
+    const Page* p = impl_->find(page);
+    if (p == nullptr) {
+      return set_last_error(ScanError::kNotFound, "page store: no page %u to recolour", page);
+    }
+    const std::uint32_t live = p->count.load(std::memory_order_acquire);
+    if (first > live || count > live - first) {
+      return set_last_error(ScanError::kInvalidArgument,
+                            "page store: recolour range [%u, %u) is past page %u's %u points",
+                            first, first + count, page, live);
+    }
+    u.page = p->id;
+    u.stream = p->stream;
+    u.first = first;
+    u.count = count;
+    u.page_created = false;
+    u.kind = PageUpdateKind::kRecoloured;
+    subs_copy = impl_->subs;
+  }
+  // Outside the lock — same rule append() follows, so a renderer that queues
+  // a GPU upload from the callback cannot stall a producer.
+  for (const auto& s : subs_copy) s.cb(u, s.user);
+  return kOkStatus;
+}
+
 PageView PageStore::page_view(PageId id) const {
   std::lock_guard<std::mutex> lock(impl_->m);
   const Page* p = impl_->find(id);

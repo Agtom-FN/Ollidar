@@ -66,7 +66,8 @@ bool safe_relative_name(const std::string& name) {
 
 }  // namespace
 
-Status zip_export(const std::string& lscan_dir, const std::string& zip_path) {
+Status zip_export(const std::string& lscan_dir, const std::string& zip_path,
+                  ZipProgressFn progress, ZipCancelToken* cancel) {
   std::error_code ec;
   if (!fs::exists(lscan_dir, ec) || !fs::is_directory(lscan_dir, ec)) {
     return set_last_error(ScanError::kFileError, "zip: '%s' is not a directory",
@@ -81,21 +82,50 @@ Status zip_export(const std::string& lscan_dir, const std::string& zip_path) {
     if (it->is_regular_file(ec)) files.push_back(it->path());
   }
 
+  // The denominator, from the directory metadata rather than a read pass — a
+  // progress bar must not cost a third traversal of a multi-gigabyte capture.
+  std::uint64_t bytes_total = 0;
+  for (const auto& f : files) {
+    const std::uintmax_t sz = fs::file_size(f, ec);
+    if (!ec) bytes_total += static_cast<std::uint64_t>(sz);
+    ec.clear();
+  }
+  std::uint64_t bytes_done = 0;
+  if (progress) progress(0, bytes_total, "");
+
+  if (cancel != nullptr && cancel->cancelled()) {
+    return set_last_error(ScanError::kCancelled, "zip: export of '%s' cancelled before it started",
+                          zip_path.c_str());
+  }
+
   std::ofstream out(zip_path, std::ios::binary | std::ios::trunc);
   if (!out) {
     return set_last_error(ScanError::kFileError, "zip: cannot create '%s'", zip_path.c_str());
   }
+
+  // One place to unwind from: a half-written archive looks openable and is
+  // not (its central directory never gets written), so cancellation closes
+  // the stream and deletes it before returning. Closing first matters on
+  // Windows, where an open handle blocks the remove.
+  const auto abandon = [&out, &zip_path]() -> Status {
+    out.close();
+    std::error_code rm;
+    fs::remove(zip_path, rm);
+    return set_last_error(ScanError::kCancelled, "zip: export of '%s' cancelled", zip_path.c_str());
+  };
 
   std::vector<PendingEntry> entries;
   std::vector<std::uint8_t> buf(kIoBufBytes);
   std::uint32_t offset = 0;
 
   for (const auto& file_path : files) {
+    if (cancel != nullptr && cancel->cancelled()) return abandon();
     const std::string rel = fs::relative(file_path, lscan_dir, ec).generic_string();
     if (ec || rel.empty()) {
       ec.clear();
       continue;
     }
+    if (progress) progress(bytes_done, bytes_total, rel.c_str());
 
     // Pass 1: size + CRC32, streamed. lscan::crc32's seed argument chains
     // correctly across calls (same technique as chunk_crc() in lscan.cpp),
@@ -148,10 +178,13 @@ Status zip_export(const std::string& lscan_dir, const std::string& zip_path) {
     {
       std::ifstream in(file_path, std::ios::binary);
       while (in) {
+        if (cancel != nullptr && cancel->cancelled()) return abandon();
         in.read(reinterpret_cast<char*>(buf.data()), static_cast<std::streamsize>(buf.size()));
         const std::streamsize n = in.gcount();
         if (n <= 0) break;
         out.write(reinterpret_cast<const char*>(buf.data()), n);
+        bytes_done += static_cast<std::uint64_t>(n);
+        if (progress) progress(bytes_done, bytes_total, rel.c_str());
       }
     }
     offset += pe.size;
@@ -202,12 +235,14 @@ Status zip_export(const std::string& lscan_dir, const std::string& zip_path) {
     return set_last_error(ScanError::kFileError, "zip: short write to '%s'", zip_path.c_str());
   }
 
+  if (progress) progress(bytes_total, bytes_total, "");
   SCAN_LOG_INFO(kMod, "zip_export: '%s' -> '%s' (%zu entries)", lscan_dir.c_str(),
                zip_path.c_str(), entries.size());
   return kOkStatus;
 }
 
-Status zip_import(const std::string& zip_path, const std::string& dest_dir) {
+Status zip_import(const std::string& zip_path, const std::string& dest_dir, ZipProgressFn progress,
+                  ZipCancelToken* cancel) {
   std::ifstream in(zip_path, std::ios::binary | std::ios::ate);
   if (!in) return set_last_error(ScanError::kFileError, "zip: cannot open '%s'", zip_path.c_str());
   const std::streamoff file_size = in.tellg();
@@ -248,9 +283,40 @@ Status zip_import(const std::string& zip_path, const std::string& dest_dir) {
     fs::create_directories(std::string(dest_dir) + "/" + sub, ec);
   }
 
+  // Denominator pre-pass over the central directory only (46 bytes + a name
+  // per entry, no payload read). Failing it is not fatal: a zero total simply
+  // means the caller sees bytes_done climb against 0, which is what "unknown
+  // size" honestly looks like.
+  std::uint64_t bytes_total = 0;
+  {
+    in.clear();
+    in.seekg(central_offset);
+    for (std::uint16_t i = 0; i < total_entries; ++i) {
+      std::uint8_t ch[46];
+      in.read(reinterpret_cast<char*>(ch), sizeof ch);
+      if (!in || get_u32(ch) != kCentralSig) {
+        bytes_total = 0;
+        break;
+      }
+      bytes_total += get_u32(&ch[24]);  // uncompressed size
+      in.seekg(static_cast<std::streamoff>(get_u16(&ch[28])) + get_u16(&ch[30]) + get_u16(&ch[32]),
+               std::ios::cur);
+    }
+    in.clear();
+  }
+  std::uint64_t bytes_done = 0;
+  if (progress) progress(0, bytes_total, "");
+
   in.seekg(central_offset);
   std::vector<std::uint8_t> buf(kIoBufBytes);
   for (std::uint16_t i = 0; i < total_entries; ++i) {
+    if (cancel != nullptr && cancel->cancelled()) {
+      // The files already extracted stay: `dest_dir` is the caller's
+      // directory and may have had contents before this call, so removing it
+      // is not this function's decision (see record/zip.h).
+      return set_last_error(ScanError::kCancelled, "zip: import of '%s' cancelled",
+                            zip_path.c_str());
+    }
     std::uint8_t ch[46];
     in.read(reinterpret_cast<char*>(ch), sizeof ch);
     if (!in || get_u32(ch) != kCentralSig) {
@@ -313,6 +379,12 @@ Status zip_import(const std::string& zip_path, const std::string& dest_dir) {
       running_crc = crc32(ByteSpan(buf.data(), chunk), running_crc);
       of.write(reinterpret_cast<const char*>(buf.data()), static_cast<std::streamsize>(chunk));
       remaining -= static_cast<std::uint32_t>(chunk);
+      bytes_done += chunk;
+      if (progress) progress(bytes_done, bytes_total, name.c_str());
+      if (cancel != nullptr && cancel->cancelled()) {
+        return set_last_error(ScanError::kCancelled, "zip: import of '%s' cancelled inside '%s'",
+                              zip_path.c_str(), name.c_str());
+      }
     }
     of.flush();
     if (!of) {
@@ -327,6 +399,7 @@ Status zip_import(const std::string& zip_path, const std::string& dest_dir) {
     in.seekg(saved);
   }
 
+  if (progress) progress(bytes_total, bytes_total, "");
   SCAN_LOG_INFO(kMod, "zip_import: '%s' -> '%s' (%u entries)", zip_path.c_str(), dest_dir.c_str(),
                total_entries);
   return kOkStatus;

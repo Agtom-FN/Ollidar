@@ -325,6 +325,59 @@ int scan_capi_smoke_run(const uint8_t* d6_bytes, size_t d6_len) {
   if (scan_engine_device_health(engine, 4242u, &health) != SCAN_ERR_NOT_FOUND) return 36;
   if (scan_engine_last_error()[0] == '\0') return 37;
 
+  /* --- ABI 4 (INT-34): the keyframe write path (B8), while the engine is
+   * still alive. No recording session is open in this smoke run, so this is
+   * the honest refusal rather than a write; what is being proved is that
+   * scan_keyframe is fillable and the call linkable from C11. */
+  {
+    scan_keyframe kf;
+    memset(&kf, 0, sizeof kf);
+    kf.t_engine_ns = 1700000000000000000LL;
+    kf.orientation[3] = 1.0; /* x, y, z, w */
+    kf.fx = 1200.0f;
+    kf.fy = 1200.0f;
+    kf.cx = 960.0f;
+    kf.cy = 540.0f;
+    kf.width = 1920;
+    kf.height = 1080;
+    kf.pose_quality = SCAN_POSE_QUALITY_GOOD;
+    kf.pose_source = SCAN_STREAM_POSE_AR;
+    kf.flags = SCAN_KEYFRAME_MOTION_VALID;
+    kf.angular_rate_rad_s = 0.1f;
+    kf.image_name = "kf_000001.jpg";
+    if (scan_engine_record_keyframe(engine, &kf) != SCAN_ERR_INVALID_STATE) return 103;
+    if (scan_engine_record_keyframe(NULL, &kf) != SCAN_ERR_INVALID_ARGUMENT) return 104;
+    if (scan_engine_record_keyframe(engine, NULL) != SCAN_ERR_INVALID_ARGUMENT) return 105;
+    kf.image_name = NULL;
+    if (scan_engine_record_keyframe(engine, &kf) != SCAN_ERR_INVALID_ARGUMENT) return 106;
+
+    /* The colorizer is a SECOND handle, and it runs against the engine's page
+     * store — so its lifecycle is exercised here, while there is one. */
+    {
+      scan_colorize_config cc;
+      scan_colorizer* col = NULL;
+      memset(&cc, 0, sizeof cc);
+      /* A zero-initialized config FAILS CLOSED (SCAN_SYNC_UNKNOWN): a caller
+       * who forgets the sync gate must be refused, never silently trusted. */
+      if (cc.sync_quality != SCAN_SYNC_UNKNOWN) return 107;
+      if (scan_colorizer_create(&col, &cc) != SCAN_OK) return 108;
+      if (col == NULL) return 109;
+      if (scan_colorizer_create(NULL, &cc) != SCAN_ERR_INVALID_ARGUMENT) return 110;
+      /* No camera in this session: kNotFound, §3.5's "gracefully
+       * unavailable", which a UI reports rather than fails on. */
+      if (scan_colorizer_load_keyframes(col, ".") != SCAN_ERR_NOT_FOUND) return 111;
+      {
+        /* Either "no keyframes" (this session has no camera) or "no points"
+         * (this smoke run was given no D6 bytes to decode). Both are refusals
+         * with a real code; what must never happen is SCAN_OK or a crash. */
+        const scan_error_t rc = scan_colorizer_run(col, engine);
+        if (rc != SCAN_ERR_NOT_FOUND && rc != SCAN_ERR_INVALID_ARGUMENT) return 112;
+      }
+      scan_colorizer_destroy(col);
+      scan_colorizer_destroy(NULL); /* must be a no-op */
+    }
+  }
+
   scan_engine_destroy(engine);
   scan_engine_set_log_callback(NULL, NULL, SCAN_LOG_INFO);
   if (g_log_lines == 0) return 38;
@@ -380,6 +433,62 @@ int scan_capi_smoke_run(const uint8_t* d6_bytes, size_t d6_len) {
   if (result.camera_from_lidar[0] < 0.999) return 67;
   scan_mount_calib_destroy(calib);
   scan_mount_calib_destroy(NULL); /* must be a no-op */
+
+  /* --- ABI 4 (INT-34): the wizard's clock sweep (B7) ---------------------
+   *
+   * Engine-free, like the mount calibration above and for the same reason:
+   * the two tracks come from the app's own detection. */
+  {
+    scan_clock_sweep_result sweep;
+    scan_rate_sample cam[240];
+    scan_rate_sample lid[1600];
+    scan_colorizer* col2 = NULL;
+    scan_colorize_config cc2;
+    scan_colorize_stats cstats;
+    double ident[16];
+    const int64_t truth_ns = 23000000;
+
+    /* A colorizer with no engine in sight: the handle is standalone. */
+    memset(&cc2, 0, sizeof cc2);
+    cc2.sync_quality = SCAN_SYNC_GOOD;
+    if (scan_colorizer_create(&col2, &cc2) != SCAN_OK) return 113;
+    for (i = 0; i < 16; ++i) ident[i] = 0.0;
+    ident[0] = ident[5] = ident[10] = ident[15] = 1.0;
+    if (scan_colorizer_set_extrinsics(col2, ident) != SCAN_OK) return 114;
+    if (scan_colorizer_set_progress_callback(col2, NULL, NULL) != SCAN_OK) return 115;
+    if (scan_colorizer_cancel(col2) != SCAN_OK) return 116;
+    if (scan_colorizer_stats(col2, &cstats) != SCAN_OK) return 117;
+    if (cstats.points_colorized != 0) return 118;
+    if (scan_colorizer_progress(col2) != 0.0f) return 119;
+    scan_colorizer_destroy(col2);
+
+    /* 8 s at ~1 Hz, camera at 30 Hz against lidar at 200 Hz, the camera track
+     * shifted by the truth and scaled by 1.7 so the normalised correlation
+     * has something to normalise away. */
+    for (i = 0; i < 240; ++i) {
+      int64_t t = (int64_t)i * 33333333LL;
+      cam[i].t_ns = t - truth_ns;
+      cam[i].value = sin(2.0 * 3.14159265358979 * (double)t * 1e-9);
+    }
+    for (i = 0; i < 1600; ++i) {
+      int64_t t = (int64_t)i * 5000000LL;
+      lid[i].t_ns = t;
+      lid[i].value = 1.7 * sin(2.0 * 3.14159265358979 * (double)t * 1e-9);
+    }
+    memset(&sweep, 0, sizeof sweep);
+    if (scan_clock_sweep_estimate(cam, 240u, lid, 1600u, &sweep) != SCAN_OK) return 120;
+    if (!sweep.accepted) return 121;
+    if (sweep.verdict != SCAN_SWEEP_ACCEPTED) return 122;
+    if (sweep.correlation < 0.9) return 123;
+    if (sweep.offset_ns - truth_ns > 1000000LL) return 124;  /* the +-1 ms target */
+    if (truth_ns - sweep.offset_ns > 1000000LL) return 125;
+    if (scan_clock_sweep_estimate(cam, 240u, lid, 1600u, NULL) != SCAN_ERR_INVALID_ARGUMENT) {
+      return 126;
+    }
+    if (scan_clock_sweep_estimate(NULL, 5u, lid, 1600u, &sweep) != SCAN_ERR_INVALID_ARGUMENT) {
+      return 127;
+    }
+  }
 
   return 0;
 }

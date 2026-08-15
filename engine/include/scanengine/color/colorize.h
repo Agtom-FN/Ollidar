@@ -38,11 +38,13 @@
 #define SCANENGINE_COLOR_COLORIZE_H
 
 #include <cstdint>
+#include <functional>
 #include <string>
 
 #include "scanengine/cloud/page_store.h"
 #include "scanengine/core/error.h"
 #include "scanengine/poses/pose_source.h"
+#include "scanengine/slam/post/progress.h"
 
 namespace scanengine {
 
@@ -106,6 +108,12 @@ struct Keyframe {
   bool has_exposure() const { return (flags & kKeyframeFlagExposureValid) != 0; }
 };
 
+// Overall completion, 0..1, monotone non-decreasing within one colorize()
+// call. Invoked ON the thread inside colorize(): quick, and must not re-enter
+// the colorizer — the same rule PostProgressFn, EventBus callbacks and
+// PageStore subscribers follow (DESIGN.md §2).
+using ColorizeProgressFn = std::function<void(float fraction)>;
+
 class Colorizer {
  public:
   virtual ~Colorizer() = default;
@@ -114,6 +122,29 @@ class Colorizer {
   // Best-view selection (angle/distance/occlusion z-buffer), then RGB write.
   virtual Status colorize(PageStore* points) = 0;
   virtual float progress() const = 0;
+
+  // --- cancel + progress on the ABSTRACT seam (INT-34, A15 §7.6) ----------
+  //
+  // Before this, `jobs/local_runner.cpp` had to `dynamic_cast` to A11's
+  // concrete `color::PointColorizer` to get cancellation and fine-grained
+  // progress out of a Colorize job at all, and a job driven by any OTHER
+  // Colorizer had a real, documented gap: a blocking colorize() that could
+  // not be interrupted and two progress ticks. docs/A15-jobs.md §7.6 asked
+  // for these two hooks on the interface itself, and this is them.
+  //
+  // Both are ADDITIVE and DEFAULTED to no-ops, deliberately: every existing
+  // implementation (and every test double) keeps compiling untouched, and one
+  // that overrides nothing behaves exactly as it did — the caller still gets
+  // a correct result, just without cancellation. An implementation that DOES
+  // override them gets real cancellation for free, with no dynamic_cast and
+  // no second vocabulary.
+  //
+  // `token` is NOT owned and must outlive the colorize() call it is set for;
+  // null clears it. It is A7's post::CancelToken rather than a colorization-
+  // specific one because A15 owns one token per job and hands out a pointer —
+  // there is no reason for this stage to invent a parallel type.
+  virtual void set_cancel_token(post::CancelToken* token) { (void)token; }
+  virtual void set_progress_fn(ColorizeProgressFn cb) { (void)cb; }
 };
 
 // Mount/extrinsics wizard solver (S6 → A11).

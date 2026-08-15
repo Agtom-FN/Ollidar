@@ -72,15 +72,37 @@ Status run_transfer_export(const TransferExportParams& params, std::function<voi
     if (progress_cb) progress_cb(0.3f);
   }
 
-  // zip_export() (record/zip.h, A5) has neither a progress callback nor a
-  // cancel token — see this file's header comment. Cancellation is only
-  // honoured either side of this call.
   if (cancelled && cancelled()) {
     std::error_code ec;
     if (!staging_dir.empty()) fs::remove_all(staging_dir, ec);
     return set_last_error(ScanError::kCancelled, "jobs/transfer: cancelled before zip_export");
   }
-  const Status zip_status = lscan::zip_export(source_dir, params.zip_path);
+
+  // INT-34 closed docs/A15-jobs.md §7.4: zip_export() now takes an optional
+  // progress callback and cancel token, so the gap this file used to document
+  // — "cancellation is only honoured either side of the blocking zip call" —
+  // is gone. The token is polled from inside the copy loop; the callback is
+  // mapped onto the remaining progress budget (0.3..1.0 when a staging copy
+  // happened first, 0.0..1.0 otherwise) so the reported fraction stays
+  // monotone across the whole job.
+  lscan::ZipCancelToken zip_cancel;
+  if (cancelled && cancelled()) zip_cancel.request_cancel();
+  const float zip_lo = staging_dir.empty() ? 0.f : 0.3f;
+  lscan::ZipProgressFn zip_progress;
+  if (progress_cb || cancelled) {
+    zip_progress = [&](std::uint64_t done, std::uint64_t total, const char*) {
+      // Polling the caller's predicate here is what makes a mid-zip cancel
+      // land: `cancelled` is the queue's flag, `zip_cancel` is what zip_export
+      // itself reads.
+      if (cancelled && cancelled()) zip_cancel.request_cancel();
+      if (!progress_cb) return;
+      const float f = total == 0 ? 1.f : static_cast<float>(static_cast<double>(done) /
+                                                            static_cast<double>(total));
+      progress_cb(zip_lo + (1.f - zip_lo) * f);
+    };
+  }
+  const Status zip_status = lscan::zip_export(source_dir, params.zip_path, zip_progress,
+                                              &zip_cancel);
 
   std::error_code ec;
   if (!staging_dir.empty()) fs::remove_all(staging_dir, ec);

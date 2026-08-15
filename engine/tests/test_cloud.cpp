@@ -1,5 +1,6 @@
 // PageStore: paging, pointer stability, bounds, provenance, backpressure.
 #include <cstddef>
+#include <string>
 #include <vector>
 
 #include "doctest.h"
@@ -149,6 +150,111 @@ TEST_CASE("cloud/subscribers_see_every_range_exactly_once") {
 
   CHECK(store.unsubscribe(id).ok());
   CHECK(store.unsubscribe(id).error() == ScanError::kNotFound);
+}
+
+// --- INT-34: the colorization seam (docs/A11-color.md §8.1) ---------------
+
+TEST_CASE("cloud/page_data_mutable_lets_the_one_rewriting_producer_rewrite") {
+  PageStoreConfig cfg;
+  cfg.page_capacity = 4;
+  cfg.max_pages = 8;
+  PageStore store(cfg);
+
+  const auto pts = ramp(10);
+  REQUIRE(store.append(StreamId::kSlamMap, span_of(pts), 1).ok());
+  const auto ids = store.page_ids();
+  REQUIRE(ids.size() == 3);
+
+  // The pointer is the SAME buffer the const view addresses — that identity
+  // is what makes the accessor a replacement for the const_cast that used to
+  // live in src/color/colorizer.cpp, rather than a copy.
+  for (const PageId id : ids) {
+    CHECK(store.page_data_mutable(id) == store.page_view(id).data);
+  }
+  CHECK(store.page_data_mutable(9999) == nullptr);
+
+  // Rewrite only the colours, exactly as the colorizer does.
+  for (const PageId id : ids) {
+    const PageView v = store.page_view(id);
+    PointVertex* w = store.page_data_mutable(id);
+    REQUIRE(w != nullptr);
+    for (std::uint32_t i = 0; i < v.count; ++i) {
+      w[i].r = 10;
+      w[i].g = 20;
+      w[i].b = 30;
+    }
+  }
+
+  // Positions, counts, bounds and page ids all survive: that is the property
+  // that makes writing through this pointer safe without recomputing the
+  // incrementally-maintained bounding box.
+  std::uint32_t seen = 0;
+  for (const PageId id : ids) {
+    const PageView v = store.page_view(id);
+    for (std::uint32_t i = 0; i < v.count; ++i) {
+      CHECK(v.data[i].x == pts[seen].x);
+      CHECK(v.data[i].y == pts[seen].y);
+      CHECK(v.data[i].r == 10);
+      CHECK(v.data[i].b == 30);
+      ++seen;
+    }
+  }
+  CHECK(seen == 10);
+  CHECK(store.total_points() == 10);
+  CHECK(store.page_view(ids[0]).bounds_max[0] == 3.f);  // untouched by the rewrite
+}
+
+TEST_CASE("cloud/a_recolour_notifies_with_a_kind_an_append_never_carries") {
+  PageStoreConfig cfg;
+  cfg.page_capacity = 8;
+  cfg.max_pages = 4;
+  PageStore store(cfg);
+
+  std::vector<PageUpdate> seen;
+  const auto sub = store.subscribe(
+      [](const PageUpdate& u, void* user) {
+        static_cast<std::vector<PageUpdate>*>(user)->push_back(u);
+      },
+      &seen);
+  REQUIRE(sub != 0);
+
+  const auto pts = ramp(6);
+  REQUIRE(store.append(StreamId::kSlamMap, span_of(pts), 1).ok());
+  REQUIRE(seen.size() == 1);
+  // Every pre-INT-34 producer is unchanged in meaning: an append is kAppended
+  // without anyone having said so.
+  CHECK(seen[0].kind == PageUpdateKind::kAppended);
+  const PageId id = store.page_ids().front();
+
+  seen.clear();
+  CHECK(store.notify_recoloured(id, 0, 6).ok());
+  REQUIRE(seen.size() == 1);
+  CHECK(seen[0].kind == PageUpdateKind::kRecoloured);
+  CHECK(seen[0].page == id);
+  CHECK(seen[0].first == 0);
+  CHECK(seen[0].count == 6);
+  CHECK(seen[0].stream == StreamId::kSlamMap);
+  CHECK_FALSE(seen[0].page_created);  // a recolour never allocates a GPU buffer
+  CHECK(std::string(to_string(PageUpdateKind::kRecoloured)) == "recoloured");
+
+  // A partial range is legal — a caller that colours a sub-range says so.
+  seen.clear();
+  CHECK(store.notify_recoloured(id, 2, 3).ok());
+  REQUIRE(seen.size() == 1);
+  CHECK(seen[0].first == 2);
+  CHECK(seen[0].count == 3);
+
+  // Refusals: an unknown page, and a range past the live count. The second is
+  // the one that matters — publishing it would tell a renderer to upload
+  // memory that has never been written.
+  seen.clear();
+  CHECK(store.notify_recoloured(9999, 0, 1).error() == ScanError::kNotFound);
+  CHECK(store.notify_recoloured(id, 0, 7).error() == ScanError::kInvalidArgument);
+  CHECK(store.notify_recoloured(id, 6, 1).error() == ScanError::kInvalidArgument);
+  CHECK(store.notify_recoloured(id, 0, 0).ok());  // a no-op, not an error
+  CHECK(seen.empty());
+
+  CHECK(store.unsubscribe(sub).ok());
 }
 
 TEST_CASE("cloud/clear_never_reuses_page_ids") {

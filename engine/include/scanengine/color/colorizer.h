@@ -296,6 +296,14 @@ class PointColorizer final : public Colorizer {
   // views today.
   Status colorize(PageStore* points) override;
   float progress() const override;
+  // A15 §7.6's two abstract-seam hooks, now real overrides (INT-34). The
+  // token is not owned; null restores this object's own internal token, so
+  // cancel() below keeps working either way. set_progress_fn() is the
+  // coarse, interface-level form of set_progress_callback() and is
+  // implemented in terms of it — a caller wanting the stage/label/counts
+  // still uses the richer one, and setting either replaces the other.
+  void set_cancel_token(post::CancelToken* token) override;
+  void set_progress_fn(ColorizeProgressFn cb) override;
 
   // --- A11 additions -------------------------------------------------------
   // The core. `points` are in the session's world frame; only the r/g/b (and
@@ -311,7 +319,6 @@ class PointColorizer final : public Colorizer {
   void set_image_source(ImageSource* src);      // not owned
   void set_angular_rate_fn(AngularRateFn fn);
   void set_pose_fn(PoseAtFn fn);
-  void set_cancel_token(post::CancelToken* token);  // not owned; null = own
   void set_progress_callback(ColorProgressFn cb);
   void cancel();
 

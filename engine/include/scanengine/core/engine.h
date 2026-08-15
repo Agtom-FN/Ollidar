@@ -32,6 +32,7 @@
 #include <vector>
 
 #include "scanengine/cloud/page_store.h"
+#include "scanengine/color/colorize.h"
 #include "scanengine/core/error.h"
 #include "scanengine/core/event_bus.h"
 #include "scanengine/core/log.h"
@@ -50,11 +51,23 @@
 
 namespace scanengine {
 
+// A15's job queue, reachable through Engine::jobs() below. Forward-declared
+// rather than included: jobs/job_queue.h transitively pulls in the post
+// pipeline, the exporter, the colorizer and the cloud client, and engine.h is
+// included by every consumer of the engine.
+namespace jobs {
+class JobQueue;
+}  // namespace jobs
+
 // Bumped whenever the C ABI changes shape (see capi/scanengine_c.h).
 // 2 (INT-24): poses + pushbroom + mount calibration + live-SLAM session knobs.
 // 3 (INT-29): A10's GNSS/RTK stack — NMEA in, fix/NTRIP/georef events, the
 //             NTRIP client handle, the georef solution and the session CRS.
-inline constexpr std::uint32_t kEngineAbiVersion = 3;
+// 4 (INT-34): A11's colorization (scan_engine_record_keyframe, the
+//             scan_colorizer_* handle, scan_clock_sweep_estimate) and A15's
+//             jobs (the kJobProgress union case + SCAN_JOB_* mirror), plus
+//             `update_kind` on the points payload.
+inline constexpr std::uint32_t kEngineAbiVersion = 4;
 const char* engine_version_string();  // "scanengine 0.1.0 (<clock backend>)"
 
 struct EngineConfig {
@@ -288,6 +301,56 @@ class Engine {
   // independent estimation noise BETWEEN the two streams — exactly the
   // quantity undistortion is sensitive to (docs/A6-lio.md §7.2).
   ImuIngest& imu();
+
+  // --- camera keyframes in (A11's frames.idx; B8's write path, INT-34) ----
+  //
+  // Encodes `kf` as a `color::encode_keyframe_record()` payload and writes it
+  // to the session recorder as a `kCameraFrameIndex` chunk on
+  // `StreamId::kCameraFrames`, i.e. into `streams/frames/frames.idx`.
+  //
+  // WHY HERE AND NOT ON THE RECORDER. docs/A11-color.md §3.1 is explicit that
+  // the capture side needs no new writer — it is two lines against the
+  // `FileRecordWriter` the app already holds. What it cannot do for itself is
+  // the LOCK: `FileRecordWriter` is not internally synchronized (record/ owns
+  // no thread), and since the Mid-360 raw shim landed, the D6 serial thread,
+  // the Mid-360 receive thread and the NTRIP thread can all be recording
+  // concurrently. `Engine::recorder()` hands out the writer with no lock;
+  // this method takes the same `record_m` every other producer takes. B8's
+  // CameraX callback is a fourth thread, so it needs it.
+  //
+  // The record is VALIDATED before it is written (unit quaternion, principal
+  // point inside the image, a relative image name with no ".." — the same
+  // zip-slip class `zip_import()` defends against): an invalid record that
+  // reaches the disk can only be skipped silently at read time.
+  // kInvalidState when no session is recording, kInvalidArgument when the
+  // keyframe is unusable.
+  Status record_keyframe(const Keyframe& kf);
+
+  // --- background processing (A15's queue, wired INT-34) ------------------
+  //
+  // ONE place an app drives every long job through: post-process, colorize,
+  // export, extract-for-transfer, cloud submit (Tech Spec §3.8's three
+  // processing modes). Before this, `JobQueue` was constructible but nothing
+  // owned one, so the Android foreground service and the Qt processing panel
+  // would each have invented their own — and each would have had to wire its
+  // own EventBus for kJobProgress.
+  //
+  // OWNED LAZILY. The queue starts a worker thread in its constructor
+  // (DESIGN.md §2, "(A15) job workers"), and the overwhelming majority of
+  // Engine instances — every unit test, every live capture that never
+  // processes anything — never submit a job. So the first call to jobs()
+  // creates it and every later call returns the same one; an Engine that is
+  // never asked owns no thread. The queue is constructed with THIS engine's
+  // EventBus, which is what makes EventType::kJobProgress arrive on the same
+  // subscription as every other event.
+  //
+  // LIFETIME. Destroyed (and its worker joined) at the very start of
+  // ~Engine, before the recorder, the page store or the bus — a running job
+  // may be publishing progress and appending points to both.
+  //
+  // Thread-safe: the lazy construction is serialized by the engine mutex, and
+  // JobQueue's own methods are safe from any thread.
+  jobs::JobQueue& jobs();
 
   // --- shared services ---------------------------------------------------
   EventBus& events();

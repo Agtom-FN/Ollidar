@@ -204,6 +204,15 @@ if(ENGINE_BUILD_TESTS)
     if(ENGINE_BUILD_TOOLS)
         add_test(NAME engine_cli_selftest COMMAND engine_cli --selftest --quiet)
         add_test(NAME engine_cli_version COMMAND engine_cli --version)
+        # INT-34: the D1 cloud-worker entry point, smoke-tested end to end.
+        # --post-selftest synthesizes a tiny Mid-360 .lscan into a temp dir,
+        # runs the SAME code path `--post <dir> --out <dir>` runs (A7's
+        # pipeline + A9's export, driven through A15's JobQueue behind A1's
+        # JobRunner seam), asserts a real .ply came out, and removes the
+        # directory. No committed binary fixture, and nothing here is
+        # test-only: --post is the flag a worker actually invokes.
+        add_test(NAME engine_cli_post COMMAND engine_cli --post-selftest --quiet)
+        set_tests_properties(engine_cli_post PROPERTIES TIMEOUT 300)
     endif()
 
     # --- optional: Mid-360 end-to-end against the S2 simulator (A3) --------

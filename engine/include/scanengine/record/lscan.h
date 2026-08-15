@@ -233,6 +233,37 @@ class FileRecordWriter final : public RecordWriter {
   void set_profile(const std::string& profile);
   void add_sensor(const std::string& id, const std::string& kind, const std::string& model);
 
+  // ===== INT-34 ADDITION — the ONE thing outside A5 that touches this file ==
+  //
+  // A5 owns record/. INT-34 added exactly this setter and the matching
+  // `"clockOffsets"` key in write_manifest(); nothing else in lscan.h or
+  // lscan.cpp changed, and the change is purely additive (a new optional
+  // field, a new always-present manifest key, no format-version bump, no
+  // behaviour change for a caller that never calls it). If A5 revisits the
+  // manifest, this is the block to reconcile.
+  //
+  // WHY. docs/A11-color.md §8.4: WIZARD §3 wants the estimated camera↔engine
+  // clock offset in manifest.json, keyed per bracket. A11 both PRODUCES it
+  // (`color::ClockSweepResult::offset_ns`) and CONSUMES it
+  // (`color::ColorizeConfig::camera_clock_offset_ns`) — but nothing persisted
+  // it, so a session re-opened on a desktop or in the cloud worker had to
+  // re-run the 8-second sweep it can no longer capture. One number in the
+  // manifest is the whole fix.
+  //
+  // SIGN CONVENTION, the same one clock_sweep.h states and asserts:
+  //     t_engine_ns = t_camera_ns + camera_to_engine_ns
+  //
+  // `bracket` is the mount bracket the calibration belongs to (WIZARD §3 keys
+  // both the mount calibration and the offset by it); "" is stored as
+  // "default". Calling this twice for one bracket replaces that entry.
+  // Emitted as:
+  //     "clockOffsets": {"<bracket>": {"cameraToEngineNs": N, "sigmaNs": S}}
+  // — always present, `{}` when nothing was set, so a consumer can rely on
+  // the key from day one exactly as it can on "mountCalibration"/"crs".
+  void add_clock_offset(const std::string& bracket, std::int64_t camera_to_engine_ns,
+                        double sigma_ns = 0.0);
+  // ===== end INT-34 addition ===============================================
+
   const std::string& path() const;
 
  private:

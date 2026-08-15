@@ -37,23 +37,22 @@ Status run_post_process(const PostProcessParams& params, post::CancelToken* canc
 // ScanError::kUnimplemented immediately if `params.colorizer` is null —
 // never silently no-ops.
 //
-// Two paths, chosen by a dynamic_cast to A11's concrete implementation:
+// UPDATED BY INT-34 (docs/A15-jobs.md §7.6 is now closed). Cancellation and
+// progress used to require a dynamic_cast to A11's concrete
+// color::PointColorizer, and any OTHER Colorizer got two progress ticks and
+// no cancellation at all. `Colorizer` now carries set_cancel_token() and
+// set_progress_fn() itself — additive, defaulted to no-ops — so this function
+// wires both for EVERY implementation, and one that overrides them gets real
+// cancellation with no cast.
 //
-//   color::PointColorizer (color/colorizer.h, landed alongside this task):
-//     real cancellation via `cancel_token` (post::CancelToken — the same
-//     type A7's pipeline uses) and fine-grained progress via
-//     PointColorizer::set_progress_callback(), plus load_keyframes(lscan_dir)
-//     when the caller left `params.keyframes` empty. A kNotFound from
-//     load_keyframes() (no camera for this session — Tech Spec §3.5
-//     "gracefully unavailable") is NOT treated as a job failure: the job
-//     completes with progress 1.0 and no points touched.
-//
-//   any other Colorizer (a test double, or a future second implementation):
-//     the plain abstract-seam sequence — set_extrinsics(), add_keyframe()
-//     per params.keyframes, colorize() — with only two progress ticks (0.0
-//     then 1.0) and NO cancellation: the abstract interface exposes only a
-//     poll-style progress() and no cancel hook, so there is no safe way to
-//     interrupt a blocking colorize() call through it alone.
+// One dynamic_cast survives, and it is a CONVENIENCE rather than a
+// capability: color::PointColorizer knows how to load its own keyframes (and
+// install a FileImageSource) from a .lscan directory when the caller left
+// `params.keyframes` empty. The abstract seam has no such notion, so it stays
+// a cast instead of becoming a virtual nobody else could answer. A kNotFound
+// from load_keyframes() (no camera for this session — Tech Spec §3.5
+// "gracefully unavailable") is NOT treated as a job failure: the job
+// completes with progress 1.0 and no points touched.
 Status run_colorize(const ColorizeParams& params, std::function<void(float)> progress_cb,
                      post::CancelToken* cancel_token);
 

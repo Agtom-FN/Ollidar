@@ -58,14 +58,40 @@ struct PageView {
   std::size_t bytes() const { return static_cast<std::size_t>(count) * sizeof(PointVertex); }
 };
 
+// WHY a page changed (INT-34, closing docs/A11-color.md §8.1).
+//
+// The store's original traffic was append-only, so a PageUpdate could only
+// ever mean "these points are new". Colorization is the one producer that
+// REWRITES points that already exist (§3.5's "RGB into final cloud"), and a
+// renderer that cannot tell the two apart keeps the stale GPU buffer until
+// something else forces a re-upload. This enum is what tells it apart, and it
+// is deliberately an extra FIELD on PageUpdate rather than a second event
+// type: every existing subscriber keeps compiling, keeps its one code path,
+// and — because both kinds carry the same [first, first+count) range — a
+// subscriber that ignores `kind` entirely still does the right thing (it
+// re-uploads the range).
+enum class PageUpdateKind : std::uint8_t {
+  // [first, first+count) are points that did not exist before this update.
+  kAppended = 0,
+  // [first, first+count) already existed; only their r/g/b/a bytes changed.
+  // Positions, bounds, count, page id and time range are all unchanged, so a
+  // consumer that caches geometry only has to re-upload colour.
+  kRecoloured = 1,
+};
+
+const char* to_string(PageUpdateKind k) noexcept;
+
 // What changed in the store. Handed to PageStore subscribers (the renderer,
 // and internally the Engine, which turns it into an event).
 struct PageUpdate {
   PageId page = kInvalidPageId;
   StreamId stream = StreamId::kUnknown;
-  std::uint32_t first = 0;   // index of the first newly written point
-  std::uint32_t count = 0;   // number of newly written points
+  std::uint32_t first = 0;   // index of the first written point
+  std::uint32_t count = 0;   // number of written points
   bool page_created = false; // renderer must allocate GPU buffers for `page`
+  // Defaulted to kAppended so every pre-INT-34 producer and consumer is
+  // unchanged in meaning.
+  PageUpdateKind kind = PageUpdateKind::kAppended;
 };
 
 }  // namespace scanengine

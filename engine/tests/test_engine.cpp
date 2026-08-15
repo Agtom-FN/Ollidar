@@ -5,18 +5,26 @@
 // rather than a module: A8's pushbroom (poses in over the C++ API, world
 // points out on StreamId::kSlamMap) and A6's live SLAM (Mid-360 datagrams in
 // through the kInject backend, a registered map out on the same stream).
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <string>
+#include <system_error>
+#include <thread>
 #include <vector>
 
 #include "doctest.h"
 #include "packet_builder.h"
+#include "scanengine/color/frames_idx.h"
 #include "scanengine/core/engine.h"
 #include "scanengine/drivers/mid360/mid360_packets.h"
+#include "scanengine/jobs/job_queue.h"
+#include "scanengine/record/lscan.h"
 
 using namespace scanengine;
 
@@ -192,7 +200,9 @@ TEST_CASE("engine/create_starts_idle_and_reports_a_version") {
   CHECK(std::string(engine_version_string()).find("scanengine") == 0);
   // Bumped with SCAN_ABI_VERSION, never on its own (DESIGN §6 item 9).
   // 3: INT-29's GNSS/RTK surface (NMEA in, fix/NTRIP/georef out).
-  CHECK(kEngineAbiVersion == 3);
+  // 4: INT-34's colorization + jobs surface (record_keyframe, the colorizer
+  //    handle, the clock sweep, the kJobProgress union case).
+  CHECK(kEngineAbiVersion == 4);
 }
 
 TEST_CASE("engine/session_transitions_are_enforced_and_announced") {
@@ -1122,4 +1132,217 @@ TEST_CASE("engine/the_rtk_trajectory_drives_the_pushbroom_with_no_arcore") {
   REQUIRE(e.set_trajectory_source(TrajectorySource::kExternal).ok());
   CHECK(e.trajectory_source() == TrajectorySource::kExternal);
   REQUIRE(e.stop_session().ok());
+}
+
+// --- INT-34: keyframes in, the job queue, and the manifest's clock offset ---
+
+namespace {
+
+std::string int34_temp_dir(const char* tag) {
+  static std::atomic<long long> counter{0};
+  const auto n = counter.fetch_add(1, std::memory_order_relaxed);
+  const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+  const std::filesystem::path p =
+      std::filesystem::temp_directory_path() /
+      (std::string("engine_int34_") + tag + "_" + std::to_string(now) + "_" + std::to_string(n));
+  std::error_code ec;
+  std::filesystem::create_directories(p, ec);
+  return p.string();
+}
+
+// A keyframe that passes validate_keyframe(): unit quaternion, principal
+// point inside the image, a relative name.
+Keyframe int34_keyframe(std::int64_t t_ns, const char* name) {
+  Keyframe kf;
+  kf.t_mono_ns = t_ns;
+  kf.image_path = std::string("streams/frames/") + name;
+  kf.pose.t_mono_ns = t_ns;
+  kf.pose.position[0] = 1.5;
+  kf.pose.position[1] = -0.25;
+  kf.pose.position[2] = 0.75;
+  kf.pose.orientation[0] = 0.0;
+  kf.pose.orientation[1] = 0.0;
+  kf.pose.orientation[2] = 0.0;
+  kf.pose.orientation[3] = 1.0;
+  kf.pose.quality = PoseQuality::kGood;
+  kf.pose.source = StreamId::kPoseAr;
+  kf.intrinsics.fx = 900.f;
+  kf.intrinsics.fy = 900.f;
+  kf.intrinsics.cx = 640.f;
+  kf.intrinsics.cy = 360.f;
+  kf.intrinsics.width = 1280;
+  kf.intrinsics.height = 720;
+  kf.intrinsics.rolling_shutter_row_time_ns = 27777.f;
+  kf.flags = kKeyframeFlagMotionValid | kKeyframeFlagExposureValid;
+  kf.exposure_duration_ns = 8'000'000;
+  kf.iso = 200.f;
+  kf.angular_rate_rad_s = 0.12f;
+  kf.linear_speed_m_s = 0.4f;
+  kf.image_bytes = 123456;
+  return kf;
+}
+
+}  // namespace
+
+// docs/A11-color.md §3.1 said the capture side needs no new writer: a
+// keyframe is encode_keyframe_record() + write_chunk() against the recorder
+// the app already holds. What it could NOT do for itself is take the record
+// lock, which is why this lives on the Engine (B8's CameraX callback is a
+// fourth recording thread). This case is the whole round trip: record through
+// the Engine, read back with A11's own tolerant reader.
+TEST_CASE("engine/keyframes_recorded_through_the_engine_read_back_as_frames_idx") {
+  const std::string dir = int34_temp_dir("kf") + "/session.lscan";
+  auto engine = Engine::create(small_engine_config());
+  REQUIRE(engine.ok());
+  Engine& e = *engine.value();
+
+  // Refused before a session is recording: there is no file to append to, and
+  // silently dropping the keyframe would lose it.
+  CHECK(e.record_keyframe(int34_keyframe(1000, "kf_0.jpg")).error() ==
+        ScanError::kInvalidState);
+
+  SessionConfig sc;
+  sc.lscan_dir = dir;
+  REQUIRE(e.start_session(sc).ok());
+
+  const std::int64_t t0 = 1'700'000'000'000'000'000LL;
+  for (int i = 0; i < 4; ++i) {
+    REQUIRE(e.record_keyframe(int34_keyframe(t0 + i * 200'000'000LL,
+                                             ("kf_" + std::to_string(i) + ".jpg").c_str()))
+                .ok());
+  }
+
+  // Validation runs BEFORE the write: an unusable record must not reach the
+  // disk, because a reader's only option later is to skip it silently.
+  Keyframe bad = int34_keyframe(t0, "kf_bad.jpg");
+  bad.pose.orientation[3] = 0.5;  // not a unit quaternion
+  CHECK(e.record_keyframe(bad).error() == ScanError::kInvalidArgument);
+  Keyframe escaping = int34_keyframe(t0, "kf_ok.jpg");
+  escaping.image_path = "../../etc/passwd";  // the zip-slip class, in an index
+  CHECK(e.record_keyframe(escaping).error() == ScanError::kInvalidArgument);
+
+  REQUIRE(e.stop_session().ok());
+
+  std::vector<Keyframe> back;
+  color::FrameIndexStats stats;
+  REQUIRE(color::read_frame_index(dir, &back, &stats).ok());
+  CHECK(stats.records == 4);          // the two refusals never landed
+  CHECK(stats.rejected_records == 0);
+  CHECK(stats.crc_mismatch_chunks == 0);
+  CHECK(stats.truncated_tail_chunks == 0);
+  REQUIRE(back.size() == 4);
+  CHECK(back[0].t_mono_ns == t0);
+  CHECK(back[3].t_mono_ns == t0 + 600'000'000LL);
+  // image_path is composed back to root-relative on read (A11 §3.3 item 5).
+  CHECK(back[2].image_path == "streams/frames/kf_2.jpg");
+  CHECK(back[1].intrinsics.width == 1280);
+  CHECK(back[1].intrinsics.rolling_shutter_row_time_ns == doctest::Approx(27777.f));
+  CHECK(back[1].has_motion());
+  CHECK(back[1].angular_rate_rad_s == doctest::Approx(0.12f));
+  CHECK(back[1].image_bytes == 123456);
+  CHECK(back[1].pose.position[0] == doctest::Approx(1.5));
+
+  std::error_code ec;
+  std::filesystem::remove_all(std::filesystem::path(dir).parent_path(), ec);
+}
+
+// A11 §8.4 / WIZARD §3: the wizard's clock offset has to survive the session,
+// or a desktop re-open has to re-run an 8-second sweep it can no longer
+// capture. INT-34's ONE additive edit in A5's manifest writer.
+TEST_CASE("engine/the_manifest_carries_the_camera_clock_offset_per_bracket") {
+  const std::string dir = int34_temp_dir("manifest") + "/session.lscan";
+  {
+    lscan::FileRecordWriter w;
+    REQUIRE(w.open(dir).ok());
+    w.set_profile("survey");
+    w.add_clock_offset("bracket-a", 37'000'000, 210'000.0);
+    w.add_clock_offset("bracket-b", -4'500'000, 90'000.0);
+    // Re-setting one bracket REPLACES it rather than appending a duplicate.
+    w.add_clock_offset("bracket-a", 38'000'000, 205'000.0);
+    REQUIRE(w.close().ok());
+  }
+
+  lscan::FileRecordReader r;
+  REQUIRE(r.open(dir).ok());
+  CHECK(r.manifest_present());
+  CHECK(r.manifest_ok());  // still well-formed JSON with the new key
+  const std::string& m = r.manifest_raw();
+  CHECK(m.find("\"clockOffsets\"") != std::string::npos);
+  CHECK(m.find("\"bracket-a\": {\"cameraToEngineNs\": 38000000") != std::string::npos);
+  CHECK(m.find("\"bracket-b\": {\"cameraToEngineNs\": -4500000") != std::string::npos);
+  CHECK(m.find("37000000") == std::string::npos);  // replaced, not appended
+  // Every pre-existing key is untouched: this addition is additive.
+  CHECK(m.find("\"mountCalibration\": null") != std::string::npos);
+  CHECK(m.find("\"crs\": null") != std::string::npos);
+  CHECK(m.find("\"profile\": \"survey\"") != std::string::npos);
+  (void)r.close();
+
+  // The key is ALWAYS present, `{}` when nothing was set, so a consumer can
+  // rely on it from day one exactly as it can on mountCalibration/crs.
+  const std::string dir2 = int34_temp_dir("manifest2") + "/session.lscan";
+  {
+    lscan::FileRecordWriter w;
+    REQUIRE(w.open(dir2).ok());
+    REQUIRE(w.close().ok());
+  }
+  lscan::FileRecordReader r2;
+  REQUIRE(r2.open(dir2).ok());
+  CHECK(r2.manifest_ok());
+  CHECK(r2.manifest_raw().find("\"clockOffsets\": {}") != std::string::npos);
+  (void)r2.close();
+
+  std::error_code ec;
+  std::filesystem::remove_all(std::filesystem::path(dir).parent_path(), ec);
+  std::filesystem::remove_all(std::filesystem::path(dir2).parent_path(), ec);
+}
+
+// The Engine now owns A15's queue, lazily. "Lazily" is the assertion that
+// matters: every unit test and every live capture that never processes
+// anything must not pay for a worker thread.
+TEST_CASE("engine/the_job_queue_is_owned_lazily_and_publishes_on_the_engines_bus") {
+  auto engine = Engine::create(small_engine_config());
+  REQUIRE(engine.ok());
+  Engine& e = *engine.value();
+
+  jobs::JobQueue& q = e.jobs();
+  CHECK(&q == &e.jobs());  // one queue per engine, not one per call
+  CHECK(q.list().empty());
+
+  // A spec that fails validation at submit() proves the queue is live without
+  // needing a .lscan: JobQueue::submit() checks the required fields before
+  // the worker ever sees the job.
+  jobs::JobSpec bad;
+  bad.kind = jobs::JobKind::kPostProcess;
+  bad.post.lscan_dir = "";
+  CHECK_FALSE(q.submit(bad).ok());
+
+  // Progress republishing goes onto THIS engine's bus, which is what makes
+  // kJobProgress arrive on the same subscription as every other event rather
+  // than on a second one the app had to invent.
+  jobs::JobSpec spec;
+  spec.kind = jobs::JobKind::kPostProcess;
+  spec.post.lscan_dir = int34_temp_dir("nojob");  // a directory with no .lscan in it
+  auto id = q.submit(spec);
+  REQUIRE(id.ok());
+
+  bool saw_progress = false;
+  for (int i = 0; i < 400 && !saw_progress; ++i) {
+    Event ev;
+    while (e.events().poll(e.app_subscription(), &ev)) {
+      if (ev.type == EventType::kJobProgress) {
+        CHECK(ev.payload.job.job_id == id.value());
+        saw_progress = true;
+      }
+    }
+    if (!saw_progress) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  CHECK(saw_progress);
+  // The job itself fails (there is no .lscan there) — the point is the event
+  // path, not the pipeline.
+  const jobs::Job j = q.status(id.value());
+  CHECK((j.state == jobs::JobState::kFailed || j.state == jobs::JobState::kRunning ||
+         j.state == jobs::JobState::kDone));
+
+  std::error_code ec;
+  std::filesystem::remove_all(spec.post.lscan_dir, ec);
 }

@@ -39,9 +39,12 @@
 #include "scanengine/jobs/http_transport.h"
 #include "scanengine/jobs/job_queue.h"
 #include "scanengine/jobs/job_types.h"
+#include "scanengine/jobs/colorize_wiring.h"
 #include "scanengine/jobs/local_runner.h"
 #include "scanengine/jobs/transfer.h"
 #include "scanengine/record/lscan.h"
+#include "scanengine/record/zip.h"
+#include "scanengine/timesync/imu_ingest.h"
 
 using namespace scanengine;
 using namespace scanengine::jobs;
@@ -1059,4 +1062,284 @@ TEST_CASE("cloud/job_queue_reports_no_transport_as_invalid_argument") {
   const Result<std::uint64_t> r = q.submit(spec);
   CHECK_FALSE(r.ok());
   CHECK(r.error() == ScanError::kInvalidArgument);
+}
+
+// ===========================================================================
+// INT-34 — closing docs/A15-jobs.md §7.3, §7.4 and §7.6
+// ===========================================================================
+
+namespace {
+
+// A Colorizer that overrides NOTHING beyond the pure-virtual four. It is the
+// proof that A15 §7.6's two new hooks are additive: this class compiles
+// unchanged against the extended interface and behaves exactly as it did.
+class PlainColorizer final : public Colorizer {
+ public:
+  Status set_extrinsics(const double[16]) override { return kOkStatus; }
+  Status add_keyframe(const Keyframe&) override {
+    ++keyframes;
+    return kOkStatus;
+  }
+  Status colorize(PageStore*) override {
+    ++colorize_calls;
+    return kOkStatus;
+  }
+  float progress() const override { return 1.f; }
+
+  int keyframes = 0;
+  int colorize_calls = 0;
+};
+
+// One that DOES override them — what A11's PointColorizer now is, expressed
+// as a test double so the wiring can be asserted without a scene.
+class CancellableColorizer final : public Colorizer {
+ public:
+  Status set_extrinsics(const double[16]) override { return kOkStatus; }
+  Status add_keyframe(const Keyframe&) override { return kOkStatus; }
+  Status colorize(PageStore*) override {
+    // Block until cancelled — which is only possible because the token
+    // reached us through the abstract seam.
+    for (int i = 0; i < 2000; ++i) {
+      if (post::cancelled(token_)) return ScanError::kCancelled;
+      if (progress_) progress_(static_cast<float>(i) / 2000.f);
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return kOkStatus;
+  }
+  float progress() const override { return 0.f; }
+
+  void set_cancel_token(post::CancelToken* t) override { token_ = t; }
+  void set_progress_fn(ColorizeProgressFn cb) override { progress_ = std::move(cb); }
+
+  post::CancelToken* token_ = nullptr;
+  ColorizeProgressFn progress_;
+};
+
+}  // namespace
+
+TEST_CASE("jobs/the_abstract_colorizer_seam_now_carries_cancel_and_progress") {
+  auto store = std::make_shared<PageStore>();
+  std::vector<PointVertex> pts(8);
+  REQUIRE(store->append(StreamId::kSlamMap, Span<const PointVertex>(pts.data(), pts.size()), 1)
+              .ok());
+
+  // A plain implementation is untouched by the change: the hooks default to
+  // no-ops, so run_colorize() still drives it through the bare seam.
+  PlainColorizer plain;
+  ColorizeParams p;
+  p.colorizer = &plain;
+  p.store = store;
+  p.keyframes.resize(3);
+  for (auto& kf : p.keyframes) kf.pose.orientation[3] = 1.0;
+
+  std::vector<float> ticks;
+  post::CancelToken never;
+  CHECK(run_colorize(p, [&](float f) { ticks.push_back(f); }, &never).ok());
+  CHECK(plain.keyframes == 3);
+  CHECK(plain.colorize_calls == 1);
+  REQUIRE(ticks.size() >= 2);
+  CHECK(ticks.front() == 0.f);
+  CHECK(ticks.back() == 1.f);
+
+  // An implementation that overrides them gets REAL cancellation out of the
+  // same call — which is the whole point of §7.6: before this, only a
+  // dynamic_cast to color::PointColorizer could do it.
+  CancellableColorizer cancellable;
+  ColorizeParams p2;
+  p2.colorizer = &cancellable;
+  p2.store = store;
+
+  post::CancelToken token;
+  std::atomic<int> seen{0};
+  std::thread worker([&] {
+    const Status st = run_colorize(p2, [&](float) { seen.fetch_add(1); }, &token);
+    CHECK(st.error() == ScanError::kCancelled);
+  });
+  while (seen.load() < 3) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  token.cancel();
+  worker.join();
+  CHECK(cancellable.token_ == &token);
+  CHECK(seen.load() > 0);
+
+  // A null colorizer still fails fast rather than silently no-op'ing.
+  ColorizeParams p3;
+  p3.store = store;
+  CHECK(run_colorize(p3, nullptr, nullptr).error() == ScanError::kUnimplemented);
+}
+
+// docs/A15-jobs.md §7.4: zip_export()/zip_import() had no progress or cancel
+// hook, so a kTransferExport job could report only start/end and could only
+// be cancelled either side of a multi-minute blocking call.
+TEST_CASE("transfer/zip_export_and_import_report_progress_and_honour_cancel") {
+  const std::string src = make_temp_dir("zipprog");
+  write_minimal_lscan(src);
+  // A few hundred KiB so the copy loop iterates more than once per file and
+  // the mid-file cancel poll is actually reached.
+  for (int i = 0; i < 3; ++i) {
+    std::ofstream f(src + "/streams/blob" + std::to_string(i) + ".bin", std::ios::binary);
+    const std::vector<char> chunk(200 * 1024, static_cast<char>('a' + i));
+    f.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+  }
+
+  const std::string zip = src + ".zip";
+  std::vector<std::uint64_t> done;
+  std::uint64_t total = 0;
+  REQUIRE(lscan::zip_export(src, zip,
+                            [&](std::uint64_t d, std::uint64_t t, const char* entry) {
+                              CHECK(entry != nullptr);
+                              done.push_back(d);
+                              total = t;
+                            })
+              .ok());
+  REQUIRE(done.size() > 4);  // more than the two end ticks
+  CHECK(done.front() == 0);
+  CHECK(done.back() == total);
+  CHECK(total >= 600u * 1024u);
+  for (std::size_t i = 1; i < done.size(); ++i) CHECK(done[i] >= done[i - 1]);  // monotone
+
+  // Import reports against its own denominator, taken from the central
+  // directory rather than from a read pass.
+  const std::string dest = make_temp_dir("zipprog_out");
+  std::vector<std::uint64_t> idone;
+  std::uint64_t itotal = 0;
+  REQUIRE(lscan::zip_import(zip, dest,
+                            [&](std::uint64_t d, std::uint64_t t, const char*) {
+                              idone.push_back(d);
+                              itotal = t;
+                            })
+              .ok());
+  CHECK(itotal == total);
+  CHECK(idone.back() == itotal);
+
+  // Cancelled before it starts: kCancelled, and NO half-written archive left
+  // on disk — a partial zip looks openable and is not, because its central
+  // directory never gets written.
+  const std::string zip2 = src + "2.zip";
+  lscan::ZipCancelToken pre;
+  pre.request_cancel();
+  CHECK(lscan::zip_export(src, zip2, nullptr, &pre).error() == ScanError::kCancelled);
+  CHECK_FALSE(fs::exists(zip2));
+
+  // Cancelled from INSIDE the copy loop — the case that did not exist before.
+  const std::string zip3 = src + "3.zip";
+  lscan::ZipCancelToken mid;
+  CHECK(lscan::zip_export(src, zip3,
+                          [&](std::uint64_t d, std::uint64_t, const char*) {
+                            if (d > 64 * 1024) mid.request_cancel();
+                          },
+                          &mid)
+            .error() == ScanError::kCancelled);
+  CHECK_FALSE(fs::exists(zip3));
+
+  // Import cancellation LEAVES what it extracted: dest_dir is the caller's
+  // directory and may have had contents, so removing it is not zip_import's
+  // decision (record/zip.h says so).
+  const std::string dest2 = make_temp_dir("zipprog_cancel");
+  lscan::ZipCancelToken icancel;
+  icancel.request_cancel();
+  CHECK(lscan::zip_import(zip, dest2, nullptr, &icancel).error() == ScanError::kCancelled);
+
+  std::error_code ec;
+  fs::remove_all(src, ec);
+  fs::remove_all(dest, ec);
+  fs::remove_all(dest2, ec);
+  fs::remove(zip, ec);
+}
+
+// docs/A11-color.md §8.3's four one-liners, which nothing wired before.
+TEST_CASE("jobs/colorize_wiring_connects_A4_and_A7_to_A11") {
+  TimeSync ts;
+
+  ColorizeWiring w;
+  color::ColorizeConfig base;
+  base.max_incidence_deg = 61.f;  // a caller's own choice must survive
+  base.w_motion = 3.f;
+
+  // Null timesync leaves the REFUSAL in place: A11 §2's fail-closed default
+  // is the whole reason ColorizeConfig::sync_quality starts at kUnknown, and
+  // a wiring helper that quietly assumed kGood would undo it.
+  color::ColorizeConfig c0 = colorize_config_from(w, base);
+  CHECK(c0.sync_quality == SyncQuality::kUnknown);
+  CHECK(c0.max_incidence_deg == 61.f);
+  CHECK(c0.w_motion == 3.f);
+
+  w.timesync = &ts;
+  w.sync_stream = StreamId::kLidarMid360;
+  w.camera_clock_offset_ns = 23'000'000;
+  w.allow_poor_sync = true;
+  color::ColorizeConfig c1 = colorize_config_from(w, base);
+  CHECK(c1.sync_quality == ts.quality(StreamId::kLidarMid360));
+  CHECK(c1.camera_clock_offset_ns == 23'000'000);
+  CHECK(c1.allow_poor_sync);
+  CHECK(c1.max_incidence_deg == 61.f);
+
+  CHECK(wire_colorizer(w, nullptr).error() == ScanError::kInvalidArgument);
+
+  // The motion gate, end to end: a keyframe whose RECORDED rate is slow, an
+  // IMU that says it was fast, and the S6 rule that the caller-supplied
+  // function outranks the recording (A11 §7.3's third behaviour). The
+  // rejection happens in prepare_keyframes, before any image is decoded, so
+  // this needs no JPEG.
+  const std::string dir = make_temp_dir("wiring");
+  const std::int64_t t_kf = 5'000'000'000LL;
+  {
+    color::KeyframeIndexWriter kw;
+    REQUIRE(kw.open(dir).ok());
+    Keyframe kf;
+    kf.t_mono_ns = t_kf;
+    kf.image_path = "streams/frames/kf_0.jpg";
+    kf.pose.t_mono_ns = t_kf;
+    kf.pose.position[2] = -3.0;
+    kf.pose.orientation[3] = 1.0;
+    kf.pose.quality = PoseQuality::kGood;
+    kf.intrinsics.fx = kf.intrinsics.fy = 300.f;
+    kf.intrinsics.cx = 160.f;
+    kf.intrinsics.cy = 120.f;
+    kf.intrinsics.width = 320;
+    kf.intrinsics.height = 240;
+    kf.flags = kKeyframeFlagMotionValid;
+    kf.angular_rate_rad_s = 0.05f;  // ~2.9 deg/s: comfortably inside any gate
+    REQUIRE(kw.add(kf).ok());
+    REQUIRE(kw.close().ok());
+  }
+
+  auto store = std::make_shared<PageStore>();
+  std::vector<PointVertex> pts(16);
+  for (std::size_t i = 0; i < pts.size(); ++i) {
+    pts[i].x = 0.05f * static_cast<float>(i);
+    pts[i].a = 255;
+  }
+  REQUIRE(store->append(StreamId::kSlamMap, Span<const PointVertex>(pts.data(), pts.size()), 1)
+              .ok());
+
+  // 3 rad/s ~= 172 deg/s: past every reject threshold in the S6 table.
+  ImuIngest imu(ts, StreamId::kImu);
+  const float accel[3] = {0.f, 0.f, 9.80665f};
+  for (int i = 0; i < 60; ++i) {
+    const float gyro[3] = {3.0f, 0.f, 0.f};
+    imu.add(t_kf - 200'000'000LL + i * 4'000'000LL,
+            TimePoint{t_kf - 200'000'000LL + i * 4'000'000LL}, gyro, accel);
+  }
+
+  color::ColorizeConfig cc;
+  cc.sync_quality = SyncQuality::kGood;
+  color::PointColorizer pc(cc);
+  REQUIRE(pc.load_keyframes(dir).ok());
+
+  ColorizeWiring w2;
+  w2.imu = &imu;
+  REQUIRE(wire_colorizer(w2, &pc).ok());
+  (void)pc.colorize(store.get());
+  CHECK(pc.stats().keyframes_total == 1);
+  CHECK(pc.stats().keyframes_rejected_motion == 1);  // the IMU outranked the record
+
+  // Without the wiring the recorded 0.05 rad/s stands and the keyframe is
+  // kept — the control that proves it was the IMU doing it.
+  color::PointColorizer pc2(cc);
+  REQUIRE(pc2.load_keyframes(dir).ok());
+  (void)pc2.colorize(store.get());
+  CHECK(pc2.stats().keyframes_rejected_motion == 0);
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
 }

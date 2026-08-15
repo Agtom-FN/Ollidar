@@ -362,6 +362,13 @@ void PointColorizer::set_cancel_token(post::CancelToken* token) {
 void PointColorizer::set_progress_callback(ColorProgressFn cb) {
   impl_->progress_cb = std::move(cb);
 }
+void PointColorizer::set_progress_fn(ColorizeProgressFn cb) {
+  if (!cb) {
+    impl_->progress_cb = nullptr;
+    return;
+  }
+  impl_->progress_cb = [cb = std::move(cb)](const ColorProgress& p) { cb(p.fraction); };
+}
 void PointColorizer::cancel() { impl_->own_token.cancel(); }
 
 float PointColorizer::progress() const { return impl_->progress.load(std::memory_order_relaxed); }
@@ -384,25 +391,44 @@ Status PointColorizer::colorize(PageStore* points) {
   if (points == nullptr) {
     return set_last_error(ScanError::kInvalidArgument, "color: colorize(null store)");
   }
+  // INT-34 closed docs/A11-color.md §8.1: the store now hands out a writable
+  // pointer for exactly this producer, so there is no const_cast here any
+  // more. `page_data_mutable()` addresses [0, count) of a buffer that never
+  // reallocates, and this pass writes only r/g/b (and optionally a) — never
+  // x/y/z, which is what keeps the page's incrementally-maintained bounding
+  // box valid.
+  struct Touched {
+    PageId id;
+    std::uint32_t count;
+  };
+  std::vector<Touched> touched;
   Impl::PointRefs refs;
   for (const PageId id : points->page_ids()) {
     const PageView pv = points->page_view(id);
     if (!pv.valid() || pv.count == 0) continue;
-    // The store hands out const views because its normal traffic is
-    // append-then-render. Colorization is the one producer that REWRITES
-    // points that already exist, and §3.5 defines it as exactly that ("RGB
-    // into final cloud"). The buffer is non-const inside the store and never
-    // reallocates, so writing through the view is defined; only the r/g/b
-    // (and optionally a) bytes change, so no bound, count, page id or time
-    // range is invalidated. docs/A11-color.md §7 asks cloud/ for a
-    // `page_data_mutable()` accessor to make this explicit rather than
-    // implicit.
-    refs.add(const_cast<PointVertex*>(pv.data), pv.count);
+    PointVertex* data = points->page_data_mutable(id);
+    if (data == nullptr) continue;  // cleared between the two calls
+    refs.add(data, pv.count);
+    touched.push_back(Touched{id, pv.count});
   }
   if (refs.total == 0) {
     return set_last_error(ScanError::kInvalidArgument, "color: the page store holds no points");
   }
-  return impl_->run(refs);
+  const Status st = impl_->run(refs);
+  if (!st.ok()) return st;
+
+  // Tell the renderer the colours moved. Without this a live viewer keeps the
+  // pre-colorization GPU buffer until something else forces a re-upload.
+  // Failures here are not the colorization's failure — the points ARE
+  // coloured — so they are logged, not propagated.
+  for (const Touched& t : touched) {
+    const Status ns = points->notify_recoloured(t.id, 0, t.count);
+    if (!ns.ok()) {
+      SCAN_LOG_WARN(kMod, "color: page %u recolour notification failed: %s", t.id,
+                    error_str(ns.error()));
+    }
+  }
+  return kOkStatus;
 }
 
 // ---------------------------------------------------------------------------

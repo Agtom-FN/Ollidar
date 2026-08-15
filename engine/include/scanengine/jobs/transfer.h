@@ -24,20 +24,19 @@ namespace scanengine {
 namespace jobs {
 
 // Export side: runs a kTransferExport JobSpec. `progress_cb`/`cancelled`
-// follow the same cooperative shape as the rest of jobs/, but note the
-// limitation this function documents rather than works around: A5's
-// zip_export()/zip_import() (record/zip.h — not this task's file) take
-// neither a progress callback nor a cancel token. So:
-//   * progress is reported only at the two ends (0.0 at start, 1.0 on
-//     success) plus a midpoint tick after staging when `include_results` is
-//     false and a staging copy had to happen first;
-//   * cancellation is honoured only BETWEEN the staging copy and the zip
-//     call, and after the (uncancellable) zip_export() call returns — at
-//     which point, if cancellation was requested meanwhile, the produced
-//     zip is deleted and kCancelled is returned rather than left on disk
-//     half-intended.
-// This is flagged as an integration item for A5/A15 in docs/A15-jobs.md:
-// the real fix is an optional cancel-poll parameter on zip_export() itself.
+// follow the same cooperative shape as the rest of jobs/.
+//
+// UPDATED BY INT-34 (docs/A15-jobs.md §7.4 is now closed). This function used
+// to document a real gap: A5's zip_export() took neither a progress callback
+// nor a cancel token, so a kTransferExport job reported only start/end and
+// could be cancelled only either side of a blocking multi-minute call.
+// record/zip.h now takes both (ZipProgressFn + ZipCancelToken), and this
+// function passes them through, so:
+//   * progress is continuous over the zip's payload bytes, mapped onto
+//     0.0..1.0 (or 0.3..1.0 when `include_results` is false and a staging
+//     copy had to happen first), and stays monotone across the whole job;
+//   * cancellation is polled from INSIDE the copy loop, and the half-written
+//     zip is removed rather than left on disk looking openable.
 Status run_transfer_export(const TransferExportParams& params, std::function<void(float)> progress_cb,
                             std::function<bool()> cancelled);
 

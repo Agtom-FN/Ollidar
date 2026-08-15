@@ -20,7 +20,8 @@ engine/
   include/scanengine/   public headers (this is the API surface)
   src/                  implementations, mirroring include/ 1:1
   tests/                doctest suite + the S1 packet builder + a C smoke test
-  tools/engine_cli.cpp  headless CLI: --selftest, --synth, --replay
+  tools/engine_cli.cpp  headless CLI: --selftest, --synth, --replay, --post
+                        (--post is workstream D1's cloud-worker entry point)
   third_party/doctest/  vendored single-header test framework
 ```
 
@@ -31,12 +32,18 @@ engine/
 | `drivers/d6/` | `d6_parser.h/.cpp` `commands.h` `d6_driver.h/.cpp` | A1 / A2 / A8 | parser = the finished S1 artefact, copied in; driver integrates it end to end |
 | `drivers/mid360/` | `mid360_driver.h/.cpp` | **A3** | interface + stub; `start()` returns `kUnimplemented` |
 | `timesync/` | `clock.h` `offset_estimator.h/.cpp` | A1 / A4 | clock complete (S7 backends); `TimeSync` registry + passthrough estimator |
-| `record/` | `lscan.h/.cpp` | A1 / A5 | **format constants, CRC32 and framing codecs are real and tested**; writer is `NullRecordWriter` |
-| `cloud/` | `point_page.h` `page_store.h/.cpp` | A1 / A14 | complete — the render-facing contract |
+| `record/` | `lscan.h/.cpp` `replay.h/.cpp` `zip.h/.cpp` | A1 / A5 | **implemented (A5)** — format constants, CRC32, framing, the on-disk writer/reader, replay, and the `.lscan.zip` transfer bundle (INT-34 added the zip's optional progress callback + cancel token, and the manifest's `clockOffsets` key) |
+| `cloud/` | `point_page.h` `page_store.h/.cpp` `display_params.h/.cpp` | A1 / A14 | complete — the render-facing contract. INT-34 added `page_data_mutable()` + `notify_recoloured()` and `PageUpdate::kind`: colorization is the one producer that rewrites points that already exist, and a renderer has to be able to tell a recolour from an append (docs/A11-color.md §8.1) |
 | `poses/` | `pose_source.h` `pose_interpolator.h` `se3.h` `external_pose_source.h/.cpp` | A1 / **A8** / A10 | **implemented (A8)** — SE(3) vocabulary, gated interpolation, the ARCore/RTK/replay ingestion ring |
 | `slam/pushbroom/` | `pushbroom_assembler.h/.cpp` `mount_calibration.h/.cpp` | **A8** | **implemented** — D6 profiles × trajectory × mount extrinsic → world points; the S6 planar-checkerboard solver with the split-half gate |
 | `slam/` (live) | `lio.h` `eskf.h` `ivox.h` + `src/slam/*.cpp` | **A6** | **implemented** — ESKF lidar-inertial odometry, incremental voxel map, `LioPoseSource` |
-| `slam/` (seams) `gnss/` `color/` `plan/` `merge/` `export/` `jobs/` | one header each | A7–A15 | interface seams with the spike findings each owner must honour written into the header |
+| `gnss/` | `gnss.h` `nmea.h` `rtcm3.h` `ntrip_client.h` `gnss_source.h` `georef.h` `crs.h` + `src/gnss/*.cpp` | **A10** | **implemented** — NMEA/RTCM3 parsing, the NTRIP client, the fix timeline, the local→global fusion and the CRS seam (wired INT-29) |
+| `slam/post/` | `post_pipeline.h` `pose_graph.h` `loop_closure.h` `scan_context.h` `cloud_filter.h` `progress.h` + `src/slam/post/*.cpp` | **A7** | **implemented** — the cancellable, progress-reported offline pipeline |
+| `export/` | `exporter.h` `las_constants.h` + `src/export/*.cpp` | **A9** | **implemented** — PLY / LAS 1.4 / PCD |
+| `color/` | `colorize.h` `frames_idx.h` `image_source.h` `clock_sweep.h` `colorizer.h` + `src/color/*.cpp` | **A11** | **implemented** — the `frames.idx` format, JPEG/PNG decode (vendored stb_image), the wizard's clock sweep, and `PointColorizer` (best-view selection, z-buffer occlusion, rolling shutter, the motion gate). INT-34 added `set_cancel_token()`/`set_progress_fn()` to the **abstract** `Colorizer` seam (docs/A15-jobs.md §7.6) |
+| `plan/` | `floor_plan.h` `occupancy.h` `plan_model.h` `plan_editor.h` `plan_writers.h` + `src/plan/*.cpp` | **A12** | **implemented** — occupancy, wall extraction, rooms, DXF/PDF |
+| `jobs/` | `job.h` (A1 seam) `job_types.h` `job_queue.h` `local_runner.h` `transfer.h` `cloud_submit.h` `http_transport.h` + `src/jobs/*.cpp` | **A15** / INT-34 | **implemented** — the five job kinds, one worker thread with priorities and cancellation, the cloud REST client and the transfer bundle. INT-34 added `job_runner_adapter.h` (A1's `JobRunner` seam over the queue, docs/A15-jobs.md §7.3) and `colorize_wiring.h` (docs/A11-color.md §8.3's A4/A7 → A11 one-liners) |
+| `merge/` | `merge.h` (+ `src/merge/` in flight) | A13 | **A13 was mid-flight while INT-34 landed** — this row is A13's to write, not INT-34's. |
 
 Rule: **`src/<module>/x.cpp` implements `include/scanengine/<module>/x.h`.** Nothing in
 `src/` is included across module boundaries; modules talk through public headers only.
@@ -50,9 +57,13 @@ original `d6::` namespace so the S1 files stay byte-identical to the spike.
 
 **The engine owns no threads of its own.** That is a deliberate starting point, not an
 oversight: every thread that will exist gets introduced by the task that needs it, and
-must be documented here when it lands. The `Engine` itself still creates none — the one
-row below that it can *cause* to exist belongs to `LioOdometry`, which the Engine
-constructs but does not drive.
+must be documented here when it lands.
+
+The `Engine` can now *cause* three threads to exist, and drives none of them: A6's
+`LioOdometry` (only with `LioConfig::internal_thread`), A10's `TcpNtripClient` receive
+thread (only between `connect()` and `disconnect()`), and — since INT-34 — A15's
+`jobs::JobQueue` worker, created **lazily on the first `Engine::jobs()` call**, so an
+Engine that never processes anything still owns nothing.
 
 | Thread | Owner | What runs on it |
 | --- | --- | --- |
@@ -64,7 +75,7 @@ constructs but does not drive.
 | `UdpSource` receive *(A3, landed)* | `UdpSource` | raw-UDP backend only; one per bound port; blocking `recvfrom` with 100 ms timeout so `stop()` is prompt. Lock order `flush_m_` → `m_`; `PageStore::append` publishes with **no** driver lock held (see docs/A3-mid360-driver.md §6). |
 | LIO odometry *(A6, landed)* | `LioOdometry` (only when `LioConfig::internal_thread`) | Drains the IMU/point queues, propagates, undistorts, runs the iterated update, inserts into the voxel map, appends to the `PageStore`, publishes the pose. One per instance; ~10 Hz scan-to-map, ≤ 2 big cores on Android. Lock order `proc_m` → `in_m`; `LioPoseSource` callbacks fire **outside** its lock, so a subscriber cannot deadlock the odometry from one. With `internal_thread = false` (the default, and what every test uses) the pipeline runs inline on the caller's thread — the engine's default posture. |
 | NTRIP receive *(A10, landed; wired INT-29)* | `TcpNtripClient` | blocking `recv` with a 1 s socket timeout so `disconnect()` is prompt; RTCM3 framing; the rover-write callback; periodic GGA upload; stall detection; reconnect with jittered exponential backoff. One per client, and the Engine owns exactly one client — but the thread exists only between `ntrip().connect()` and `disconnect()`, not for the Engine's lifetime. The rover callback runs **on this thread**, with **no client lock held**, so a slow Bluetooth write cannot deadlock the client; it must still be quick and must not re-enter the client (the general callback rule). |
-| *(A15)* job workers | A15 | post pipeline, exports, uploads. |
+| Job worker *(A15, landed; owned by the Engine since INT-34)* | `jobs::JobQueue` | **One** thread per queue, started in the constructor and joined in the destructor. Runs **post-processing, colorization, point export, extract-for-transfer and cloud submit** — every job kind, strictly one at a time, highest `JobSpec::priority` first and FIFO within a level. Cancellation is cooperative per kind (`post::CancelToken`, `ExportCancelToken`, `lscan::ZipCancelToken` since INT-34, an atomic between upload chunks) and the job still finalizes from this thread once its `run()` unwinds. Progress republishes as `EventType::kJobProgress` on the queue's `EventBus`. Completion callbacks fire **on this thread** — quick, no re-entry, the same rule `EventBus` callbacks and `PageStore` subscribers follow. `Engine::jobs()` creates the one queue an app should use, **lazily**, so an Engine that never processes anything owns no thread; `~Engine` destroys it first, before the recorder, the page store and the bus. See `docs/A15-jobs.md` §3 and `docs/INT34-wiring.md`. |
 
 ### Where the Engine's own consumers run (INT-24)
 
@@ -203,7 +214,18 @@ push_serial_bytes · poll_event/wait_event/set_event_callback ·
 page_count/page_id_at/get_point_page/total_points · last_error/error_str/version/abi ·
 set_log_callback · **push_pose/pose_at · set_mount_extrinsics/pushbroom_enable/
 pushbroom_flush/pushbroom_stats · scan_mount_calib_create/add_observation/solve/destroy**
-(ABI 2, INT-24).
+(ABI 2, INT-24) · **push_nmea/last_fix/gnss_stats/georef_solution/crs_wkt/crs_epsg ·
+scan_ntrip_\*** (ABI 3, INT-29) · **scan_engine_record_keyframe · scan_colorizer_\*
+(create/destroy/load_keyframes/set_extrinsics/set_progress_callback/run/cancel/progress/stats)
+· scan_clock_sweep_estimate** (ABI 4, INT-34).
+
+ABI 4 also filled two payload gaps rather than adding a call: `scan_event.payload.job`
+gives `SCAN_EVENT_JOB_PROGRESS` a real union case (it had been crossing as zeroed opaque
+bytes since A1 declared the type — `docs/A15-jobs.md` §7.1), and
+`scan_event.payload.points.update_kind` distinguishes a recolour from an append
+(`docs/A11-color.md` §8.1). **There is deliberately no C surface for the job queue at
+ABI 4:** an app drives it through `Engine::jobs()` in C++, and the `kJobProgress` event
+is what a JNI consumer subscribes to. See `docs/INT34-wiring.md`.
 
 The A8 additions follow the same rules and add one convention of their own: **a function
 that reports a gate always writes the gate, including when it returns an error.**
