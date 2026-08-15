@@ -599,14 +599,17 @@ void CaptureWindow::onStop() {
 
 void CaptureWindow::onSerialReadyRead() {
   if (!serial_ || !host_ || device_ == scanengine::kInvalidDeviceId || !device_is_d6_) return;
-  const QByteArray data = serial_->readAll();
-  if (data.isEmpty()) return;
+  // NOT named `data`: QWidget has a public member `QWidgetData* data`, and
+  // MSVC /W4 flags the shadowing (C4458) where clang -Wall -Wextra does not.
+  // The one desktop-side warning the first Windows CI build found.
+  const QByteArray bytes = serial_->readAll();
+  if (bytes.isEmpty()) return;
   // Arrival-stamped by the engine (TimePoint{0} = "stamp now"): the app has no
   // better stamp than arrival for a USB serial device (timesync/clock.h).
   const auto st = host_->engine()->push_serial_bytes(
       device_,
-      scanengine::ByteSpan(reinterpret_cast<const std::uint8_t*>(data.constData()),
-                           std::size_t(data.size())));
+      scanengine::ByteSpan(reinterpret_cast<const std::uint8_t*>(bytes.constData()),
+                           std::size_t(bytes.size())));
   if (!st.ok() && st.error() != scanengine::ScanError::kAgain) {
     log(QString("push_serial_bytes: %1").arg(scanengine::error_str(st.error())));
   }

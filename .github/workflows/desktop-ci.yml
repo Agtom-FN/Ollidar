@@ -1,0 +1,383 @@
+name: desktop-ci
+
+# The cross-platform leg of spike S3.
+#
+# S3's exit criterion was "Filament embedded in a Qt window on macOS **and**
+# Windows or Linux". Only the macOS half was ever met: engine-ci.yml's
+# `desktop-build` job builds desktop/ on macos-latest, and
+# desktop/NOTES.md §6 records that as the one measured platform.
+# src/render/NativeSurface_win.cpp, NativeSurface_linux.cpp and
+# DisplayLink_generic.cpp were written by C1 from S3 REPORT.md §8's analysis and
+# had **never been compiled by anyone** — NOTES.md said so in three places.
+#
+# This workflow compiles them. What each job proves, and what it deliberately
+# does not, is spelled out in the job's own header and in NOTES.md §14.
+#
+# It is a separate workflow from engine-ci.yml on purpose: the desktop app has a
+# different dependency shape (Qt binaries + a ~790 MB Filament release) and a
+# different failure mode from the engine's five-target matrix, and mixing them
+# makes a red engine-ci ambiguous.
+
+on:
+  push:
+    # main: guard the desktop against a regression from either side of the seam.
+    # ci/**: the iteration branch this workflow was developed on — pushing to it
+    # is how the Windows/Linux compilers get asked a question at all, since
+    # neither platform exists on the development machine.
+    branches:
+      - main
+      - "ci/**"
+    paths:
+      - "desktop/**"
+      - "engine/**"
+      - ".github/workflows/desktop-ci.yml"
+  pull_request:
+    paths:
+      - "desktop/**"
+      - "engine/**"
+      - ".github/workflows/desktop-ci.yml"
+  workflow_dispatch: {}
+
+env:
+  # Both pins are load-bearing.
+  #
+  # FILAMENT_VERSION: S3 found Filament's own documentation wrong in two places
+  # in this very release (the NSView-vs-CAMetalLayer swapchain handle, and a
+  # README link list missing libzstd, which libfilament hard-needs), so the
+  # version is not fungible. REPORT.md §9 caveat 2.
+  #
+  # QT_VERSION: the exact Qt every macOS measurement in NOTES.md §6/§8/§11/§13
+  # was taken against. Using the distro's Qt on Linux instead would have made a
+  # Linux-only compile error indistinguishable from a Qt-version difference.
+  # (The Windows job cannot have it — see QT_VERSION_WINDOWS below.)
+  FILAMENT_VERSION: v1.75.0
+  QT_VERSION: 6.11.1
+
+  # Qt 6.10.3 on Windows, 6.11.1 everywhere else, and this is a finding rather
+  # than a preference. Measured against the Qt CDN on 2026-08-16:
+  #
+  #   linux_x64/desktop/qt6_6111/  contains a nested qt6_6111/ (with Updates.xml)
+  #   windows_x86/desktop/qt6_6111/ contains ONLY per-arch folders —
+  #                                 qt6_6111_msvc2022_64/, qt6_6111_mingw/, ...
+  #   windows_x86/desktop/qt6_6103/ still has the nested qt6_6103/
+  #
+  # i.e. Qt split the Windows repository per-architecture at 6.11 and
+  # aqtinstall 3.3.0 (the newest on PyPI, and what install-qt-action pins with
+  # `aqtversion: ==3.3.*`) has not followed: it composes
+  # `qt6_6111/qt6_6111/Updates.xml`, gets a 404, and reports
+  # "Failed to locate XML data for Qt version '6.11.1'". Reproduced both in CI
+  # and locally with aqt 3.3.0. There is no aqt version that fixes it yet, and
+  # the Qt online installer needs an interactive account login, so the choice is
+  # 6.10.x on Windows or no official Qt on Windows at all. Revisit when
+  # aqtinstall > 3.3.0 ships.
+  QT_VERSION_WINDOWS: 6.10.3
+
+jobs:
+  # =====================================================================
+  # Windows: a REAL LINK.
+  #
+  # The Windows Filament release is MSVC-built against the /MD CRT, which is
+  # what CMake's Release config uses, so there is no standard-library ABI
+  # question here the way there is on Linux — this job builds and links the
+  # whole app, engine included, and the artifact is a lidarscan.exe.
+  #
+  # It does NOT run it: NativeSurface_win.cpp hands Filament an HWND for a
+  # Vulkan swapchain, and a GitHub runner has no GPU and no interactive session
+  # to present to. Everything in NOTES.md §3.1's Windows column below the
+  # "compiles" line — resize under VK_ERROR_OUT_OF_DATE_KHR, gl_PointSize
+  # clamping, the timer render clock — is still unproven.
+  # =====================================================================
+  windows:
+    name: windows-latest / desktop (compile + link)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable MSVC dev command prompt (x64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - uses: lukka/get-cmake@latest
+
+      - name: Install Ninja
+        run: choco install ninja -y --no-progress
+
+      - name: Install Qt ${{ env.QT_VERSION_WINDOWS }}
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION_WINDOWS }}
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          # qtserialport is an add-on, not part of qtbase: CaptureWindow.cpp
+          # opens a real QSerialPort for the COIN-D6.
+          modules: qtserialport
+          cache: true
+
+      # ~790 MB compressed. Cached on the version tag, which is pinned, so this
+      # downloads once per repo per Filament bump.
+      - name: Cache Filament
+        id: cache-filament
+        uses: actions/cache@v4
+        with:
+          path: desktop/third_party/filament
+          key: filament-${{ env.FILAMENT_VERSION }}-windows-x64
+
+      - name: Fetch Filament ${{ env.FILAMENT_VERSION }}
+        if: steps.cache-filament.outputs.cache-hit != 'true'
+        working-directory: desktop
+        shell: pwsh
+        run: ./tools/fetch_filament.ps1 -Version $env:FILAMENT_VERSION
+
+      # ENGINE_FETCH_EIGEN=ON, not vcpkg: engine-ci.yml's own Windows jobs
+      # document why (vcpkg's eigen3 port probes for a Fortran compiler that the
+      # GitHub Windows image does not ship, and Strawberry Perl's broken gfortran
+      # on PATH turns the probe into a hard configure failure).
+      - name: Configure
+        working-directory: desktop
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DENGINE_FETCH_EIGEN=ON
+
+      - name: Build
+        working-directory: desktop
+        run: cmake --build build
+
+      - name: What was produced
+        working-directory: desktop
+        shell: pwsh
+        run: |
+          Get-Item build/lidarscan.exe | Format-List Name,Length,LastWriteTime
+          Get-Item build/points.filamat | Format-List Name,Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lidarscan-windows-x64-unpackaged
+          path: |
+            desktop/build/lidarscan.exe
+            desktop/build/points.filamat
+          if-no-files-found: error
+
+  # =====================================================================
+  # Linux: COMPILE-ONLY, and the reason is a measured ABI fact, not caution.
+  #
+  # filament-v1.75.0-linux.tgz is built against **libc++**: its libutils.a
+  # exports 171 distinct `_ZNSt3__1...` (i.e. std::__1::) symbols. Qt's own
+  # Linux binaries and every g++ on the runner are **libstdc++**
+  # (std::__cxx11::). Those two standard libraries do not share an ABI, and
+  # anywhere Filament's headers put a std:: type in a signature the two sides
+  # mangle it differently — an undefined symbol at link, not a diagnosable
+  # compile error.
+  #
+  # The documented fix is to build Filament from source against libstdc++.
+  # That is a ~40 minute from-scratch build (C8 measured the much smaller
+  # x86_64-only macOS slice at 2 minutes of compile after a 3 minute clone,
+  # with most of the tree already prebuilt) and it belongs in the Linux
+  # packaging job, not in a per-push compile gate.
+  #
+  # So this job asks the question it CAN answer honestly:
+  #   does every desktop translation unit — including NativeSurface_linux.cpp
+  #   and DisplayLink_generic.cpp, which no compiler had ever seen — compile
+  #   on Linux, against the real Filament headers, the real engine and a real
+  #   Qt, with -Wall -Wextra?
+  # LIDARSCAN_COMPILE_ONLY=ON builds them all into an object library and stops
+  # before the executable link. The engine, engine_cli and points.filamat are
+  # all still fully built and linked, so the Linux leg of the *engine* and of
+  # matc is proven end to end; only the app's final link is out of scope.
+  # NOTES.md §14 states this in the same words.
+  #
+  # MEASURED AFTERWARDS, and better than expected: Probe A at the end of this
+  # job shows all 69 unresolved symbols are standard-library, not one of them
+  # crossing the app/Filament boundary; Probe B then links a real ELF
+  # executable by supplying libc++ alongside libstdc++. So the app's *symbol*
+  # graph is portable to Linux today. A binary carrying two C++ runtimes is
+  # still not a shippable Linux build — nothing here runs it — which is why
+  # the compile-only build, not Probe B, is what this job is named after.
+  # =====================================================================
+  linux:
+    name: ubuntu-latest / desktop (compiles; links only with libc++ bridged)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: lukka/get-cmake@latest
+
+      # The X11/xcb/GL set is what Qt 6's own binaries need to be *found* and
+      # linked against (Qt6GuiConfig pulls in GL), plus the headers
+      # NativeSurface_linux.cpp's X11 path documents. libvulkan-dev is here
+      # because the surface this file exists to create is a VkSurfaceKHR.
+      - name: Toolchain and Qt platform dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build g++ \
+            libgl1-mesa-dev libglu1-mesa-dev libvulkan-dev \
+            libx11-dev libx11-xcb-dev libxcb1-dev libxkbcommon-dev \
+            libxkbcommon-x11-dev libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
+            libxcb-xinerama0 libxcb-xkb1 libegl1-mesa-dev \
+            libc++-dev libc++abi-dev
+          # libc++: NOT to build with, only so the link probe at the end of this
+          # job can try resolving the Filament prebuilt's libc++ runtime symbols.
+          # See that step.
+
+      - name: Install Qt ${{ env.QT_VERSION }}
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          modules: qtserialport
+          cache: true
+
+      - name: Cache Filament
+        id: cache-filament
+        uses: actions/cache@v4
+        with:
+          path: desktop/third_party/filament
+          key: filament-${{ env.FILAMENT_VERSION }}-linux-x64
+
+      - name: Fetch Filament ${{ env.FILAMENT_VERSION }}
+        if: steps.cache-filament.outputs.cache-hit != 'true'
+        working-directory: desktop
+        run: ./tools/fetch_filament.sh "$FILAMENT_VERSION"
+
+      - name: Configure
+        working-directory: desktop
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DENGINE_FETCH_EIGEN=ON
+          -DLIDARSCAN_COMPILE_ONLY=ON
+
+      - name: Build (every desktop TU + the engine + matc)
+        working-directory: desktop
+        run: cmake --build build
+
+      # Proof, not assertion: name the object files that came out. If a source
+      # silently stopped being compiled, this step is where it shows up.
+      - name: What was produced
+        working-directory: desktop
+        run: |
+          set -euo pipefail
+          echo "--- desktop objects ---"
+          find build -name '*.o' -path '*lidarscan*' | sort
+          echo "--- object count ---"
+          find build -name '*.o' -path '*lidarscan*' | wc -l
+          echo "--- the two files that had never been compiled anywhere ---"
+          find build -name 'NativeSurface_linux.cpp.o' -o -name 'DisplayLink_generic.cpp.o'
+          echo "--- engine + material ---"
+          ls -la build/points.filamat
+          ls -la build/engine/libscanengine.a build/engine/engine_cli
+
+      - name: Engine CLI selftest (the engine half DOES link and run here)
+        working-directory: desktop
+        run: ./build/engine/engine_cli --selftest
+
+      # ---------------------------------------------------------------
+      # PROBE A — the libc++/libstdc++ claim above, MEASURED not asserted.
+      #
+      # Configure a second tree with the compile-only switch OFF and try the
+      # executable link exactly as a naive `cmake --build` would. It is allowed
+      # to fail; that is the point. First run (2026-08-16) failed with
+      # 27 distinct undefined symbols, EVERY ONE of them in the `std::__1::`
+      # (libc++) namespace and every one from libutils.a / libfilament.a.
+      # That measurement is what NOTES.md §14 quotes, and re-running it every
+      # push is what stops it becoming a prediction that quietly rots.
+      # ---------------------------------------------------------------
+      - name: "Probe A: plain executable link (expected to fail)"
+        id: linkprobe
+        continue-on-error: true
+        working-directory: desktop
+        run: |
+          set -o pipefail
+          cmake -S . -B build-link -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DENGINE_FETCH_EIGEN=ON \
+            -DLIDARSCAN_COMPILE_ONLY=OFF > /dev/null
+          cmake --build build-link 2>&1 | tail -n 40
+
+      - name: "Probe A: classify the undefined symbols"
+        if: always()
+        working-directory: desktop
+        continue-on-error: true
+        run: |
+          cmake --build build-link 2>&1 \
+            | grep -oE "undefined reference to \`[^']*'" \
+            | sed "s/.*\`//;s/'\$//" | sort -u > /tmp/undef.txt || true
+          total=$(wc -l < /tmp/undef.txt)
+          # Two forms of "this is libc++, not our code":
+          #   std::__1::...   the inline ABI namespace libc++ versions everything with
+          #   std::<the ABI-stable subset libc++abi owns un-namespaced> —
+          #                   exception_ptr, rethrow_exception, bad_optional_access,
+          #                   bad_variant_access, bad_array_new_length
+          # Anything OUTSIDE both is a symbol our own code or Qt failed to
+          # provide, i.e. a genuine app/Filament ABI boundary problem rather
+          # than a missing standard library.
+          grep -vE 'std::__1::|std::(exception_ptr|rethrow_exception|bad_optional_access|bad_variant_access|bad_array_new_length)' \
+            /tmp/undef.txt > /tmp/undef-notlibcxx.txt || true
+          echo "distinct undefined symbols: $total"
+          echo "of those, libc++ runtime: $(( total - $(wc -l < /tmp/undef-notlibcxx.txt) ))"
+          echo "NOT libc++ (a real app/Filament ABI boundary problem):"
+          cat /tmp/undef-notlibcxx.txt
+          test -s /tmp/undef-notlibcxx.txt || echo "  (none — every unresolved symbol is standard-library, not ours)"
+
+      # ---------------------------------------------------------------
+      # PROBE B — does adding libc++ alongside libstdc++ complete the link?
+      #
+      # Probe A's symbols are all libc++ *runtime internals* (mutex::lock,
+      # condition_variable::notify_one, __thread_local_data) — not a single
+      # std:: type crossing the app/Filament call boundary. If that stays true,
+      # -lc++ -lc++abi should satisfy them and the binary should link.
+      #
+      # A LINKED BINARY IS NOT A SHIPPABLE ONE. Two C++ runtimes in one process
+      # means two allocators, two typeinfo hierarchies and two exception
+      # tables, and nothing here runs the result. This probe answers exactly
+      # one question — "does it resolve?" — and NOTES.md §14 records it as
+      # exactly that, not as a Linux port.
+      #
+      # CMAKE_CXX_STANDARD_LIBRARIES, not CMAKE_EXE_LINKER_FLAGS: the latter
+      # goes in FRONT of the objects and archives on the link line, and Ubuntu
+      # links with --as-needed, so a shared libc++ listed before anything that
+      # references it is dropped outright. Measured: the first attempt used
+      # EXE_LINKER_FLAGS and libc++'s iostream/locale symbols stayed
+      # unresolved. STANDARD_LIBRARIES is appended at the end, where static and
+      # as-needed archive semantics can actually pull members out.
+      # ---------------------------------------------------------------
+      # NOT continue-on-error: this went green on 2026-08-16 (a real ELF 64-bit
+      # PIE executable with libc++.so.1, libc++abi.so.1 AND libstdc++.so.6 in
+      # its NEEDED list), so from here on it is a regression gate. If it ever
+      # goes red, something started passing a std:: type across the
+      # app/Filament boundary and Probe A's classifier will name it.
+      - name: "Probe B: link with libc++ alongside libstdc++"
+        id: linkprobe2
+        working-directory: desktop
+        run: |
+          set -o pipefail
+          cmake -S . -B build-link2 -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DENGINE_FETCH_EIGEN=ON \
+            -DLIDARSCAN_COMPILE_ONLY=OFF \
+            -DCMAKE_CXX_STANDARD_LIBRARIES="-lc++ -lc++abi" > /dev/null
+          cmake --build build-link2 2>&1 | tail -n 40
+          ls -la build-link2/lidarscan
+          file build-link2/lidarscan
+          echo "--- both runtimes present in the binary's NEEDED list? ---"
+          readelf -d build-link2/lidarscan | grep -E 'NEEDED.*(stdc\+\+|c\+\+)' || true
+
+      - name: "Probe verdict"
+        if: always()
+        run: |
+          {
+            echo "### Linux link probes"
+            echo ""
+            echo "| probe | outcome |"
+            echo "| --- | --- |"
+            echo "| A: plain link (libstdc++ only) | \`${{ steps.linkprobe.outcome }}\` |"
+            echo "| B: link with \`-lc++ -lc++abi\` | \`${{ steps.linkprobe2.outcome }}\` |"
+            echo ""
+            echo "The job's verdict is the compile-only build above. These probes measure whether the libc++-built Filament prebuilt can be linked against a libstdc++ Qt/g++ app at all — not whether the result runs."
+          } >> "$GITHUB_STEP_SUMMARY"

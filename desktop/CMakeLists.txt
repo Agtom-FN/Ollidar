@@ -33,7 +33,7 @@ endif()
 # ---------------------------------------------------------------------------
 # Qt 6
 # ---------------------------------------------------------------------------
-if(NOT CMAKE_PREFIX_PATH AND EXISTS "/opt/homebrew/opt/qt")
+if(NOT CMAKE_PREFIX_PATH AND APPLE AND EXISTS "/opt/homebrew/opt/qt")
     set(CMAKE_PREFIX_PATH "/opt/homebrew/opt/qt")
 endif()
 set(CMAKE_AUTOMOC ON)
@@ -107,7 +107,25 @@ else()
             "Filament not found at ${FILAMENT_DIR}.\n"
             "Run: ./tools/fetch_filament.sh v1.75.0")
     endif()
-    if(EXISTS "${FILAMENT_DIR}/lib/arm64" AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+    if(MSVC)
+        # S7/CI finding (first Windows configure): the WINDOWS release tarball is
+        # laid out differently from the mac/linux ones in TWO ways.
+        #   * it has no top-level `filament/` directory at all — it unpacks
+        #     straight to bin/ include/ lib/ (tools/fetch_filament.ps1 therefore
+        #     extracts it INTO third_party/filament/filament so FILAMENT_DIR is
+        #     the same shape on all three platforms), and
+        #   * its libs are lib/x86_64/{md,mdd}/<name>.lib — one set per CRT
+        #     (md = /MD release, mdd = /MDd debug) with no `lib` prefix and no
+        #     `.a` suffix. The mac/linux tarballs are lib/<arch>/lib<name>.a.
+        # Picking the wrong CRT set is not a warning, it is a pile of
+        # _ITERATOR_DEBUG_LEVEL / RuntimeLibrary mismatch link errors, so the
+        # choice is tied to the CMake config, not guessed.
+        if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+            set(FILAMENT_LIB_DIR "${FILAMENT_DIR}/lib/x86_64/mdd")
+        else()
+            set(FILAMENT_LIB_DIR "${FILAMENT_DIR}/lib/x86_64/md")
+        endif()
+    elseif(EXISTS "${FILAMENT_DIR}/lib/arm64" AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
         set(FILAMENT_LIB_DIR "${FILAMENT_DIR}/lib/arm64")
     elseif(EXISTS "${FILAMENT_DIR}/lib/x86_64")
         set(FILAMENT_LIB_DIR "${FILAMENT_DIR}/lib/x86_64")
@@ -130,13 +148,28 @@ set(FILAMENT_LINK "")
 foreach(l ${FILAMENT_LIBS})
     if(EXISTS "${FILAMENT_LIB_DIR}/lib${l}.a")
         list(APPEND FILAMENT_LINK "${FILAMENT_LIB_DIR}/lib${l}.a")
+    elseif(EXISTS "${FILAMENT_LIB_DIR}/${l}.lib")          # MSVC naming
+        list(APPEND FILAMENT_LINK "${FILAMENT_LIB_DIR}/${l}.lib")
     endif()
 endforeach()
+list(LENGTH FILAMENT_LINK _fil_found)
+if(_fil_found EQUAL 0)
+    message(FATAL_ERROR
+        "no Filament static libraries found in ${FILAMENT_LIB_DIR}. Expected "
+        "lib<name>.a (mac/linux) or <name>.lib (MSVC). The release tarball "
+        "layout differs per platform — see the comment above.")
+endif()
+list(LENGTH FILAMENT_LIBS _fil_wanted)
+message(STATUS "lidarscan: ${_fil_found}/${_fil_wanted} Filament libs resolved from ${FILAMENT_LIB_DIR}")
 
 # ---------------------------------------------------------------------------
 # Point material: matc from the same pinned release
 # ---------------------------------------------------------------------------
-set(MATC "${FILAMENT_DIR}/bin/matc")
+set(MATC "${FILAMENT_DIR}/bin/matc${CMAKE_EXECUTABLE_SUFFIX}")
+if(NOT EXISTS "${MATC}")
+    message(FATAL_ERROR "matc not found at ${MATC} — the Filament release under "
+                        "third_party/ is incomplete (see tools/fetch_filament.*)")
+endif()
 if(APPLE)
     set(MATC_BACKENDS -a metal)
 else()
@@ -198,8 +231,32 @@ else()
         src/render/DisplayLink_generic.cpp)
 endif()
 
-add_executable(lidarscan
-    ${LIDARSCAN_BUNDLE_FLAG}
+# ---------------------------------------------------------------------------
+# S3-cross-platform CI: compile-only mode
+#
+# The Linux Filament release is built against **libc++** (its libutils.a is full
+# of `_ZNSt3__1...` symbols) while the Qt binaries and the distro toolchain are
+# **libstdc++**. Those two C++ standard libraries do not share an ABI, so a final
+# link of this app against the Linux prebuilt is not guaranteed to resolve — and
+# the documented alternative (rebuild Filament from source with libstdc++) is a
+# multi-hour job that does not belong in a per-push CI job.
+#
+# LIDARSCAN_COMPILE_ONLY=ON builds every desktop translation unit — the same
+# sources, the same flags, the same Filament and Qt headers, the same moc run —
+# into an OBJECT library and stops before the executable link. That proves the
+# code compiles on the platform, which is exactly the half of the S3 exit
+# criterion that was open, and it does not pretend to prove the other half.
+# Default OFF: macOS and Windows link for real.
+# ---------------------------------------------------------------------------
+option(LIDARSCAN_COMPILE_ONLY
+       "Compile every TU into an object library; skip the executable link" OFF)
+if(LIDARSCAN_COMPILE_ONLY)
+    set(LIDARSCAN_TARGET_KIND OBJECT)
+else()
+    set(LIDARSCAN_TARGET_KIND EXECUTABLE)
+endif()
+
+set(LIDARSCAN_SOURCES
     src/main.cpp
     src/app/EngineHost.cpp
     src/app/Project.cpp
@@ -224,6 +281,12 @@ add_executable(lidarscan
     src/render/ViewportWindow.cpp
     ${LIDARSCAN_PLATFORM_SOURCES}
 )
+
+if(LIDARSCAN_COMPILE_ONLY)
+    add_library(lidarscan OBJECT ${LIDARSCAN_SOURCES})
+else()
+    add_executable(lidarscan ${LIDARSCAN_BUNDLE_FLAG} ${LIDARSCAN_SOURCES})
+endif()
 add_dependencies(lidarscan lidarscan_points_material)
 
 if(APPLE AND LIDARSCAN_MACOS_BUNDLE)
@@ -264,6 +327,19 @@ endif()
 # and the cloud tools alike — needs the same flag.
 target_compile_definitions(lidarscan PRIVATE QT_NO_KEYWORDS)
 
+if(WIN32)
+    # _USE_MATH_DEFINES: ViewportWindow.cpp uses M_PI, which the MSVC CRT only
+    #   declares when this is defined before <cmath> — a command-line define is
+    #   the only way to get it in front of every include in every TU.
+    # NOMINMAX: <windows.h> (pulled in by Filament's backend headers and by Qt's
+    #   Windows QPA-facing headers) defines min/max as macros, which breaks
+    #   std::min/std::max and QVector3D's members alike.
+    # WIN32_LEAN_AND_MEAN: keeps winsock.h out, which would otherwise collide
+    #   with the winsock2.h the vendored Livox SDK2 in the engine includes.
+    target_compile_definitions(lidarscan PRIVATE
+        _USE_MATH_DEFINES NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
+
 target_include_directories(lidarscan PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${FILAMENT_DIR}/include")
@@ -280,10 +356,23 @@ if(APPLE)
     set_source_files_properties(
         src/render/NativeSurface_mac.mm src/render/DisplayLink_mac.mm
         PROPERTIES COMPILE_FLAGS "-fobjc-arc")
+elseif(WIN32)
+    # Filament's Vulkan/OpenGL backends resolve their loaders at runtime
+    # (bluevk/bluegl LoadLibrary vulkan-1.dll / opengl32.dll), but the static
+    # libs still reference the Win32 window/GDI entry points directly.
+    target_link_libraries(lidarscan PRIVATE opengl32 gdi32 user32 shlwapi)
+elseif(UNIX)
+    # dl: bluevk dlopen()s libvulkan.so.1 rather than link-time-binding it.
+    find_package(Threads REQUIRED)
+    target_link_libraries(lidarscan PRIVATE ${CMAKE_DL_LIBS} Threads::Threads)
 endif()
 
 if(MSVC)
-    target_compile_options(lidarscan PRIVATE /W4 /permissive- /Zc:__cplusplus /utf-8)
+    target_compile_options(lidarscan PRIVATE /W4 /permissive- /Zc:__cplusplus /utf-8
+        # /bigobj: MainWindow.cpp and MergeDock.cpp exceed the 65,279-section
+        # COFF limit once Qt's moc'd metaobjects and Filament's heavily
+        # templated headers are both in the same TU.
+        /bigobj)
 else()
     target_compile_options(lidarscan PRIVATE -Wall -Wextra -Wno-unused-parameter)
 endif()
