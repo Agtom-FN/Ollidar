@@ -118,6 +118,7 @@ jobs:
   macos-universal:
     name: macos-latest / universal (arm64+x86_64)
     runs-on: macos-latest
+    if: github.event_name == 'workflow_dispatch'  # macOS bills 10x; run locally or dispatch manually (free-tier trim)
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
@@ -267,6 +268,7 @@ jobs:
   macos-sim-labelled-tests:
     name: macos-latest / simulator suites (sim, sim-rtk)
     runs-on: macos-latest
+    if: github.event_name == 'workflow_dispatch'  # macOS bills 10x; run locally or dispatch manually (free-tier trim)
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -363,6 +365,7 @@ jobs:
   desktop-build:
     name: macos-latest / desktop app (build-only)
     runs-on: macos-latest
+    if: github.event_name == 'workflow_dispatch'  # macOS bills 10x; run locally or dispatch manually (free-tier trim)
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
