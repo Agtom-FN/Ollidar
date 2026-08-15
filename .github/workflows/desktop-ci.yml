@@ -49,8 +49,28 @@ env:
   # QT_VERSION: the exact Qt every macOS measurement in NOTES.md §6/§8/§11/§13
   # was taken against. Using the distro's Qt on Linux instead would have made a
   # Linux-only compile error indistinguishable from a Qt-version difference.
+  # (The Windows job cannot have it — see QT_VERSION_WINDOWS below.)
   FILAMENT_VERSION: v1.75.0
   QT_VERSION: 6.11.1
+
+  # Qt 6.10.3 on Windows, 6.11.1 everywhere else, and this is a finding rather
+  # than a preference. Measured against the Qt CDN on 2026-08-16:
+  #
+  #   linux_x64/desktop/qt6_6111/  contains a nested qt6_6111/ (with Updates.xml)
+  #   windows_x86/desktop/qt6_6111/ contains ONLY per-arch folders —
+  #                                 qt6_6111_msvc2022_64/, qt6_6111_mingw/, ...
+  #   windows_x86/desktop/qt6_6103/ still has the nested qt6_6103/
+  #
+  # i.e. Qt split the Windows repository per-architecture at 6.11 and
+  # aqtinstall 3.3.0 (the newest on PyPI, and what install-qt-action pins with
+  # `aqtversion: ==3.3.*`) has not followed: it composes
+  # `qt6_6111/qt6_6111/Updates.xml`, gets a 404, and reports
+  # "Failed to locate XML data for Qt version '6.11.1'". Reproduced both in CI
+  # and locally with aqt 3.3.0. There is no aqt version that fixes it yet, and
+  # the Qt online installer needs an interactive account login, so the choice is
+  # 6.10.x on Windows or no official Qt on Windows at all. Revisit when
+  # aqtinstall > 3.3.0 ships.
+  QT_VERSION_WINDOWS: 6.10.3
 
 jobs:
   # =====================================================================
@@ -84,10 +104,10 @@ jobs:
       - name: Install Ninja
         run: choco install ninja -y --no-progress
 
-      - name: Install Qt ${{ env.QT_VERSION }}
+      - name: Install Qt ${{ env.QT_VERSION_WINDOWS }}
         uses: jurplel/install-qt-action@v4
         with:
-          version: ${{ env.QT_VERSION }}
+          version: ${{ env.QT_VERSION_WINDOWS }}
           host: windows
           target: desktop
           arch: win64_msvc2022_64
@@ -242,6 +262,36 @@ jobs:
           echo "--- engine + material ---"
           ls -la build/points.filamat
           ls -la build/engine/libscanengine.a build/engine/engine_cli
+
       - name: Engine CLI selftest (the engine half DOES link and run here)
         working-directory: desktop
         run: ./build/engine/engine_cli --selftest
+
+      # ---------------------------------------------------------------
+      # The libc++/libstdc++ claim above, MEASURED rather than asserted.
+      #
+      # This step configures a second build tree with the compile-only switch
+      # OFF and tries the executable link for real. It is allowed to fail —
+      # that is the point. Whatever it prints (a clean binary, or the exact
+      # `std::__1::` undefined symbols) is the evidence NOTES.md §14 quotes,
+      # and it is re-measured on every push instead of being a prediction that
+      # silently rots. The job's verdict does not depend on it.
+      # ---------------------------------------------------------------
+      - name: "Probe: attempt the real executable link (allowed to fail)"
+        id: linkprobe
+        continue-on-error: true
+        working-directory: desktop
+        run: |
+          set -o pipefail
+          cmake -S . -B build-link -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DENGINE_FETCH_EIGEN=ON \
+            -DLIDARSCAN_COMPILE_ONLY=OFF > /dev/null
+          cmake --build build-link 2>&1 | tail -n 120
+
+      - name: "Probe verdict"
+        if: always()
+        run: |
+          echo "executable-link probe outcome: ${{ steps.linkprobe.outcome }}"
+          echo "### Linux executable-link probe: \`${{ steps.linkprobe.outcome }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "The job's own verdict is the compile-only build above; this probe measures whether the libc++-built Filament prebuilt can be linked against a libstdc++ Qt/g++ app at all." >> "$GITHUB_STEP_SUMMARY"
