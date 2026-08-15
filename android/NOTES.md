@@ -2356,3 +2356,136 @@ for the first time. Still arm64-v8a only, so `abiFilters` holds.
 - `material-icons-extended` is used instead of `material-icons-core` —
   pulling in both causes duplicate-class build failures (extended already
   contains everything core does), so only one is declared.
+
+## Android emulator smoke test
+
+A permanent instrumentation test (`android/app/src/androidTest/`), gated on
+every push in `.github/workflows/android-emulator.yml`, added specifically
+because unit tests, `javap`, and `llvm-nm` all missed a real crash and only a
+booted device found it — see §8.1 above ("The crash only a device could
+find"): `Manipulator.nCreateBuilder()` threw `UnsatisfiedLinkError` the first
+time a Filament view attached, because `Filament.init()` loads
+`libfilament-jni.so` and nothing else — `Manipulator` needs the separate
+`filament-utils` artifact's `libfilament-utils-jni.so`, loaded only by
+`Utils.init()`. B4 called just the first. It compiled cleanly, passed every
+unit test, and was invisible to static inspection of the `.so` — the classes
+and symbols all existed, just in an unloaded library. Nothing before this
+test ran that check automatically; every prior "on device" verification
+pass in this file (B4 §8, B3/B7/B8/B5-B12 §8) was a one-off, run by hand,
+never wired into CI.
+
+### What it covers
+
+`android/app/src/androidTest/kotlin/com/lidarscan/app/ReplayCaptureSmokeTest.kt`,
+two `@Test`s, both driven through `MainActivity` (a real Activity launch, not
+a Robolectric shadow):
+
+1. `launchReachesProjectsListWithoutCrashing` — the cheap end. A cold launch
+   alone exercises `LidarScanApplication`/`AppContainer` construction (which
+   touches `ScanEngineNative`'s `System.loadLibrary("scanengine_jni")`) and
+   Compose's first composition. This is the JNI_OnLoad class of crash the
+   task brief calls out, and it is everything a crash *before* any
+   `SurfaceView` screen is reachable would look like.
+2. `replaySyntheticCaptureDecodesPointsWithoutCrashing` — the one that
+   actually reaches Filament. It launches `MainActivity` with a debug-only
+   intent extra that deep-links straight to the "Replay synthetic capture"
+   acceptance path (bundled `assets/replay/synth.lscan/`, no hardware — see
+   B4 §3 above), taps "Start replay", then polls the live stats panel's
+   "Points captured" value for ~10s, asserting it is positive, never goes
+   backwards, and grows at some point in that window. A crash anywhere in
+   that path (Filament init, the native replay engine, the JNI page-read
+   marshalling) fails the whole instrumentation run outright — the same
+   failure mode B4's own bug had — rather than tripping a normal assertion.
+
+### Hooks added to app code (kept minimal, documented at each site)
+
+- **`com.lidarscan.app.debug.ReplayDeepLink`** (new file): a debug-only
+  launch intent extra, `EXTRA_LAUNCH_REPLAY_CAPTURE` (boolean). When
+  `MainActivity.onCreate` sees it set, it find-or-creates the same
+  "Synthetic Replay Demo" project `SettingsViewModel.replaySyntheticCapture`
+  does and navigates straight to `Routes.replayCapture(projectId)` —
+  skipping the Projects -> Settings -> tap path a human uses. This is a real,
+  reusable deep link, not a test-only branch: nothing about it depends on
+  the instrumentation-test process, and it is what let the smoke test avoid
+  tapping through two screens (and their own async project-list load) on
+  every run. `SettingsViewModel` was refactored to import the shared
+  `REPLAY_PROJECT_NAME` constant from this file instead of keeping its own
+  private copy, so the two call sites can't drift on the project name.
+- **`Modifier.testTag("pointsCapturedValue")`** on the "Points captured"
+  `StatRow`'s value `Text` in `CaptureScreen.kt` (`StatRow` gained an
+  optional `valueTestTag` parameter — every other call site is unaffected).
+  This is what the test polls; parsing the on-screen `"%,d"`-formatted
+  string is simpler and more honest than adding a second, parallel
+  test-only data path that could itself drift from what a user sees.
+- **`Modifier.testTag("replaySyntheticCaptureButton")`** on the Settings
+  screen's "Replay synthetic capture" button — not used by the current test
+  (which uses the deep link instead), but added because that screen has two
+  `Text` nodes with the identical string ("Replay synthetic capture" is both
+  the button's label and the line of copy above it), which would make a
+  plain-text UI-navigation variant of this test ambiguous without it. Left
+  in place for exactly that future variant.
+
+### Workflow: `.github/workflows/android-emulator.yml`
+
+Separate from `engine-ci.yml`'s `android-app` job (JDK/SDK setup,
+`:core:test`, `:app:assembleDebug`, `continue-on-error: true`, no device) —
+this new job is a hard gate (`continue-on-error: false`) and actually boots a
+device. Key decisions, and why they depart from the task's original "ubuntu-latest x86_64, KVM" sketch:
+
+- **Runs on `macos-latest`, with an `arm64-v8a` system image — not
+  `ubuntu-latest` with `x86_64`.** `android/app/build.gradle.kts` pins
+  `ndk.abiFilters += "arm64-v8a"` only (B2 §1: the reference hardware is all
+  arm64; armeabi-v7a/x86_64 would need their own `libscanengine`
+  cross-compiles). That means the debug APK ships **only** arm64-v8a native
+  libraries — `libscanengine_jni.so`, `libfilament-jni.so`,
+  `libfilament-utils-jni.so`, all of it. An x86_64 emulator (the fast,
+  KVM-accelerated option on an x86_64 `ubuntu-latest` host) could install
+  that APK, but every native call — Filament's own init included, the exact
+  thing this test exists to catch — would fail immediately with a
+  missing-ABI `UnsatisfiedLinkError`, which would make the test worthless as
+  a regression gate: it would either "pass" by finding a different,
+  uninteresting crash, or never reach Filament at all. GitHub's
+  `macos-latest` runners are Apple Silicon (arm64) hosts, so an arm64-v8a
+  system image is the hardware-accelerated pairing there (Apple's
+  Hypervisor.Framework does for arm64-on-arm64 what KVM does for
+  x86_64-on-x86_64) — and it is the exact ABI NOTES.md's B4/B7 sections
+  already used locally (the `b4_test` AVD: android-34, google_apis,
+  arm64-v8a, `swiftshader_indirect` software GPU).
+- **AVD caching** (`actions/cache` keyed on API level/target/arch, a
+  create-and-snapshot step gated on cache miss) — `reactivecircus/
+  android-emulator-runner`'s own documented pattern; a cold AVD create + first
+  boot (system-image download + setup wizard) is the single slowest, least
+  interesting part of this job and does not change run to run.
+- **Two disable-animations knobs**: `app/build.gradle.kts`'s
+  `testOptions.animationsDisabled = true` (instrumentation-runner side) and
+  the emulator-runner action's own `disable-animations: true` input
+  (device-settings side) — window-animation flakiness and boot flakiness are
+  the two classic emulator-CI failure modes; each knob covers one.
+  `-no-boot-anim` on the emulator itself covers a third.
+- **Logcat capture**: `adb logcat -v threadtime` piped to a file for the
+  whole `:app:connectedDebugAndroidTest` run, uploaded (with the
+  instrumentation HTML/XML report) only `if: failure()`. This is deliberate,
+  not boilerplate — B4's own crash (§8.1) was found by reading exactly this
+  kind of log, not by a JUnit assertion tripping afterward; a bare
+  test-failure message would not have said *why*.
+- Gradle cache: same key pattern as `engine-ci.yml`'s `android-app` job
+  (hash of `**/*.gradle*` + the wrapper properties + the version catalog),
+  under its own `gradle-emulator-` prefix so the two jobs' caches don't
+  collide on `runner.os` alone.
+
+### Running it locally
+
+```
+cd android
+./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
+# with a booted arm64-v8a emulator/device (adb devices shows one):
+./gradlew :app:connectedDebugAndroidTest
+```
+
+An x86_64 emulator will not work for this, for the same ABI reason the
+workflow runs on `macos-latest` — see above. On Apple Silicon, an
+`arm64-v8a` AVD (e.g. NOTES.md's `b4_test`, §8.0 above) is
+hardware-accelerated via HVF; on an Intel Mac or Linux x86_64 box, the same
+AVD boots but under software CPU emulation, which is correct but slow.
+Results land in `app/build/reports/androidTests/connected/` and
+`app/build/outputs/androidTest-results/connected/` either way.

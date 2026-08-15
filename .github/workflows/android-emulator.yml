@@ -1,0 +1,175 @@
+name: android-emulator
+
+# The permanent Android-emulator smoke test (android/NOTES.md's "Android
+# emulator smoke test" section): the class of test that caught B4's own
+# Filament `Utils.init()` crash — an `UnsatisfiedLinkError` that compiled
+# cleanly, passed every unit test, and was invisible to `javap`/`llvm-nm`,
+# because the missing call was to load a *second* native library, not a
+# missing symbol in the one everyone remembered to load. Nothing in
+# engine-ci.yml's `android-app` job (JDK/SDK setup, :core:test,
+# :app:assembleDebug — no device) could ever have caught it; only a booted
+# device/emulator attaching a real Filament SurfaceView can.
+#
+# Runs on `macos-latest`, not `ubuntu-latest`: android/app/build.gradle.kts
+# pins `ndk.abiFilters += "arm64-v8a"` ONLY (see NOTES.md's B2 section — the
+# reference hardware is Pixel 7+/Galaxy S22+, all arm64; armeabi-v7a/x86_64
+# would need their own libscanengine cross-compiles, out of scope), so this
+# debug APK ships arm64-v8a native libraries and nothing else. An x86_64
+# emulator (the fast, KVM-accelerated option on an ubuntu-latest x86_64 host)
+# could install the APK but every native call — Filament's own init included,
+# the exact thing this test exists to catch — would fail immediately with a
+# missing-ABI UnsatisfiedLinkError, which would make this test worthless as a
+# regression gate (it would "pass" by finding a *different*, uninteresting
+# crash, or never load Filament at all). GitHub's `macos-latest` runners are
+# Apple Silicon (arm64) hosts, so an arm64-v8a system image is the
+# hardware-accelerated choice there too — Apple's Hypervisor.Framework does
+# for arm64-on-arm64 what KVM does for x86_64-on-x86_64 — and it is the exact
+# ABI pairing android/NOTES.md's B4/B7 sections already used locally (the
+# `b4_test` AVD: android-34, google_apis, arm64-v8a).
+#
+# Triggers on push to main (the "every push" gate the task asked for) and to
+# ci/** (so this workflow's own iteration commits trigger it), restricted to
+# the paths that can actually affect this test's outcome.
+on:
+  push:
+    branches:
+      - main
+      - "ci/**"
+    paths:
+      - "android/**"
+      - "engine/**"
+      - ".github/workflows/android-emulator.yml"
+  pull_request:
+    paths:
+      - "android/**"
+      - "engine/**"
+      - ".github/workflows/android-emulator.yml"
+  workflow_dispatch: {}
+
+env:
+  AVD_API_LEVEL: 30
+  AVD_TARGET: google_apis
+  AVD_ARCH: arm64-v8a
+
+jobs:
+  android-emulator-smoke-test:
+    name: macos-latest / Android emulator smoke test (arm64-v8a)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    # A hard gate, not `continue-on-error: true` like engine-ci.yml's
+    # android-app job: that job is a first CI pass at a toolchain still
+    # proving itself; this job's whole reason to exist is to be the thing
+    # that fails loudly the next time an app-code change reintroduces a
+    # device-only crash like B4's.
+    continue-on-error: false
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Same shape as engine-ci.yml's android-app job: empty `packages` (the
+      # action's own license pass rejects several licenses on the runner
+      # image), then accept licenses explicitly and let Gradle/AGP fetch the
+      # NDK/CMake/build-tools versions android/app/build.gradle.kts pins.
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: ""
+
+      - name: Accept Android SDK licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-emulator-${{ runner.os }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle/wrapper/gradle-wrapper.properties', 'android/gradle/libs.versions.toml') }}
+          restore-keys: |
+            gradle-emulator-${{ runner.os }}-
+
+      # reactivecircus/android-emulator-runner's own documented pattern: boot
+      # an AVD once, let it settle to a snapshot, and cache the whole
+      # ~/.android/avd directory keyed on the exact image — a cold AVD create
+      # + first boot is the single slowest part of this job (system-image
+      # download + first-boot setup wizard), and it does not change run to
+      # run.
+      - name: Cache AVD
+        uses: actions/cache@v4
+        id: avd-cache
+        with:
+          path: |
+            ~/.android/avd/*
+            ~/.android/adb*
+          key: avd-${{ env.AVD_API_LEVEL }}-${{ env.AVD_TARGET }}-${{ env.AVD_ARCH }}-v1
+
+      - name: Create AVD + generate snapshot for caching
+        if: steps.avd-cache.outputs.cache-hit != 'true'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ env.AVD_API_LEVEL }}
+          target: ${{ env.AVD_TARGET }}
+          arch: ${{ env.AVD_ARCH }}
+          force-avd-creation: false
+          # No GPU/graphics acceleration needed or available headlessly —
+          # swiftshader_indirect (software) is exactly what NOTES.md's
+          # `b4_test` AVD also used; this test asserts Filament initializes
+          # and decodes points, not that a frame looks correct.
+          emulator-options: -no-window -gpu swiftshader_indirect -no-audio -no-boot-anim -camera-back none -no-snapshot-save
+          disable-animations: false
+          script: echo "Generated AVD snapshot for caching."
+
+      # Assembled outside the emulator step so a pure build failure (as
+      # opposed to a runtime/device failure) shows up as its own step and
+      # its own log, rather than being buried inside the emulator-runner
+      # action's own output.
+      - name: Assemble debug app + androidTest APKs
+        run: ./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest
+
+      # The actual smoke test. `disable-animations: true` here (belt and
+      # suspenders on top of app/build.gradle.kts's `testOptions
+      # .animationsDisabled = true`) — window-animation flakiness is the
+      # other classic emulator-CI failure mode besides boot flakiness, and
+      # the two knobs cover it from both the device-settings side and the
+      # instrumentation-runner side. Logcat is captured for the whole test
+      # run and uploaded only on failure, since B4's own crash (§8.1 of
+      # NOTES.md) was found by exactly this kind of log, not by the JUnit
+      # assertion that happened to trip afterward.
+      - name: Run the smoke test (:app:connectedDebugAndroidTest)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ env.AVD_API_LEVEL }}
+          target: ${{ env.AVD_TARGET }}
+          arch: ${{ env.AVD_ARCH }}
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -no-audio -no-boot-anim -camera-back none -no-snapshot-save
+          disable-animations: true
+          script: |
+            adb logcat -c
+            adb logcat -v threadtime > "$GITHUB_WORKSPACE/emulator-logcat.txt" &
+            LOGCAT_PID=$!
+            cd android
+            ./gradlew --no-daemon :app:connectedDebugAndroidTest
+            GRADLE_EXIT=$?
+            kill "$LOGCAT_PID" || true
+            exit $GRADLE_EXIT
+
+      - name: Upload logcat + instrumentation report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-emulator-smoke-test-failure
+          path: |
+            emulator-logcat.txt
+            android/app/build/reports/androidTests/connected/**
+            android/app/build/outputs/androidTest-results/connected/**
+          if-no-files-found: ignore
+          retention-days: 14

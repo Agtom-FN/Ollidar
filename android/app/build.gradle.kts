@@ -116,6 +116,11 @@ android {
         versionCode = 1
         versionName = "0.1.0"
 
+        // CI Android-emulator smoke test (:app:connectedDebugAndroidTest,
+        // android/app/src/androidTest/) — see NOTES.md's "Android emulator
+        // smoke test" section.
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
         vectorDrawables {
             useSupportLibrary = true
         }
@@ -209,6 +214,16 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+
+    // CI Android-emulator smoke test: belt-and-suspenders on top of the
+    // workflow's own `disable-animations: true` step — this flag makes AGP's
+    // test runner call `Settings.Global` animation-scale writes itself before
+    // each test, which also covers running `connectedDebugAndroidTest`
+    // locally against an emulator/device that was not booted through that
+    // action.
+    testOptions {
+        animationsDisabled = true
+    }
 }
 
 // Every variant's asset-merge step needs the compiled .filamat(s) to exist
@@ -270,4 +285,14 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+
+    // CI Android-emulator smoke test (:app:connectedDebugAndroidTest) — see
+    // android/app/src/androidTest/ and NOTES.md's "Android emulator smoke
+    // test" section.
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.espresso.core)
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
 }
