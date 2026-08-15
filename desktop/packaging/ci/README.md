@@ -21,13 +21,24 @@ job definitions so they drop in without conflicting.
   mounted, launched DMG on the development machine (see `desktop/NOTES.md`
   §13). The only step in it that has never run anywhere is notarization, which
   is gated behind `secrets.APPLE_*` being present and skipped otherwise.
-* **Windows / Linux** — **never executed on any machine.** The build scripts
-  they invoke are staged, not proven. `lidarscan.nsi` has been compiled by
-  `makensis` on macOS against stub files (a real 146 KB installer came out), and
-  `lidarscan.desktop` passes `desktop-file-validate`, but that validates
-  *syntax*, not that the app builds or runs on those platforms. `NOTES.md` §3.1
-  still marks both renderers UNVERIFIED. Expect the first run of each of these
-  jobs to fail, and treat fixing it as real work, not a formality.
+* **Windows / Linux** — **these packaging jobs have still never been executed on
+  any machine.** `lidarscan.nsi` has been compiled by `makensis` on macOS against
+  stub files (a real 146 KB installer came out), and `lidarscan.desktop` passes
+  `desktop-file-validate`, but that validates *syntax*, not that the installers
+  build. Expect the first run of each to fail, and treat fixing it as real work.
+
+  **What HAS changed since these snippets were written:** the *app itself* now
+  builds on both platforms. `.github/workflows/desktop-ci.yml` (a real workflow,
+  not a snippet — see `NOTES.md` §14) compiles every `desktop/src` translation
+  unit on `windows-latest` and `ubuntu-latest` and links a real `lidarscan.exe`
+  on Windows. So the premise these two snippets were written under — "the app
+  does not build on this platform, so the installer is groundwork" — no longer
+  holds, and whoever picks them up should start from `desktop-ci.yml`'s Qt and
+  Filament steps, which are known-good, rather than the ones drafted here.
+  In particular the Windows snippet's `tar xzf ... -C third_party/filament` is
+  **wrong** — the Windows tarball has no top-level `filament/` directory; use
+  `tools/fetch_filament.ps1`. `NOTES.md` §3.1 still marks both **renderers**
+  UNVERIFIED, because nothing has been run.
 
 ## Caching
 

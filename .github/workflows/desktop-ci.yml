@@ -188,9 +188,17 @@ jobs:
   # all still fully built and linked, so the Linux leg of the *engine* and of
   # matc is proven end to end; only the app's final link is out of scope.
   # NOTES.md §14 states this in the same words.
+  #
+  # MEASURED AFTERWARDS, and better than expected: Probe A at the end of this
+  # job shows all 69 unresolved symbols are standard-library, not one of them
+  # crossing the app/Filament boundary; Probe B then links a real ELF
+  # executable by supplying libc++ alongside libstdc++. So the app's *symbol*
+  # graph is portable to Linux today. A binary carrying two C++ runtimes is
+  # still not a shippable Linux build — nothing here runs it — which is why
+  # the compile-only build, not Probe B, is what this job is named after.
   # =====================================================================
   linux:
-    name: ubuntu-latest / desktop (compile-only, see job header)
+    name: ubuntu-latest / desktop (compiles; links only with libc++ bridged)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -340,9 +348,13 @@ jobs:
       # unresolved. STANDARD_LIBRARIES is appended at the end, where static and
       # as-needed archive semantics can actually pull members out.
       # ---------------------------------------------------------------
+      # NOT continue-on-error: this went green on 2026-08-16 (a real ELF 64-bit
+      # PIE executable with libc++.so.1, libc++abi.so.1 AND libstdc++.so.6 in
+      # its NEEDED list), so from here on it is a regression gate. If it ever
+      # goes red, something started passing a std:: type across the
+      # app/Filament boundary and Probe A's classifier will name it.
       - name: "Probe B: link with libc++ alongside libstdc++"
         id: linkprobe2
-        continue-on-error: true
         working-directory: desktop
         run: |
           set -o pipefail

@@ -287,7 +287,13 @@ drawable size / DPR / swapchain-recreate count.
 `NativeSurface_{win,linux}.cpp` carry S3 §8's analysis inline, verbatim where it matters, so
 whoever finishes them inherits the reasoning rather than a citation. The app shows the
 renderer as unverified (`isVerifiedPlatform()`) on those platforms rather than implying S3
-covered them. If `gl_PointSize` fails on Vulkan, the fallback is billboard-quad expansion in
+covered them.
+
+> **Update (§14):** both files now **compile** in CI on `windows-latest` and
+> `ubuntu-latest`, and Windows links a complete `lidarscan.exe`. Every row in the
+> table above except "does it build" is still exactly as unverified as it was —
+> nothing has been run on either platform. `isVerifiedPlatform()` still returns
+> `false` on both, correctly. If `gl_PointSize` fails on Vulkan, the fallback is billboard-quad expansion in
 the vertex shader (4–6× the vertex work) — that is exactly what A14's
 `PointSizeMode::kWorldSize` exists to express, and the change touches only `points.mat` plus
 `PagedCloudRenderer`'s primitive type.
@@ -455,9 +461,13 @@ bar and log show it. It is left visible rather than suppressed.
   the replay path — but **"a real D6 on a serial port would work" is an expectation, not a
   measurement**. Same for the Mid-360 tab: it configures `Mid360Config` correctly and calls
   `add_device`, and nothing beyond that has been observed.
-* **Windows and Linux are not built, let alone run.** The two `NativeSurface` files compile
+* ~~**Windows and Linux are not built, let alone run.** The two `NativeSurface` files compile
   only on their own platforms and have never been compiled by anyone. S3's exit criterion
-  ("macOS **+** Windows or Linux") remains half-met, exactly as REPORT §8 left it.
+  ("macOS **+** Windows or Linux") remains half-met, exactly as REPORT §8 left it.~~
+  **Half-closed by §14** (`.github/workflows/desktop-ci.yml`): both files now compile in CI
+  on `windows-latest` and `ubuntu-latest`, and Windows links a real `lidarscan.exe`.
+  Neither is **run** — no GPU and no display on a runner — so every runtime claim in §3.1's
+  Windows/Linux columns is still open. See §14.5 for the precise remainder.
 * **Multi-monitor / DPI change** is written (`screenChanged` → full reconfigure,
   `CVDisplayLinkSetCurrentCGDisplay`) but not tested: one display on this machine. This is
   the same residual risk S3 flagged and it is still open.
@@ -2012,3 +2022,159 @@ field tool. And `lidarscan.desktop` forces `QT_QPA_PLATFORM=xcb` because
   `tools/make_icon.sh` draws it with a stdlib-only PNG writer so that swapping in
   a real mark later is "edit the script, re-run, commit" rather than hunting for
   whoever produced a binary blob.
+
+---
+
+## 14. Cross-platform CI — the desktop app now compiles on Windows and Linux
+
+**This closes the half of S3's exit criterion that had been open since the
+spike.** S3 asked for "Filament embedded in a Qt window on macOS **and** Windows
+or Linux" and delivered macOS only. §3.1, §6 ("Not verified"), §13.6 and
+`packaging/ci/README.md` all said the same thing in different words:
+`src/render/NativeSurface_win.cpp`, `src/render/NativeSurface_linux.cpp` and
+`src/render/DisplayLink_generic.cpp` were written from S3 REPORT.md §8's
+analysis and **had never been compiled by anyone**.
+
+They have now been compiled, on both platforms, by their real toolchains.
+
+New file: **`.github/workflows/desktop-ci.yml`** — a workflow separate from
+`engine-ci.yml` (different dependency shape, different failure modes; mixing
+them makes a red engine-ci ambiguous). It triggers on pushes to `main` and to
+`ci/**` touching `desktop/**`, `engine/**` or the workflow itself.
+
+### 14.1 What each job proves — and what it does not
+
+| | `windows-latest` | `ubuntu-latest` |
+| --- | --- | --- |
+| Qt | 6.10.3, `win64_msvc2022_64`, official binaries via aqtinstall | **6.11.1**, `linux_gcc_64`, same source |
+| Filament | `filament-v1.75.0-windows.tgz`, MSVC `/MD` static libs | `filament-v1.75.0-linux.tgz` |
+| Engine | built from source in-tree (`add_subdirectory(../engine)`), `ENGINE_FETCH_EIGEN=ON` | same |
+| `matc` → `points.filamat` | yes, `-a vulkan` | yes, `-a vulkan` |
+| Every `desktop/src` TU compiles | **yes** (`/W4 /permissive-`) | **yes** (`-Wall -Wextra`) |
+| Executable links | **yes — `lidarscan.exe` is an uploaded artifact** | yes, but only with libc++ bridged in (§14.3) |
+| Executable runs | **no** | **no** |
+| Renderer verified | **no** | **no** |
+
+The runtime column is the honest limit. A GitHub runner has no GPU and no
+interactive session; the app's whole point is a `createWindowContainer()`'d
+Filament viewport presenting to a real swapchain. So **everything below the
+"it compiles" line in §3.1's Windows and Linux columns is still unproven**:
+Vulkan swapchain creation from an `HWND` / X11 `Window`, `VK_ERROR_OUT_OF_DATE_KHR`
+handling across a resize, `gl_PointSize` clamping on Intel/AMD, the timer render
+clock, and every performance number. §3.1's "UNVERIFIED" marking stands, and
+`NativeSurface::isVerifiedPlatform()` still returns `false` on both. What
+changed is that the code is now *known to be valid C++ for those targets*
+rather than plausible-looking text.
+
+### 14.2 Source fixes the compilers found
+
+Six in total; four are build-system, two are code. macOS was rebuilt clean
+after every one of them.
+
+| File | Change | Why |
+| --- | --- | --- |
+| `CMakeLists.txt` | MSVC Filament lib discovery: `lib/x86_64/{md,mdd}/<name>.lib` | The Windows release tarball is laid out **differently from mac/linux in two ways** (§14.4). The existing `lib<name>.a` glob found nothing and produced an empty link list — which is a silent configure, not an error, so the loop now hard-fails on zero libs found and prints `N/12 resolved`. |
+| `CMakeLists.txt` | `matc${CMAKE_EXECUTABLE_SUFFIX}` + an existence check | `bin/matc` vs `bin/matc.exe`. |
+| `CMakeLists.txt` | MSVC: `_USE_MATH_DEFINES`, `NOMINMAX`, `WIN32_LEAN_AND_MEAN`, `/bigobj`; Windows link libs `opengl32 gdi32 user32 shlwapi`; UNIX link libs `${CMAKE_DL_LIBS} Threads::Threads` | `ViewportWindow.cpp` uses `M_PI`, which the MSVC CRT only declares behind `_USE_MATH_DEFINES`; `<windows.h>`'s `min`/`max` macros break `std::min`/`std::max`; `bluevk` `dlopen()`s `libvulkan.so.1`. |
+| `CMakeLists.txt` | `CMAKE_PREFIX_PATH`'s `/opt/homebrew/opt/qt` default is now `APPLE`-guarded; new option `LIDARSCAN_COMPILE_ONLY` (default **OFF**) | The Homebrew default could otherwise leak onto a non-Apple configure. `LIDARSCAN_COMPILE_ONLY` builds every TU into an OBJECT library and stops before the executable link — see §14.3. Default off, so macOS and Windows are untouched. |
+| `src/render/NativeSurface_win.cpp` | `#include <cstdint>` | `uintptr_t` was used unqualified and reached only transitively through Qt's headers. |
+| `src/app/CaptureWindow.cpp` | local `data` → `bytes` in `onSerialReadyRead()` | **The one real code warning either new compiler found**: `QWidget` has a public member `QWidgetData* data`, and MSVC `/W4` reports the shadowing as C4458 where clang's `-Wall -Wextra` says nothing. It was the *only* warning from any file under `desktop/src` in the Windows build (the rest are the engine's `fopen`/`inet_addr` C4996s and Filament's own headers). §6's "zero warnings from `desktop/src`" claim now holds on two compilers instead of one. |
+
+New file `tools/fetch_filament.ps1` — the Windows twin of `fetch_filament.sh`,
+extracting into `third_party/filament/filament` so `FILAMENT_DIR` has the same
+shape on all three platforms, and pulling only `include/`, `lib/x86_64/` and
+`bin/matc.exe` out of a ~790 MB archive.
+
+**Notably absent from that table: the surface shims themselves.**
+`NativeSurface_win.cpp`, `NativeSurface_linux.cpp` and `DisplayLink_generic.cpp`
+compiled as written, apart from the one added `<cstdint>`. C1 wrote them
+against S3 §8's analysis without a compiler and they were correct.
+
+### 14.3 Linux: the libc++/libstdc++ split, measured
+
+`filament-v1.75.0-linux.tgz` is built against **libc++**; `libutils.a` alone
+exports 171 `_ZNSt3__1…` (`std::__1::`) symbols. Qt's official Linux binaries
+and the runner's g++ are **libstdc++**. Those two standard libraries do not
+share an ABI. The documented fix — rebuild Filament from source against
+libstdc++ — is a long build that does not belong in a per-push compile gate, so
+the job's verdict is a **compile-only** build (`LIDARSCAN_COMPILE_ONLY=ON`):
+all 25 desktop objects, including `mocs_compilation.cpp.o`,
+`NativeSurface_linux.cpp.o` and `DisplayLink_generic.cpp.o`, plus a fully
+linked `libscanengine.a`, a fully linked `engine_cli` that passes `--selftest`,
+and a real `points.filamat` out of `matc`.
+
+Two further steps then **measure** the link rather than predicting it:
+
+* **Probe A** — the plain link, allowed to fail. It fails with **69 distinct
+  undefined symbols, and a classifier step confirms every single one is
+  standard-library**: 61 in the `std::__1::` inline ABI namespace, the other 8
+  the un-namespaced ABI-stable subset libc++abi owns (`std::exception_ptr`,
+  `std::rethrow_exception`, `std::bad_optional_access`,
+  `std::bad_variant_access`, `std::bad_array_new_length`). **Not one symbol
+  crosses the app↔Filament call boundary** — i.e. this codebase never passes a
+  `std::` type into or out of Filament.
+* **Probe B** — link with `-lc++ -lc++abi` appended. It **succeeds**: a real
+  `ELF 64-bit LSB pie executable` with `libc++.so.1`, `libc++abi.so.1` *and*
+  `libstdc++.so.6` in its `NEEDED` list. Probe B is a required step now that it
+  is green, so a future change that does put a `std::` type across that
+  boundary turns the job red and Probe A's classifier names the symbol.
+
+One CI-mechanics finding worth keeping: the flags must go in
+`CMAKE_CXX_STANDARD_LIBRARIES`, not `CMAKE_EXE_LINKER_FLAGS`. The latter is
+placed *in front of* the objects and archives, and Ubuntu links `--as-needed`,
+so a shared libc++ listed before anything references it is dropped outright —
+the first attempt did exactly that and the iostream/locale symbols stayed
+unresolved.
+
+**What Probe B is not.** A binary carrying two C++ runtimes has two allocators,
+two typeinfo hierarchies and two exception tables, and nothing in CI runs it. It
+proves the symbol graph is portable; it is not a shippable Linux build. The
+shippable Linux build still wants Filament rebuilt against libstdc++, and that
+belongs in `packaging/ci/linux-packages.yml.snippet`'s job, not here.
+
+### 14.4 Two platform traps found the hard way
+
+* **The Windows Filament tarball is not shaped like the other two.** No
+  top-level `filament/` directory at all (it unpacks straight to
+  `bin/ include/ lib/`), and its libs are `lib/x86_64/md/<name>.lib` and
+  `lib/x86_64/mdd/<name>.lib` — one set per CRT, no `lib` prefix, no `.a`
+  suffix — against `lib/<arch>/lib<name>.a` on mac and linux. Picking the wrong
+  CRT set is a pile of `_ITERATOR_DEBUG_LEVEL` link errors, so the choice is
+  tied to `CMAKE_BUILD_TYPE` rather than guessed. This is the third time this
+  release has punished an assumption about its own layout (§3.2's arm64-only
+  mac tarball and §13.1's `filament-abseil` / `lib<name>_combined.a` were the
+  first two).
+* **aqtinstall 3.3.0 cannot install Qt 6.11 on Windows**, which is why that job
+  pins 6.10.3 while Linux gets the 6.11.1 every macOS measurement in this file
+  used. Qt split the Windows repository per-architecture at 6.11 —
+  `windows_x86/desktop/qt6_6111/` contains only `qt6_6111_msvc2022_64/`,
+  `qt6_6111_mingw/`, … — while `linux_x64/desktop/qt6_6111/` still has the
+  nested `qt6_6111/` that aqt expects. aqt composes
+  `qt6_6111/qt6_6111/Updates.xml`, 404s, and reports "Failed to locate XML data
+  for Qt version '6.11.1'". Reproduced in CI and locally; 3.3.0 is the newest on
+  PyPI and the Qt online installer needs an interactive account login, so the
+  choice was 6.10.x on Windows or no official Qt on Windows. Revisit when
+  aqtinstall > 3.3.0 ships.
+
+### 14.5 Still not proven
+
+Everything runtime, on both new platforms:
+
+* **Nothing is executed.** No `lidarscan.exe` launch, no window, no swapchain,
+  no frame. The `--help` smoke tests in `packaging/ci/*.yml.snippet` are still
+  unrun, and so are the installers those jobs build.
+* **The Vulkan backend has never initialised anywhere.** `Engine::create(VULKAN)`,
+  `createSwapChain(HWND)` and `createSwapChain(X11 Window)` are compiled calls,
+  not observed ones. §3.1's assumptions — `needsSwapChainRecreateOnResize()`
+  returning `false`, Filament handling `VK_ERROR_OUT_OF_DATE_KHR` internally —
+  remain assumptions.
+* **`gl_PointSize` on Vulkan** (S3 §8 risk 2) is untested. If it clamps, the
+  fallback is `PointSizeMode::kWorldSize` + billboard quads, touching only
+  `points.mat` and `PagedCloudRenderer`.
+* **Wayland is still refused outright** by `NativeSurface_linux.cpp`, by design.
+  What CI proved is that the refusal path compiles.
+* **No performance number off Apple silicon.** S3 §8 risk 4 is untouched.
+* **No hardware, still.** Nothing here touches §6's or §8.8's hardware gaps.
+* **Linux packaging** (AppImage/`.deb`) and **Windows packaging** (NSIS) are
+  still where §13.6 left them: syntax-validated, never built. This workflow
+  builds the *app*, not the installers.
