@@ -62,6 +62,8 @@ jclass g_mount_calib_result_class = nullptr;
 jmethodID g_mount_calib_result_ctor = nullptr;
 jclass g_pushbroom_stats_class = nullptr;
 jmethodID g_pushbroom_stats_ctor = nullptr;
+jclass g_mid360_probe_class = nullptr;
+jmethodID g_mid360_probe_ctor = nullptr;
 
 JNIEnv* AttachCurrentThreadOrGet(bool* did_attach) {
   JNIEnv* env = nullptr;
@@ -85,6 +87,8 @@ using lidarscan_jni::g_health_ctor;
 using lidarscan_jni::g_jvm;
 using lidarscan_jni::g_point_page_class;
 using lidarscan_jni::g_point_page_ctor;
+using lidarscan_jni::g_mid360_probe_class;
+using lidarscan_jni::g_mid360_probe_ctor;
 using lidarscan_jni::g_mount_calib_result_class;
 using lidarscan_jni::g_mount_calib_result_ctor;
 using lidarscan_jni::g_pushbroom_stats_class;
@@ -352,6 +356,20 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
   g_pushbroom_stats_ctor = env->GetMethodID(g_pushbroom_stats_class, "<init>", "(JJJJJJJJJJJJJ)V");
   if (g_pushbroom_stats_ctor == nullptr) {
     LOGE("JNI_OnLoad: NativePushbroomStats constructor not found");
+    return JNI_ERR;
+  }
+
+  // B3 (mid360_jni.cpp): the Mid-360 connect wizard's transport snapshot.
+  jclass mid360_local = env->FindClass("com/lidarscan/app/engine/NativeMid360Probe");
+  if (mid360_local == nullptr) {
+    LOGE("JNI_OnLoad: NativeMid360Probe class not found");
+    return JNI_ERR;
+  }
+  g_mid360_probe_class = static_cast<jclass>(env->NewGlobalRef(mid360_local));
+  g_mid360_probe_ctor =
+      env->GetMethodID(g_mid360_probe_class, "<init>", "(IIJJJJJDDDJJJJJJIJZI)V");
+  if (g_mid360_probe_ctor == nullptr) {
+    LOGE("JNI_OnLoad: NativeMid360Probe constructor not found");
     return JNI_ERR;
   }
 

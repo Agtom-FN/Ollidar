@@ -99,6 +99,37 @@ class CaptureViewModel(
     private val _liveSlam = MutableStateFlow(false)
     val liveSlam: StateFlow<Boolean> = _liveSlam.asStateFlow()
 
+    // --- B3: Mid-360 -------------------------------------------------------
+    /** This project's sensor; drives which connect wizard opens and whether Pause is offered. */
+    val sensor: StateFlow<com.lidarscan.core.model.SensorType>
+        get() = _sensor.asStateFlow()
+    private val _sensor = MutableStateFlow(com.lidarscan.core.model.SensorType.COIN_D6)
+
+    /** `"<lidarIp>|<hostIp>"` from the manifest, or null when the wizard has not been run for this project. */
+    private val _mid360Endpoint = MutableStateFlow<String?>(null)
+    val mid360Endpoint: StateFlow<String?> = _mid360Endpoint.asStateFlow()
+
+    /**
+     * Connects the engine to this project's saved Mid-360 endpoint.
+     *
+     * Deliberately explicit rather than automatic on screen entry: bringing a
+     * Mid-360 up runs SDK2's discovery + handshake + host-IP configuration
+     * push and takes a process-wide singleton, and doing that as a side effect
+     * of opening a screen is how a connect-wizard probe and a capture session
+     * end up fighting over it.
+     */
+    fun connectMid360() {
+        val endpoint = _mid360Endpoint.value ?: return
+        viewModelScope.launch {
+            engineBridge.connect(
+                com.lidarscan.core.engine.EngineTarget(
+                    com.lidarscan.core.model.SensorType.MID360,
+                    transportHint = endpoint,
+                ),
+            )
+        }
+    }
+
     // --- B7/B8 state ---------------------------------------------------------
     private val _keyframeStats = MutableStateFlow(com.lidarscan.app.ar.KeyframeRecorder.Stats())
     val keyframeStats: StateFlow<com.lidarscan.app.ar.KeyframeRecorder.Stats> = _keyframeStats.asStateFlow()
@@ -133,6 +164,11 @@ class CaptureViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             val project = projectStore.open(projectId)
             _uiState.value = if (project != null) CaptureUiState.Loaded(project) else CaptureUiState.NotFound
+            if (project != null) {
+                _sensor.value = project.manifest.sensor
+                _mid360Endpoint.value = project.manifest.mid360
+                    ?.let { "${'$'}{it.lidarIp}|${'$'}{it.hostIp}" }
+            }
         }
 
         engineBridge.events

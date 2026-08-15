@@ -12,6 +12,7 @@ import com.lidarscan.app.di.AppContainer
 import com.lidarscan.app.ui.calib.MountCalibrationRoute
 import com.lidarscan.app.ui.capture.CaptureRoute
 import com.lidarscan.app.ui.connect.ConnectWizardRoute
+import com.lidarscan.app.ui.connect.Mid360ConnectRoute
 import com.lidarscan.app.ui.detail.ProjectDetailRoute
 import com.lidarscan.app.ui.newproject.NewProjectRoute
 import com.lidarscan.app.ui.projects.ProjectsListRoute
@@ -55,6 +56,35 @@ fun LidarScanApp(
                 onBack = { navController.popBackStack() },
                 onOpenCapture = { pid -> navController.navigate(Routes.capture(pid)) },
                 onOpenMountCalibration = { pid -> navController.navigate(Routes.mountCalibration(pid)) },
+                onOpenMid360Connect = { pid -> navController.navigate(Routes.mid360Connect(pid)) },
+            )
+        }
+
+        // B3: the Mid-360 (Ethernet) connect wizard, per project — this is
+        // the entry point that can save the addresses into the project's
+        // manifest (Tech Spec 3.1's "Save per project").
+        composable(
+            route = Routes.MID360_CONNECT,
+            arguments = listOf(navArgument(Routes.PROJECT_ID_ARG) { type = NavType.StringType }),
+        ) { backStackEntry ->
+            val encodedId = backStackEntry.arguments?.getString(Routes.PROJECT_ID_ARG).orEmpty()
+            val pid = Uri.decode(encodedId)
+            Mid360ConnectRoute(
+                container = container,
+                projectId = pid,
+                onBack = { navController.popBackStack() },
+                onContinueToCapture = { navController.navigate(Routes.capture(pid)) },
+            )
+        }
+
+        // Same wizard with no project behind it — reachable from the generic
+        // connect wizard, where it is purely a transport check and there is
+        // nothing to save into.
+        composable(Routes.MID360_CONNECT_NO_PROJECT) {
+            Mid360ConnectRoute(
+                container = container,
+                projectId = null,
+                onBack = { navController.popBackStack() },
             )
         }
 
@@ -84,11 +114,13 @@ fun LidarScanApp(
             arguments = listOf(navArgument(Routes.PROJECT_ID_ARG) { type = NavType.StringType }),
         ) { backStackEntry ->
             val encodedId = backStackEntry.arguments?.getString(Routes.PROJECT_ID_ARG).orEmpty()
+            val pid = Uri.decode(encodedId)
             CaptureRoute(
                 container = container,
-                projectId = Uri.decode(encodedId),
+                projectId = pid,
                 onBack = { navController.popBackStack() },
                 onConnectDevice = { navController.navigate(Routes.CONNECT_WIZARD) },
+                onOpenMid360Connect = { navController.navigate(Routes.mid360Connect(pid)) },
             )
         }
 
@@ -114,6 +146,7 @@ fun LidarScanApp(
                 container = container,
                 onBack = { navController.popBackStack() },
                 onConnected = { navController.popBackStack() },
+                onOpenMid360 = { navController.navigate(Routes.MID360_CONNECT_NO_PROJECT) },
             )
         }
     }

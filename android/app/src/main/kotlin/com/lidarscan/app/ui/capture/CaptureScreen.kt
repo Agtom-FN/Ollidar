@@ -58,8 +58,10 @@ import com.lidarscan.app.engine.ScanEngineNative
 import com.lidarscan.app.render.CameraMode
 import com.lidarscan.app.render.PointCloudSource
 import com.lidarscan.app.render.PointCloudView
+import com.lidarscan.app.render.StreamFilter
 import com.lidarscan.core.engine.CaptureState
 import com.lidarscan.core.engine.ConnectionState
+import com.lidarscan.core.model.SensorType
 import com.lidarscan.core.engine.DeviceHealth
 import com.lidarscan.core.render.ColorMode
 import com.lidarscan.core.render.Colormap
@@ -71,6 +73,8 @@ fun CaptureRoute(
     isReplay: Boolean = false,
     onBack: () -> Unit,
     onConnectDevice: () -> Unit,
+    /** B3: opens the Mid-360 wizard for this project. No-op default keeps the replay route unchanged. */
+    onOpenMid360Connect: () -> Unit = {},
 ) {
     val viewModel: CaptureViewModel = viewModel(
         key = "capture-$projectId-$isReplay",
@@ -112,6 +116,8 @@ fun CaptureRoute(
     val liveSlam by viewModel.liveSlam.collectAsStateWithLifecycle()
     val keyframeStats by viewModel.keyframeStats.collectAsStateWithLifecycle()
     val mountCalibration by viewModel.mountCalibrationApplied.collectAsStateWithLifecycle()
+    val sensor by viewModel.sensor.collectAsStateWithLifecycle()
+    val mid360Endpoint by viewModel.mid360Endpoint.collectAsStateWithLifecycle()
     val arStatus = viewModel.arStatus?.collectAsStateWithLifecycle()?.value
 
     // B7: the AR session belongs to the whole app (one ARCore Session per
@@ -156,6 +162,8 @@ fun CaptureRoute(
         arTrackingLossEpisodes = arStatus?.trackingLossEpisodes ?: 0,
         keyframeStats = keyframeStats,
         mountCalibrationHeadline = mountCalibration?.readout()?.headline,
+        sensor = sensor,
+        mid360Endpoint = mid360Endpoint,
         arOverlay = { modifier ->
             ArOverlayView(
                 controller = container.arController,
@@ -168,6 +176,12 @@ fun CaptureRoute(
         },
         onBack = onBack,
         onConnectDevice = onConnectDevice,
+        onConnectMid360 = {
+            // Not connected yet and no saved endpoint -> the wizard; saved
+            // endpoint -> just connect. Two very different actions behind one
+            // button, chosen by what the project actually has.
+            if (mid360Endpoint == null) onOpenMid360Connect() else viewModel.connectMid360()
+        },
         onStart = viewModel::startCapture,
         onPause = viewModel::pauseCapture,
         onResume = viewModel::resumeCapture,
@@ -203,9 +217,20 @@ fun CaptureScreen(
     arTrackingLossEpisodes: Int,
     keyframeStats: com.lidarscan.app.ar.KeyframeRecorder.Stats,
     mountCalibrationHeadline: String?,
+    /**
+     * B3: this project's sensor. Two things depend on it — which connect
+     * wizard the Connect button opens, and whether Pause is offered at all
+     * (a Mid-360 cannot pause; see RealEngineBridge.pauseCapture for why
+     * faking it would truncate the recording).
+     */
+    sensor: SensorType,
+    /** B3: `"<lidarIp>|<hostIp>"` saved in the manifest, or null if the wizard has not been run. */
+    mid360Endpoint: String?,
     arOverlay: @Composable (Modifier) -> Unit,
     onBack: () -> Unit,
     onConnectDevice: () -> Unit,
+    /** B3: connects the engine to the saved Mid-360 endpoint (no USB permission dance to run first). */
+    onConnectMid360: () -> Unit,
     onStart: () -> Unit,
     onPause: () -> Unit,
     onResume: () -> Unit,
@@ -244,7 +269,7 @@ fun CaptureScreen(
                         Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
                             Live3DOrPlaceholder(
                                 connected, pointCloudSource, colorMode, colormap, pointSizePx,
-                                cameraMode, arAvailable, arTrackingHint, arOverlay,
+                                cameraMode, liveSlam, arAvailable, arTrackingHint, arOverlay,
                             )
                         }
                         Column(
@@ -255,7 +280,8 @@ fun CaptureScreen(
                                 connectionState, captureState, stats, health, colorMode, colormap, pointSizePx,
                                 cameraMode, liveSlam, isReplaySession, arAvailable, arPosesPushed,
                                 arTrackingLossEpisodes, keyframeStats, mountCalibrationHeadline,
-                                onConnectDevice, onStart, onPause, onResume,
+                                sensor, mid360Endpoint,
+                                onConnectDevice, onConnectMid360, onStart, onPause, onResume,
                                 onStop, onLiveSlamChange, onColorModeChange, onColormapChange, onPointSizeChange,
                                 onCameraModeChange,
                             )
@@ -266,7 +292,7 @@ fun CaptureScreen(
                         Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
                             Live3DOrPlaceholder(
                                 connected, pointCloudSource, colorMode, colormap, pointSizePx,
-                                cameraMode, arAvailable, arTrackingHint, arOverlay,
+                                cameraMode, liveSlam, arAvailable, arTrackingHint, arOverlay,
                             )
                         }
                         Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp)) {
@@ -274,7 +300,8 @@ fun CaptureScreen(
                                 connectionState, captureState, stats, health, colorMode, colormap, pointSizePx,
                                 cameraMode, liveSlam, isReplaySession, arAvailable, arPosesPushed,
                                 arTrackingLossEpisodes, keyframeStats, mountCalibrationHeadline,
-                                onConnectDevice, onStart, onPause, onResume,
+                                sensor, mid360Endpoint,
+                                onConnectDevice, onConnectMid360, onStart, onPause, onResume,
                                 onStop, onLiveSlamChange, onColorModeChange, onColormapChange, onPointSizeChange,
                                 onCameraModeChange,
                             )
@@ -300,6 +327,7 @@ private fun Live3DOrPlaceholder(
     colormap: Colormap,
     pointSizePx: Float,
     cameraMode: CameraMode,
+    liveSlam: Boolean,
     arAvailable: Boolean,
     arTrackingHint: String?,
     arOverlay: @Composable (Modifier) -> Unit,
@@ -327,6 +355,11 @@ private fun Live3DOrPlaceholder(
             colormap = colormap,
             pointSizePx = pointSizePx,
             cameraMode = cameraMode,
+            // B3: Record-only draws the sensor-frame stream; Live-SLAM draws
+            // the registered map (falling back to raw until the first mapped
+            // page exists). Without this a Mid-360 live-SLAM session draws
+            // both at once — see StreamFilter.
+            streamFilter = StreamFilter.forSession(liveSlam),
             modifier = Modifier.fillMaxSize(),
         )
     } else {
@@ -360,7 +393,10 @@ private fun CaptureControlsColumn(
     arTrackingLossEpisodes: Int,
     keyframeStats: com.lidarscan.app.ar.KeyframeRecorder.Stats,
     mountCalibrationHeadline: String?,
+    sensor: SensorType,
+    mid360Endpoint: String?,
     onConnectDevice: () -> Unit,
+    onConnectMid360: () -> Unit,
     onStart: () -> Unit,
     onPause: () -> Unit,
     onResume: () -> Unit,
@@ -372,7 +408,12 @@ private fun CaptureControlsColumn(
     onCameraModeChange: (CameraMode) -> Unit,
 ) {
     if (!isReplaySession) {
-        ConnectionCard(connectionState, onConnectDevice)
+        ConnectionCard(
+            connectionState = connectionState,
+            sensor = sensor,
+            mid360Endpoint = mid360Endpoint,
+            onConnectDevice = if (sensor == SensorType.MID360) onConnectMid360 else onConnectDevice,
+        )
         Spacer(Modifier.height(16.dp))
     }
 
@@ -381,7 +422,18 @@ private fun CaptureControlsColumn(
             LiveSlamToggle(liveSlam, onLiveSlamChange)
             Spacer(Modifier.height(12.dp))
         }
-        RecordingControls(captureState, isReplaySession, onStart, onPause, onResume, onStop)
+        // B3: Pause is offered only where it actually works. Replay has no
+        // pause hook in ReplaySource (B4), and a Mid-360 cannot pause without
+        // truncating the recording on resume (see RealEngineBridge).
+        RecordingControls(
+            captureState = captureState,
+            pauseSupported = !isReplaySession && sensor != SensorType.MID360,
+            isReplaySession = isReplaySession,
+            onStart = onStart,
+            onPause = onPause,
+            onResume = onResume,
+            onStop = onStop,
+        )
         Spacer(Modifier.height(16.dp))
         StatusStripCard(stats, health)
         Spacer(Modifier.height(16.dp))
@@ -395,7 +447,15 @@ private fun CaptureControlsColumn(
         )
     } else if (!isReplaySession) {
         Text(
-            "Connect a D6 to start recording.",
+            if (sensor == SensorType.MID360) {
+                if (mid360Endpoint == null) {
+                    "Run the Mid-360 connect wizard first — capture needs both a lidar IP and a host IP, and neither has a safe default."
+                } else {
+                    "Connect the Mid-360 ($mid360Endpoint) to start recording."
+                }
+            } else {
+                "Connect a D6 to start recording."
+            },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -403,23 +463,39 @@ private fun CaptureControlsColumn(
 }
 
 @Composable
-private fun ConnectionCard(connectionState: ConnectionState, onConnectDevice: () -> Unit) {
+private fun ConnectionCard(
+    connectionState: ConnectionState,
+    sensor: SensorType,
+    mid360Endpoint: String?,
+    onConnectDevice: () -> Unit,
+) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.padding(16.dp).fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column {
-                Text("Device", style = MaterialTheme.typography.titleSmall)
+            Column(Modifier.weight(1f)) {
+                Text(sensor.displayName, style = MaterialTheme.typography.titleSmall)
                 Text(
-                    connectionState.name.lowercase().replaceFirstChar { it.uppercase() },
+                    connectionState.name.lowercase().replaceFirstChar { it.uppercase() } +
+                        // B3: naming the endpoint here is the cheapest possible
+                        // guard against the Mid-360's silent failure — a capture
+                        // that records nothing usually had the wrong host IP,
+                        // and this is where that is visible before Start.
+                        (if (sensor == SensorType.MID360 && mid360Endpoint != null) " · $mid360Endpoint" else ""),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             OutlinedButton(onClick = onConnectDevice) {
-                Text(if (connectionState == ConnectionState.CONNECTED) "Manage" else "Connect")
+                Text(
+                    when {
+                        connectionState == ConnectionState.CONNECTED -> "Manage"
+                        sensor == SensorType.MID360 && mid360Endpoint == null -> "Set up"
+                        else -> "Connect"
+                    },
+                )
             }
         }
     }
@@ -449,6 +525,7 @@ private fun LiveSlamToggle(liveSlam: Boolean, onChange: (Boolean) -> Unit) {
 @Composable
 private fun RecordingControls(
     captureState: CaptureState,
+    pauseSupported: Boolean,
     isReplaySession: Boolean,
     onStart: () -> Unit,
     onPause: () -> Unit,
@@ -463,7 +540,7 @@ private fun RecordingControls(
                 Text(if (isReplaySession) "  Start replay" else "  Start recording")
             }
             CaptureState.RECORDING -> {
-                if (!isReplaySession) {
+                if (pauseSupported) {
                     Button(onClick = onPause) {
                         Icon(Icons.Filled.Pause, contentDescription = null)
                         Text("  Pause")

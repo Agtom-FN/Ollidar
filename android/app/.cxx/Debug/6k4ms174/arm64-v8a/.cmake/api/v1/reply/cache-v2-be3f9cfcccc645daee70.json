@@ -1387,7 +1387,7 @@
 				}
 			],
 			"type" : "INTERNAL",
-			"value" : "11"
+			"value" : "22"
 		},
 		{
 			"name" : "CMAKE_OBJCOPY",
@@ -2814,8 +2814,8 @@
 					"value" : "AUTO;ON;OFF"
 				}
 			],
-			"type" : "BOOL",
-			"value" : "OFF"
+			"type" : "STRING",
+			"value" : "ON"
 		},
 		{
 			"name" : "Eigen3_BINARY_DIR",
@@ -3650,6 +3650,18 @@
 			"value" : "TRUE"
 		},
 		{
+			"name" : "THREADS_PTHREAD_ARG",
+			"properties" : 
+			[
+				{
+					"name" : "HELPSTRING",
+					"value" : "Result from TRY_RUN"
+				}
+			],
+			"type" : "STRING",
+			"value" : "PLEASE_FILL_OUT-FAILED_TO_RUN"
+		},
+		{
 			"name" : "UMFPACK_INCLUDES",
 			"properties" : 
 			[
@@ -3752,6 +3764,42 @@
 			],
 			"type" : "STATIC",
 			"value" : "general;eigen_blas;"
+		},
+		{
+			"name" : "livox_sdk2_BINARY_DIR",
+			"properties" : 
+			[
+				{
+					"name" : "HELPSTRING",
+					"value" : "Value Computed by CMake"
+				}
+			],
+			"type" : "STATIC",
+			"value" : "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/scanengine/livox_sdk2/samples"
+		},
+		{
+			"name" : "livox_sdk2_IS_TOP_LEVEL",
+			"properties" : 
+			[
+				{
+					"name" : "HELPSTRING",
+					"value" : "Value Computed by CMake"
+				}
+			],
+			"type" : "STATIC",
+			"value" : "OFF"
+		},
+		{
+			"name" : "livox_sdk2_SOURCE_DIR",
+			"properties" : 
+			[
+				{
+					"name" : "HELPSTRING",
+					"value" : "Value Computed by CMake"
+				}
+			],
+			"type" : "STATIC",
+			"value" : "/Users/admin/lidarscan/engine/third_party/Livox-SDK2/samples"
 		},
 		{
 			"name" : "scanengine_BINARY_DIR",

@@ -15,6 +15,7 @@ import com.lidarscan.app.data.SettingsRepository
 import com.lidarscan.app.engine.RealEngineBridge
 import com.lidarscan.app.engine.ReplayEngineBridge
 import com.lidarscan.app.engine.ScanEngineNative
+import com.lidarscan.app.net.EthernetMonitor
 import com.lidarscan.app.usb.D6UsbConnectionRegistry
 import com.lidarscan.core.engine.D6ConnectController
 import com.lidarscan.core.engine.EngineBridge
@@ -58,6 +59,32 @@ class AppContainer(context: Context) {
 
     /** D6 USB device discovery, permission flow and open-connection registry (B2). */
     val d6UsbConnectionRegistry = D6UsbConnectionRegistry(appContext)
+
+    /**
+     * B3: USB-C Ethernet watcher for the Mid-360 connect wizard. Created here
+     * (not per-screen) so the adapter's state survives navigation, but
+     * `start()`/`stop()` are driven by the screen — an always-registered
+     * `NetworkCallback` on a capture app is a battery cost with no payoff
+     * while the user is in the projects list.
+     */
+    val ethernetMonitor = EthernetMonitor(appContext)
+
+    init {
+        // B3: MUST run before any Mid-360 device is added. The engine's SDK2
+        // backend writes the config file `LivoxLidarSdkInit()` requires into
+        // `std::filesystem::temp_directory_path()`, which resolves to nothing
+        // writable on Android (no TMPDIR, no /tmp; the engine's fallback of
+        // "." is the app's CWD, i.e. "/"). Setting TMPDIR to the app's own
+        // cacheDir fixes that with no ABI change and no engine edit — see
+        // `mid360_jni.cpp`'s header comment for the full write-up.
+        //
+        // Done in the container's init rather than lazily at connect time so
+        // there is exactly one call site and no ordering question: by the
+        // time any screen exists, the environment is already correct.
+        if (ScanEngineNative.isAvailable) {
+            ScanEngineNative.nativeSetTempDir(appContext.cacheDir.absolutePath)
+        }
+    }
 
     /**
      * Fired by [com.lidarscan.app.MainActivity]'s dynamically-registered

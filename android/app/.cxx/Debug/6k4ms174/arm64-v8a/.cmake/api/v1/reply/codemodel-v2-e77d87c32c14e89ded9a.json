@@ -20,14 +20,15 @@
 					"source" : ".",
 					"targetIndexes" : 
 					[
-						8
+						18
 					]
 				},
 				{
 					"build" : "scanengine",
 					"childIndexes" : 
 					[
-						2
+						2,
+						11
 					],
 					"hasInstallRule" : true,
 					"jsonFile" : "directory-scanengine-Debug-45687b7b1156e55d145b.json",
@@ -40,7 +41,7 @@
 					"source" : "/Users/admin/lidarscan/engine",
 					"targetIndexes" : 
 					[
-						7
+						17
 					]
 				},
 				{
@@ -65,13 +66,13 @@
 					"source" : "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src",
 					"targetIndexes" : 
 					[
-						12
+						22
 					]
 				},
 				{
 					"build" : "_deps/eigen3-build/blas",
 					"hasInstallRule" : true,
-					"jsonFile" : "directory-_deps.eigen3-build.blas-Debug-6d2ae495490e589a6d81.json",
+					"jsonFile" : "directory-_deps.eigen3-build.blas-Debug-5ac2e5c1069ac09f18c2.json",
 					"minimumCMakeVersion" : 
 					{
 						"string" : "3.5.0"
@@ -82,14 +83,14 @@
 					"targetIndexes" : 
 					[
 						0,
-						2,
-						3
+						3,
+						4
 					]
 				},
 				{
 					"build" : "_deps/eigen3-build/lapack",
 					"hasInstallRule" : true,
-					"jsonFile" : "directory-_deps.eigen3-build.lapack-Debug-379235325a1bb98ba4f2.json",
+					"jsonFile" : "directory-_deps.eigen3-build.lapack-Debug-7c3e3fedaa849b27158e.json",
 					"minimumCMakeVersion" : 
 					{
 						"string" : "3.5.0"
@@ -99,9 +100,9 @@
 					"source" : "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack",
 					"targetIndexes" : 
 					[
-						4,
 						5,
-						6
+						6,
+						7
 					]
 				},
 				{
@@ -160,7 +161,7 @@
 					"source" : "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/demos",
 					"targetIndexes" : 
 					[
-						1
+						2
 					]
 				},
 				{
@@ -186,9 +187,185 @@
 					"source" : "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/bench/spbench",
 					"targetIndexes" : 
 					[
-						9,
-						10,
+						19,
+						20,
+						21
+					]
+				},
+				{
+					"build" : "scanengine/livox_sdk2",
+					"childIndexes" : 
+					[
+						12,
+						13
+					],
+					"hasInstallRule" : true,
+					"jsonFile" : "directory-scanengine.livox_sdk2-Debug-4849eb6aa1392e35d734.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.10"
+					},
+					"parentIndex" : 1,
+					"projectIndex" : 6,
+					"source" : "/Users/admin/lidarscan/engine/third_party/Livox-SDK2"
+				},
+				{
+					"build" : "scanengine/livox_sdk2/sdk_core",
+					"hasInstallRule" : true,
+					"jsonFile" : "directory-scanengine.livox_sdk2.sdk_core-Debug-6704e41ce5673745f55e.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.10"
+					},
+					"parentIndex" : 11,
+					"projectIndex" : 6,
+					"source" : "/Users/admin/lidarscan/engine/third_party/Livox-SDK2/sdk_core",
+					"targetIndexes" : 
+					[
+						13,
+						14
+					]
+				},
+				{
+					"build" : "scanengine/livox_sdk2/samples",
+					"childIndexes" : 
+					[
+						14,
+						15,
+						16,
+						17,
+						18,
+						19,
+						20,
+						21
+					],
+					"jsonFile" : "directory-scanengine.livox_sdk2.samples-Debug-a924bb01dd8113bcae89.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.10"
+					},
+					"parentIndex" : 11,
+					"projectIndex" : 6,
+					"source" : "/Users/admin/lidarscan/engine/third_party/Livox-SDK2/samples"
+				},
+				{
+					"build" : "scanengine/livox_sdk2/samples/livox_lidar_quick_start",
+					"jsonFile" : "directory-scanengine.livox_sdk2.samples.livox_lidar_quick_start-Debug-2bfbe4ccba2f8eb565df.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.10"
+					},
+					"parentIndex" : 13,
+					"projectIndex" : 6,
+					"source" : "/Users/admin/lidarscan/engine/third_party/Livox-SDK2/samples/livox_lidar_quick_start",
+					"targetIndexes" : 
+					[
 						11
+					]
+				},
+				{
+					"build" : "scanengine/livox_sdk2/samples/multi_lidars_upgrade",
+					"jsonFile" : "directory-scanengine.livox_sdk2.samples.multi_lidars_upgrade-Debug-bf8bfc8c62c56f612199.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.10"
+					},
+					"parentIndex" : 13,
+					"projectIndex" : 6,
+					"source" : "/Users/admin/lidarscan/engine/third_party/Livox-SDK2/samples/multi_lidars_upgrade",
+					"targetIndexes" : 
+					[
+						16
+					]
+				},
+				{
+					"build" : "scanengine/livox_sdk2/samples/logger",
+					"jsonFile" : "directory-scanengine.livox_sdk2.samples.logger-Debug-e882415c5371ea81d372.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.10"
+					},
+					"parentIndex" : 13,
+					"projectIndex" : 6,
+					"source" : "/Users/admin/lidarscan/engine/third_party/Livox-SDK2/samples/logger",
+					"targetIndexes" : 
+					[
+						15
+					]
+				},
+				{
+					"build" : "scanengine/livox_sdk2/samples/debug_point_cloud",
+					"jsonFile" : "directory-scanengine.livox_sdk2.samples.debug_point_cloud-Debug-216734b7694148910030.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.10"
+					},
+					"parentIndex" : 13,
+					"projectIndex" : 6,
+					"source" : "/Users/admin/lidarscan/engine/third_party/Livox-SDK2/samples/debug_point_cloud",
+					"targetIndexes" : 
+					[
+						1
+					]
+				},
+				{
+					"build" : "scanengine/livox_sdk2/samples/lidar_cmd_observer",
+					"jsonFile" : "directory-scanengine.livox_sdk2.samples.lidar_cmd_observer-Debug-259a2dda1c2f002071d3.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.10"
+					},
+					"parentIndex" : 13,
+					"projectIndex" : 6,
+					"source" : "/Users/admin/lidarscan/engine/third_party/Livox-SDK2/samples/lidar_cmd_observer",
+					"targetIndexes" : 
+					[
+						8
+					]
+				},
+				{
+					"build" : "scanengine/livox_sdk2/samples/livox_lidar_rmc_time_sync",
+					"jsonFile" : "directory-scanengine.livox_sdk2.samples.livox_lidar_rmc_time_sync-Debug-49b1c1632cac0b353011.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.10"
+					},
+					"parentIndex" : 13,
+					"projectIndex" : 6,
+					"source" : "/Users/admin/lidarscan/engine/third_party/Livox-SDK2/samples/livox_lidar_rmc_time_sync",
+					"targetIndexes" : 
+					[
+						12
+					]
+				},
+				{
+					"build" : "scanengine/livox_sdk2/samples/livox_lidar_ip_set",
+					"jsonFile" : "directory-scanengine.livox_sdk2.samples.livox_lidar_ip_set-Debug-5ba0505c21d28fec361b.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.10"
+					},
+					"parentIndex" : 13,
+					"projectIndex" : 6,
+					"source" : "/Users/admin/lidarscan/engine/third_party/Livox-SDK2/samples/livox_lidar_ip_set",
+					"targetIndexes" : 
+					[
+						10
+					]
+				},
+				{
+					"build" : "scanengine/livox_sdk2/samples/livox_lidar_info_get",
+					"jsonFile" : "directory-scanengine.livox_sdk2.samples.livox_lidar_info_get-Debug-abaa83ae8679c48fa2d6.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.10"
+					},
+					"parentIndex" : 13,
+					"projectIndex" : 6,
+					"source" : "/Users/admin/lidarscan/engine/third_party/Livox-SDK2/samples/livox_lidar_info_get",
+					"targetIndexes" : 
+					[
+						9
 					]
 				}
 			],
@@ -207,13 +384,14 @@
 					"name" : "scanengine_jni_shim",
 					"targetIndexes" : 
 					[
-						8
+						18
 					]
 				},
 				{
 					"childIndexes" : 
 					[
-						2
+						2,
+						6
 					],
 					"directoryIndexes" : 
 					[
@@ -223,7 +401,7 @@
 					"parentIndex" : 0,
 					"targetIndexes" : 
 					[
-						7
+						17
 					]
 				},
 				{
@@ -246,10 +424,10 @@
 					"parentIndex" : 1,
 					"targetIndexes" : 
 					[
-						9,
-						10,
-						11,
-						12
+						19,
+						20,
+						21,
+						22
 					]
 				},
 				{
@@ -262,8 +440,8 @@
 					"targetIndexes" : 
 					[
 						0,
-						2,
-						3
+						3,
+						4
 					]
 				},
 				{
@@ -275,9 +453,9 @@
 					"parentIndex" : 2,
 					"targetIndexes" : 
 					[
-						4,
 						5,
-						6
+						6,
+						7
 					]
 				},
 				{
@@ -289,7 +467,38 @@
 					"parentIndex" : 2,
 					"targetIndexes" : 
 					[
-						1
+						2
+					]
+				},
+				{
+					"directoryIndexes" : 
+					[
+						11,
+						12,
+						13,
+						14,
+						15,
+						16,
+						17,
+						18,
+						19,
+						20,
+						21
+					],
+					"name" : "livox_sdk2",
+					"parentIndex" : 1,
+					"targetIndexes" : 
+					[
+						1,
+						8,
+						9,
+						10,
+						11,
+						12,
+						13,
+						14,
+						15,
+						16
 					]
 				}
 			],
@@ -301,6 +510,13 @@
 					"jsonFile" : "target-blas-Debug-52d924f039d578251428.json",
 					"name" : "blas",
 					"projectIndex" : 3
+				},
+				{
+					"directoryIndex" : 17,
+					"id" : "debug_point_cloud::@85b72b9f717f9ad3f24d",
+					"jsonFile" : "target-debug_point_cloud-Debug-919df10d99201ccacedc.json",
+					"name" : "debug_point_cloud",
+					"projectIndex" : 6
 				},
 				{
 					"directoryIndex" : 8,
@@ -345,16 +561,79 @@
 					"projectIndex" : 4
 				},
 				{
+					"directoryIndex" : 18,
+					"id" : "lidar_cmd_observer::@4e92d51beaddcb33c096",
+					"jsonFile" : "target-lidar_cmd_observer-Debug-9fd5defa6a28697d9350.json",
+					"name" : "lidar_cmd_observer",
+					"projectIndex" : 6
+				},
+				{
+					"directoryIndex" : 21,
+					"id" : "livox_lidar_info_get::@626157ac9a07de14bf84",
+					"jsonFile" : "target-livox_lidar_info_get-Debug-9a586ac8a05ae86b2f7b.json",
+					"name" : "livox_lidar_info_get",
+					"projectIndex" : 6
+				},
+				{
+					"directoryIndex" : 20,
+					"id" : "livox_lidar_ip_set::@340bfaf36583bb00d66b",
+					"jsonFile" : "target-livox_lidar_ip_set-Debug-9297beb54cc7b4ad5d7a.json",
+					"name" : "livox_lidar_ip_set",
+					"projectIndex" : 6
+				},
+				{
+					"directoryIndex" : 14,
+					"id" : "livox_lidar_quick_start::@c8283bbc58c1b9d87e65",
+					"jsonFile" : "target-livox_lidar_quick_start-Debug-6ba3bd963a51004a172e.json",
+					"name" : "livox_lidar_quick_start",
+					"projectIndex" : 6
+				},
+				{
+					"directoryIndex" : 19,
+					"id" : "livox_lidar_rmc_time_sync::@840f7eb9360f44c0f421",
+					"jsonFile" : "target-livox_lidar_rmc_time_sync-Debug-ab53060d689a2dd4114f.json",
+					"name" : "livox_lidar_rmc_time_sync",
+					"projectIndex" : 6
+				},
+				{
+					"directoryIndex" : 12,
+					"id" : "livox_lidar_sdk_shared::@5ce95165cb88f8b1333c",
+					"jsonFile" : "target-livox_lidar_sdk_shared-Debug-dddfb5ae6efc9c0d18fe.json",
+					"name" : "livox_lidar_sdk_shared",
+					"projectIndex" : 6
+				},
+				{
+					"directoryIndex" : 12,
+					"id" : "livox_lidar_sdk_static::@5ce95165cb88f8b1333c",
+					"jsonFile" : "target-livox_lidar_sdk_static-Debug-5f03fbd0bd5d3c64b5a5.json",
+					"name" : "livox_lidar_sdk_static",
+					"projectIndex" : 6
+				},
+				{
+					"directoryIndex" : 16,
+					"id" : "logger::@66e39ab4743b71d38ad3",
+					"jsonFile" : "target-logger-Debug-6c8496dafa1a27e9670a.json",
+					"name" : "logger",
+					"projectIndex" : 6
+				},
+				{
+					"directoryIndex" : 15,
+					"id" : "multi_lidars_upgrade::@5273f4c7c7a3c73e7ed0",
+					"jsonFile" : "target-multi_lidars_upgrade-Debug-8d3535bd9c441e438f4d.json",
+					"name" : "multi_lidars_upgrade",
+					"projectIndex" : 6
+				},
+				{
 					"directoryIndex" : 1,
 					"id" : "scanengine::@8eb8b0495c24506ce5a2",
-					"jsonFile" : "target-scanengine-Debug-ee93ab2d185ddc6f8371.json",
+					"jsonFile" : "target-scanengine-Debug-918b423869928ea1a778.json",
 					"name" : "scanengine",
 					"projectIndex" : 1
 				},
 				{
 					"directoryIndex" : 0,
 					"id" : "scanengine_jni::@6890427a1f51a3e7e1df",
-					"jsonFile" : "target-scanengine_jni-Debug-481680ef2f034a7fc190.json",
+					"jsonFile" : "target-scanengine_jni-Debug-0ba1e98c0a1de6cd6efa.json",
 					"name" : "scanengine_jni",
 					"projectIndex" : 0
 				},

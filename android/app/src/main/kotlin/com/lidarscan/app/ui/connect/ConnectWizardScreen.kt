@@ -45,6 +45,7 @@ fun ConnectWizardRoute(
     container: AppContainer,
     onBack: () -> Unit,
     onConnected: () -> Unit,
+    onOpenMid360: () -> Unit = {},
 ) {
     val viewModel: ConnectWizardViewModel = viewModel(
         factory = viewModelFactory {
@@ -71,6 +72,7 @@ fun ConnectWizardRoute(
         onRetry = viewModel::retry,
         onBack = onBack,
         onDone = onConnected,
+        onOpenMid360 = onOpenMid360,
     )
 }
 
@@ -85,6 +87,11 @@ fun ConnectWizardScreen(
     onRetry: (String) -> Unit,
     onBack: () -> Unit,
     onDone: () -> Unit,
+    // B3: the Mid-360 is a completely different transport (Ethernet, not
+    // USB-serial) with its own wizard, so this screen offers a door rather
+    // than growing a tab. Defaulted so existing call sites/tests do not have
+    // to change.
+    onOpenMid360: () -> Unit = {},
 ) {
     Scaffold(
         topBar = {
@@ -104,6 +111,9 @@ fun ConnectWizardScreen(
                 .padding(padding)
                 .padding(16.dp),
         ) {
+            Mid360DoorCard(onOpenMid360)
+            Spacer(Modifier.height(16.dp))
+
             when (wizardState) {
                 is ConnectWizardState.Connected -> {
                     ConnectedCard(devicePath = wizardState.devicePath, onDone = onDone)
@@ -253,5 +263,29 @@ private fun HealthRow(label: String, value: String) {
     ) {
         Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(value, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+
+/**
+ * B3: the Mid-360 lives on Ethernet, not USB-serial, so it gets its own
+ * wizard rather than a second tab here — nothing on this screen (driver
+ * enumeration, USB permission, CH340 detection) applies to it.
+ */
+@Composable
+private fun Mid360DoorCard(onOpenMid360: () -> Unit) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp)) {
+            Text("Livox Mid-360 (Ethernet)", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "USB-C Ethernet adapter, static IP, and a pre-capture self-test. None of the USB-serial " +
+                    "setup below applies to it.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(onClick = onOpenMid360) { Text("Open Mid-360 connect") }
+        }
     }
 }

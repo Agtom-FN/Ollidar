@@ -1,0 +1,14 @@
+{
+	"backtraceGraph" : 
+	{
+		"commands" : [],
+		"files" : [],
+		"nodes" : []
+	},
+	"installers" : [],
+	"paths" : 
+	{
+		"build" : "scanengine/livox_sdk2/samples/multi_lidars_upgrade",
+		"source" : "/Users/admin/lidarscan/engine/third_party/Livox-SDK2/samples/multi_lidars_upgrade"
+	}
+}

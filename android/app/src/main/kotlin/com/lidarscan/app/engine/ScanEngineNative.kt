@@ -214,6 +214,90 @@ object ScanEngineNative {
     external fun nativeKeyframeWriterFlush(handle: Long)
     external fun nativeKeyframeWriterClose(handle: Long)
 
+    // --- B3: Livox Mid-360 (mid360_jni.cpp) -------------------------------------
+
+    /**
+     * Points `TMPDIR` at a writable directory (the app's `cacheDir`) for the
+     * whole process. **Call this once before adding any Mid-360 device.**
+     *
+     * Not cosmetic: the engine's SDK2 backend generates the config file
+     * `LivoxLidarSdkInit()` requires into `std::filesystem::temp_directory_path()`,
+     * which on Android resolves to nothing usable — libc++ consults
+     * `TMPDIR`/`TMP`/`TEMP`/`TEMPDIR` then falls back to `/tmp`, and an
+     * Android device has none of those and no `/tmp`; the engine's own
+     * fallback of `"."` is the app's CWD, which is `/`. Without this call the
+     * Mid-360 fails to start with a file error. See mid360_jni.cpp's header
+     * comment for the full write-up and for why this is preferable to an ABI
+     * change exposing `Mid360Config::sdk_config_path`.
+     *
+     * Returns false if `setenv` failed (nothing in the app should be able to
+     * cause that; it is reported rather than swallowed).
+     */
+    external fun nativeSetTempDir(path: String): Boolean
+
+    /**
+     * Adds a Mid-360 to the live capture engine over the C ABI. Returns the
+     * device id (>= 0), or -1 on failure (see [nativeLastError]).
+     *
+     * Both IPs are REQUIRED, per A3 §3 ("Explicit IP is mandatory,
+     * everywhere") — `host_ip` because the device is *told* where to stream
+     * via the SDK's `0x0100` configuration push and never discovers its host,
+     * so a wrong one means it streams into the void, silently.
+     *
+     * `scan_device_config` carries **only** these two fields for a Mid-360;
+     * the backend selector, every port, and `UdpConfig::prebound_fd` are not
+     * in the C ABI at all. That is why the wizard's checks go through
+     * [nativeMid360ProbeStart] instead — see NativeMid360Probe.kt.
+     */
+    external fun nativeAddMid360Device(handle: Long, lidarIp: String, hostIp: String): Int
+
+    /** Allocates a `lidarscan_jni::Mid360Probe`. Always pair with [nativeMid360ProbeDestroy]. */
+    external fun nativeMid360ProbeCreate(): Long
+    external fun nativeMid360ProbeDestroy(handle: Long)
+
+    /**
+     * Starts the probe's standalone engine + Mid-360 device.
+     *
+     * @param backend 0 = SDK2 (full bring-up: discovery, handshake, host-IP
+     *   config push — the only backend that can start an out-of-the-box
+     *   device), 1 = raw UDP (listen-only, for a device already configured to
+     *   stream here, and the only backend that can take [preboundPointFd]).
+     * @param preboundPointFd a descriptor already bound to the Ethernet
+     *   `Network` via `Network.bindSocket` and detached with
+     *   `ParcelFileDescriptor.dup(...).detachFd()`, or -1. **Ownership
+     *   transfers to native**: `UdpSource` never closes a pre-bound fd ("the
+     *   app owns it"), so `Mid360Probe::stop()` closes it. Only meaningful
+     *   with `backend = 1`; with a pre-bound fd the probe forces IMU off (one
+     *   `prebound_fd` field, two `UdpSource`s — see mid360_probe.h).
+     */
+    external fun nativeMid360ProbeStart(
+        handle: Long,
+        lidarIp: String,
+        hostIp: String,
+        backend: Int,
+        devicePointPort: Int,
+        deviceImuPort: Int,
+        deviceCmdPort: Int,
+        hostPointPort: Int,
+        hostImuPort: Int,
+        hostCmdPort: Int,
+        preboundPointFd: Int,
+        publishImu: Boolean,
+    ): Boolean
+
+    external fun nativeMid360ProbeStop(handle: Long)
+    external fun nativeMid360ProbeLastError(handle: Long): String
+    external fun nativeMid360ProbeSnapshot(handle: Long): NativeMid360Probe?
+
+    /**
+     * True while any SDK2-backed probe holds the Livox SDK's process-wide
+     * singleton (`LivoxLidarSdkInit`/`Uninit` and the callback registrations
+     * are global — A3 §3: "A second kSdk2 driver gets kBusy"). The wizard
+     * gates capture start on this so the failure is a sentence, not a kBusy
+     * from somewhere the user cannot see.
+     */
+    external fun nativeMid360Sdk2Active(): Boolean
+
     /**
      * Engine → app write callback for D6's start/stop command bytes
      * (`scan_serial_write_cb` in the C ABI). Implemented in
@@ -316,8 +400,24 @@ object ScanEngineNative {
 
     /** Mirrors `SCAN_STREAM_*`. */
     object StreamId {
+        const val UNKNOWN = 0
+        const val LIDAR_D6 = 1
+        const val LIDAR_MID360 = 2
+        const val IMU = 3
         const val POSE_AR = 4
+        const val GNSS = 5
         const val CAMERA_FRAMES = 6
+        const val POSE_FUSED = 7
+
+        /**
+         * Registered world-frame points: A6's live-SLAM map **and** A8's
+         * assembled pushbroom cloud, which INT24-wiring.md §2 deliberately
+         * routes here rather than back onto `LIDAR_D6` ("kSlamMap *is* the
+         * registered-world-frame stream"). B3's [com.lidarscan.app.render.StreamFilter]
+         * is what stops it being drawn on top of the sensor-frame preview.
+         */
+        const val SLAM_MAP = 8
+        const val POSE_LIO = 9
     }
 
     /** Mirrors `kKeyframeFlag*` (`engine/include/scanengine/color/colorize.h`). */

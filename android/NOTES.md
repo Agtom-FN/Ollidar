@@ -209,14 +209,10 @@ needs to change when that swap happens, since everything is coded against the
 - **B2 (D6 connect) — done**, see the "B2 — D6 JNI bridge + connect flow"
   section above. `EngineBridgeProvider` now has a real `RealEngineBridge`
   registered (behind availability/dev-toggle checks) alongside `Fake`.
-- **B3 (Mid-360 connect)**: same shape as B2 — a `RealEngineBridge`-adjacent
-  path (or an extension of it) for `SensorType.MID360`, plus flipping
-  `ENGINE_WITH_LIVOX_SDK2` back `ON` in
-  `android/app/src/main/cpp/CMakeLists.txt`. `RealEngineBridge.connect`
-  currently fails cleanly (not silently) for any non-`COIN_D6` target — that
-  check is the seam to extend. Rebind against the C ABI as it exists when B3
-  starts (see "C ABI gaps found" above — the `DEVICE_HEALTH` event gap
-  matters more for B3, since Mid-360 actually publishes it).
+- **B3 (Mid-360 connect) — done**, see the "B3 — Mid-360 over USB-C Ethernet"
+  section below. `ENGINE_WITH_LIVOX_SDK2` is now `ON`,
+  `RealEngineBridge.connect` handles `SensorType.MID360`, and there is a
+  Compose connect wizard with a pre-capture self-test.
 - **B4 (Capture screen) — done**, see the "B4 — Filament capture screen +
   live 3D rendering" section below: live 3D view (Filament/`SurfaceView`),
   status strip, Live-SLAM toggle (now genuinely bound to
@@ -1324,6 +1320,576 @@ addendum):**
   calibration older than an interval, user reports misalignment) — the stored
   record carries everything needed (timestamp, bracket, serial, gate), and the
   Project Detail card already surfaces the verdict, but nothing prompts yet.
+
+## B3 — Mid-360 over USB-C Ethernet
+
+Task B3 (Tech Spec §3.1's Android row: "USB-C Ethernet; `ConnectivityManager`
+`TRANSPORT_ETHERNET` + `Network.bindSocket`; static-IP wizard + per-OEM
+guidance + pre-capture self-test"). Ownership strictly `android/**`; `engine/`
+stayed read-only. Pinned against **`SCAN_ABI_VERSION` 4** as observed in
+`engine/capi/scanengine_c.h` at task start.
+
+**Read `engine/docs/A3-mid360-driver.md` before this section.** Nearly every
+decision below is downstream of one of its measured findings, and the ones
+that matter most are: explicit `lidar_ip` **and** `host_ip` are mandatory
+because the device is *told* where to stream and never discovers its host; a
+link drop is invisible to the packet counter (0 counted losses across three
+15-second cable pulls), so silence is the only honest outage signal; and a
+power-cycled device is never re-configured by the SDK, which is why the driver
+forces a full re-init rather than waiting for a self-heal.
+
+### 1. SDK2 on bionic: it compiles clean, and the overlay is empty
+
+`android/app/src/main/cpp/CMakeLists.txt` now sets
+`ENGINE_WITH_LIVOX_SDK2 = "ON"` (B2 had it `OFF`). `ON`, not `AUTO`,
+deliberately: `AUTO` silently degrades to a build with no SDK2 backend when
+the tree is missing, and the user finds out on a bench when `start()` returns
+`kNotSupported`. `ON` is a configure-time `FATAL_ERROR` naming the fetch
+script, which is the right failure for a path that is not optional.
+
+It is a **`STRING`** cache entry, not a `BOOL` — the engine declares it as a
+tri-state (`AUTO`/`ON`/`OFF`) and compares it with `STREQUAL "AUTO"`, so
+forcing it to `BOOL` from the shim would hand that comparison a type it never
+expects.
+
+**The bionic question, answered before anything was wired.** Rather than
+discover SDK2's portability through Gradle, the SDK's own CMake project was
+configured directly against the NDK toolchain and the one target the engine
+links was built:
+
+```
+$ cmake -S engine/third_party/Livox-SDK2 -B <tmp> -G Ninja \
+    -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake \
+    -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-29 \
+    -DANDROID_STL=c++_shared -DCMAKE_BUILD_TYPE=RelWithDebInfo
+$ cmake --build <tmp> --target livox_lidar_sdk_static
+...
+17 warnings generated.
+[37/37] Linking CXX static library sdk_core/liblivox_lidar_sdk_static.a
+```
+
+**37/37 objects, zero errors, no Android-specific source change needed.**
+`android/third_party/patches-android/` therefore contains only a README
+recording that result and the rules any future patch has to follow.
+
+Two of the *engine's* three existing patches turn out to be load-bearing on
+Android even though neither was written for it, and this is worth knowing
+before anyone "cleans them up":
+
+* **`0001-cmake-minimum-required-3.10.patch`** — the NDK ships CMake 3.31.6,
+  which refuses `cmake_minimum_required(VERSION 3.0)` exactly as CMake ≥ 4.0
+  does. Without it the Android configure fails the same way the macOS one did.
+* **`0002-no-werror-on-clang.patch`** — this is the one that makes bionic
+  work. The NDK's compiler identifies as `Clang` (not `AppleClang`), so it
+  hits the same `-Werror` line, and it raises **17** warnings here. Most are
+  rapidjson's malformed `RAPIDJSON_DIAG_OFF` pragma strings
+  (`-Wunknown-warning-option`), but one is **NDK-libc++-specific and does not
+  fire on Apple's libc++ at all**: the bundled fmt instantiates
+  `std::char_traits<fmt::char8_t>`, which the NDK's libc++ marks
+  `_LIBCPP_DEPRECATED_`. Had patch 0002 not already existed, a bionic-only
+  `-Werror` patch would have had to be written for exactly that one warning.
+* `0003-darwin-no-broadcast-bind.patch` is inert here by construction — its
+  guard is `#if defined(WIN32) || defined(__APPLE__)`, so Android keeps
+  upstream's Linux path and still creates the broadcast-bound detection
+  sockets. That is correct: Linux (and therefore Android) accepts `bind()` to
+  `255.255.255.255` (`RTN_BROADCAST` is an allowed local-address class), which
+  is the whole reason the Darwin patch was needed in the first place.
+
+**The overlay's one hard rule, if a patch ever does land there**: it must be
+guarded by `#ifdef __ANDROID__` / `if(ANDROID)`. The overlay is applied **in
+place** to `engine/third_party/Livox-SDK2`, which is the same gitignored,
+script-generated tree the engine's macOS/Linux/CI builds configure against.
+Mutating a generated tree is not "editing `engine/`", but it *is* shared, and
+an unguarded change would silently alter a build this task does not own.
+
+### 2. Build integration: a Gradle task, because CMake is too late
+
+`ENGINE_WITH_LIVOX_SDK2=ON` needs the tree to exist **at configure time**, so
+the fetch cannot live in CMake — by the time the configure step runs, it has
+already failed. `app/build.gradle.kts` gains `prepareLivoxSdk2`, wired as a
+dependency of every task whose name starts with `configureCMake` or
+`buildCMake` (AGP names them `configureCMakeDebug[arm64-v8a]` — the bracketed
+ABI is part of the task name, so matching by prefix is what keeps a release
+build or a second ABI from silently missing the dependency).
+
+It shells out to `android/scripts/prepare_livox_sdk2.sh`, which:
+
+1. runs the **engine's own** `engine/third_party/fetch_sdk2.sh` unmodified
+   (pinned tarball + its three patches; a no-op when the tree is present, and
+   it honours `LIVOX_SDK2_TARBALL` for an air-gapped build), then
+2. applies `android/third_party/patches-android/*.patch` idempotently — each
+   patch is skipped when `patch -R --dry-run` succeeds, i.e. when it is
+   already in the tree, so a re-run never half-applies.
+
+That idempotency idiom was verified directly (apply → detected-as-applied →
+skipped) rather than assumed, since the overlay itself is currently empty and
+the mechanism would otherwise be untested code.
+
+Same "fetched on demand, not committed" shape as B4's `fetchFilamentTools`.
+
+### 3. Two runtime problems bionic creates that compiling clean does not fix
+
+**a) There is nowhere for SDK2's config file to go.** `LivoxLidarSdkInit()`
+takes a config-file *path*, so `mid360_sdk2.cpp`'s `write_config()`
+synthesises one:
+
+```cpp
+std::filesystem::path dir = std::filesystem::temp_directory_path(ec);
+if (ec) dir = std::filesystem::path(".");
+```
+
+On Android **neither branch is writable**. libc++'s `temp_directory_path()`
+consults `TMPDIR`/`TMP`/`TEMP`/`TEMPDIR` and falls back to `/tmp`; an Android
+device has none of those set for an app and no `/tmp` directory at all, so
+`ec` is set — and the engine's fallback of `"."` is the process CWD, which for
+an app is `/`. The generated config would fail to write and the Mid-360 would
+never start, reporting `kFileError` against a path that makes no sense.
+
+Fixed app-side with one `setenv("TMPDIR", context.cacheDir, 1)`
+(`ScanEngineNative.nativeSetTempDir`, called once from `AppContainer`'s `init`
+so there is exactly one call site and no ordering question). This needs **no
+ABI change**, fixes every other `temp_directory_path()` caller in the engine
+at the same time, and `setenv` is the mechanism libc++ documents for it. The
+cleaner long-term fix is engine-side and is listed in §8.
+
+**b) `socket(2)` itself is permission-gated.** On Android the syscall fails
+with `EACCES` unless the app is in the `inet` supplementary group, which it
+joins only by holding `android.permission.INTERNET`. This affects **both** the
+sockets this app creates and the ones the Livox SDK creates inside native
+code, and reported as a bare "EACCES" it reads like a firewall problem and is
+not. `AndroidManifest.xml` now declares `INTERNET`,`ACCESS_NETWORK_STATE` and
+`CHANGE_NETWORK_STATE`, and `NetworkBoundUdpSocket.explainErrno` turns that
+particular errno into the sentence that names the real fix.
+
+### 4. Ethernet transport: `EthernetMonitor`, and why it also registers a plain callback
+
+`app/net/EthernetMonitor.kt` builds a
+`NetworkRequest(TRANSPORT_ETHERNET, NOT_VPN)` and tries
+`ConnectivityManager.requestNetwork` **first**, falling back to
+`registerNetworkCallback` on `SecurityException`.
+
+That fallback is not defensive padding — `requestNetwork` is guarded by
+`CHANGE_NETWORK_STATE`, whose protection level is
+`signature|preinstalled|appop|pre23`. A normal app does **not** get it by
+declaring it, and on many builds the call throws.
+`registerNetworkCallback` takes the same `NetworkRequest`, needs only
+`ACCESS_NETWORK_STATE`, is granted at install, and delivers identical
+callbacks; it simply does not *ask for* the network, which for a physically
+attached USB-Ethernet adapter is not something that needs asking. Which path
+is live is surfaced in the UI (`EthernetState.usingRequest`), because it
+changes what "no Ethernet network" means.
+
+`NET_CAPABILITY_INTERNET` is deliberately **not** in the request. A direct
+phone-to-lidar link has no internet and never will; requiring it is the
+easiest way to make this callback never fire on exactly the setup it exists
+for.
+
+The monitor reads `LinkProperties.linkAddresses`, filters to IPv4 (`UdpConfig`
+is dotted-quad throughout and SDK2's config JSON has no IPv6 form), and
+exposes them — which is what makes the wizard's most valuable check possible
+(§6). "Adapter up, no IPv4 address" is called out as its own state, because it
+is precisely where a direct lidar link sits until a static IP is configured:
+there is no DHCP server on the other end of the cable.
+
+**`bindProcessToNetwork` is deliberately not used.** It is process-wide and
+would push NTRIP corrections (A10/B9), Play services and everything else onto
+a link with no route to the internet.
+
+### 5. Passing a pre-bound fd — and the C-ABI wall it runs into
+
+`engine/include/scanengine/transport/udp_source.h` documents
+`UdpConfig::prebound_fd` as, in its own words, "The Android seam: the app
+binds the socket to the USB-Ethernet Network object (ConnectivityManager
+TRANSPORT_ETHERNET + Network.bindSocket) and hands the bound descriptor down,
+because the engine cannot reach ConnectivityManager."
+
+**The C ABI cannot express it.** `scan_device_config`'s Mid-360 half is
+exactly two fields:
+
+```c
+  /* Mid-360 (UDP) — A3 */
+  const char* lidar_ip;
+  const char* host_ip;
+```
+
+and `scanengine_c.cpp` copies them into `dc.mid360.udp.{lidar_ip,host_ip}` and
+nothing else. So the backend selector, every port, `recv_buffer_bytes`, the
+point filter, `live_points_per_sec` and `prebound_fd` are all unreachable from
+the C ABI — and there is no route from the opaque `scan_engine*` to the C++
+`scanengine::Engine&` it wraps either (`EngineHandle` is file-local to
+`scanengine_c.cpp`). B4 hit exactly this wall for `lscan::ReplaySource`.
+
+So B3 does what B4 did, with the same reasoning, and splits the two jobs:
+
+* **Capture goes through the C ABI.** `ScanEngineNative.nativeAddMid360Device`
+  → `scan_engine_add_device(kind = SCAN_DEVICE_MID360)` on **the same**
+  `scan_engine*` `RealEngineBridge` already owns, so Mid-360 points land in
+  the session's `PageStore`, its raw datagrams reach the session's `.lscan`
+  recorder (the engine installs its own `raw_sink` shim for that —
+  `engine.cpp`'s "Record-always for a driver that owns its own sockets"), and
+  live SLAM sees them. Backend is SDK2 by default, which is the only one that
+  can bring an out-of-the-box device up.
+* **The wizard's checks go through a standalone C++ engine.**
+  `cpp/mid360_probe.{h,cpp}` builds its own `scanengine::Engine` and a full
+  `Mid360Config`, which is the only place `prebound_fd`, the backend selector
+  and the ports can be set at all.
+
+**How the descriptor actually crosses**, in `app/net/NetworkBoundUdpSocket.kt`:
+`android.system.Os.socket()` → `setsockopt(SO_REUSEADDR)` +
+`setsockopt(SO_RCVBUF, 4 MB)` → `Os.bind(hostIp, port)` →
+`Network.bindSocket(FileDescriptor)` →
+`ParcelFileDescriptor.dup(fd).detachFd()` → an `int` handed to JNI.
+
+* `Os` rather than `DatagramSocket` because `Network.bindSocket` would take
+  either, but there is no public way to get an **int** out of a
+  `DatagramSocket` — the usual route is reflection into `DatagramSocketImpl`,
+  which is greylisted and has moved between releases. This path uses no
+  reflection.
+* Binding the **specific** host address rather than `INADDR_ANY` is
+  deliberate: it fails immediately with `EADDRNOTAVAIL` if that address is not
+  on the device, which is the commonest Mid-360 misconfiguration and otherwise
+  surfaces eight seconds later as "no packet".
+* `SO_RCVBUF` is set here because a pre-bound socket **bypasses the engine's
+  own sizing** — `UdpSource` only sets `SO_RCVBUF` on a socket it created
+  itself. A3 §8 names NIC/buffer behaviour as the single biggest untested
+  risk, so silently shipping a default-sized buffer on this path would be a
+  bad trade.
+* Ownership is stated at every step: this class owns the original fd and
+  closes it; the **dup** is owned by native, because `UdpSource` never closes
+  a pre-bound descriptor ("the app owns it"), so `Mid360Probe::stop()` closes
+  it after tearing the engine down (order matters — no receive thread may
+  still be in `recvfrom` on it).
+
+**`Mid360Probe` also reports what `DeviceHealth` cannot.** `Engine` exposes no
+concrete-driver accessor, so `Mid360Stats` — link state, watchdog trips,
+forced re-inits, window loss %, device SN — is unreachable even from C++
+(desktop's NOTES §8.3 records the same constraint). Two things close the gap
+without an engine change:
+
+* the probe installs its own **`raw_sink`**, which fires per datagram *before*
+  parsing. That is the only signal available when bytes arrive but nothing
+  decodes, and "no datagrams at all" vs "datagrams but no points" is the
+  difference between a cabling/addressing fault and a port/format one;
+* **link state is re-derived** from wall-clock silence using A3 §5's own
+  thresholds (`data_timeout_ms` 1 s → `kSilent`, `reinit_after_silence_ms`
+  5 s → `kReinitializing`) applied to `t_last_data_ns` — the same observable
+  and the same rule the driver applies internally, so the two do not tell the
+  user different stories. Wall clock and not `udp_cnt`, because S2 measured
+  **0 counted losses across three 15-second cable pulls**.
+
+### 6. The connect wizard (Compose)
+
+`ui/connect/Mid360ConnectScreen.kt` + `Mid360ConnectViewModel.kt`, reachable
+from Project Detail (per-project, can save) and from the D6 connect wizard
+(no project, transport check only). Five sections, ordered the way an operator
+hits the problems:
+
+**Interface status.** Adapter present/absent, interface name, the IPv4
+addresses actually on it, and a one-tap "use this as the host IP". "Up but no
+address" is its own message.
+
+**Static-IP guidance, per OEM, with a Settings deep link.** It is *guidance*
+and not a form because **there is no public API to configure an Ethernet
+interface's IP**: `EthernetManager`/`StaticIpConfiguration` are `@SystemApi`
+behind `MANAGE_ETHERNET_NETWORKS`, which is `signature`-level with no
+user-grantable equivalent (`WifiManager` has a public counterpart; Ethernet
+does not). `StaticIpGuidance` carries per-vendor menu paths and a per-vendor
+*caveat* for Pixel/AOSP, Samsung One UI, Xiaomi HyperOS/MIUI,
+OnePlus/OPPO/realme and HONOR/Huawei — including the ones that matter most:
+several MagicOS/EMUI builds ship **no Ethernet settings UI at all** (a
+DHCP-capable switch is the workaround), and some One UI builds drop static
+settings when the adapter is unplugged. The deep link goes through
+`resolveActivity` so an unresolvable action degrades to the generic Settings
+screen instead of throwing.
+
+**Per-OEM variance is stated as unverified.** The intents are documented
+`Settings.ACTION_*` constants; the *menu paths* come from vendor
+documentation and have **not** been walked on a device of each brand — no
+device was available. The on-screen copy says so, and says that the addresses
+read back from the live interface are the ground truth.
+
+**Addresses.** Lidar IP and host IP (defaults `192.168.1.100` / `192.168.1.5`,
+with the host pre-filled from the interface's real address when there is one),
+the three device-side ports, and the transport selector. Validation lives in
+`:core` (`net/Mid360Settings.kt`) and is **deliberately stricter than desktop
+C2**, which checks only that the lidar IP is non-empty and lets `add_device`
+be the validator. That is a defensible desktop trade; it is a poor one here,
+because the Mid-360's characteristic failure is *silence*, and an 8-second
+self-test that ends in "no packet" is a far worse diagnosis than a field that
+says the host IP is not an address this phone holds. The checks:
+
+| check | verdict | why |
+| --- | --- | --- |
+| both IPs present | fatal, with different reasons | one is "we cannot find it", the other "it cannot find us" |
+| dotted-quad, hand-rolled | fatal | `InetAddress.getByName` does a **DNS lookup** for non-literals, on whatever thread; the wizard validates per keystroke. Leading zeros are refused because `inet_addr` reads `010` as octal 8 |
+| host IP ∈ interface addresses | **fatal** | the one misconfiguration that produces no error at all |
+| …but only when addresses are known | warning | do not block form-filling before the cable is in |
+| loopback host | fatal | the engine's sim uses `127.000.000.001` to slip past SDK2's self-IP filter; A3 §7 says not to copy that into production |
+| host ≠ lidar | fatal | |
+| same /24 | warning | legal with a router, impossible on a direct cable |
+| port ranges, host-port collisions | fatal | three host ports are three bound sockets |
+| raw-UDP selected | note | states what it cannot do rather than failing later |
+
+**Self-test.** `add_device` + `start` (preview session, nothing recorded) →
+first-data-or-timeout, matching desktop C2's `onTestDevice()` shape. The gate
+is **the first point, not a rate** — the same asymmetry C2 has, and for the
+same reason: the D6's failure mode is a bad link that decodes *some* bytes, so
+a rate discriminates; the Mid-360's is total silence, and once it streams it
+streams at 200,000 pts/s, so there is no partial-credit regime. The window is
+**8 s**, deliberately shorter than the engine's own 10 s `connect_timeout_ms`
+(that timer decides whether the *watchdog* forces an SDK re-init; the UI's job
+is to stop asking the user to wait once the answer is clear) and about 5× the
+measured 1.45 s handshake.
+
+A failure is diagnosed, not just reported — `Mid360SelfTest.diagnose` picks
+between "datagrams ARE arriving but none decode" (wire and addressing fine,
+port or format wrong), "the driver reported a fault" (usually host IP or a
+bound port), and "no datagram at all", whose likelihood-ordered list ends with
+the one an operator cannot deduce from the app: **the Mid-360 needs its own
+9–27 V / ~6.5 W supply; USB-C cannot power it.**
+
+The health readout shows A3's link state with its meaning spelled out
+(including "a cable pull looks exactly like this" on `Silent`), plus pts/s,
+IMU Hz, loss % **and** its complement, points, drops, and the pre-parse
+datagram counters — against A3 §7's soak figures quoted as the reference. On
+the pre-bound path IMU reads "n/a", never "0.00 Hz", because a structural
+absence displayed as a zero reads as a broken device.
+
+On a pass the device is **left streaming**, exactly as C2 does: the
+interesting question (does loss % stay at zero over 30 s?) is answered after
+the verdict, not before it.
+
+**Save per project.** `ProjectManifest` gains a `mid360: Mid360Settings?`
+field, written only after a pass — desktop C2's rule that a config which
+failed to add is never persisted, for the same reason: saving addresses that
+demonstrably do not work makes the next session's pre-fill worse than the
+defaults. It lives in the manifest rather than a device-level store because,
+unlike a mount calibration (which belongs to the *bracket* and follows the
+phone), a lidar/host IP pair belongs to the **site** — and it is the record of
+what a capture was actually taken with, which is the first thing anyone asks
+when a `.lscan` turns out empty.
+
+### 7. Capture integration
+
+* `RealEngineBridge.connect` handles `SensorType.MID360` via a
+  `"<lidarIp>|<hostIp>"` `transportHint`, creating the engine if needed and
+  adding the device to the capture session's own handle.
+* Project Detail shows a **Mid-360 connect** card for a Mid-360 project with
+  the saved endpoint on it; the Capture screen's device card names the
+  endpoint next to the connection state, and its button is "Set up" (→ wizard)
+  or "Connect" (→ connect with the saved endpoint) depending on what the
+  project has. The D6 wizard grew a door to the Mid-360 one rather than a tab
+  — nothing on it (driver enumeration, USB permission, CH340 detection)
+  applies to Ethernet.
+* **Live-SLAM + Mid-360 compiles through and renders correctly — after a fix
+  that is the opposite of the one the brief anticipated.** The brief asked to
+  verify that stream filtering does not drop `kSlamMap` pages. It does not,
+  because **B4's renderer had no stream filtering at all**: `syncPointCloud()`
+  drew every page it enumerated, ignoring `scan_point_page.stream`. That is
+  correct for a D6 record-only session (one point stream) and wrong the moment
+  a Mid-360 runs with `live_slam = true`, when the engine's single `PageStore`
+  holds both `SCAN_STREAM_LIDAR_MID360` (sensor-frame preview) and
+  `SCAN_STREAM_SLAM_MAP` (A6's registered map, and also where A8's pushbroom
+  cloud goes — INT24 §2). Drawing both superimposes a cloud that rotates with
+  the sensor on one that does not; the symptom is smearing and doubling, not
+  missing points, which is much harder to attribute.
+
+  Fixed in `render/StreamFilter.kt` + `PointCloudRenderer.setStreamFilter`:
+  `RAW_ONLY` when Record-only, `MAPPED_ONLY` when Live-SLAM, chosen from the
+  same `liveSlam` flag that goes into `scan_session_config.live_slam`.
+  `MAPPED_ONLY` **falls back to raw until the first mapped page exists**,
+  because live SLAM takes a moment to initialise its ESKF and is allowed to
+  fail without failing the session (INT24 §2) — a strict map-only filter would
+  show a black screen in exactly the case where the operator most needs to see
+  that points are arriving. The first mapped page drops the raw pages in the
+  same pass, so the switch is one frame rather than a slow crossfade.
+  `mappedSeen` is tracked on the renderer, not on the enum, because enum
+  entries are process-wide singletons and would leak one session's state into
+  the next.
+* **Pause is not offered for a Mid-360, and that is a deliberate refusal.**
+  B2's trick (the reader thread stops forwarding bytes) does not transfer: the
+  Mid-360 owns its own sockets and the app never touches its bytes. Desktop C2
+  pauses by stopping the recording session and resuming with a *new* one into
+  the same directory — **not replicated**, because
+  `FileRecordWriter::open()` creates its stream files with
+  `std::fopen(path, "wb")`, so a resume would truncate everything recorded
+  before the pause. Silently destroying the first half of a capture is far
+  worse than not offering the button, so `pauseCapture` fails cleanly with the
+  reason and `CaptureScreen` hides the control (same shape as B4's replay
+  path). A real fix is an append/resume mode in the recorder, or pause/resume
+  in the C ABI.
+
+### 8. Engine-side findings (for the rebind list — none were worked around silently)
+
+1. **`scan_device_config` cannot carry the Android seam.** Its Mid-360 half is
+   `lidar_ip` + `host_ip` only, so `UdpConfig::prebound_fd` — the field
+   `udp_source.h` documents *as* the Android seam — is unreachable from the C
+   ABI, and so are the backend selector, all ten ports, `recv_buffer_bytes`,
+   the filter and `live_points_per_sec`. B3 works around it with a standalone
+   C++ engine for the wizard (§5), but **the capture session cannot use a
+   pre-bound socket at all** without an ABI addition. This is the one worth
+   fixing first.
+2. **`UdpConfig::prebound_fd` is one fd, but the raw-UDP backend needs two.**
+   `RawUdpBackend::open()` copies the whole `UdpConfig` into both its point
+   and its IMU `UdpSource` (`mid360_raw_udp.cpp`), so a single pre-bound
+   descriptor would be `recvfrom`'d by two receive threads that steal each
+   other's datagrams. B3's pre-bound path therefore runs point-only
+   (`publish_imu = false`) and says so in the UI. A per-source fd (or a small
+   `prebound_fds[2]`) would close it. **Not a bionic incompatibility** — an
+   API-shape gap, so it is reported rather than patched.
+3. **SDK2's own sockets cannot be bound to a `Network` per-socket.** They are
+   created inside `util::CreateSocket` in the vendored SDK, so
+   `Network.bindSocket` never sees them, and the production bring-up path
+   (kSdk2) relies on the Ethernet link being the route the kernel picks. The
+   three ways out, none taken here: (a) `ConnectivityManager.bindProcessToNetwork`
+   — works, including for native sockets, but is **process-wide** and would
+   push NTRIP/Play/everything onto a link with no internet; (b)
+   `android_setprocnetwork()` from `<android/multinetwork.h>` scoped around
+   SDK init — same semantics, callable from the shim, same cost; (c) a fourth
+   SDK patch calling `android_setsocknetwork()` inside `CreateSocket`, which
+   is the only per-socket answer but is an Android *feature* patch rather than
+   a bionic-compat one and so is outside this task's overlay rule. Worth
+   deciding deliberately before a bench session.
+4. **`Mid360Config::sdk_config_path` is not exposed through the C ABI**, which
+   is what forced the `TMPDIR` fix-up (§3a). Exposing it — or having the
+   engine prefer an app-supplied directory — would be cleaner than relying on
+   an environment variable set at startup.
+5. **`Engine` exposes no concrete-driver accessor**, so `Mid360Stats` (link
+   state, watchdog trips, forced re-inits, window loss %, device SN/IP) is
+   unreachable from the app even in C++. Desktop's NOTES §8.3 flags the same
+   thing. B3 re-derives link state from `t_last_data_ns` using A3's own
+   thresholds and counts datagrams through `raw_sink`, which covers the
+   wizard's needs — but "how many forced re-inits has this capture had" is a
+   question the app still cannot answer, and it is exactly the question a
+   flaky bench session raises.
+6. **B2's `SCAN_EVENT_DEVICE_HEALTH` gap still stands** and now bites: the
+   Mid-360 *is* the driver that publishes `kDeviceHealth`, and its payload
+   still does not survive `convert_event()`'s `default:` fallthrough. Health
+   is therefore polled, not pushed. There is a second-order consequence worth
+   knowing: the *published* payload carries the **per-window** loss
+   (`1 - loss_pct_window/100`) while `device_health()` carries the
+   **lifetime** figure, so the polled "loss %" will not snap back after a
+   transient burst. Closing the event gap would also make the gauge
+   responsive.
+
+### 9. Verification — what was actually run
+
+**Verified in this environment** (`./gradlew clean :core:test
+:app:assembleDebug`, and a second run from a wiped `app/.cxx` + `app/build`):
+
+- **`:core:test` — 104/104 pass, 0 failures** (81 from B1/B2/B4/B7/B8
+  unchanged, **23 new**), plain JVM, no emulator:
+  - `Ipv4Test` (4): dotted-quad parsing; rejection of the shapes a human
+    actually types (`192.168.1`, `.256`, trailing dot, `1a`, and **leading
+    zeros**, which `inet_addr` would read as octal); prefix-length subnet
+    matching including the /32 edge; loopback/multicast/broadcast
+    classification — plus an explicit assertion that the engine sim's
+    `127.000.000.001` is *not* accepted here.
+  - `Mid360SettingsValidationTest` (9): defaults validate against a matching
+    interface; both IPs required **with distinct reasons**; a host IP the
+    interface does not hold is fatal and names the addresses it does hold;
+    unknown addresses degrade the check to a warning; loopback refused;
+    host ≠ lidar; cross-subnet is a warning not an error; port range and
+    host-port collision; the raw-UDP note is non-blocking and states both of
+    its limitations.
+  - `Mid360SelfTestTest` (10): one point passes at 1.45 s; the baseline is
+    subtracted so a re-test on a streaming device is honest; progress across
+    the window; **fails at exactly 8000 ms and not at 7999**; the window is
+    locked shorter than the engine's 10 s grace; the three diagnoses are
+    distinct and the silence one names the power requirement; a fault is
+    named rather than blamed on the cable; the pre-bound path reports "IMU
+    off" and never "0.00 Hz"; the health line quotes loss and its complement;
+    the reference constants match A3 §7's soak table.
+- **SDK2 compiled under the NDK before any integration** — 37/37 objects, 0
+  errors (§1), which is the answer to "does it work on bionic".
+- **`:app:assembleDebug` — succeeds with SDK2 genuinely compiled in**, not
+  skipped. Evidence, on the *unstripped* `.so`
+  (`app/build/intermediates/cxx/Debug/*/obj/arm64-v8a/libscanengine_jni.so`):
+  - `llvm-nm -a` finds **4,610 symbols matching `livox`**, including
+    `LivoxLidarSdkInit`, `LivoxLidarSdkStart`, `LivoxLidarSdkUninit` and
+    `SetLivoxLidarPointCloudCallBack`;
+  - the engine's own SDK2 backend is present:
+    `scanengine::make_sdk2_backend(Mid360Driver&, unsigned, Mid360Config const&)`.
+- **Size jump**: `lib/arm64-v8a/libscanengine_jni.so` grew from B7/B8's
+  **3.1 MB to 5.84 MB** (+2.7 MB, the SDK2 static library and its vendored
+  rapidjson/spdlog/FastCRC); the debug APK from ~74.7 MB to **77.6 MB**. Still
+  arm64-v8a only — no `armeabi-v7a`/`x86_64` entries, so `abiFilters` holds.
+- **JNI surface verified mechanically, both directions**:
+  - `llvm-nm -D` on the packaged `.so`: **55** exported
+    `Java_com_lidarscan_app_engine_ScanEngineNative_native*` entry points (46
+    from B2/B4/B7/B8 plus the 9 new ones), names matching the Kotlin
+    `external fun` declarations exactly;
+  - `javap -s` on the compiled Kotlin: `NativeMid360Probe`'s constructor
+    descriptor is `(IIJJJJJDDDJJJJJJIJZI)V`, **identical** to the string
+    `JNI_OnLoad` looks up, and every new `native` method's descriptor matches
+    its C++ parameter list (e.g. `nativeMid360ProbeStart`
+    `(JLjava/lang/String;Ljava/lang/String;IIIIIIIIZ)Z`). This is the
+    "compiles on both sides, dies at `JNI_OnLoad`" class of bug B2 and B4 both
+    flagged, closed for the new surface.
+- **Gradle task graph checked** (`--dry-run`): `prepareLivoxSdk2` sits ahead
+  of `configureCMakeDebug[arm64-v8a]` and `buildCMakeDebug[...]`, which is the
+  ordering the `ON` setting requires.
+- **The overlay's idempotency idiom tested directly** (apply → detected as
+  already-applied → skipped), since the overlay is empty and the mechanism
+  would otherwise be unexercised code.
+
+**Explicitly NOT verified — device-deferred. Everything network is in this
+list**, consistent with the Tech Spec's 2026-08-15 hardware-absent addendum
+and with A3 §8's own "what is still hardware-only":
+
+- **Any Mid-360 hardware interaction at all.** No device, no USB-C Ethernet
+  adapter, no switch. Nothing below has run: SDK2's discovery, the handshake,
+  the `0x0100` host-IP configuration push, a single UDP datagram, the loss
+  model against real firmware, the watchdog, or a forced re-init.
+- **The whole `ConnectivityManager` path.** Whether `requestNetwork` throws on
+  a given build, whether the fallback callback fires, what `LinkProperties`
+  reports for a given adapter, and whether `Network.bindSocket` actually
+  steers traffic — all reasoned from the documented contracts, none executed.
+- **The pre-bound fd end to end.** `Os.socket`/`bind`/`bindSocket`/
+  `ParcelFileDescriptor.dup().detachFd()` → `UdpConfig::prebound_fd` →
+  `UdpSource` receiving on it. The descriptor-ownership split is stated
+  precisely in three places, and it is exactly the kind of thing that is
+  correct on paper and leaks or double-closes in practice.
+- **SDK2 running on bionic.** It *compiles*; whether `LivoxLidarSdkInit`
+  succeeds on an Android device is a separate question, and §3 lists the two
+  Android-specific reasons found by reading that it might not have.
+- **The `TMPDIR` fix.** Reasoned from libc++'s documented lookup order and
+  Android's filesystem; not observed.
+- **Every OEM menu path** in `StaticIpGuidance`, and whether the Settings deep
+  link lands anywhere useful per vendor.
+- **Live-SLAM + Mid-360 rendering.** The `StreamFilter` fix compiles and its
+  policy is unit-reasoned, but no `kSlamMap` page has been drawn on a device —
+  B4's renderer has never executed here either.
+
+**What the protocol-level proof actually is, and where it lives.** This UI is
+not the first thing to exercise the Mid-360 protocol, and it does not claim to
+be. The protocol is proven by (a) the S2 simulator (`spikes/s2-mid360-sim/`)
+driving the real, patched SDK2 against the real driver on loopback — A3 §7's
+60-second soak at 199,999 pts/s / 200.00 Hz IMU / 0 lost packets, the 2%
+injected-loss run measuring 1.8596% against 2% injected, the cable-pull and
+power-cycle runs, and the `.lvx2` replay against Livox's own recordings — and
+(b) desktop C2, whose Mid-360 self-test measured 1.59–1.63 s handshake-to-first
+-packet through the same `Engine::add_device` call this app makes. B3 is a
+transport and a wizard built on top of that proof; it adds Android's
+`ConnectivityManager`/`Network`/bionic layer, and **that layer alone is what
+needs hardware.** The first bench session should be A3 §8's: re-run the §7
+soak with `Mid360Backend::kSdk2` pointed at the physical unit, which from this
+app is exactly "type the two IPs into the wizard and press Run self-test".
+
+### 10. Follow-ups this task deliberately did not take
+
+- **A C-ABI addition for the Mid-360's full `Mid360Config`** (§8 items 1, 2,
+  4). Until then the capture session cannot use a pre-bound socket, and the
+  wizard's probe is a second engine rather than the real one.
+- **Deciding how SDK2's sockets get onto the Ethernet network** (§8 item 3) —
+  three options, all with real costs, and none of them testable here.
+- **Append/resume in the recorder**, which is what Mid-360 pause needs (§7).
+- **`pointCountEstimate` on capture stop** is *still* unwired — flagged by B2,
+  B4 and B7 before this. `ProjectStore.updateManifest` has existed since B7.
+- **A `kImuAvailable` event** (A3 §4's own recommendation): the Mid-360's IMU
+  never crosses the C ABI, so the wizard reads its rate only through
+  `DeviceHealth.rotation_hz`, which the driver overloads for exactly this
+  reason.
 
 ## Things intentionally deferred (not oversights)
 

@@ -4,6 +4,35 @@
     <!-- B2: D6 connect flow (Tech Spec §3.1 Android row — USB-C OTG serial). -->
     <uses-feature android:name="android.hardware.usb.host" android:required="true" />
 
+    <!-- B3 (Tech Spec §3.1 Android row — Mid-360 over USB-C Ethernet).
+
+         INTERNET is NOT about the internet here, and it is not optional: on
+         Android the socket(2) syscall itself is gated on the app being in the
+         `inet` supplementary group, which is granted by holding this
+         permission. Without it, every UDP socket — the ones this app creates
+         for the pre-bound path AND the ones the Livox SDK creates inside
+         native code — fails at creation with EACCES, which reads like a
+         firewall problem and is not.
+
+         ACCESS_NETWORK_STATE is what ConnectivityManager's
+         registerNetworkCallback/getLinkProperties need.
+
+         CHANGE_NETWORK_STATE is declared because requestNetwork() asks for
+         it — but its protection level is signature|preinstalled|appop|pre23,
+         so a normal build will NOT be granted it and requestNetwork() throws
+         SecurityException. EthernetMonitor catches that and falls back to
+         registerNetworkCallback, which needs only ACCESS_NETWORK_STATE and
+         delivers the same callbacks. Declaring it costs nothing and lets a
+         privileged/OEM build take the stronger path. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+
+    <!-- Ethernet is a real hardware requirement for the Mid-360 path, but
+         "required" would hide the app from every phone that can still do D6,
+         replay and review. Same trade as the ARCore feature below. -->
+    <uses-feature android:name="android.hardware.ethernet" android:required="false" />
+
     <!-- B4: Filament's OpenGL backend needs ES 3.0+ (the min it links against);
          declared so a store listing / device-compatibility check can filter
          correctly rather than only finding out at Engine.create() time. -->

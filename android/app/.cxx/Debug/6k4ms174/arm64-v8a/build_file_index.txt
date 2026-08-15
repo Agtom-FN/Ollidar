@@ -9,3 +9,14 @@
 /Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/unsupported/Eigen/CXX11/CMakeLists.txt
 /Users/admin/lidarscan/android/app/src/main/cpp/CMakeLists.txt
 /Users/admin/lidarscan/engine/CMakeLists.txt
+/Users/admin/lidarscan/engine/third_party/Livox-SDK2/CMakeLists.txt
+/Users/admin/lidarscan/engine/third_party/Livox-SDK2/samples/CMakeLists.txt
+/Users/admin/lidarscan/engine/third_party/Livox-SDK2/samples/debug_point_cloud/CMakeLists.txt
+/Users/admin/lidarscan/engine/third_party/Livox-SDK2/samples/lidar_cmd_observer/CMakeLists.txt
+/Users/admin/lidarscan/engine/third_party/Livox-SDK2/samples/livox_lidar_info_get/CMakeLists.txt
+/Users/admin/lidarscan/engine/third_party/Livox-SDK2/samples/livox_lidar_ip_set/CMakeLists.txt
+/Users/admin/lidarscan/engine/third_party/Livox-SDK2/samples/livox_lidar_quick_start/CMakeLists.txt
+/Users/admin/lidarscan/engine/third_party/Livox-SDK2/samples/livox_lidar_rmc_time_sync/CMakeLists.txt
+/Users/admin/lidarscan/engine/third_party/Livox-SDK2/samples/logger/CMakeLists.txt
+/Users/admin/lidarscan/engine/third_party/Livox-SDK2/samples/multi_lidars_upgrade/CMakeLists.txt
+/Users/admin/lidarscan/engine/third_party/Livox-SDK2/sdk_core/CMakeLists.txt

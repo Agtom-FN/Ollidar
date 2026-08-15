@@ -34,6 +34,17 @@ object Routes {
 
     const val CONNECT_WIZARD = "connect_wizard"
 
+    // B3: the Mid-360 (Ethernet) connect wizard. Reachable two ways, and the
+    // route takes an OPTIONAL project id for that reason: from Project Detail
+    // (where the settings can be saved into that project's manifest, per
+    // §3.1's "Save per project"), and from the D6/global connect wizard,
+    // where there may be no project yet and the wizard is purely a transport
+    // check.
+    const val MID360_CONNECT_NO_PROJECT = "mid360_connect"
+    private const val MID360_CONNECT_PATTERN = "project/{projectId}/mid360_connect"
+    const val MID360_CONNECT = MID360_CONNECT_PATTERN
+    fun mid360Connect(projectId: String): String = "project/${Uri.encode(projectId)}/mid360_connect"
+
     // B7: Device setup -> Mount calibration (Tech Spec §3.13's app structure,
     // WIZARD.md §2's "a five-screen wizard inside Device setup -> Mount
     // calibration"). Per-project because the resulting calibration is written

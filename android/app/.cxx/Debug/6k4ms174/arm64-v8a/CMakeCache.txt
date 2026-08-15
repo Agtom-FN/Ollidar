@@ -462,7 +462,7 @@ ENGINE_WARNINGS_AS_ERRORS:BOOL=OFF
 //Link Eigen (required from A6/A7 onwards)
 ENGINE_WITH_EIGEN:BOOL=ON
 
-ENGINE_WITH_LIVOX_SDK2:BOOL=OFF
+ENGINE_WITH_LIVOX_SDK2:STRING=ON
 
 //Value Computed by CMake
 Eigen3_BINARY_DIR:STATIC=/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-build
@@ -575,6 +575,9 @@ SUPERLU_INCLUDES:PATH=SUPERLU_INCLUDES-NOTFOUND
 //Path to a library.
 SUPERLU_LIBRARIES:FILEPATH=SUPERLU_LIBRARIES-NOTFOUND
 
+//Result from TRY_RUN
+THREADS_PTHREAD_ARG:STRING=PLEASE_FILL_OUT-FAILED_TO_RUN
+
 //Path to a file.
 UMFPACK_INCLUDES:PATH=UMFPACK_INCLUDES-NOTFOUND
 
@@ -583,6 +586,15 @@ UMFPACK_LIBRARIES:FILEPATH=UMFPACK_LIBRARIES-NOTFOUND
 
 //Dependencies for the target
 eigen_lapack_LIB_DEPENDS:STATIC=general;eigen_blas;
+
+//Value Computed by CMake
+livox_sdk2_BINARY_DIR:STATIC=/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/scanengine/livox_sdk2/samples
+
+//Value Computed by CMake
+livox_sdk2_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+livox_sdk2_SOURCE_DIR:STATIC=/Users/admin/lidarscan/engine/third_party/Livox-SDK2/samples
 
 //Value Computed by CMake
 scanengine_BINARY_DIR:STATIC=/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/scanengine
@@ -753,7 +765,7 @@ CMAKE_MODULE_LINKER_FLAGS_RELWITHDEBINFO-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_NM
 CMAKE_NM-ADVANCED:INTERNAL=1
 //number of local generators
-CMAKE_NUMBER_OF_MAKEFILES:INTERNAL=11
+CMAKE_NUMBER_OF_MAKEFILES:INTERNAL=22
 //ADVANCED property for variable: CMAKE_OBJCOPY
 CMAKE_OBJCOPY-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_OBJDUMP

@@ -1,6 +1,7 @@
 package com.lidarscan.core.model
 
 import com.lidarscan.core.calib.MountCalibration
+import com.lidarscan.core.net.Mid360Settings
 import kotlinx.serialization.Serializable
 
 /**
@@ -38,6 +39,21 @@ data class ProjectManifest(
      * ([com.lidarscan.core.calib.MountCalibrationStore]); this is the copy.
      */
     val mountCalibration: MountCalibration? = null,
+    /**
+     * B3: the Mid-360's network configuration for this project (Tech Spec
+     * §3.1's "Save per project"). Null for a D6 project, and null for a
+     * Mid-360 project whose wizard has not been run yet.
+     *
+     * In the manifest rather than a device-level store, and the split from
+     * [mountCalibration] is deliberate: a mount calibration belongs to the
+     * *bracket* (WIZARD.md §3) and follows the phone, but a lidar IP / host
+     * IP pair belongs to the **site** — the same phone on a different job
+     * with a different switch needs different addresses, and the same
+     * `.lscan` re-opened on that site should offer the ones that worked. It
+     * is also the record of what a capture was actually taken with, which is
+     * the first thing anyone asks when a `.lscan` turns out to be empty.
+     */
+    val mid360: Mid360Settings? = null,
 ) {
     companion object {
         /** Bump when a field is added/removed/renamed in a way old readers can't tolerate. */

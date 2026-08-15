@@ -31,11 +31,23 @@
 #
 # Only the `scanengine` STATIC library target is consumed from engine/ (its
 # own tests/tools/CLI are turned off below — irrelevant to an app build).
-# Mid-360 (Livox SDK2) is explicitly OFF: B2 is D6-only; third_party/Livox-SDK2
-# happens to be checked out in this workspace (fetched for A3/B3), but
-# building it here would pull in Mid-360 UDP/networking code this task does
-# not need and has not verified cross-compiles for Android. B3 flips this ON
-# when it wires Mid-360 connect.
+#
+# B3 FLIPPED ENGINE_WITH_LIVOX_SDK2 TO **ON** (B2 had it OFF, D6-only). `ON`
+# rather than `AUTO` deliberately: AUTO silently degrades to a build with no
+# SDK2 backend if the tree happens to be missing, and the failure then shows
+# up only at runtime as `start()` returning kNotSupported on a user's device.
+# `ON` turns that into a configure-time FATAL_ERROR naming the fetch script,
+# which is what we want for an app whose Mid-360 path is not optional.
+#
+# Because `ON` requires the tree to exist AT CONFIGURE TIME, the fetch cannot
+# live in CMake — Gradle's `prepareLivoxSdk2` task (app/build.gradle.kts) runs
+# android/scripts/prepare_livox_sdk2.sh before AGP's configure step. That
+# script wraps the ENGINE's own engine/third_party/fetch_sdk2.sh (unmodified;
+# engine/ is read-only here) and then applies android/third_party/
+# patches-android/*.patch — this task's own bionic overlay, which is empty:
+# stock-plus-engine-patches SDK2 compiles clean under NDK r27d. See that
+# directory's README.md for the exact verification and for the rule any
+# future overlay patch has to follow.
 cmake_minimum_required(VERSION 3.22)
 project(scanengine_jni_shim LANGUAGES CXX)
 
@@ -46,7 +58,13 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 # --- pull in libscanengine, app-build flavored ------------------------------
 set(ENGINE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(ENGINE_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
-set(ENGINE_WITH_LIVOX_SDK2 OFF CACHE BOOL "" FORCE)   # D6-only for B2; B3 rebinds
+# B3: Mid-360 needs the SDK2 backend — it is the only one that can bring an
+# out-of-the-box device up (A3 §3's backend table). STRING, not BOOL: the
+# engine declares this cache entry as a tri-state STRING (AUTO/ON/OFF), and
+# forcing it to BOOL here makes engine/CMakeLists.txt's
+# `if(ENGINE_WITH_LIVOX_SDK2 STREQUAL "AUTO")` compare against a type it never
+# expects.
+set(ENGINE_WITH_LIVOX_SDK2 "ON" CACHE STRING "" FORCE)
 set(ENGINE_WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)
 
 get_filename_component(LIDARSCAN_ENGINE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../engine" ABSOLUTE)
@@ -69,12 +87,20 @@ add_subdirectory("${LIDARSCAN_ENGINE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/scanengi
 # at SCAN_ABI_VERSION 3). keyframe_writer.cpp is deliberately free of any JNI
 # type so android/tools/keyframe_roundtrip/ can compile the SAME source on a
 # host and actually exercise it — see that tool's CMakeLists.
+# B3 adds mid360_probe.{h,cpp} (a standalone scanengine::Engine + Mid360Config
+# helper for the connect wizard's self-test — the only way to reach
+# Mid360Config's backend selector, ports, filter and UdpConfig::prebound_fd,
+# none of which the C ABI's scan_device_config exposes; see its header) and
+# mid360_jni.cpp (its JNI bindings, plus the C-ABI Mid-360 add_device the
+# capture path uses and the TMPDIR fix-up SDK2 needs on Android).
 add_library(scanengine_jni SHARED
     scanengine_jni.cpp
     replay_engine.cpp
     replay_jni.cpp
     arcore_jni.cpp
     keyframe_writer.cpp
+    mid360_probe.cpp
+    mid360_jni.cpp
 )
 
 target_link_libraries(scanengine_jni PRIVATE

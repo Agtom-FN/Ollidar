@@ -29,6 +29,14 @@ fun PointCloudView(
     colormap: Colormap,
     pointSizePx: Float,
     cameraMode: CameraMode,
+    /**
+     * B3: which point streams to draw. Defaults to [StreamFilter.ALL] so
+     * existing callers (the replay path, the AR overlay) are unchanged; the
+     * live Capture screen passes [StreamFilter.forSession] so a Mid-360 +
+     * live-SLAM session does not draw the sensor-frame preview and the
+     * registered map on top of each other. See StreamFilter's own doc.
+     */
+    streamFilter: StreamFilter = StreamFilter.ALL,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -48,6 +56,7 @@ fun PointCloudView(
     renderer.setColormap(colormap)
     renderer.setPointSizePx(pointSizePx)
     renderer.setCameraMode(cameraMode)
+    renderer.setStreamFilter(streamFilter)
 
     AndroidView(
         modifier = modifier.fillMaxSize(),

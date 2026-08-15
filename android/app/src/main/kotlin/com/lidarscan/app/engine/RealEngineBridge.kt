@@ -65,11 +65,13 @@ class RealEngineBridge(
     private var pointsSinceStart = 0L
     private var lastDevicePath: String? = null
 
+    /** B3: `"<lidarIp>|<hostIp>"` while a Mid-360 is the connected device, else null. */
+    private var mid360Endpoint: String? = null
+
     override suspend fun connect(target: EngineTarget): Result<Unit> = withContext(Dispatchers.IO) {
-        if (target.sensor != SensorType.COIN_D6) {
-            return@withContext Result.failure(
-                UnsupportedOperationException("RealEngineBridge: ${target.sensor} connect arrives with B3/B9"),
-            )
+        when (target.sensor) {
+            SensorType.MID360 -> return@withContext connectMid360(target)
+            SensorType.COIN_D6 -> Unit // falls through to the D6 path below
         }
         if (!ScanEngineNative.isAvailable) {
             _connectionState.value = ConnectionState.ERROR
@@ -128,8 +130,77 @@ class RealEngineBridge(
         Result.success(Unit)
     }
 
+    /**
+     * B3: the Mid-360 connect path. Adds the device to **this bridge's own**
+     * `scan_engine*` — the same engine the capture session runs on — so its
+     * points land in the session's PageStore, its raw datagrams reach the
+     * session's `.lscan` recorder (the engine installs a `raw_sink` shim for
+     * exactly that, engine.cpp's "Record-always for a driver that owns its
+     * own sockets"), and live SLAM can see them.
+     *
+     * That is why this goes through the C ABI rather than through B3's
+     * `Mid360Probe`: the probe owns a *separate* engine, which is right for a
+     * transport check and wrong for a capture.
+     *
+     * [EngineTarget.transportHint] carries `"<lidarIp>|<hostIp>"`. Both are
+     * required — see [ScanEngineNative.nativeAddMid360Device]. The engine is
+     * created here if it does not exist yet, exactly as the D6 path does.
+     */
+    private suspend fun connectMid360(target: EngineTarget): Result<Unit> {
+        if (!ScanEngineNative.isAvailable) {
+            _connectionState.value = ConnectionState.ERROR
+            return Result.failure(IllegalStateException("scanengine_jni native library not loaded"))
+        }
+        val hint = target.transportHint
+            ?: return Result.failure(IllegalArgumentException("Mid-360 connect needs \"<lidarIp>|<hostIp>\""))
+        val parts = hint.split('|')
+        if (parts.size != 2 || parts.any { it.isBlank() }) {
+            return Result.failure(
+                IllegalArgumentException(
+                    "Mid-360 connect needs both a lidar IP and a host IP (\"<lidarIp>|<hostIp>\"); got \"$hint\"",
+                ),
+            )
+        }
+        val (lidarIp, hostIp) = parts
+
+        _connectionState.value = ConnectionState.CONNECTING
+        _events.emit(EngineEvent.StatusMessage("Adding Mid-360 $lidarIp → host $hostIp…"))
+
+        if (engineHandle == 0L) {
+            engineHandle = ScanEngineNative.nativeCreateEngine("lidarscan-android", LOG_LEVEL_INFO, 0, 0, 0)
+            if (engineHandle == 0L) {
+                _connectionState.value = ConnectionState.ERROR
+                val message = "scan_engine_create failed: ${ScanEngineNative.nativeLastError()}"
+                _events.emit(EngineEvent.Fault("CREATE_FAILED", message))
+                return Result.failure(IllegalStateException(message))
+            }
+        }
+
+        val id = ScanEngineNative.nativeAddMid360Device(engineHandle, lidarIp, hostIp)
+        if (id < 0) {
+            _connectionState.value = ConnectionState.ERROR
+            val message = "scan_engine_add_device(Mid-360) failed: ${ScanEngineNative.nativeLastError()}"
+            _events.emit(EngineEvent.Fault("ADD_DEVICE_FAILED", message))
+            return Result.failure(IllegalStateException(message))
+        }
+        deviceId = id
+        lastDevicePath = null // no USB connection backs a Mid-360
+        mid360Endpoint = hint
+
+        ScanEngineNative.nativeStartEventPump(engineHandle, this@RealEngineBridge)
+        startHealthPolling()
+
+        _connectionState.value = ConnectionState.CONNECTED
+        _events.emit(EngineEvent.StatusMessage("Mid-360 $lidarIp added as device $id"))
+        return Result.success(Unit)
+    }
+
+    /** True once a Mid-360 has been added — changes what pause/resume can mean (see [pauseCapture]). */
+    val isMid360: Boolean get() = mid360Endpoint != null
+
     override suspend fun disconnect() {
         stopCapture()
+        mid360Endpoint = null
         healthPollJob?.cancel()
         healthPollJob = null
 
@@ -182,6 +253,32 @@ class RealEngineBridge(
 
     override suspend fun pauseCapture(): Result<Unit> {
         if (_captureState.value != CaptureState.RECORDING) return Result.success(Unit)
+        if (isMid360) {
+            // B2's pause trick does not transfer. The D6 pauses by having the
+            // app's reader thread stop forwarding bytes into
+            // push_serial_bytes — but the Mid-360 owns its own sockets and
+            // the app never touches its bytes, so there is nothing app-side
+            // to hold back.
+            //
+            // Desktop C2 pauses a Mid-360 by stopping the recording session
+            // and starting a preview one, then resuming with a *new*
+            // recording session into the same directory. That is NOT
+            // replicated here, because `FileRecordWriter::open()` creates its
+            // stream files with `std::fopen(path, "wb")` — a resume would
+            // **truncate everything recorded before the pause**. Silently
+            // destroying the first half of a capture is far worse than not
+            // offering the button, so this fails cleanly and CaptureScreen
+            // hides Pause for a Mid-360 session (the same shape as B4's
+            // replay path, which also refuses rather than faking a resume).
+            //
+            // A real fix is an append/resume mode in the recorder, or a
+            // pause/resume pair in the C ABI — noted in android/NOTES.md.
+            val message =
+                "Pause is not available for a Mid-360: the driver owns its own sockets, and restarting " +
+                    "the session to resume would truncate the recording already written. Use Stop."
+            _events.emit(EngineEvent.StatusMessage(message, EngineEvent.StatusMessage.Level.WARNING))
+            return Result.failure(UnsupportedOperationException(message))
+        }
         // No scan_engine_pause/resume in the C ABI (start/stop only — see
         // android/NOTES.md). Pause is implemented one layer down: the D6
         // reader thread keeps the USB port open but stops forwarding bytes

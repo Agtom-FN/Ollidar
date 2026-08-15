@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Cable
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Preview
 import androidx.compose.material.icons.filled.Straighten
@@ -45,6 +46,7 @@ import com.lidarscan.app.ui.common.ProfileChip
 import com.lidarscan.app.ui.common.SensorBadge
 import com.lidarscan.app.ui.common.formatCreatedDate
 import com.lidarscan.app.ui.common.formatPointCount
+import com.lidarscan.core.model.SensorType
 import com.lidarscan.core.store.Project
 import kotlinx.coroutines.launch
 
@@ -55,6 +57,7 @@ fun ProjectDetailRoute(
     onBack: () -> Unit,
     onOpenCapture: (String) -> Unit,
     onOpenMountCalibration: (String) -> Unit,
+    onOpenMid360Connect: (String) -> Unit = {},
 ) {
     val viewModel: ProjectDetailViewModel = viewModel(
         factory = viewModelFactory {
@@ -68,6 +71,7 @@ fun ProjectDetailRoute(
         onBack = onBack,
         onOpenCapture = onOpenCapture,
         onOpenMountCalibration = onOpenMountCalibration,
+        onOpenMid360Connect = onOpenMid360Connect,
     )
 }
 
@@ -78,6 +82,7 @@ fun ProjectDetailScreen(
     onBack: () -> Unit,
     onOpenCapture: (String) -> Unit = {},
     onOpenMountCalibration: (String) -> Unit = {},
+    onOpenMid360Connect: (String) -> Unit = {},
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -116,6 +121,7 @@ fun ProjectDetailScreen(
                 },
                 onOpenCapture = { onOpenCapture(uiState.project.id) },
                 onOpenMountCalibration = { onOpenMountCalibration(uiState.project.id) },
+                onOpenMid360Connect = { onOpenMid360Connect(uiState.project.id) },
             )
         }
     }
@@ -128,6 +134,7 @@ private fun ProjectDetailContent(
     onArrivesWith: (String) -> Unit,
     onOpenCapture: () -> Unit,
     onOpenMountCalibration: () -> Unit,
+    onOpenMid360Connect: () -> Unit,
 ) {
     Column(
         modifier = modifier
@@ -142,6 +149,12 @@ private fun ProjectDetailContent(
 
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             CaptureNavCard(onClick = onOpenCapture)
+            if (project.manifest.sensor == SensorType.MID360) {
+                Mid360ConnectNavCard(
+                    settings = project.manifest.mid360,
+                    onClick = onOpenMid360Connect,
+                )
+            }
             MountCalibrationNavCard(
                 calibrated = project.manifest.mountCalibration != null,
                 gateHeadline = project.manifest.mountCalibration?.readout()?.headline,
@@ -215,6 +228,47 @@ private fun CaptureNavCard(onClick: () -> Unit) {
             Text(
                 "Connect the D6, start/stop a real recording session, live pts/s and recording " +
                     "size. Live 3D / AR overlay preview arrives with B4.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * B3: Device setup -> Mid-360 connect. Only shown for a Mid-360 project —
+ * the card exists to surface the SAVED addresses without opening the wizard,
+ * because "which host IP was this capture taken with" is the first question
+ * asked when a .lscan turns out empty, and a wrong host IP is the failure
+ * that produces no error at all.
+ */
+@Composable
+private fun Mid360ConnectNavCard(
+    settings: com.lidarscan.core.net.Mid360Settings?,
+    onClick: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onClick,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.Cable, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(12.dp))
+                Text("Mid-360 connect", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(6.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(8.dp))
+            Text(
+                if (settings != null) {
+                    "Lidar ${settings.lidarIp} -> host ${settings.hostIp} (saved). Re-run the self-test after " +
+                        "moving sites: the host IP has to be an address this phone actually holds."
+                } else {
+                    "Not configured. Ethernet adapter, static IP and a pre-capture self-test — capture cannot " +
+                        "start without both addresses."
+                },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

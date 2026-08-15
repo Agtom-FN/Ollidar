@@ -23,6 +23,7 @@ import com.google.android.filament.Viewport
 import com.google.android.filament.android.DisplayHelper
 import com.google.android.filament.android.UiHelper
 import com.google.android.filament.utils.Manipulator
+import com.lidarscan.app.engine.ScanEngineNative
 import com.lidarscan.core.render.ColorMode
 import com.lidarscan.core.render.Colormap
 import com.lidarscan.core.render.ColormapLut
@@ -134,6 +135,14 @@ class PointCloudRenderer(
     )
 
     private val gpuPages = LinkedHashMap<Int, GpuPage>()
+
+    /** B3: `pageId -> SCAN_STREAM_*`, so [setStreamFilter] can drop the pages that no longer qualify. */
+    private val pageStreams = HashMap<Int, Int>()
+
+    private var streamFilter: StreamFilter = StreamFilter.ALL
+
+    /** True once a `SCAN_STREAM_SLAM_MAP` page has been seen — see [StreamFilter.MAPPED_ONLY]'s fallback. */
+    private var mappedPageSeen = false
     private var lastStats = PointCloudRenderStats()
     private val combinedBoundsMin = floatArrayOf(0f, 0f, 0f)
     private val combinedBoundsMax = floatArrayOf(0f, 0f, 0f)
@@ -222,6 +231,8 @@ class PointCloudRenderer(
         if (newSource == null) {
             gpuPages.values.forEach { destroyGpuPage(it) }
             gpuPages.clear()
+            pageStreams.clear()
+            mappedPageSeen = false
             haveBounds = false
         }
     }
@@ -243,6 +254,39 @@ class PointCloudRenderer(
 
     fun setCameraMode(mode: CameraMode) {
         cameraMode = mode
+    }
+
+    /**
+     * B3: which `StreamId`s to draw. See [StreamFilter] for the whole story;
+     * the short version is that B4 drew **every** page regardless of stream,
+     * which is correct for a D6 record-only session (one point stream) and
+     * wrong for a Mid-360 with live SLAM, where `kLidarMid360` (sensor-frame
+     * preview) and `kSlamMap` (registered world-frame map) both have pages
+     * and drawing both puts two copies of the world on screen at once.
+     *
+     * Changing the filter drops the GPU pages that no longer belong, so a
+     * toggle takes effect on the next frame rather than leaving the old
+     * stream's pages resident forever.
+     */
+    fun setStreamFilter(filter: StreamFilter) {
+        if (streamFilter == filter) return
+        streamFilter = filter
+        dropPagesNotMatchingFilter()
+    }
+
+    /** Removes every resident GPU page whose stream the current filter rejects. */
+    private fun dropPagesNotMatchingFilter() {
+        val stale = gpuPages.filterKeys { pageId ->
+            !streamFilter.accepts(pageStreams[pageId] ?: -1, mappedPageSeen)
+        }
+        if (stale.isEmpty()) return
+        stale.forEach { (pageId, page) ->
+            scene.removeEntity(page.entity)
+            destroyGpuPage(page)
+            gpuPages.remove(pageId)
+            pageStreams.remove(pageId)
+        }
+        haveBounds = false
     }
 
     /**
@@ -392,6 +436,20 @@ class PointCloudRenderer(
             val pageId = src.pageIdAt(i)
             if (pageId < 0) continue
             val page = src.getPage(pageId) ?: continue
+            // B3: pages are single-stream (INT24 §2, "pages are single-stream:
+            // StreamId::kSlamMap gets its own pages"), so one check per page
+            // is the whole filter. Skipping BEFORE the GPU-page lookup is what
+            // keeps a filtered-out stream from ever being uploaded.
+            if (page.stream == ScanEngineNative.StreamId.SLAM_MAP && !mappedPageSeen) {
+                // The first mapped page ends MAPPED_ONLY's raw fallback. Drop
+                // the raw pages that were standing in for it in the same pass,
+                // so the switch is one frame and not a slow crossfade of two
+                // superimposed clouds.
+                mappedPageSeen = true
+                if (streamFilter == StreamFilter.MAPPED_ONLY) dropPagesNotMatchingFilter()
+            }
+            if (!streamFilter.accepts(page.stream, mappedPageSeen)) continue
+            pageStreams[pageId] = page.stream
             resident += page.count
 
             var gpu = gpuPages[pageId]

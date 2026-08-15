@@ -33,6 +33,10 @@ extern jmethodID g_mount_calib_result_ctor;  // ([DZZIIJJDDDDIDDD)V
 extern jclass g_pushbroom_stats_class;    // com.lidarscan.app.engine.NativePushbroomStats
 extern jmethodID g_pushbroom_stats_ctor;  // (JJJJJJJJJJJJJ)V
 
+// B3 (mid360_jni.cpp): the connect wizard's Mid-360 transport snapshot.
+extern jclass g_mid360_probe_class;    // com.lidarscan.app.engine.NativeMid360Probe
+extern jmethodID g_mid360_probe_ctor;  // (IIJJJJJDDDJJJJJJIJZI)V
+
 // Attaches the calling native thread to the JVM if it is not already
 // attached (*did_attach reports which happened, so the caller knows whether
 // it is responsible for DetachCurrentThread once done). Never detach a

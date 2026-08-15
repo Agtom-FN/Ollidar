@@ -67,6 +67,38 @@ val compileMaterials by tasks.registering {
     }
 }
 
+// --- B3: vendored Livox-SDK2 (Mid-360) --------------------------------------
+//
+// src/main/cpp/CMakeLists.txt sets ENGINE_WITH_LIVOX_SDK2=ON, and the engine
+// treats ON-with-a-missing-tree as a configure-time FATAL_ERROR (deliberately —
+// AUTO would silently ship an app whose Mid-360 path fails at runtime). So the
+// SDK tree has to exist BEFORE AGP's CMake configure step runs, which is too
+// early for CMake itself to fetch it. This task is that step.
+//
+// It shells out to android/scripts/prepare_livox_sdk2.sh, which wraps the
+// ENGINE's own engine/third_party/fetch_sdk2.sh (unmodified — engine/ is
+// read-only for B3) and then applies android/third_party/patches-android/*.patch,
+// this task's own bionic overlay. Same "fetched on demand, not committed"
+// shape as B4's fetchFilamentTools above.
+//
+// `onlyIf` + an output marker keep it a no-op once the tree is there, so this
+// costs nothing on an incremental build and needs no network after the first
+// run. Set LIVOX_SDK2_TARBALL to point at a local tarball for an air-gapped
+// build (fetch_sdk2.sh honours it).
+val livoxSdk2Dir = file("$projectDir/../../engine/third_party/Livox-SDK2")
+
+val prepareLivoxSdk2 by tasks.registering(Exec::class) {
+    description = "Fetches + patches the vendored Livox-SDK2 (Mid-360 SDK2 backend) before the CMake configure step."
+    val script = file("$projectDir/../scripts/prepare_livox_sdk2.sh")
+    val overlayDir = file("$projectDir/../third_party/patches-android")
+    val marker = File(livoxSdk2Dir, "CMakeLists.txt")
+    inputs.file(script)
+    inputs.files(fileTree(overlayDir) { include("*.patch") })
+    outputs.file(marker)
+    onlyIf { !marker.exists() }
+    commandLine("bash", script.absolutePath)
+}
+
 android {
     namespace = "com.lidarscan.app"
     compileSdk = 36
@@ -185,6 +217,19 @@ android {
 // block per build type.
 tasks.matching { it.name.matches(Regex("merge[A-Za-z]*Assets")) }.configureEach {
     dependsOn(compileMaterials)
+}
+
+// B3: the SDK2 tree must exist before AGP *configures* CMake, not merely
+// before it builds — ENGINE_WITH_LIVOX_SDK2=ON fails the configure outright
+// when it is missing. AGP's per-variant/per-ABI native tasks are named
+// `configureCMakeDebug[arm64-v8a]` / `buildCMakeDebug[arm64-v8a]` (the
+// bracketed ABI is part of the task name), so this matches by prefix rather
+// than naming one variant — otherwise a release build, or a second ABI added
+// later, would silently miss the dependency and fail its configure.
+tasks.matching {
+    it.name.startsWith("configureCMake") || it.name.startsWith("buildCMake")
+}.configureEach {
+    dependsOn(prepareLivoxSdk2)
 }
 
 dependencies {
