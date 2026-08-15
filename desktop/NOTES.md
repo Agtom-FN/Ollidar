@@ -27,6 +27,16 @@ desktop/
       CaptureWindow.{h,cpp}   guided self-test → Record/Pause/Stop (C2, §8.1-8.3)
       MeasureDock.{h,cpp}     C3 §3.13 measure panel: mode toggle, units, segment list (§8.4)
       ExportDialog.{h,cpp}    C3 §3.13 export center: PLY/LAS/PCD, progress + cancel (§8.5)
+      ProcessingDock.{h,cpp}  C4 §3.8 processing queue: job list + Post-process/
+                               Colorize/Export/Transfer/Cloud submit (§9)
+      PlanDock.{h,cpp}        C5 §3.6 floor-plan workspace: extraction + 2D
+                               QGraphicsView + editor controls + DXF/PDF (§10)
+      QtHttpTransport.{h,cpp} C4: a real scanengine::jobs::HttpTransport over
+                               QNetworkAccessManager (§9.2)
+      SyntheticMid360.{h,cpp} C4 evidence fixture: a real .lscan with real
+                               kMid360Points/kMid360Imu chunks, no hardware (§9.4)
+      SyntheticBuilding.{h,cpp} C5 evidence fixture: A12's own synthetic
+                               two-room-plus-corridor test building (§10.5)
     render/
       NativeSurface.h         per-OS swapchain-handle shim (the S3 recommendation)
       NativeSurface_mac.mm    CAMetalLayer path — the proven one
@@ -292,8 +302,8 @@ can be discovered late — flag it now.
 | --- | --- |
 | **C2** capture flows | `CaptureWindow` — wizards, self-tests, reconnect UX, per-OS driver install guidance. The engine wiring (`addD6`/`addMid360`/`startSession`, the serial read+write paths) is done; C2 owns the UX around it. Also: move the D6 read loop to its own thread if a future device is faster than the D6. |
 | **C3** review workspace | `ViewportWindow` + `PagedCloudRenderer`. Measure tools attach to the viewport; the EDL post-process pass, real coarse-to-fine LOD and the trajectory/pose-graph overlays are the three renderer features C1 left as documented gaps. Export UI hangs off `export/exporter.h`. |
-| **C4** processing queue | New dock; `EngineHost` already owns the Engine and pumps `kJobProgress` events, which currently fall through `describeEvent()`'s default case. |
-| **C5** floor plan | New workspace; the height-clip band in `DisplayParams` is already live and is literally §3.6's slice control. |
+| **C4** processing queue | **Done, §9.** `ProcessingDock` — driven by `Engine::jobs()` (INT-34, landed mid-task), polled rather than subscribed to `kJobProgress` (still falls through `describeEvent()`'s default case; not needed since `list()` already has every update). |
+| **C5** floor plan | **Done, §10.** `PlanDock` — the height-clip band in `DisplayParams` is a *display* clip (viewport-only); the plan's own slice band is a completely separate `plan::PlanEditState`, per §10.1. |
 | **C6** merge workbench | New window over A13; `PagedCloudRenderer` is per-`PageId` and `PageStore` pages are single-stream, so per-session provenance and colour-by-session need no renderer redesign. |
 | **C7** transfer import | `lscan::zip_import` + `Project.cpp`'s `readProject`; add the file association and a drag-drop handler on `MainWindow`. |
 | **C8** packaging | §3 above. |
@@ -810,3 +820,392 @@ freshly-defaulted) document back to profile defaults.
   by this task's author driving the real GUI, not captured as evidence
   (`ViewportWindow::captureScreenshot()` is the viewport's readPixels path
   and does not apply to a `QDialog`).
+
+---
+
+## 9. C4 (processing queue)
+
+New files: `src/app/ProcessingDock.{h,cpp}` (the dock), `src/app/QtHttpTransport.{h,cpp}`
+(a real `HttpTransport`), `src/app/SyntheticMid360.{h,cpp}` (the evidence fixture builder).
+`src/main.cpp` gained `--build-synth-mid360`, `--post-e2e`, `--cloud-submit-selftest`.
+`MainWindow` gained a `processingDock()` accessor and wires `ProcessingDock::loadResultRequested`
+into the viewport + Plan dock. `CMakeLists.txt` gained the `Qt6::Network` component (§9.2).
+
+### 9.1 `ProcessingDock` does not own a `JobQueue` — it uses `Engine::jobs()`
+
+This is the one place this task's "code against what exists when you start" instruction
+actually bit, in the good direction. At task start `engine/include/scanengine/jobs/job_queue.h`
+had no accessor anywhere on `Engine`; `jobs/job_queue.h`'s own doc calls `JobQueue` "a standalone
+concrete class". So `ProcessingDock` was built to construct and own its own
+`scanengine::jobs::JobQueue`, seeded with `&host_->engine()->events()` so `EventType::kJobProgress`
+still republished onto the real event bus.
+
+**Mid-task, `Engine::jobs()` landed** (INT-34, `core/engine.h`: "lazily owned... the first call to
+`jobs()` creates it and every later call returns the same one; an Engine that is never asked owns
+no thread... destroyed (and its worker joined) at the very start of `~Engine`"). This is exactly
+the shape `docs/A15-jobs.md` §7 item 3 asked for, and it removes a real problem the
+dock-owns-its-own-queue design had: a second, independent `JobQueue` means a second worker thread
+and, if anything else in the app (a future capture-window "process on stop" button, say) ever
+wanted to submit a job, it would have needed its own third queue or a reference threaded through
+from `ProcessingDock`. **Adopted.** `ProcessingDock::queue()` is now one line,
+`return host_->engine()->jobs();` — no member, no constructor wiring, no destructor `stop()` call
+(the engine's own shutdown order — jobs before recorder before page store before bus — already
+handles that). Re-verified end to end after the switch (§9.4); no behavioural difference, less
+code.
+
+**Also landed mid-task and *not* adopted:** `jobs/job_runner_adapter.h` (INT-34's other half,
+closing §7 item 3's `JobRunner` translation) and `jobs/colorize_wiring.h` (a `ColorizeWiring`
+struct + `wire_colorizer()` that would wire a live `TimeSync`/`ImuIngest`/`PoseInterpolator` into
+a `PointColorizer`). Neither fits this dock: the adapter's own header explains why the *richer*
+`JobQueue`/`JobSpec` API — chaining, priority, per-kind options — is what an app-facing UI should
+code against directly rather than through the lossy `JobRequest{mode, lscan_dir, output_dir,
+pipeline}` seam, which is exactly what `ProcessingDock` already does. `colorize_wiring.h` needs a
+live `TimeSync`/`ImuIngest` — real objects that exist only inside a *live capture* session — but
+Colorize here runs against an already-recorded (and usually already-imported-from-a-phone)
+project with no capture session open, so there is nothing of that shape to wire. Flagged for
+whoever adds capture-time colorization or an in-session "process what I just captured" flow: that
+caller *does* have a live `TimeSync` and should use `colorize_wiring.h` instead of the manual
+sync-quality dropdown described in §9.3.
+
+### 9.2 `QtHttpTransport` — a real socket attempt, per the task's own instruction
+
+`docs/A15-jobs.md` §5 and `jobs/cloud_submit.h` are explicit that `CloudSubmitClient` is written
+and tested **only** against a scripted fake `HttpTransport`; the real one is "D3's". This task's
+brief is equally explicit the other way: *"the fake-transport path is not for UI"*. So
+`QtHttpTransport` is a real, if small, adapter: one `QNetworkAccessManager` (`thread_local`, since
+`JobQueue`'s worker thread — not the GUI thread — is what calls `request()`), a `QEventLoop` spun
+per call to turn `QNetworkReply`'s async callback into `HttpTransport::request()`'s synchronous
+contract, and a timeout timer that aborts the reply so an unreachable/black-holed host cannot wedge
+a job forever. `HttpResponse::transport_ok` is `false` exactly when no real HTTP status line ever
+came back (`status_code == 0`) — connection refused, DNS failure, or this transport's own timeout
+— which is precisely the flag `CloudSubmitClient`'s retry/resume logic keys off. `Qt6::Network`
+was added to `CMakeLists.txt`'s `find_package`/`target_link_libraries` for this.
+
+### 9.3 The dock: one queue, five actions, a polling table
+
+`ProcessingDock` is a `QDockWidget` holding a `QTableWidget` (ID / Kind / State / Progress bar /
+Stage / Message / Cancel+Load-result buttons) refreshed every 200 ms from `queue().list()` — the
+same "poll an atomic/a snapshot from a `QTimer`" shape `ExportDialog`/`ReplayController` already
+established for their own worker threads, chosen again here because `list()` already reflects
+every update the instant it lands and a second `EventBus` subscription would just be a second,
+redundant path to the same information.
+
+* **Post-process…** — a small dialog: pick (or browse to) a `.lscan` directory, or click "Build a
+  synthetic Mid-360 test project…" (§9.4) to get one with no hardware. Submits `kPostProcess` with
+  a "fast" `PostConfig` preset (`desktopPostConfig()`, ported from `test_post.cpp`'s own
+  `fast_synth_config()` — smaller keyframes/voxels, tuned for an interactive UI run rather than a
+  30-minute capture) rather than A7's full-density production default, so the dock stays
+  responsive against the desktop's own synthetic fixture. `store = null`: the job gets its own
+  fresh `PageStore`, not the engine's live one — see §9.4 for why "Load result" is the mechanism
+  that gets it into the viewport rather than the pipeline publishing straight into what is already
+  on screen.
+* **Colorize…** — needs a project with `streams/frames/frames.idx` (Android-only capture, §3.5;
+  desktop has no camera). Source is either the currently-loaded viewport/engine cloud (wrapped as
+  a non-owning `shared_ptr<PageStore>` — same "wrap, do not copy" pattern `docs/A11-color.md` §8.1
+  names for the store's own mutable-access seam) or `chain_from` a finished
+  Post-process/Colorize job. A `color::PointColorizer` is constructed per submission and kept
+  alive in `colorizers_` (keyed by job id, since `ColorizeParams::colorizer` is a non-owning raw
+  pointer that must outlive the queued run — job_types.h says so explicitly) until `refresh()`
+  observes the job settled. Sync quality is a dropdown (Good/Gated) rather than measured, because
+  there is no live `TimeSync` for an already-recorded project to measure from — see §9.1's note on
+  `colorize_wiring.h` for where a real answer would come from.
+* **Export…** — chains from a finished Post-process/Colorize job id (`kExportPoints`,
+  PLY/LAS/PCD). This is deliberately a *second* export path alongside C3's `ExportDialog`: that
+  one exports whatever is live in the viewport right now, synchronously-ish on its own
+  `std::thread`; this one exports a specific finished job's own `PageStore` through the queue, so
+  exporting job #3's result does not depend on job #3 having been "Load result"-ed into the
+  viewport first.
+* **Transfer bundle…** — `kTransferExport`: project dir + destination `.zip` +
+  `include_results` checkbox, straight onto `TransferExportParams`.
+* **Submit to cloud…** — the config dialog the task calls for: server URL + token, persisted to
+  `QSettings` (`cloud/baseUrl`, `cloud/token`) so a re-open remembers them. Bundle source is either
+  a browsed `.lscan.zip` path or `chain_from` a finished Transfer job. Every field maps directly
+  onto `CloudSubmitParams`; `spec.cloud.transport` is `cloud_transport_.get()`, one
+  `QtHttpTransport` owned by the dock for its whole lifetime. The dialog states plainly that no
+  server exists in this environment and the attempt will fail — see §9.5 for the measured
+  failure.
+
+**"Load result" and why it is not "a fresh engine/replay of processed/".** The task phrases C4's
+completion flow as loading the final cloud "via a fresh engine/replay of the processed output —
+use whatever A7's pipeline writes to processed/". `docs/A7-post.md` §7 says, in its own words, the
+opposite is true today: *"The final cloud is **not** written back into the `.lscan` as a
+`kPointsXyzRgba` chunk in `processed/`"* — `stream_of(ChunkType::kPointsXyzRgba)` maps to
+`kUnknown`, so there is nothing under `processed/` to replay. What A7's pipeline *does* produce is
+a live, in-memory `PageStore` on `StreamId::kSlamMap` (`docs/A7-post.md` §7,
+`PostSlamPipeline::out_store()`), which `JobQueue::produced_store(job_id)` hands back as a
+`shared_ptr<PageStore>` once the job reaches `kDone`. So "Load result" is
+`ProcessingDock::loadResultRequested(shared_ptr<PageStore>, jobId)` →
+`viewport_->setPointStore(store.get())` + `viewport_->fitView()` + `plan_dock_->setPointStore(...)`
+— the *same* kSlamMap pages a replay would eventually publish, reached directly rather than through
+a round trip to disk and back that the engine does not currently support. `MainWindow` keeps the
+`shared_ptr` alive (`loaded_result_store_`) for as long as it might be on screen. If A7/A5 close
+the §7 gap and start writing a processed cloud back into the `.lscan`, this is the one place that
+would change — an actual replay/reader call in place of `produced_store()`.
+
+### 9.4 A real post-process run from the UI, with no hardware
+
+`app/SyntheticMid360.{h,cpp}` is a line-for-line port of `engine/tests/test_post.cpp`'s own
+`write_synthetic_lscan()` and its helpers (`Room`, `LoopTraj`, `imu_truth`, `mid360_ray`,
+`put_header`, the small quaternion routines) — a ray-cast loop through a 24×18×3.5 m synthetic
+hall, written through `lscan::FileRecordWriter` as **real** `kMid360Points`/`kMid360Imu` chunks in
+the Mid-360 wire format (`mid360::DataHeader`/`CartesianHigh`/`ImuRaw`), exactly the shape A7's own
+pipeline reads. Ported rather than shared because `engine/` is read-only for this task and that
+helper is file-local to a test binary; `SyntheticMid360.h` says so and points at the source. This
+is *not* the S2 sim-inject path (that needs `mid360_sim` running and a live capture session) and
+*not* A7's `transcode_livoxdump()` path (that needs a fixture file this task cannot rely on being
+present) — it needs nothing but the engine's own public headers, so `--build-synth-mid360 DIR`
+works standalone, headless, on any machine.
+
+`--build-synth-mid360 evidence/c4-synth-mid360.lscan` produced **1,667 point packets (127,425
+points), 1,601 IMU packets, 8.0 s** — matching `docs/A7-post.md` §6.2's own numbers for the
+identical recipe almost exactly (that run reports 127,425 points decoded from the same generator).
+
+`--post-e2e DIR` submits a real `kPostProcess` job through `ProcessingDock`'s queue (i.e.
+`Engine::jobs()`, §9.1), polls `queue().status(jobId)` on a `QTimer` until terminal, and on success
+calls the exact same `setPointStore`/`fitView`/`setPointStore`-on-the-plan-dock sequence "Load
+result" does:
+
+```
+[lidarscan] post-e2e: job #1 submitted for evidence/c4-synth-mid360.lscan
+[lidarscan] post-e2e: job #1 running — 0% (opening recording)
+[lidarscan] post-e2e: job #1 running — 35% (full-density odometry)
+[lidarscan] post-e2e: job #1 running — 75% (pose-graph optimization)
+[lidarscan] post-e2e: job #1 done — 100% (done)
+[lidarscan] post-e2e: DONE — 83228 points in the result cloud
+[lidarscan] post-e2e: result loaded into the viewport
+```
+
+`evidence/09-post-process*.png` (`--shot`, 6 s after `--post-e2e`) shows the reconstructed loop
+hall in the viewport — 83,228 points, the whole run (submit → odometry → loop detection →
+optimization → re-integration → filtering → publish) finished well inside the screenshot delay.
+`evidence/verify_c4c5.log` has the full run.
+
+### 9.5 Submit-to-cloud fails gracefully, measured
+
+`--cloud-submit-selftest URL` submits a real `kCloudSubmit` job against a URL nothing listens on
+(`https://127.0.0.1:1/v1` — a real socket connect attempt, refused), through the same
+`QtHttpTransport` the dialog uses, and polls to a terminal state:
+
+```
+[lidarscan] cloud-submit-selftest: job #1 submitted against https://127.0.0.1:1/v1
+[lidarscan] cloud-submit-selftest: job #1 settled as failed (error=network error, message=network error) — the app is still running, which is the point
+```
+
+**Measured, not assumed: this takes ~28–35 s**, not an instant failure. `POST /jobs`'s own retry
+policy (`docs/A15-jobs.md` §5: up to `max_retries` = 5 attempts with exponential backoff 500 ms ×
+2, capped at 30 s, each attempt itself subject to `QtHttpTransport`'s own connect timeout) runs to
+exhaustion before the client gives up and the job settles `kFailed` / a network `ScanError`. The
+app stays fully responsive throughout (verified: the GUI event loop keeps running, `--quit-after`
+still fires on schedule) — nothing blocks the GUI thread, because this all happens on
+`Engine::jobs()`'s own worker thread. `evidence/cloud-submit-selftest.log` has the full run. This
+is the graded, non-crashing failure the task asked for; a UI operator would see the row sit in
+`running`/`cancelling` for that same half-minute before turning red, which is a real UX cost of
+A15's own retry policy against total silence, not a bug introduced here — `Cancel` on that row
+works throughout (it polls the same cooperative flag `CloudSubmitClient::send_with_retry` checks
+between attempts).
+
+### 9.6 A real, pre-existing crash-on-exit, found and fixed while verifying this task
+
+Running `scripts/verify_c2c3.sh` as a regression check (§9.1's engine-side rewiring touched
+`MainWindow`, so its own §8 evidence was re-run to make sure nothing broke) hit a **SIGSEGV on
+exit** after the Mid-360 self-test step, every time. Symbolicating the crash report
+(`~/Library/Logs/DiagnosticReports/lidarscan-*.ips` via `atos`) gave the stack:
+
+```
+main -> CaptureWindow::~CaptureWindow() -> CaptureWindow::onStop() ->
+EngineHost::stopSession(QString*) -> EngineHost::logLine(QString const&) ->
+MainWindow's `connect(host_, &EngineHost::logLine, ...)` lambda  [SIGSEGV]
+```
+
+**This predates C4/C5 entirely** — a second crash report from earlier the same day (05:17,
+before this task's own binary existed) symbolicates to the identical stack shape, confirming it
+is a real bug in C1/C2's own code (`CaptureWindow.cpp`, `EngineHost.cpp`, `MainWindow.cpp`), not
+something introduced here. Root cause: `CaptureWindow` is created **lazily**
+(`MainWindow::captureWindow()`, first touched from the Capture menu or `--mid360-selftest`), so
+it always becomes a *later* `QObject` child of `MainWindow` than the docks `buildUi()` creates up
+front — including the "Projects" dock that owns `log_`. Qt destroys a `QObject`'s children
+front-to-back (construction order, not reverse), so on exit the Projects dock (and `log_` with
+it) was torn down **before** `capture_`. `CaptureWindow`'s own destructor calls `onStop()` (to
+cleanly stop any in-flight capture), which calls `EngineHost::stopSession()`, which emits
+`logLine()`, which invokes `MainWindow`'s own lambda — dereferencing the by-then-dangling `log_`.
+
+Since this is squarely inside `desktop/` (this task's ownership, unlike the `engine/` cross-
+boundary breakages this doc reports rather than fixes — §"OWNERSHIP" at the top of this file),
+and a crash-on-exit undermines the "app launches" verification bar for every task that touches
+`MainWindow`, it was fixed here rather than only reported: `MainWindow::~MainWindow()` now
+explicitly `delete capture_;` before the implicit base-class/child destruction runs, sidestepping
+the ordering question entirely instead of relying on child-list order. Re-verified:
+`scripts/verify_c2c3.sh`'s Mid-360 self-test step (§8.7.3) now exits clean, no crash report
+produced, same PASSED-at-2.17s self-test result as before.
+
+### 9.7 Not verified / known gaps
+
+* **Colorize was not run against a real `frames.idx`.** No Android capture with camera frames
+  exists in this environment (§3.5: capture is Android-only) and no `.lscan` with
+  `streams/frames/frames.idx` was available to import. The wiring (`ColorizeParams`,
+  `PointColorizer` construction, `chain_from`/`store` source selection, the `colorizers_` lifetime
+  map) is real code exercised by inspection and by the "no camera" refusal path
+  (`load_keyframes()` returning `kNotFound`, which `run_colorize()` treats as a non-failure per
+  `docs/A15-jobs.md` §4) against the synthetic Mid-360 project, which has no `frames/` directory —
+  but "colorizing a real phone capture would work" is an expectation, not a measurement here.
+* **Transfer bundle was exercised by code review and the dialog's own field wiring, not captured
+  as CLI evidence** — `jobs::run_transfer_export()` is the same `zip_export()` A5 already ships and
+  C7 (transfer import) will need to read the far end of; no new risk here beyond A15's own
+  documented cancellation gap (`docs/A15-jobs.md` §3: `zip_export()` has no cancel hook, so a
+  Transfer job can only be cancelled either side of the blocking zip call).
+* **The processing table's Cancel button was exercised interactively, not scripted** — cancelling
+  a `kPostProcess` job mid-run is a real, tested path in `jobs::JobQueue` itself
+  (`docs/A15-jobs.md` §6's `queue/cancel_running`), and `ProcessingDock::onCancelJob` is a
+  three-line call to `queue().cancel(jobId)`; no new engine-facing risk, just not screenshotted.
+
+---
+
+## 10. C5 (floor plan workspace)
+
+New files: `src/app/PlanDock.{h,cpp}` (the dock + `PlanGraphicsView`),
+`src/app/SyntheticBuilding.{h,cpp}` (the evidence fixture builder). `src/main.cpp` gained
+`--plan-fixture`, `--plan-extract`, `--plan-export-dxf`, `--plan-export-pdf`, `--plan-shot`,
+`--plan-delay`. `MainWindow` gained `planDock()` and `loadSyntheticBuildingFixture()`.
+
+### 10.1 The recompute split, exactly as `plan_editor.h` specifies it
+
+`PlanDock` holds one `plan::PlanEditState state_` plus the two cached `OccupancyGrid`s
+`recompute_grids()` last produced. Every control maps to exactly one of two paths:
+
+| Control | Mutator | Path |
+| --- | --- | --- |
+| Slice slider (release) / band-width spinbox | `with_slice_band` | slow: `recompute_grids()` + `recompute_walls()` |
+| Window sill check toggle | `with_sill_check` | slow (a second grid on the same lattice has to be built or dropped) |
+| Include/exclude region drawn or deleted | `with_include_region`/`with_exclude_region`/`without_region`/`with_regions_cleared` | slow (changes which points land in the grid) |
+| Orthogonality snap toggle | `with_orthogonality` | **fast**: `recompute_walls()` only, against the cached grids |
+
+This is `docs/A12-plan.md` §5's own cost model ("moving the slice band or a rectangle changes
+which points land in the grid... changing snapping... does NOT touch the cloud") wired up exactly
+as specified, not approximated: the slider's live drag only repaints a label
+(`onSliderMoved`→`updateSliceLabel()`); the actual re-slice happens once, on `sliderReleased`, so
+dragging across the full 6 m range does not fire dozens of full grid rebuilds.
+
+`state_`/`main_grid_`/`sill_grid_`/`model_` are plain members, not a `std::vector<PlanEditState>`
+undo stack — the task asked for the recompute split and the editor controls, not undo/redo, and
+`plan_editor.h`'s own doc frames the `vector<PlanEditState>` history as something "the Qt desktop
+and the Android viewer" *can* keep for free because every mutator returns a new value; nothing
+here stops a future pass from adding a history list on top of the same state shape.
+
+### 10.2 Rendering: metres as scene units, and the bug that came from not doing that consistently
+
+`PlanGraphicsView`'s `QGraphicsScene` is built directly in **metres** (1 scene unit = 1 m, y
+negated so north renders up), and `QGraphicsView::fitInView()` supplies the pixel scale — no
+hand-rolled meters-to-pixels transform. Walls are `QGraphicsLineItem`s with `pen.setWidthF(wall
+thickness)` (a scene-unit width, so it scales with zoom like a real wall would); openings are a
+second, coloured line per gap (door = brown, window = cyan) laid across the gap; rooms are
+`QGraphicsPolygonItem`s filled translucent blue with a `QGraphicsTextItem` label (name + area) at
+the centroid, flagged `ItemIgnoresTransformations` so the label text stays a constant *pixel* size
+regardless of zoom.
+
+**That flag is exactly what broke the first version of `fitInView()`.** `ItemIgnoresTransformations`
+means the label's `boundingRect()` — sized in local (pixel-ish) coordinates by the font metrics —
+gets folded straight into `QGraphicsScene::itemsBoundingRect()` as if it were scene-unit (metre)
+geometry, which silently inflated the "whole plan" bounding box to tens of "metres" and zoomed the
+real ~8 m building down to a speck in one corner of the view (caught by inspecting the first
+`--plan-shot` screenshot, which showed exactly that). The fix — `PlanDock::renderModel()` computes
+the fit rectangle from **`model_.bounds`** (`PlanBounds`, real metres, no items in it) rather than
+from `itemsBoundingRect()`, and `PlanGraphicsView::fitToRect()`/`resizeEvent()` re-fit to that
+stored rectangle on every resize (needed because this dock is constructed, and does its first
+`fitInView()`, before `MainWindow` has ever been shown or laid out to its final size — a `QTimer`
+delay or a dock tab that starts hidden both hit this). `evidence/10-plan.png` is the corrected
+render; the underlying bug and fix are recorded here because it is exactly the kind of thing a
+"screenshot ⇒ inspect it ⇒ notice the plan is 2 px in a corner" step catches that a compile-only
+pass never would.
+
+### 10.3 Include/exclude region drawing
+
+`PlanGraphicsView` in "draw region" mode (a checkable toolbutton) drags out a dashed yellow
+rubber-band `QGraphicsRectItem` and emits its rectangle **in scene coordinates**; `PlanDock`
+converts that back to world coordinates (`worldY = -sceneY`, the same negation §10.2 render uses)
+and calls `with_include_region`/`with_exclude_region` depending on an Include/Exclude combo box.
+The region list (`QListWidget`) shows every region as `include/exclude (minx,miny)-(maxx,maxy)`;
+"Delete selected"/"Clear all" map straight onto `without_region`/`with_regions_cleared`. Existing
+regions are also drawn as dashed overlays on the plan itself (green = include, red = exclude) so
+the effect of a region is visible without cross-referencing the list.
+
+### 10.4 DXF / PDF export, with open-in-Finder
+
+`onExportDxf`/`onExportPdf` prompt for a save path (defaulting into the project's `exports/`
+directory) and call `plan::write_dxf`/`plan::write_pdf` with default `DxfOptions`/`PdfOptions`,
+then reveal the file the same per-OS way `ExportDialog::onOpenContaining()` already does
+(`open -R` / `explorer.exe /select,` / `QDesktopServices::openUrl`) — reimplemented locally rather
+than shared, since `ExportDialog`'s version is private to that class. Both are also reachable
+headlessly (`exportDxfForCli()`/`exportPdfForCli()`, no `QFileDialog`) for `main.cpp`'s
+`--plan-export-dxf`/`--plan-export-pdf` evidence hooks, which the interactive buttons now delegate
+to after the file dialog returns a path — one code path, not two.
+
+### 10.5 Verified against A12's own synthetic building fixture
+
+`app/SyntheticBuilding.{h,cpp}` ports `engine/tests/test_plan.cpp`'s `make_building()` /
+`emit_face()` / `emit_box_sides()` (default `BuildOpts`: clutter on, no shelf-against-wall, no
+diagonal wall, no rotation) — the same two-room-plus-corridor building `docs/A12-plan.md` §6
+documents, chosen for the same reason `SyntheticMid360` was ported rather than shared (§9.4):
+`engine/` is read-only and the generator is file-local to a test binary.
+
+`--plan-fixture` appends the fixture directly into the engine's own `PageStore`
+(`MainWindow::loadSyntheticBuildingFixture()`, `StreamId::kSlamMap`) and points the
+viewport/Plan dock at it. `--plan-extract` then drives `PlanDock::runExtractionForCli()` — the
+exact same `recompute_grids()`+`recompute_walls()` the "Extract floor plan from current cloud"
+button calls:
+
+```
+[lidarscan] plan-fixture: loaded
+[lidarscan] plan-extract: 6 walls, 3 openings, 3 rooms, 38.28 m2 total area, slice 1.00..1.50 m
+[lidarscan] plan-extract:   room R1: 11.1963 m2
+[lidarscan] plan-extract:   room R2: 13.2843 m2
+[lidarscan] plan-extract:   room R3: 13.7979 m2
+```
+
+**These numbers match `docs/A12-plan.md` §6's own reported figures for the identical fixture
+exactly** (11.1963 / 13.2843 / 13.7979 m², against true areas 11.2000 / 13.2825 / 13.8000 m² —
+A12's own doc's own table, to four decimal places), which is as strong a confirmation as this task
+can get that the desktop's editor/recompute path reaches the same extractor with the same default
+`PlanOptions` A12 itself verified against, not a divergent copy.
+
+`evidence/10-plan.png` (`--plan-shot`, the Plan dock raised so its `QGraphicsView` has a real
+layout to render into) shows the three labelled rooms, walls and the door/window openings.
+`evidence/floorplan.dxf` passes `scripts/check_dxf.py` — a from-scratch DXF R12 reader independent
+of A12's own writer/tests (the same "two independent implementations must agree" posture
+`scripts/check_ply.py` already established for A9's PLY writer in §8.5.2), asserting `$ACADVER =
+AC1009`, `HEADER`/`ENTITIES` sections present, every `POLYLINE` closed by a `SEQEND`, and all four
+expected layers (`WALLS`/`OPENINGS`/`ROOMS`/`DIMENSIONS`) present:
+
+```
+OK: evidence/floorplan.dxf: AC1009, 4 sections, 15 POLYLINE/SEQEND pairs, 28 entities, layers=['DIMENSIONS', 'OPENINGS', 'ROOMS', 'WALLS']
+```
+
+`evidence/floorplan.pdf` was opened through **macOS Quick Look**
+(`qlmanage -t -s 1000 -o evidence evidence/floorplan.pdf`, the same verification style
+`docs/A12-plan.md` §9 itself uses — "No CAD package is installed on this machine, so the DXF's
+only verification is the from-scratch reader" applies equally here), producing
+`evidence/floorplan.pdf.png`: poché-filled wall footprints, dashed threshold lines across both
+doors and the window, three labelled rooms with areas, a scale bar at 1:50, a north arrow marked
+`N (ASSUMED)` (§7's documented placeholder — this session has no georeferencing), and a title
+block with scale/sheet/slice-band/grid-resolution/wall-opening-room counts — rendering correctly
+end to end with no viewer-side errors.
+
+### 10.6 Not verified / known gaps
+
+* **Non-rectangular / rotated regions.** The include/exclude tool only draws axis-aligned
+  rectangles (`PlanRegion`'s own shape, `plan_model.h`) — this matches the engine API exactly, not
+  a desktop limitation.
+* **No undo/redo stack.** `plan_editor.h`'s pure-function `PlanEditState` makes one trivial to add
+  (`std::vector<PlanEditState>`, §10.1), but the task asked for the recompute split and the editor
+  controls, not undo — not implemented.
+* **The slice slider's live-drag preview is the label text only, not a live-updating plan.** A
+  full live re-slice on every `valueChanged` tick (rather than once on `sliderReleased`) was
+  measured as unnecessary cost for this task's fixture (§10.1) and not attempted at a larger scale;
+  A12's own doc (§8 item 10) already flags "live slider on Android" as marginal even for the
+  *fast* (walls-only) path on a 40×40 m building, so a full re-grid on every tick would be worse.
+* **A real Mid-360/post-process cloud was not run through the Plan dock** — §10.5's fixture is
+  A12's own synthetic building, not the C4 §9.4 post-process result. Nothing in `PlanInput`/
+  `PlanDock` distinguishes the two (`store_` is `const PageStore*` either way — the same pointer
+  `ProcessingDock::loadResultRequested` feeds it), but "extracting a plan from a real post-process
+  run's cloud would work" is inference from the shared code path, not a separate measurement.
+* **Non-`kZ` up-axis was not exercised.** `UpAxis::kZ` is the only value used anywhere in this
+  task; `plan::UpAxis::kY`/`kX` are real engine options `PlanDock` never sets.

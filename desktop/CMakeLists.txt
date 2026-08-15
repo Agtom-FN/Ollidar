@@ -33,7 +33,12 @@ if(NOT CMAKE_PREFIX_PATH AND EXISTS "/opt/homebrew/opt/qt")
     set(CMAKE_PREFIX_PATH "/opt/homebrew/opt/qt")
 endif()
 set(CMAKE_AUTOMOC ON)
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets SerialPort)
+# Network: C4's "Submit to cloud…" dialog makes a REAL QNetworkAccessManager
+# request against A15's cloud REST contract (see src/app/QtHttpTransport.*) —
+# the task is explicit that the scripted fake HttpTransport A15's own tests
+# use "is not for UI", so this has to be a real socket attempt that fails
+# gracefully when (as in this environment) no server exists.
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets SerialPort Network)
 
 # ---------------------------------------------------------------------------
 # The engine (workstream A) — linked as C++, not through the C ABI.
@@ -136,6 +141,11 @@ add_executable(lidarscan
     src/app/CaptureWindow.cpp
     src/app/MeasureDock.cpp
     src/app/ExportDialog.cpp
+    src/app/ProcessingDock.cpp
+    src/app/PlanDock.cpp
+    src/app/QtHttpTransport.cpp
+    src/app/SyntheticMid360.cpp
+    src/app/SyntheticBuilding.cpp
     src/app/MainWindow.cpp
     src/render/NativeSurface.cpp
     src/render/DisplayLinkFallback.cpp
@@ -158,7 +168,7 @@ target_include_directories(lidarscan PRIVATE
     "${FILAMENT_DIR}/include")
 
 target_link_libraries(lidarscan PRIVATE
-    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::SerialPort
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::SerialPort Qt6::Network
     scanengine
     ${FILAMENT_LINK})
 

@@ -16,7 +16,7 @@ $ /Users/admin/lidarscan/desktop/build/lidarscan --project /Users/admin/lidarsca
 [scanengine][info][d6] device 1: stopping -> idle
 [scanengine][info][engine] stopping -> idle
 [lidarscan] imported 394287 bytes -> 120300 points -> /Users/admin/lidarscan/desktop/evidence/c2c3-synth.lscan
-FEngine (64 bits) created at 0x844da6800 (threading is enabled)
+FEngine (64 bits) created at 0xbb9063800 (threading is enabled)
 FEngine resolved backend: Metal
 Selected physical device 'Apple M4'
 Supported GPU families: 
@@ -39,13 +39,13 @@ $ /Users/admin/lidarscan/desktop/build/lidarscan --project /Users/admin/lidarsca
 [lidarscan] replay started at 0x
 [scanengine][info][d6] device 1: starting -> streaming
 [scanengine][info][d6] device 1: streaming -> stalleddevice not responding
-[lidarscan] measure-selftest: segment (1.500,-1.500,0.000) -> (2.000,0.903,0.000) = 2.4541 m
-[lidarscan] screenshot OK -> /Users/admin/lidarscan/desktop/evidence/06-measure.png | 120300 pts / 1 pages | 59.3 fps | cpu p95 0.21 ms | gpu p95 2.06 ms | 892x913 px dpr 1.00 | swapchains 0
+[lidarscan] measure-selftest: segment (2.000,-1.059,0.000) -> (1.454,-1.500,0.000) = 0.7020 m
+[lidarscan] screenshot OK -> /Users/admin/lidarscan/desktop/evidence/06-measure.png | 120300 pts / 1 pages | 59.5 fps | cpu p95 0.24 ms | gpu p95 1.90 ms | 758x946 px dpr 1.00 | swapchains 0
 [scanengine][info][engine] running -> stopping
 [scanengine][info][d6] device 1: stalled -> stopping
 [scanengine][info][d6] device 1: stopping -> idle
 [scanengine][info][engine] stopping -> idle
-FEngine (64 bits) created at 0xcb0dd6800 (threading is enabled)
+FEngine (64 bits) created at 0xc33205800 (threading is enabled)
 FEngine resolved backend: Metal
 Selected physical device 'Apple M4'
 Supported GPU families: 
@@ -73,7 +73,7 @@ $ /Users/admin/lidarscan/desktop/build/lidarscan --project /Users/admin/lidarsca
 [scanengine][info][d6] device 1: stalled -> stopping
 [scanengine][info][d6] device 1: stopping -> idle
 [scanengine][info][engine] stopping -> idle
-FEngine (64 bits) created at 0x947023800 (threading is enabled)
+FEngine (64 bits) created at 0x71ba14000 (threading is enabled)
 FEngine resolved backend: Metal
 Selected physical device 'Apple M4'
 Supported GPU families: 
@@ -100,7 +100,7 @@ $ /Users/admin/lidarscan/desktop/build/lidarscan --project /Users/admin/lidarsca
 [scanengine][info][d6] device 1: stalled -> stopping
 [scanengine][info][d6] device 1: stopping -> idle
 [scanengine][info][engine] stopping -> idle
-FEngine (64 bits) created at 0xb78db2800 (threading is enabled)
+FEngine (64 bits) created at 0x9bd205800 (threading is enabled)
 FEngine resolved backend: Metal
 Selected physical device 'Apple M4'
 Supported GPU families: 
@@ -127,7 +127,7 @@ $ /Users/admin/lidarscan/desktop/build/lidarscan --project /Users/admin/lidarsca
 [scanengine][info][d6] device 1: stalled -> stopping
 [scanengine][info][d6] device 1: stopping -> idle
 [scanengine][info][engine] stopping -> idle
-FEngine (64 bits) created at 0xc5eda6800 (threading is enabled)
+FEngine (64 bits) created at 0x79f063800 (threading is enabled)
 FEngine resolved backend: Metal
 Selected physical device 'Apple M4'
 Supported GPU families: 
@@ -143,9 +143,9 @@ $ python3 /Users/admin/lidarscan/desktop/scripts/check_ply.py /Users/admin/lidar
 OK: /Users/admin/lidarscan/desktop/evidence/export-c2c3.ply: 120300 points, properties=['x', 'y', 'z', 'red', 'green', 'blue', 'intensity'], bounds=(-2.001,-1.500,0.000)..(2.001,1.500,0.000)
 === 4. file sizes for all three formats ===
 $ ls -la /Users/admin/lidarscan/desktop/evidence/export-c2c3.ply /Users/admin/lidarscan/desktop/evidence/export-c2c3.las /Users/admin/lidarscan/desktop/evidence/export-c2c3.pcd
--rw-r--r--  1 admin  staff  3128653 15 Aug 05:16 /Users/admin/lidarscan/desktop/evidence/export-c2c3.las
--rw-r--r--  1 admin  staff  2406200 15 Aug 05:16 /Users/admin/lidarscan/desktop/evidence/export-c2c3.pcd
--rw-r--r--  1 admin  staff  1925061 15 Aug 05:16 /Users/admin/lidarscan/desktop/evidence/export-c2c3.ply
+-rw-r--r--  1 admin  staff  3128653 15 Aug 13:54 /Users/admin/lidarscan/desktop/evidence/export-c2c3.las
+-rw-r--r--  1 admin  staff  2406200 15 Aug 13:55 /Users/admin/lidarscan/desktop/evidence/export-c2c3.pcd
+-rw-r--r--  1 admin  staff  1925061 15 Aug 13:54 /Users/admin/lidarscan/desktop/evidence/export-c2c3.ply
 === 5. Mid-360 self-test against the S2 simulator on loopback ===
 $ /Users/admin/lidarscan/desktop/build/lidarscan --mid360-selftest 127.000.000.001:127.0.0.1 --quit-after 12
 [scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
@@ -158,13 +158,14 @@ $ /Users/admin/lidarscan/desktop/build/lidarscan --mid360-selftest 127.000.000.0
 [scanengine][info][mid360] device 1: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
 [scanengine][info][mid360] device 1: connected (sn=3GGDJ6K00100001 ip=127.0.0.1)
 [scanengine][info][mid360] handle 16777343: configured (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] device 1: starting -> streaming
+[lidarscan] mid360-selftest PASSED — first packet after 2.17 s
 [scanengine][info][engine] running -> stopping
-[scanengine][info][mid360] device 1: starting -> stopping
+[scanengine][info][mid360] device 1: streaming -> stopping
 [scanengine][info][mid360] device 1: SDK2 torn down
 [scanengine][info][mid360] device 1: stopping -> idle
 [scanengine][info][engine] stopping -> idle
-[lidarscan] mid360-selftest FAILED — no packet within 8 s (device state: starting)
-FEngine (64 bits) created at 0xca1023800 (threading is enabled)
+FEngine (64 bits) created at 0xae9614000 (threading is enabled)
 FEngine resolved backend: Metal
 Selected physical device 'Apple M4'
 Supported GPU families: 

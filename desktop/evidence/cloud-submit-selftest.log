@@ -1,0 +1,15 @@
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[lidarscan] cloud-submit-selftest: job #1 submitted against https://127.0.0.1:1/v1
+[lidarscan] cloud-submit-selftest: job #1 settled as failed (error=network error, message=network error) — the app is still running, which is the point
+FEngine (64 bits) created at 0xca2d79800 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1

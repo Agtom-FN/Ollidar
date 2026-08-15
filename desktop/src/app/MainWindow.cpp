@@ -30,7 +30,10 @@
 #include "app/EngineHost.h"
 #include "app/ExportDialog.h"
 #include "app/MeasureDock.h"
+#include "app/PlanDock.h"
+#include "app/ProcessingDock.h"
 #include "app/ReplayController.h"
+#include "app/SyntheticBuilding.h"
 #include "render/ViewportWindow.h"
 
 namespace lidarscan {
@@ -74,7 +77,23 @@ MainWindow::MainWindow(EngineHost* host, QWidget* parent) : QMainWindow(parent),
   });
 }
 
-MainWindow::~MainWindow() = default;
+MainWindow::~MainWindow() {
+  // CaptureWindow is created LAZILY (captureWindow(), first used from the
+  // Capture menu or the --mid360-selftest CLI hook), so it always becomes a
+  // LATER QObject child of `this` than the docks buildUi() creates up
+  // front — including the Projects dock that owns `log_`. QObject destroys
+  // its children list front-to-back (construction order, not reverse), so
+  // on exit the Projects dock (and log_ with it) would be torn down BEFORE
+  // `capture_` otherwise. CaptureWindow's own destructor calls onStop() ->
+  // EngineHost::stopSession(), which emits logLine() -> this window's own
+  // lambda (see the constructor), which dereferences log_ — by then
+  // dangling. A real, reproducible SIGSEGV on exit whenever captureWindow()
+  // had ever been called; found (crash log symbolicated back to this path)
+  // while verifying C4/C5, pre-existing in C1/C2's code, not new here.
+  // Deleting it explicitly, first, sidesteps the ordering question entirely
+  // rather than relying on child-list order.
+  delete capture_;
+}
 
 void MainWindow::buildUi() {
   // --- viewport (native child window embedded in the widget tree) ---
@@ -201,13 +220,43 @@ void MainWindow::buildUi() {
   tabifyDockWidget(params_dock_, measure_dock_);
   params_dock_->raise();
 
+  // --- right dock (tabbed): processing queue (C4) ---
+  processing_dock_ = new ProcessingDock(host_, this);
+  addDockWidget(Qt::RightDockWidgetArea, processing_dock_);
+  tabifyDockWidget(params_dock_, processing_dock_);
+  connect(processing_dock_, &ProcessingDock::logLine, this,
+          [this](const QString& l) { log_->appendPlainText(l); });
+  connect(processing_dock_, &ProcessingDock::loadResultRequested, this,
+          [this](std::shared_ptr<scanengine::PageStore> store, quint64 jobId) {
+            loaded_result_store_ = store;
+            viewport_->setPointStore(loaded_result_store_.get());
+            viewport_->fitView();
+            plan_dock_->setPointStore(loaded_result_store_.get());
+            log_->appendPlainText(
+                QString("job #%1's result is now the viewport/plan cloud (%2 points)")
+                    .arg(jobId)
+                    .arg(loaded_result_store_->total_points()));
+          });
+
+  // --- right dock (tabbed): floor plan workspace (C5) ---
+  plan_dock_ = new PlanDock(this);
+  addDockWidget(Qt::RightDockWidgetArea, plan_dock_);
+  tabifyDockWidget(params_dock_, plan_dock_);
+  plan_dock_->setPointStore(host_->points());
+  connect(plan_dock_, &PlanDock::logLine, this,
+          [this](const QString& l) { log_->appendPlainText(l); });
+  // tabifyDockWidget() raises the most-recently-added tab; put Display
+  // parameters back in front as C1/C2/C3 established, now that C4/C5 have
+  // added two more tabs behind it.
+  params_dock_->raise();
+
   // --- status bar ---
   status_engine_ = new QLabel("engine: starting");
   status_render_ = new QLabel("renderer: starting");
   statusBar()->addWidget(status_engine_, 1);
   statusBar()->addPermanentWidget(status_render_, 2);
 
-  resize(1580, 940);
+  resize(1760, 980);  // C4/C5 added two more tabs to the right dock group
 }
 
 void MainWindow::buildMenus() {
@@ -254,6 +303,12 @@ void MainWindow::buildMenus() {
   view->addSeparator();
   view->addAction(params_dock_->toggleViewAction());
   view->addAction(measure_dock_->toggleViewAction());
+  view->addAction(processing_dock_->toggleViewAction());
+  view->addAction(plan_dock_->toggleViewAction());
+
+  auto* tools = menuBar()->addMenu("&Tools");
+  tools->addAction("Load synthetic building fixture (C5 test fixture)…", this,
+                   &MainWindow::loadSyntheticBuildingFixture);
 
   auto* help = menuBar()->addMenu("&Help");
   help->addAction("About", this, [this] {
@@ -293,6 +348,11 @@ bool MainWindow::openProject(const QString& dir, QString* err) {
   project_ = info;
   addRecent(info.dir);
   refreshProjectPanel();
+  loaded_result_store_.reset();
+  processing_dock_->setProjectDir(info.dir);
+  processing_dock_->setCurrentStore(host_->points());
+  plan_dock_->setProjectDir(info.dir);
+  plan_dock_->setPointStore(host_->points());
   if (!params_dock_->loadFromProject(info.dir)) {
     // No saved processed/display_params.json for this project yet — fall
     // back to A14's profile_defaults() for whatever workflow profile the
@@ -326,6 +386,25 @@ void MainWindow::closeProject() {
   project_ = ProjectInfo{};
   refreshProjectPanel();
   setWindowTitle("LidarScan — Desktop");
+  processing_dock_->setProjectDir(QString());
+  plan_dock_->setProjectDir(QString());
+}
+
+void MainWindow::loadSyntheticBuildingFixture() {
+  if (!host_ || !host_->engine()) return;
+  loaded_result_store_.reset();
+  scanengine::PageStore& store = host_->engine()->points();
+  store.clear();
+  const auto points = buildSyntheticBuildingPoints();
+  scanengine::Span<const scanengine::PointVertex> span(points.data(), points.size());
+  quint32 appended = 0;
+  const auto st = store.append(scanengine::StreamId::kSlamMap, span, 0, &appended);
+  viewport_->setPointStore(host_->points());
+  plan_dock_->setPointStore(host_->points());
+  viewport_->fitView();
+  log_->appendPlainText(QString("synthetic building fixture loaded: %1 points (%2)")
+                            .arg(appended)
+                            .arg(st.ok() ? "ok" : scanengine::error_str(st.error())));
 }
 
 void MainWindow::persistDisplayParamsIfProjectOpen() {

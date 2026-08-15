@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "formatVersion": 1,
+  "engineVersion": "0.1.0",
+  "createdAtUtcNs": 1786766160615235000,
+  "sealed": true,
+  "sealedAtUtcNs": 1786766160639200000,
+  "profile": "survey",
+  "sensors": [{"id": "mid360-sim", "kind": "lidar", "model": "Livox Mid-360 (synthetic)"}],
+  "mountCalibration": null,
+  "crs": null,
+  "clockOffsets": {},
+  "streams": {"streams/lidar.bin": {"stream": 2}, "streams/imu.bin": {"stream": 3}}
+}

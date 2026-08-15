@@ -28,6 +28,10 @@ class QPushButton;
 class QDoubleSpinBox;
 class QTreeWidget;
 
+namespace scanengine {
+class PageStore;
+}
+
 namespace lidarscan {
 
 class CaptureWindow;
@@ -35,6 +39,8 @@ class DisplayParamsDock;
 class EngineHost;
 class ExportDialog;
 class MeasureDock;
+class PlanDock;
+class ProcessingDock;
 class ReplayController;
 class ViewportWindow;
 
@@ -48,10 +54,20 @@ class MainWindow : public QMainWindow {
   // Lazily creates the capture window exactly like the "Capture" menu does.
   // Public so main.cpp's --mid360-selftest CLI hook can drive it headlessly.
   CaptureWindow* captureWindow();
+  // Public so main.cpp's C4/C5 evidence hooks can drive the processing queue
+  // and the floor-plan workspace headlessly, the same posture captureWindow()
+  // already established for C2/C3.
+  ProcessingDock* processingDock() { return processing_dock_; }
+  PlanDock* planDock() { return plan_dock_; }
 
   bool openProject(const QString& dir, QString* err = nullptr);
   void closeProject();
   bool startReplay(double speed, QString* err = nullptr);
+
+  // C5 evidence/verification fixture: appends the A12 test-fixture building
+  // (SyntheticBuilding.h) into the engine's own PageStore and points the
+  // viewport + Plan dock at it — "any dense synthetic cloud" per the task.
+  void loadSyntheticBuildingFixture();
 
   // Apply a display-parameter document (A14 from_json) — used by
   // --display-params so a scripted run can render a specific configuration.
@@ -81,6 +97,8 @@ class MainWindow : public QMainWindow {
   ViewportWindow* viewport_ = nullptr;
   DisplayParamsDock* params_dock_ = nullptr;
   MeasureDock* measure_dock_ = nullptr;
+  ProcessingDock* processing_dock_ = nullptr;
+  PlanDock* plan_dock_ = nullptr;
   CaptureWindow* capture_ = nullptr;
   ExportDialog* export_dialog_ = nullptr;
   ReplayController* replay_ = nullptr;
@@ -101,6 +119,12 @@ class MainWindow : public QMainWindow {
 
   ProjectInfo project_;
   QStringList recent_dirs_;
+
+  // Keeps a loaded Post-process result (ProcessingDock::loadResultRequested)
+  // alive for as long as the viewport/plan dock might read it — see
+  // ProcessingDock.h's comment on why this is the mechanism rather than a
+  // fresh engine/replay of processed/ (A7 does not persist the final cloud).
+  std::shared_ptr<scanengine::PageStore> loaded_result_store_;
 };
 
 }  // namespace lidarscan
