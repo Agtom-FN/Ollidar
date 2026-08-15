@@ -14,6 +14,16 @@
 #include <cstddef>
 #include <cstdint>
 
+// <version> defines the feature-test macros. Without it, __cpp_lib_span is
+// only visible in TUs that happened to include <span> transitively first —
+// which split this header between std::span and the fallback across TUs on
+// GCC and broke the link with undefined std::span symbols (engine-ci #2).
+#if defined(__has_include)
+#if __has_include(<version>)
+#include <version>
+#endif
+#endif
+
 #if defined(__cpp_lib_span) && __cpp_lib_span >= 202002L
 #define SCANENGINE_HAS_STD_SPAN 1
 #include <span>

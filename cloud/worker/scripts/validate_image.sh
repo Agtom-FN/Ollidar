@@ -78,7 +78,7 @@ fi
 
 echo
 echo "== 1. synthesizing a .lscan with the image's own engine_cli =="
-"$ENGINE" run --rm --entrypoint engine_cli \
+"$ENGINE" run --rm --user "$(id -u):$(id -g)" --entrypoint engine_cli \
   -v "$IN_DIR:/work/session.lscan" \
   "$IMAGE" --synth-lscan /work/session.lscan 2.2
 [ -f "$IN_DIR/manifest.json" ] || { echo "FAIL: synth-lscan did not produce manifest.json"; exit 1; }
@@ -86,7 +86,7 @@ echo "== 1. synthesizing a .lscan with the image's own engine_cli =="
 echo
 echo "== 2. running the worker: argv = <input-dir> <output-dir> =="
 set +e
-"$ENGINE" run --rm \
+"$ENGINE" run --rm --user "$(id -u):$(id -g)" \
   -e WORKER_POST_ARGS="--no-loops --no-outlier --dedup 0.05" \
   -v "$IN_DIR:/data/input" \
   -v "$OUT_DIR:/data/output" \
@@ -112,7 +112,7 @@ progress_lines="$(grep -c '^post: .*%' "$WORK/stderr.log" || true)"
 echo
 echo "== 3. usage error: no args -> exit 2 =="
 set +e
-"$ENGINE" run --rm "$IMAGE" >/dev/null 2>"$WORK/usage.log"
+"$ENGINE" run --rm --user "$(id -u):$(id -g)" "$IMAGE" >/dev/null 2>"$WORK/usage.log"
 rc=$?
 set -e
 check "missing-args exit code" "$rc" "2"
@@ -120,7 +120,7 @@ check "missing-args exit code" "$rc" "2"
 echo
 echo "== 4. usage error: nonexistent input dir -> exit 2 =="
 set +e
-"$ENGINE" run --rm "$IMAGE" /no/such/dir /data/output >/dev/null 2>"$WORK/nodir.log"
+"$ENGINE" run --rm --user "$(id -u):$(id -g)" "$IMAGE" /no/such/dir /data/output >/dev/null 2>"$WORK/nodir.log"
 rc=$?
 set -e
 check "nonexistent-input-dir exit code" "$rc" "2"
@@ -129,7 +129,7 @@ echo
 echo "== 5. engine_cli failure: input dir with no manifest.json -> exit 1 =="
 mkdir -p "$WORK/garbage"
 set +e
-"$ENGINE" run --rm \
+"$ENGINE" run --rm --user "$(id -u):$(id -g)" \
   -v "$WORK/garbage:/data/input" \
   -v "$OUT_DIR:/data/output" \
   "$IMAGE" /data/input /data/output >/dev/null 2>"$WORK/badinput.log"

@@ -41,7 +41,10 @@ for arg in "$@"; do
   esac
 done
 
-if [ -d "$DEST" ]; then
+# Presence = the real tree, not just a directory: Gradle pre-creates the
+# empty output dir for its declared marker file, which made a bare `-d` test
+# skip the fetch and fail the build one step later (engine-ci #2).
+if [ -f "$DEST/CMakeLists.txt" ]; then
   if [ "$force" -eq 1 ]; then
     echo "Removing existing $DEST (--force)"
     rm -rf "$DEST"
@@ -49,6 +52,9 @@ if [ -d "$DEST" ]; then
     echo "Livox-SDK2 already present at $DEST -- pass --force to re-fetch."
     exit 0
   fi
+elif [ -d "$DEST" ]; then
+  echo "Removing incomplete $DEST (no CMakeLists.txt)"
+  rm -rf "$DEST"
 fi
 
 tmp="$(mktemp -d)"

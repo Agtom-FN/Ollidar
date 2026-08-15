@@ -59,13 +59,26 @@ if(ENGINE_WITH_EIGEN)
         set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
         # A release tarball rather than a git clone: no git dependency, and
         # the hash pins it as tightly as a commit would.
+        # Populate WITHOUT running Eigen's own CMake: Eigen is header-only,
+        # and its CMakeLists probes for a Fortran compiler (BLAS/LAPACK
+        # subprojects). GitHub's Windows runners carry Strawberry Perl's
+        # broken gfortran in PATH, which turns that probe into a hard
+        # configure failure (CMakeTestFortranCompiler; engine-ci #1/#2).
+        # SOURCE_SUBDIR names a directory with no CMakeLists.txt, so
+        # FetchContent_MakeAvailable downloads/unpacks but never calls
+        # add_subdirectory — the documented no-deprecation alternative to
+        # single-arg FetchContent_Populate. An INTERFACE target over the
+        # sources is all a header-only dep needs.
         FetchContent_Declare(Eigen3
             URL https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz
             URL_HASH SHA256=8586084f71f9bde545ee7fa6d00288b264a2b7ac3607b974e54d13e7162c1c72
+            SOURCE_SUBDIR cmake_subdir_that_does_not_exist
         )
         FetchContent_MakeAvailable(Eigen3)
         if(NOT TARGET Eigen3::Eigen)
-            add_library(Eigen3::Eigen ALIAS eigen)
+            add_library(scanengine_eigen INTERFACE)
+            target_include_directories(scanengine_eigen SYSTEM INTERFACE "${eigen3_SOURCE_DIR}")
+            add_library(Eigen3::Eigen ALIAS scanengine_eigen)
         endif()
     else()
         message(FATAL_ERROR "scanengine: Eigen3 not found and ENGINE_FETCH_EIGEN is OFF")
