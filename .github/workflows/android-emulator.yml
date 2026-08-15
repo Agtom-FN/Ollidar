@@ -20,12 +20,26 @@ name: android-emulator
 # the exact thing this test exists to catch — would fail immediately with a
 # missing-ABI UnsatisfiedLinkError, which would make this test worthless as a
 # regression gate (it would "pass" by finding a *different*, uninteresting
-# crash, or never load Filament at all). GitHub's `macos-latest` runners are
-# Apple Silicon (arm64) hosts, so an arm64-v8a system image is the
-# hardware-accelerated choice there too — Apple's Hypervisor.Framework does
-# for arm64-on-arm64 what KVM does for x86_64-on-x86_64 — and it is the exact
-# ABI pairing android/NOTES.md's B4/B7 sections already used locally (the
-# `b4_test` AVD: android-34, google_apis, arm64-v8a).
+# crash, or never load Filament at all). `macos-latest` is arm64-v8a-native
+# instead.
+#
+# **`-accel off` is load-bearing, found by running this workflow for real
+# (iteration 1 here):** GitHub-hosted `macos-latest` runners are themselves
+# VMs (Apple's own virtualization), and Apple's Hypervisor.Framework does not
+# support the nested virtualization a *second*-level guest (the Android
+# emulator's QEMU) would need — confirmed directly, not assumed: the first
+# real run here failed with `HVF error: HV_UNSUPPORTED` /
+# `qemu-system-aarch64-headless: failed to initialize HVF: Invalid argument`,
+# the emulator process exited immediately, and the action's boot-wait loop
+# then polled a dead `emulator-5554` for its whole timeout before failing
+# with "Timeout waiting for emulator to boot." A **physical** Apple Silicon
+# Mac (e.g. a self-hosted runner) does not have this restriction — only
+# GitHub's own hosted macOS VMs do — which is why NOTES.md's B4/B7 local
+# `b4_test` AVD (this exact api-level/target/arch) booted hardware-accelerated
+# with no such flag. `-accel off` forces QEMU's software TCG path instead:
+# slower than HVF, but same-architecture (arm64 guest on the arm64 runner) —
+# nothing like the crippling cost cross-arch (e.g. arm64-on-x86_64)
+# translation would have.
 #
 # Triggers on push to main (the "every push" gate the task asked for) and to
 # ci/** (so this workflow's own iteration commits trigger it), restricted to
@@ -55,7 +69,11 @@ jobs:
   android-emulator-smoke-test:
     name: macos-latest / Android emulator smoke test (arm64-v8a)
     runs-on: macos-latest
-    timeout-minutes: 30
+    # Generous: software (TCG, no HVF — see the `-accel off` note above) boot
+    # of an arm64-v8a AVD is meaningfully slower than the hardware-accelerated
+    # boot this was first written against, and the job still has to assemble
+    # the app + androidTest APK and run the test itself on top of that.
+    timeout-minutes: 45
     # A hard gate, not `continue-on-error: true` like engine-ci.yml's
     # android-app job: that job is a first CI pass at a toolchain still
     # proving itself; this job's whole reason to exist is to be the thing
@@ -122,8 +140,13 @@ jobs:
           # No GPU/graphics acceleration needed or available headlessly —
           # swiftshader_indirect (software) is exactly what NOTES.md's
           # `b4_test` AVD also used; this test asserts Filament initializes
-          # and decodes points, not that a frame looks correct.
-          emulator-options: -no-window -gpu swiftshader_indirect -no-audio -no-boot-anim -camera-back none -no-snapshot-save
+          # and decodes points, not that a frame looks correct. `-accel off`:
+          # see the workflow header comment — GitHub-hosted macOS runners
+          # cannot nest Hypervisor.Framework, so HVF must be forced off
+          # rather than left to auto-detect (which crashes the emulator
+          # process outright instead of falling back on its own).
+          emulator-options: -no-window -gpu swiftshader_indirect -no-audio -no-boot-anim -camera-back none -no-snapshot-save -accel off
+          emulator-boot-timeout: 1800
           disable-animations: false
           script: echo "Generated AVD snapshot for caching."
 
@@ -150,7 +173,8 @@ jobs:
           target: ${{ env.AVD_TARGET }}
           arch: ${{ env.AVD_ARCH }}
           force-avd-creation: false
-          emulator-options: -no-window -gpu swiftshader_indirect -no-audio -no-boot-anim -camera-back none -no-snapshot-save
+          emulator-options: -no-window -gpu swiftshader_indirect -no-audio -no-boot-anim -camera-back none -no-snapshot-save -accel off
+          emulator-boot-timeout: 1800
           disable-animations: true
           script: |
             adb logcat -c
