@@ -9,6 +9,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.lidarscan.app.di.AppContainer
+import com.lidarscan.app.ui.calib.MountCalibrationRoute
 import com.lidarscan.app.ui.capture.CaptureRoute
 import com.lidarscan.app.ui.connect.ConnectWizardRoute
 import com.lidarscan.app.ui.detail.ProjectDetailRoute
@@ -53,6 +54,20 @@ fun LidarScanApp(
                 projectId = Uri.decode(encodedId),
                 onBack = { navController.popBackStack() },
                 onOpenCapture = { pid -> navController.navigate(Routes.capture(pid)) },
+                onOpenMountCalibration = { pid -> navController.navigate(Routes.mountCalibration(pid)) },
+            )
+        }
+
+        // B7: the mount-calibration wizard (S6 WIZARD.md's five screens).
+        composable(
+            route = Routes.MOUNT_CALIBRATION,
+            arguments = listOf(navArgument(Routes.PROJECT_ID_ARG) { type = NavType.StringType }),
+        ) { backStackEntry ->
+            val encodedId = backStackEntry.arguments?.getString(Routes.PROJECT_ID_ARG).orEmpty()
+            MountCalibrationRoute(
+                container = container,
+                projectId = Uri.decode(encodedId),
+                onBack = { navController.popBackStack() },
             )
         }
 

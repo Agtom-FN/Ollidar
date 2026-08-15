@@ -257,6 +257,25 @@ class RealEngineBridge(
     override fun currentPointCloudSource(): PointCloudSource? =
         if (engineHandle != 0L) LiveEngineCloudSource { engineHandle } else null
 
+    /**
+     * B7: the raw `scan_engine*` for the calls that have no place on the
+     * `EngineBridge` interface — `scan_engine_push_pose` (driven from the
+     * ARCore thread, not from a coroutine), `set_mount_extrinsics` and
+     * `pushbroom_enable`. Deliberately NOT added to `:core`'s `EngineBridge`:
+     * that interface is the platform-neutral seam, and a native handle is the
+     * one thing it must never carry.
+     */
+    fun engineHandleOrZero(): Long = engineHandle
+
+    /**
+     * B7: hands the ARCore controller this bridge's engine handle so its
+     * poses land in the live session, and applies a mount extrinsic when one
+     * is available. Called by the Capture screen at session start.
+     */
+    fun attachPoseSink(setHandle: (Long) -> Unit) {
+        setHandle(engineHandle)
+    }
+
     private fun activeConnection() = lastDevicePath?.let { connectionRegistry.get(it) }
 
     private fun startHealthPolling() {

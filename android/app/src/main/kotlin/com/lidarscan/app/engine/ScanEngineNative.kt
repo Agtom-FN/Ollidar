@@ -105,6 +105,115 @@ object ScanEngineNative {
     external fun nativeReplayGetPointPage(handle: Long, pageId: Int): NativePointPage?
     external fun nativeReplayTotalPoints(handle: Long): Long
 
+    // --- B7: ARCore poses in (A8's "poses in" C-ABI block) ----------------------
+    //
+    // Bound in cpp/arcore_jni.cpp. Called once per ARCore frame from the AR
+    // thread — safe concurrently with the D6 reader thread's
+    // [nativePushSerialBytes], per scanengine_c.h's own note on push_pose.
+    //
+    // `confidence` < 0 means "derive it from quality/tracking_lost", which is
+    // what [com.lidarscan.app.ar.CaptureArController] passes: ARCore reports a
+    // tracking STATE and a failure REASON, not a scalar, and inventing one
+    // here would be worse than letting the engine derive it.
+    external fun nativePushPose(
+        handle: Long,
+        tMonoNs: Long,
+        px: Double,
+        py: Double,
+        pz: Double,
+        qx: Double,
+        qy: Double,
+        qz: Double,
+        qw: Double,
+        positionSigmaM: Float,
+        orientationSigmaDeg: Float,
+        quality: Int,
+        trackingLost: Boolean,
+        confidence: Float,
+    ): Int
+
+    /** Returns the `SCAN_POSE_GATE_*` value at [tMonoNs] (see [PoseGate]), or -1 if the call itself failed. */
+    external fun nativePoseGateAt(handle: Long, tMonoNs: Long): Int
+
+    // --- B7: D6 pushbroom + mount extrinsics -----------------------------------
+    /** `phoneFromLidar` must be a **row-major** 4x4; the engine rejects a column-major one outright. */
+    external fun nativeSetMountExtrinsics(handle: Long, phoneFromLidar: DoubleArray): Int
+    external fun nativePushbroomEnable(handle: Long, on: Boolean): Int
+    external fun nativePushbroomFlush(handle: Long): Int
+    external fun nativePushbroomStats(handle: Long): NativePushbroomStats?
+
+    // --- B7: the mount-calibration solver (a standalone handle, no engine) ------
+    external fun nativeMountCalibCreate(): Long
+    external fun nativeMountCalibDestroy(handle: Long)
+
+    /**
+     * One wizard pose. `(nx, ny, nz, d)` is the board plane as the CAMERA
+     * measured it, in the camera frame; `xyz` is a flat `x,y,z` array of the
+     * lidar returns segmented onto the board, in the SENSOR frame; `sigmaM` is
+     * their 1-sigma range noise, which whitens the residual.
+     */
+    external fun nativeMountCalibAddObservation(
+        handle: Long,
+        nx: Double,
+        ny: Double,
+        nz: Double,
+        d: Double,
+        xyz: FloatArray,
+        sigmaM: Double,
+    ): Int
+
+    /** `cad` is the bracket's row-major CAD nominal `phone_from_lidar`. Null on failure (including the < 3-observation refusal). */
+    external fun nativeMountCalibSolve(handle: Long, cad: DoubleArray): NativeMountCalibResult?
+
+    // --- B8: the frames.idx keyframe writer -------------------------------------
+    //
+    // NOT a `scan_engine_record_keyframe` call — that C-ABI entry point does
+    // not exist at SCAN_ABI_VERSION 3 (A11 §8.2 asks for it; nothing has
+    // landed it). cpp/keyframe_writer.{h,cpp} wraps the engine's own
+    // `color::KeyframeIndexWriter` instead; see that header for why it is the
+    // correct writer rather than a second FileRecordWriter.
+    //
+    // The JPEG file itself is written by Kotlin ([com.lidarscan.app.ar.KeyframeRecorder]);
+    // this records the index entry naming it.
+    external fun nativeKeyframeWriterOpen(lscanDir: String): Long
+
+    /** Returns null on success, or a human-readable validation error (naming the offending field). */
+    external fun nativeKeyframeWriterAdd(
+        handle: Long,
+        tEngineNs: Long,
+        exposureNs: Long,
+        px: Double,
+        py: Double,
+        pz: Double,
+        qx: Double,
+        qy: Double,
+        qz: Double,
+        qw: Double,
+        fx: Float,
+        fy: Float,
+        cx: Float,
+        cy: Float,
+        distortion: FloatArray,
+        width: Int,
+        height: Int,
+        rowTimeNs: Float,
+        positionSigmaM: Float,
+        orientationSigmaDeg: Float,
+        poseQuality: Int,
+        trackingLost: Boolean,
+        poseSource: Int,
+        flags: Int,
+        iso: Float,
+        angularRateRadPerS: Float,
+        linearSpeedMPerS: Float,
+        imageBytes: Int,
+        imageName: String,
+    ): String?
+
+    external fun nativeKeyframeWriterRecords(handle: Long): Int
+    external fun nativeKeyframeWriterFlush(handle: Long)
+    external fun nativeKeyframeWriterClose(handle: Long)
+
     /**
      * Engine → app write callback for D6's start/stop command bytes
      * (`scan_serial_write_cb` in the C ABI). Implemented in
@@ -184,6 +293,39 @@ object ScanEngineNative {
             FAULT -> "Fault"
             else -> "Unknown ($state)"
         }
+    }
+
+    /** Mirrors `SCAN_POSE_QUALITY_*` (`scanengine_c.h`) — what [nativePushPose] takes. */
+    object PoseQuality {
+        const val INVALID = 0
+        const val POOR = 1
+        const val FAIR = 2
+        const val GOOD = 3
+    }
+
+    /** Mirrors `SCAN_POSE_GATE_*` — the five outcomes §3.3's "flagged and excluded by default" needs distinguished. */
+    object PoseGate {
+        const val OK = 0
+        const val NO_DATA = 1
+        const val BEFORE_FIRST = 2
+        const val FUTURE = 3
+        const val STALE = 4
+        const val TRACKING_LOST = 5
+        const val LOW_CONFIDENCE = 6
+    }
+
+    /** Mirrors `SCAN_STREAM_*`. */
+    object StreamId {
+        const val POSE_AR = 4
+        const val CAMERA_FRAMES = 6
+    }
+
+    /** Mirrors `kKeyframeFlag*` (`engine/include/scanengine/color/colorize.h`). */
+    object KeyframeFlags {
+        const val MOTION_VALID = 1
+        const val EXPOSURE_VALID = 2
+        const val TRACKING_LOST = 4
+        const val AUTO_EXPOSURE_LOCKED = 8
     }
 
     /** Mirrors `SCAN_EVENT_*` (`scanengine_c.h`). */

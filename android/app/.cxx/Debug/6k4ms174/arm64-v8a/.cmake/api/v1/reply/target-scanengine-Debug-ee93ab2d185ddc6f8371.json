@@ -203,7 +203,12 @@
 				61,
 				62,
 				63,
-				64
+				64,
+				65,
+				66,
+				67,
+				68,
+				69
 			],
 			"sysroot" : 
 			{
@@ -289,7 +294,12 @@
 				61,
 				62,
 				63,
-				64
+				64,
+				65,
+				66,
+				67,
+				68,
+				69
 			]
 		}
 	],
@@ -466,6 +476,12 @@
 		{
 			"backtrace" : 1,
 			"compileGroupIndex" : 0,
+			"path" : "/Users/admin/lidarscan/engine/src/jobs/colorize_wiring.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
 			"path" : "/Users/admin/lidarscan/engine/src/jobs/http_transport.cpp",
 			"sourceGroupIndex" : 0
 		},
@@ -473,6 +489,12 @@
 			"backtrace" : 1,
 			"compileGroupIndex" : 0,
 			"path" : "/Users/admin/lidarscan/engine/src/jobs/job_queue.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/admin/lidarscan/engine/src/jobs/job_runner_adapter.cpp",
 			"sourceGroupIndex" : 0
 		},
 		{
@@ -491,6 +513,24 @@
 			"backtrace" : 1,
 			"compileGroupIndex" : 0,
 			"path" : "/Users/admin/lidarscan/engine/src/jobs/transfer.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/admin/lidarscan/engine/src/merge/align.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/admin/lidarscan/engine/src/merge/icp.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/admin/lidarscan/engine/src/merge/merge_project.cpp",
 			"sourceGroupIndex" : 0
 		},
 		{

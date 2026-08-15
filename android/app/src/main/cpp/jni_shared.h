@@ -26,6 +26,13 @@ extern jmethodID g_point_page_ctor;  // (IIIIJJFFFFFFLjava/nio/ByteBuffer;)V
 extern jclass g_replay_stats_class;    // com.lidarscan.app.engine.NativeReplayStats
 extern jmethodID g_replay_stats_ctor;  // (JJIIZZI)V
 
+// B7 (arcore_jni.cpp): the mount-calibration result and the pushbroom stats.
+extern jclass g_mount_calib_result_class;    // com.lidarscan.app.engine.NativeMountCalibResult
+extern jmethodID g_mount_calib_result_ctor;  // ([DZZIIJJDDDDIDDD)V
+
+extern jclass g_pushbroom_stats_class;    // com.lidarscan.app.engine.NativePushbroomStats
+extern jmethodID g_pushbroom_stats_ctor;  // (JJJJJJJJJJJJJ)V
+
 // Attaches the calling native thread to the JVM if it is not already
 // attached (*did_attach reports which happened, so the caller knows whether
 // it is responsible for DetachCurrentThread once done). Never detach a

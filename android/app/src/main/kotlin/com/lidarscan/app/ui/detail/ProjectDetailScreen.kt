@@ -15,6 +15,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Preview
+import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -53,6 +54,7 @@ fun ProjectDetailRoute(
     projectId: String,
     onBack: () -> Unit,
     onOpenCapture: (String) -> Unit,
+    onOpenMountCalibration: (String) -> Unit,
 ) {
     val viewModel: ProjectDetailViewModel = viewModel(
         factory = viewModelFactory {
@@ -61,7 +63,12 @@ fun ProjectDetailRoute(
     )
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
-    ProjectDetailScreen(uiState = uiState, onBack = onBack, onOpenCapture = onOpenCapture)
+    ProjectDetailScreen(
+        uiState = uiState,
+        onBack = onBack,
+        onOpenCapture = onOpenCapture,
+        onOpenMountCalibration = onOpenMountCalibration,
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -70,6 +77,7 @@ fun ProjectDetailScreen(
     uiState: ProjectDetailUiState,
     onBack: () -> Unit,
     onOpenCapture: (String) -> Unit = {},
+    onOpenMountCalibration: (String) -> Unit = {},
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -107,6 +115,7 @@ fun ProjectDetailScreen(
                     scope.launch { snackbarHostState.showSnackbar("Arrives with $workstream") }
                 },
                 onOpenCapture = { onOpenCapture(uiState.project.id) },
+                onOpenMountCalibration = { onOpenMountCalibration(uiState.project.id) },
             )
         }
     }
@@ -118,6 +127,7 @@ private fun ProjectDetailContent(
     modifier: Modifier = Modifier,
     onArrivesWith: (String) -> Unit,
     onOpenCapture: () -> Unit,
+    onOpenMountCalibration: () -> Unit,
 ) {
     Column(
         modifier = modifier
@@ -132,6 +142,11 @@ private fun ProjectDetailContent(
 
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             CaptureNavCard(onClick = onOpenCapture)
+            MountCalibrationNavCard(
+                calibrated = project.manifest.mountCalibration != null,
+                gateHeadline = project.manifest.mountCalibration?.readout()?.headline,
+                onClick = onOpenMountCalibration,
+            )
             StubNavCard(
                 icon = Icons.Filled.Build,
                 title = "Processing",
@@ -200,6 +215,40 @@ private fun CaptureNavCard(onClick: () -> Unit) {
             Text(
                 "Connect the D6, start/stop a real recording session, live pts/s and recording " +
                     "size. Live 3D / AR overlay preview arrives with B4.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** B7: Device setup -> Mount calibration. Shows the stored gate verdict so a stale calibration is visible without opening the wizard. */
+@Composable
+private fun MountCalibrationNavCard(
+    calibrated: Boolean,
+    gateHeadline: String?,
+    onClick: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onClick,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.Straighten, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(12.dp))
+                Text("Mount calibration", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(6.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(8.dp))
+            Text(
+                gateHeadline ?: if (calibrated) {
+                    "Calibrated"
+                } else {
+                    "Not calibrated. Print the checkerboard target and capture at least 8 poses, including tilt."
+                },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

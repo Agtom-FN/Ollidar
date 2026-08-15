@@ -1,6 +1,8 @@
 package com.lidarscan.app.ui.capture
 
 import android.content.res.Configuration
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -37,16 +39,20 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import com.lidarscan.app.ar.ArOverlayView
 import com.lidarscan.app.di.AppContainer
 import com.lidarscan.app.engine.ScanEngineNative
 import com.lidarscan.app.render.CameraMode
@@ -71,7 +77,24 @@ fun CaptureRoute(
         factory = viewModelFactory {
             initializer {
                 val bridge = if (isReplay) container.newReplayEngineBridge() else container.engineBridge
-                CaptureViewModel(bridge, container.projectStore, projectId, isReplay = isReplay)
+                CaptureViewModel(
+                    engineBridge = bridge,
+                    projectStore = container.projectStore,
+                    projectId = projectId,
+                    isReplay = isReplay,
+                    // B7: a replay session has no camera and no live engine to
+                    // push poses into, so it gets no AR controller at all
+                    // rather than one that would silently do nothing.
+                    arController = if (isReplay) null else container.arController,
+                    engineHandleProvider = container::currentEngineHandle,
+                    mountCalibrationFor = { sensor ->
+                        container.mountCalibrationStore.find(
+                            phoneModel = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}",
+                            bracketId = com.lidarscan.core.calib.BracketNominals.DEFAULT_BRACKET_ID,
+                            sensorSerial = null,
+                        )?.takeIf { it.sensor == sensor }
+                    },
+                )
             }
         },
     )
@@ -87,6 +110,31 @@ fun CaptureRoute(
     val pointSizePx by viewModel.pointSizePx.collectAsStateWithLifecycle()
     val cameraMode by viewModel.cameraMode.collectAsStateWithLifecycle()
     val liveSlam by viewModel.liveSlam.collectAsStateWithLifecycle()
+    val keyframeStats by viewModel.keyframeStats.collectAsStateWithLifecycle()
+    val mountCalibration by viewModel.mountCalibrationApplied.collectAsStateWithLifecycle()
+    val arStatus = viewModel.arStatus?.collectAsStateWithLifecycle()?.value
+
+    // B7: the AR session belongs to the whole app (one ARCore Session per
+    // process), so the Capture screen resumes and pauses it around its own
+    // lifetime rather than creating one.
+    val context = LocalContext.current
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted -> if (granted) container.arController.createSession() }
+
+    LaunchedEffect(viewModel.arAvailable) {
+        if (!viewModel.arAvailable) return@LaunchedEffect
+        container.arController.refreshAvailability()
+        if (!container.hasCameraPermission()) {
+            permissionLauncher.launch(android.Manifest.permission.CAMERA)
+        } else {
+            container.arController.createSession()
+            container.arController.resume()
+        }
+    }
+    DisposableEffect(viewModel.arAvailable) {
+        onDispose { if (viewModel.arAvailable) container.arController.pause() }
+    }
 
     CaptureScreen(
         uiState = uiState,
@@ -102,6 +150,22 @@ fun CaptureRoute(
         cameraMode = cameraMode,
         liveSlam = liveSlam,
         isReplaySession = viewModel.isReplaySession,
+        arAvailable = viewModel.arAvailable,
+        arTrackingHint = arStatus?.trackingHint,
+        arPosesPushed = arStatus?.posesPushed ?: 0L,
+        arTrackingLossEpisodes = arStatus?.trackingLossEpisodes ?: 0,
+        keyframeStats = keyframeStats,
+        mountCalibrationHeadline = mountCalibration?.readout()?.headline,
+        arOverlay = { modifier ->
+            ArOverlayView(
+                controller = container.arController,
+                source = pointCloudSource,
+                colorMode = colorMode,
+                colormap = colormap,
+                pointSizePx = pointSizePx,
+                modifier = modifier,
+            )
+        },
         onBack = onBack,
         onConnectDevice = onConnectDevice,
         onStart = viewModel::startCapture,
@@ -133,6 +197,13 @@ fun CaptureScreen(
     cameraMode: CameraMode,
     liveSlam: Boolean,
     isReplaySession: Boolean,
+    arAvailable: Boolean,
+    arTrackingHint: String?,
+    arPosesPushed: Long,
+    arTrackingLossEpisodes: Int,
+    keyframeStats: com.lidarscan.app.ar.KeyframeRecorder.Stats,
+    mountCalibrationHeadline: String?,
+    arOverlay: @Composable (Modifier) -> Unit,
     onBack: () -> Unit,
     onConnectDevice: () -> Unit,
     onStart: () -> Unit,
@@ -171,7 +242,10 @@ fun CaptureScreen(
                 if (isLandscape) {
                     Row(modifier = Modifier.fillMaxSize().padding(padding)) {
                         Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                            Live3DOrPlaceholder(connected, pointCloudSource, colorMode, colormap, pointSizePx, cameraMode)
+                            Live3DOrPlaceholder(
+                                connected, pointCloudSource, colorMode, colormap, pointSizePx,
+                                cameraMode, arAvailable, arTrackingHint, arOverlay,
+                            )
                         }
                         Column(
                             modifier = Modifier.width(320.dp).fillMaxHeight().verticalScroll(rememberScrollState())
@@ -179,7 +253,9 @@ fun CaptureScreen(
                         ) {
                             CaptureControlsColumn(
                                 connectionState, captureState, stats, health, colorMode, colormap, pointSizePx,
-                                cameraMode, liveSlam, isReplaySession, onConnectDevice, onStart, onPause, onResume,
+                                cameraMode, liveSlam, isReplaySession, arAvailable, arPosesPushed,
+                                arTrackingLossEpisodes, keyframeStats, mountCalibrationHeadline,
+                                onConnectDevice, onStart, onPause, onResume,
                                 onStop, onLiveSlamChange, onColorModeChange, onColormapChange, onPointSizeChange,
                                 onCameraModeChange,
                             )
@@ -188,12 +264,17 @@ fun CaptureScreen(
                 } else {
                     Column(modifier = Modifier.fillMaxSize().padding(padding)) {
                         Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                            Live3DOrPlaceholder(connected, pointCloudSource, colorMode, colormap, pointSizePx, cameraMode)
+                            Live3DOrPlaceholder(
+                                connected, pointCloudSource, colorMode, colormap, pointSizePx,
+                                cameraMode, arAvailable, arTrackingHint, arOverlay,
+                            )
                         }
                         Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp)) {
                             CaptureControlsColumn(
                                 connectionState, captureState, stats, health, colorMode, colormap, pointSizePx,
-                                cameraMode, liveSlam, isReplaySession, onConnectDevice, onStart, onPause, onResume,
+                                cameraMode, liveSlam, isReplaySession, arAvailable, arPosesPushed,
+                                arTrackingLossEpisodes, keyframeStats, mountCalibrationHeadline,
+                                onConnectDevice, onStart, onPause, onResume,
                                 onStop, onLiveSlamChange, onColorModeChange, onColormapChange, onPointSizeChange,
                                 onCameraModeChange,
                             )
@@ -219,7 +300,26 @@ private fun Live3DOrPlaceholder(
     colormap: Colormap,
     pointSizePx: Float,
     cameraMode: CameraMode,
+    arAvailable: Boolean,
+    arTrackingHint: String?,
+    arOverlay: @Composable (Modifier) -> Unit,
 ) {
+    // B7 (§3.7): AR mode is a different RENDERER, not a flag inside one — the
+    // AR path stacks a translucent Filament surface over an ARCore camera
+    // GLSurfaceView, and the free-orbit path is B4's single opaque surface
+    // unchanged. Switching structurally means neither mode carries the
+    // other's setup.
+    if (cameraMode == CameraMode.AR && arAvailable) {
+        Box(Modifier.fillMaxSize()) {
+            arOverlay(Modifier.fillMaxSize())
+            arTrackingHint?.let { hint ->
+                Card(modifier = Modifier.align(Alignment.TopCenter).padding(12.dp)) {
+                    Text(hint, Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+        return
+    }
     if (connected && source != null) {
         PointCloudView(
             source = source,
@@ -255,6 +355,11 @@ private fun CaptureControlsColumn(
     cameraMode: CameraMode,
     liveSlam: Boolean,
     isReplaySession: Boolean,
+    arAvailable: Boolean,
+    arPosesPushed: Long,
+    arTrackingLossEpisodes: Int,
+    keyframeStats: com.lidarscan.app.ar.KeyframeRecorder.Stats,
+    mountCalibrationHeadline: String?,
     onConnectDevice: () -> Unit,
     onStart: () -> Unit,
     onPause: () -> Unit,
@@ -280,7 +385,14 @@ private fun CaptureControlsColumn(
         Spacer(Modifier.height(16.dp))
         StatusStripCard(stats, health)
         Spacer(Modifier.height(16.dp))
-        DisplayControlsCard(colorMode, colormap, pointSizePx, cameraMode, onColorModeChange, onColormapChange, onPointSizeChange, onCameraModeChange)
+        if (arAvailable) {
+            ArStatusCard(arPosesPushed, arTrackingLossEpisodes, keyframeStats, mountCalibrationHeadline)
+            Spacer(Modifier.height(16.dp))
+        }
+        DisplayControlsCard(
+            colorMode, colormap, pointSizePx, cameraMode, arAvailable,
+            onColorModeChange, onColormapChange, onPointSizeChange, onCameraModeChange,
+        )
     } else if (!isReplaySession) {
         Text(
             "Connect a D6 to start recording.",
@@ -419,12 +531,52 @@ private fun HealthChip(health: DeviceHealth?) {
     }
 }
 
+/**
+ * B7/B8's own strip: what the AR session and the keyframe pipeline are
+ * actually doing. The tracking-loss episode count matters more than it looks
+ * — Tech Spec §3.3 excludes points captured during tracking loss by default,
+ * so a session with a high count has holes the user should walk back and
+ * rescan while they are still on site.
+ */
+@Composable
+private fun ArStatusCard(
+    posesPushed: Long,
+    trackingLossEpisodes: Int,
+    keyframeStats: com.lidarscan.app.ar.KeyframeRecorder.Stats,
+    mountCalibrationHeadline: String?,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp)) {
+            Text("AR + camera keyframes", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(8.dp))
+            StatRow("AR poses pushed", "%,d".format(posesPushed))
+            StatRow("Tracking-loss episodes", trackingLossEpisodes.toString())
+            StatRow("Keyframes written", "%,d".format(keyframeStats.keyframesWritten))
+            StatRow("Keyframe data", "%.1f MB".format(keyframeStats.bytesWritten / 1_000_000.0))
+            StatRow("Skipped (turning too fast)", "%,d".format(keyframeStats.skippedMotion))
+            StatRow(
+                "Rolling shutter",
+                if (keyframeStats.rollingShutterKnown) "measured per frame" else "not reported by this camera",
+            )
+            mountCalibrationHeadline?.let {
+                Spacer(Modifier.height(6.dp))
+                Text(it, style = MaterialTheme.typography.bodySmall)
+            }
+            keyframeStats.lastError?.let {
+                Spacer(Modifier.height(6.dp))
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
+        }
+    }
+}
+
 @Composable
 private fun DisplayControlsCard(
     colorMode: ColorMode,
     colormap: Colormap,
     pointSizePx: Float,
     cameraMode: CameraMode,
+    arAvailable: Boolean,
     onColorModeChange: (ColorMode) -> Unit,
     onColormapChange: (Colormap) -> Unit,
     onPointSizeChange: (Float) -> Unit,
@@ -471,15 +623,22 @@ private fun DisplayControlsCard(
             Slider(value = pointSizePx, onValueChange = onPointSizeChange, valueRange = 0.5f..12f)
 
             Spacer(Modifier.height(12.dp))
-            Text("Camera", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("View", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                val modes = listOf(CameraMode.ORBIT, CameraMode.FOLLOW)
+                // §3.7's "Toggle AR view <-> free-orbit 3D". AR is offered only
+                // when there is an ARCore session to drive it — a dead toggle
+                // is worse than an absent one.
+                val modes = if (arAvailable) {
+                    listOf(CameraMode.AR, CameraMode.ORBIT, CameraMode.FOLLOW)
+                } else {
+                    listOf(CameraMode.ORBIT, CameraMode.FOLLOW)
+                }
                 modes.forEachIndexed { index, mode ->
                     SegmentedButton(
                         selected = cameraMode == mode,
                         onClick = { onCameraModeChange(mode) },
                         shape = SegmentedButtonDefaults.itemShape(index = index, count = modes.size),
-                    ) { Text(mode.name.lowercase().replaceFirstChar { it.uppercase() }) }
+                    ) { Text(cameraModeLabel(mode)) }
                 }
             }
         }
@@ -510,4 +669,11 @@ private fun StatRow(label: String, value: String) {
         Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(value, style = MaterialTheme.typography.bodyMedium)
     }
+}
+
+/** "AR" reads as an initialism; the other two are words. */
+private fun cameraModeLabel(mode: CameraMode): String = when (mode) {
+    CameraMode.AR -> "AR"
+    CameraMode.ORBIT -> "Orbit"
+    CameraMode.FOLLOW -> "Follow"
 }

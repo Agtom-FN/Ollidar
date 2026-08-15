@@ -31,7 +31,16 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.max
 
-enum class CameraMode { ORBIT, FOLLOW }
+/**
+ * How the Filament camera is driven.
+ *
+ * [AR] is B7's addition (Tech Spec §3.7): the camera follows the live ARCore
+ * pose and uses ARCore's own projection, so the cloud sits registered in the
+ * camera image drawn underneath by [com.lidarscan.app.ar.ArCameraBackgroundRenderer].
+ * [ORBIT] and [FOLLOW] are B4's free-3D modes — §3.7's "Toggle AR view <->
+ * free-orbit 3D" is the switch between them.
+ */
+enum class CameraMode { ORBIT, FOLLOW, AR }
 
 /** `com.google.android.filament.Filament.init()`, called exactly once per process (loads `libfilament-jni.so`). */
 private object FilamentLoader {
@@ -74,7 +83,17 @@ data class PointCloudRenderStats(
  * `page_view()` calls per frame — page reads are non-blocking per
  * `page_store.h`'s "readers take no lock" contract).
  */
-class PointCloudRenderer(private val context: Context) {
+class PointCloudRenderer(
+    private val context: Context,
+    /**
+     * B7: in AR mode this `SurfaceView` sits ON TOP of the ARCore camera
+     * `GLSurfaceView`, so it must not paint its own background. Set at
+     * construction rather than through a setter because `UiHelper.setOpaque`
+     * has to be decided before `attachTo()` — the surface's pixel format is
+     * fixed at that point.
+     */
+    private val translucent: Boolean = false,
+) {
 
     private lateinit var engine: Engine
     private lateinit var renderer: Renderer
@@ -149,6 +168,27 @@ class PointCloudRenderer(private val context: Context) {
         uiHelper = UiHelper(UiHelper.ContextErrorPolicy.DONT_CHECK)
         uiHelper.renderCallback = SurfaceCallback()
         displayHelper = DisplayHelper(context)
+        if (translucent) {
+            // Three things have to agree for the camera image below to show
+            // through, and missing any one of them yields a black screen with
+            // points on it rather than an AR overlay:
+            //   1. the surface itself must be translucent (UiHelper, which
+            //      also sets the swap-chain's CONFIG_TRANSPARENT flag),
+            //   2. the Filament View must BLEND rather than overwrite,
+            //   3. the clear colour must be fully TRANSPARENT black — a clear
+            //      to opaque black would paint over the camera every frame.
+            uiHelper.isOpaque = false
+            uiHelper.isMediaOverlay = true
+            view.blendMode = com.google.android.filament.View.BlendMode.TRANSLUCENT
+            renderer.clearOptions = Renderer.ClearOptions().apply {
+                clear = true
+                clearColor = doubleArrayOf(0.0, 0.0, 0.0, 0.0)
+            }
+            // Post-processing resolves into an opaque target on some drivers;
+            // off is both correct here and cheaper, and this view draws points
+            // with no tone mapping to preserve anyway.
+            view.isPostProcessingEnabled = false
+        }
         uiHelper.attachTo(surfaceView)
 
         choreographer.postFrameCallback(frameCallback)
@@ -203,6 +243,27 @@ class PointCloudRenderer(private val context: Context) {
 
     fun setCameraMode(mode: CameraMode) {
         cameraMode = mode
+    }
+
+    /**
+     * B7: the live ARCore camera, as two COLUMN-major matrices exactly as
+     * ARCore hands them out (`Camera.getProjectionMatrix()` and
+     * `Pose.toMatrix()` of the display-oriented pose). Filament's Java API is
+     * column-major too, so nothing is transposed on this path — which is the
+     * opposite of the engine's row-major C ABI, and the reason both
+     * conventions are named wherever a matrix crosses a boundary in this app.
+     *
+     * Called from the AR/GL thread; the values are latched and consumed on the
+     * next Choreographer frame on the UI thread, so the arrays are copied
+     * rather than retained.
+     */
+    fun setArCamera(projectionColumnMajor: FloatArray, modelColumnMajor: FloatArray) {
+        if (projectionColumnMajor.size != 16 || modelColumnMajor.size != 16) return
+        synchronized(arCameraLock) {
+            projectionColumnMajor.copyInto(arProjection)
+            modelColumnMajor.copyInto(arModel)
+            arCameraValid = true
+        }
     }
 
     fun stats(): PointCloudRenderStats = lastStats
@@ -437,6 +498,27 @@ class PointCloudRenderer(private val context: Context) {
         val centerZ = if (haveBounds) (combinedBoundsMin[2] + combinedBoundsMax[2]) / 2f else 0f
 
         when (cameraMode) {
+            CameraMode.AR -> {
+                val projection = DoubleArray(16)
+                val model = FloatArray(16)
+                val valid: Boolean
+                synchronized(arCameraLock) {
+                    valid = arCameraValid
+                    if (valid) {
+                        for (i in 0 until 16) projection[i] = arProjection[i].toDouble()
+                        arModel.copyInto(model)
+                    }
+                }
+                if (!valid) return
+                // ARCore's projection already encodes the physical camera's
+                // FoV, aspect and principal-point offset — which is exactly
+                // what makes the points land on the right pixels. Substituting
+                // our own 45° perspective here would look plausible and be
+                // wrong by several degrees of FoV.
+                camera.setCustomProjection(projection, AR_NEAR_M, AR_FAR_M)
+                camera.setModelMatrix(model)
+                lastEye = floatArrayOf(model[12], model[13], model[14])
+            }
             CameraMode.ORBIT -> {
                 // filament-utils' Manipulator has no runtime "retarget"
                 // setter (its target is fixed at Builder.build() time) — so
@@ -506,7 +588,12 @@ class PointCloudRenderer(private val context: Context) {
             viewportWidth = width
             viewportHeight = height
             val aspect = width.toDouble() / height.toDouble().coerceAtLeast(1.0)
-            camera.setProjection(45.0, aspect, 0.05, 2000.0, Camera.Fov.VERTICAL)
+            // Not in AR mode: ARCore's own projection owns the camera there,
+            // and re-setting a 45° perspective on a resize would silently
+            // un-register the overlay until the next AR frame arrived.
+            if (cameraMode != CameraMode.AR) {
+                camera.setProjection(45.0, aspect, 0.05, 2000.0, Camera.Fov.VERTICAL)
+            }
             view.viewport = Viewport(0, 0, width, height)
             manipulator?.setViewport(width, height)
             // px per metre at 1m depth = viewportHeightPx / (2 * tan(fovY/2)) — points.mat's comment.
@@ -539,7 +626,22 @@ class PointCloudRenderer(private val context: Context) {
     // tracked from the same eye point updateCamera() just computed, cached
     // here rather than re-deriving from the Camera object.
     private var lastEye = floatArrayOf(0f, 0f, 0f)
+
+    // B7: latched ARCore camera matrices (written from the AR/GL thread, read
+    // on the Choreographer frame).
+    private val arCameraLock = Any()
+    private val arProjection = FloatArray(16)
+    private val arModel = FloatArray(16)
+    private var arCameraValid = false
+
     private fun combinedBoundsCameraX() = lastEye[0]
     private fun combinedBoundsCameraY() = lastEye[1]
     private fun combinedBoundsCameraZ() = lastEye[2]
+
+    private companion object {
+        // Matched to what is asked of ARCore's own projection; both must agree
+        // or the depth range differs from the camera image's implied one.
+        const val AR_NEAR_M = 0.05
+        const val AR_FAR_M = 100.0
+    }
 }

@@ -1839,10 +1839,10 @@
 			[
 				{
 					"name" : "HELPSTRING",
-					"value" : "No help, variable specified on the command line."
+					"value" : "The CMake toolchain file"
 				}
 			],
-			"type" : "UNINITIALIZED",
+			"type" : "FILEPATH",
 			"value" : "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/android.toolchain.cmake"
 		},
 		{
@@ -2248,18 +2248,6 @@
 			],
 			"type" : "INTERNAL",
 			"value" : "1"
-		},
-		{
-			"name" : "COMPILER_SUPPORT_std",
-			"properties" : 
-			[
-				{
-					"name" : "HELPSTRING",
-					"value" : "Test COMPILER_SUPPORT_std=cpp03"
-				}
-			],
-			"type" : "UNINITIALIZED",
-			"value" : "cpp03:INTERNAL=1"
 		},
 		{
 			"name" : "COMPILER_SUPPORT_std=cpp03",

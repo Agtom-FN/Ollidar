@@ -58,6 +58,10 @@ jclass g_point_page_class = nullptr;
 jmethodID g_point_page_ctor = nullptr;
 jclass g_replay_stats_class = nullptr;
 jmethodID g_replay_stats_ctor = nullptr;
+jclass g_mount_calib_result_class = nullptr;
+jmethodID g_mount_calib_result_ctor = nullptr;
+jclass g_pushbroom_stats_class = nullptr;
+jmethodID g_pushbroom_stats_ctor = nullptr;
 
 JNIEnv* AttachCurrentThreadOrGet(bool* did_attach) {
   JNIEnv* env = nullptr;
@@ -81,6 +85,10 @@ using lidarscan_jni::g_health_ctor;
 using lidarscan_jni::g_jvm;
 using lidarscan_jni::g_point_page_class;
 using lidarscan_jni::g_point_page_ctor;
+using lidarscan_jni::g_mount_calib_result_class;
+using lidarscan_jni::g_mount_calib_result_ctor;
+using lidarscan_jni::g_pushbroom_stats_class;
+using lidarscan_jni::g_pushbroom_stats_ctor;
 using lidarscan_jni::g_replay_stats_class;
 using lidarscan_jni::g_replay_stats_ctor;
 
@@ -316,6 +324,34 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
   g_replay_stats_ctor = env->GetMethodID(g_replay_stats_class, "<init>", "(JJIIZZI)V");
   if (g_replay_stats_ctor == nullptr) {
     LOGE("JNI_OnLoad: NativeReplayStats constructor not found");
+    return JNI_ERR;
+  }
+
+  // B7/B8 (arcore_jni.cpp): the mount-calibration result and pushbroom
+  // stats carriers. Same reasoning as NativeReplayStats above for why they
+  // are resolved here and not lazily in the file that uses them.
+  jclass calib_local = env->FindClass("com/lidarscan/app/engine/NativeMountCalibResult");
+  if (calib_local == nullptr) {
+    LOGE("JNI_OnLoad: NativeMountCalibResult class not found");
+    return JNI_ERR;
+  }
+  g_mount_calib_result_class = static_cast<jclass>(env->NewGlobalRef(calib_local));
+  g_mount_calib_result_ctor =
+      env->GetMethodID(g_mount_calib_result_class, "<init>", "([DZZIIJJDDDDIDDD)V");
+  if (g_mount_calib_result_ctor == nullptr) {
+    LOGE("JNI_OnLoad: NativeMountCalibResult constructor not found");
+    return JNI_ERR;
+  }
+
+  jclass pb_local = env->FindClass("com/lidarscan/app/engine/NativePushbroomStats");
+  if (pb_local == nullptr) {
+    LOGE("JNI_OnLoad: NativePushbroomStats class not found");
+    return JNI_ERR;
+  }
+  g_pushbroom_stats_class = static_cast<jclass>(env->NewGlobalRef(pb_local));
+  g_pushbroom_stats_ctor = env->GetMethodID(g_pushbroom_stats_class, "<init>", "(JJJJJJJJJJJJJ)V");
+  if (g_pushbroom_stats_ctor == nullptr) {
+    LOGE("JNI_OnLoad: NativePushbroomStats constructor not found");
     return JNI_ERR;
   }
 

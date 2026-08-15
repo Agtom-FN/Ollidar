@@ -62,10 +62,19 @@ add_subdirectory("${LIDARSCAN_ENGINE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/scanengi
 # bindings, plus the page-read functions in scanengine_jni.cpp). Both link
 # against engine/'s C++ API directly (not just capi/scanengine_c.h), which is
 # fine: `scanengine` (linked below) is the same static library either way.
+# B7/B8 add arcore_jni.cpp (ARCore poses in, the D6 pushbroom, the
+# mount-calibration solver) and keyframe_writer.{h,cpp} (the frames.idx
+# writer — see its header for why it links the engine's C++ color/ module
+# instead of a `scan_engine_record_keyframe` C-ABI call that does not exist
+# at SCAN_ABI_VERSION 3). keyframe_writer.cpp is deliberately free of any JNI
+# type so android/tools/keyframe_roundtrip/ can compile the SAME source on a
+# host and actually exercise it — see that tool's CMakeLists.
 add_library(scanengine_jni SHARED
     scanengine_jni.cpp
     replay_engine.cpp
     replay_jni.cpp
+    arcore_jni.cpp
+    keyframe_writer.cpp
 )
 
 target_link_libraries(scanengine_jni PRIVATE

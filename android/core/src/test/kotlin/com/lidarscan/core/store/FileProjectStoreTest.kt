@@ -116,6 +116,61 @@ class FileProjectStoreTest {
         assertEquals(listOf(good.id), listed.map { it.id })
     }
 
+    // --- B7: updateManifest -------------------------------------------------
+
+    @Test
+    fun `updateManifest persists a mount calibration and survives a re-read`() {
+        val project = store.create("Calibrated", SensorType.MID360, WorkflowProfile.SURVEY)
+        val calibration = com.lidarscan.core.calib.MountCalibration(
+            id = "calib-1",
+            sensor = SensorType.MID360,
+            bracketId = "reference-v1",
+            sensorSerial = "SN-42",
+            cameraFromLidar = com.lidarscan.core.calib.Mat4.identity().m,
+            splitHalfPx = 9.5,
+            gate = com.lidarscan.core.calib.CalibrationGate.GOOD,
+            poseCount = 8,
+            squareSizeM = 0.08,
+            boardCols = 8,
+            boardRows = 6,
+            createdAtEpochMillis = FIXED_TIME,
+            appVersion = "test",
+            phoneModel = "Pixel 8",
+        )
+
+        val updated = store.updateManifest(project.id) {
+            it.copy(mountCalibrationId = calibration.id, mountCalibration = calibration)
+        }
+
+        assertEquals(calibration.id, updated!!.manifest.mountCalibrationId)
+        // Re-read from disk: the point of the manifest copy is that it
+        // survives the trip to another machine, so an in-memory round-trip
+        // would prove nothing.
+        val reopened = store.open(project.id)!!
+        assertEquals(calibration.id, reopened.manifest.mountCalibration!!.id)
+        assertEquals(9.5, reopened.manifest.mountCalibration!!.splitHalfPx, 1e-9)
+        assertEquals(16, reopened.manifest.mountCalibration!!.cameraFromLidar.size)
+        assertEquals("SN-42", reopened.manifest.mountCalibration!!.sensorSerial)
+        // Everything B1 wrote must be untouched.
+        assertEquals("Calibrated", reopened.manifest.name)
+        assertEquals(SensorType.MID360, reopened.manifest.sensor)
+    }
+
+    @Test
+    fun `updateManifest on a missing project returns null and creates nothing`() {
+        assertEquals(null, store.updateManifest("no-such.lscan") { it })
+        assertEquals(0, store.list().size)
+    }
+
+    @Test
+    fun `updateManifest leaves no temp file behind`() {
+        val project = store.create("Temp check", SensorType.COIN_D6, WorkflowProfile.QUICK_SCAN)
+        store.updateManifest(project.id) { it.copy(pointCountEstimate = 12_345L) }
+        val strays = project.directory.listFiles { f -> f.name.endsWith(".tmp") }.orEmpty()
+        assertEquals(0, strays.size)
+        assertEquals(12_345L, store.open(project.id)!!.manifest.pointCountEstimate)
+    }
+
     companion object {
         private const val FIXED_TIME = 1_755_100_000_000L
     }

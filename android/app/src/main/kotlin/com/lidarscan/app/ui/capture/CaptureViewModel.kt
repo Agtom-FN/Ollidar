@@ -55,6 +55,14 @@ class CaptureViewModel(
     private val projectStore: ProjectStore,
     private val projectId: String,
     val isReplay: Boolean = false,
+    /**
+     * B7/B8. Null for a replay session and for any build where ARCore is not
+     * wanted — the whole AR path (overlay, pose push, keyframes) is then
+     * simply absent rather than half-present.
+     */
+    private val arController: com.lidarscan.app.ar.CaptureArController? = null,
+    private val engineHandleProvider: () -> Long = { 0L },
+    private val mountCalibrationFor: (com.lidarscan.core.model.SensorType) -> com.lidarscan.core.calib.MountCalibration? = { null },
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<CaptureUiState>(CaptureUiState.Loading)
@@ -90,6 +98,33 @@ class CaptureViewModel(
     val cameraMode: StateFlow<CameraMode> = _cameraMode.asStateFlow()
     private val _liveSlam = MutableStateFlow(false)
     val liveSlam: StateFlow<Boolean> = _liveSlam.asStateFlow()
+
+    // --- B7/B8 state ---------------------------------------------------------
+    private val _keyframeStats = MutableStateFlow(com.lidarscan.app.ar.KeyframeRecorder.Stats())
+    val keyframeStats: StateFlow<com.lidarscan.app.ar.KeyframeRecorder.Stats> = _keyframeStats.asStateFlow()
+
+    private val _pushbroomStats = MutableStateFlow<com.lidarscan.app.engine.NativePushbroomStats?>(null)
+    val pushbroomStats: StateFlow<com.lidarscan.app.engine.NativePushbroomStats?> = _pushbroomStats.asStateFlow()
+
+    private val _mountCalibrationApplied = MutableStateFlow<com.lidarscan.core.calib.MountCalibration?>(null)
+    val mountCalibrationApplied: StateFlow<com.lidarscan.core.calib.MountCalibration?> =
+        _mountCalibrationApplied.asStateFlow()
+
+    /** True when this session can offer the §3.7 AR overlay at all. */
+    val arAvailable: Boolean get() = arController != null && !isReplay
+
+    val arStatus: StateFlow<com.lidarscan.app.ar.CaptureArController.ArStatus>? = arController?.status
+
+    private var keyframeRecorder: com.lidarscan.app.ar.KeyframeRecorder? = null
+
+    /** Held so the exact same function reference can be removed again — a method reference is a NEW object each time it is written. */
+    private var keyframeFrameListener: ((com.google.ar.core.Frame) -> Unit)? = null
+
+    private fun detachKeyframeListener() {
+        val listener = keyframeFrameListener ?: return
+        arController?.removeFrameListener(listener)
+        keyframeFrameListener = null
+    }
 
     private var lastStatsSampleMillis = 0L
     private var lastStatsSamplePoints = 0L
@@ -151,7 +186,52 @@ class CaptureViewModel(
         lastStatsSamplePoints = 0L
         _stats.value = CaptureStats()
         _sessionSummary.value = null
-        viewModelScope.launch { engineBridge.startCapture(project.directory.absolutePath, _liveSlam.value) }
+        viewModelScope.launch {
+            val started = engineBridge.startCapture(project.directory.absolutePath, _liveSlam.value)
+            if (started.isFailure) return@launch
+            startArPipelines(project)
+        }
+    }
+
+    /**
+     * B7/B8, in the one order that works:
+     *
+     *  1. point the ARCore controller at the now-live engine handle, so poses
+     *     land in this session rather than nowhere;
+     *  2. apply the stored mount extrinsic and enable the pushbroom — the
+     *     engine refuses `pushbroom_enable` with `SCAN_ERR_INVALID_STATE`
+     *     until an extrinsic exists, which is the whole reason the wizard has
+     *     to run before a D6 capture;
+     *  3. start the keyframe recorder, which needs the project directory that
+     *     `startCapture` just opened as an `.lscan`.
+     */
+    private fun startArPipelines(project: Project) {
+        val controller = arController ?: return
+        val handle = engineHandleProvider()
+        controller.engineHandle = handle
+
+        val manifestCalibration = project.manifest.mountCalibration
+            ?: mountCalibrationFor(project.manifest.sensor)
+        if (handle != 0L && manifestCalibration != null) {
+            val matrix = com.lidarscan.core.calib.Mat4(manifestCalibration.cameraFromLidar.copyOf())
+            if (matrix.isRigid(1e-4)) {
+                val err = com.lidarscan.app.engine.ScanEngineNative
+                    .nativeSetMountExtrinsics(handle, matrix.m)
+                if (err == com.lidarscan.app.engine.ScanEngineNative.ErrorCode.OK) {
+                    com.lidarscan.app.engine.ScanEngineNative.nativePushbroomEnable(handle, true)
+                    _mountCalibrationApplied.value = manifestCalibration
+                }
+            }
+        }
+
+        keyframeRecorder = com.lidarscan.app.ar.KeyframeRecorder(controller.motion).also { recorder ->
+            keyframeFrameListener = recorder::onFrame
+            controller.addFrameListener(recorder::onFrame)
+            recorder.start(project.directory)
+            viewModelScope.launch {
+                recorder.stats.collect { _keyframeStats.value = it }
+            }
+        }
     }
 
     fun pauseCapture() = viewModelScope.launch { engineBridge.pauseCapture() }
@@ -159,6 +239,23 @@ class CaptureViewModel(
 
     fun stopCapture() = viewModelScope.launch {
         val finalStats = _stats.value
+        // Keyframes first: the recorder's index has to be flushed and closed
+        // while the .lscan is still the live session's, and the ARCore frame
+        // listener must stop before the engine handle goes away.
+        detachKeyframeListener()
+        keyframeRecorder?.stop()
+        keyframeRecorder = null
+        arController?.engineHandle = 0L
+
+        val handle = engineHandleProvider()
+        if (handle != 0L && _mountCalibrationApplied.value != null) {
+            // Resolve every pending pushbroom point the poses allow before the
+            // session closes. scan_engine_stop() does this too; calling it
+            // explicitly means the stats below reflect the flushed totals.
+            com.lidarscan.app.engine.ScanEngineNative.nativePushbroomFlush(handle)
+            _pushbroomStats.value = com.lidarscan.app.engine.ScanEngineNative.nativePushbroomStats(handle)
+        }
+
         engineBridge.stopCapture()
         _sessionSummary.value = finalStats
     }
@@ -185,6 +282,14 @@ class CaptureViewModel(
 
     fun setCameraMode(mode: CameraMode) {
         _cameraMode.value = mode
+    }
+
+    override fun onCleared() {
+        detachKeyframeListener()
+        keyframeRecorder?.shutdown()
+        keyframeRecorder = null
+        arController?.engineHandle = 0L
+        super.onCleared()
     }
 
     private fun directorySizeBytes(dir: java.io.File): Long {

@@ -33,6 +33,11 @@ usbSerialForAndroid = "3.9.0"
 # version-matched matc matters). Bump this and the fetch script's default
 # together when a newer Android AAR ships.
 filament = "1.71.5"
+# B7: ARCore (Google Play Services for AR). Google's Maven only — not on
+# Maven Central. 1.54.0 is the newest published there as of this task, and it
+# declares no AAR-metadata minimum (checked), so it works under this project's
+# deliberately-pinned AGP 8.13.2 / compileSdk 36 (see the AGP note above).
+arcore = "1.54.0"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -62,6 +67,8 @@ usbSerial = { module = "com.github.mik3y:usb-serial-for-android", version.ref = 
 # Manipulator for orbit-camera math only, not glTF loading).
 filament-android = { module = "com.google.android.filament:filament-android", version.ref = "filament" }
 filament-utils-android = { module = "com.google.android.filament:filament-utils-android", version.ref = "filament" }
+# B7: ARCore session, poses, camera image + metadata.
+arcore = { module = "com.google.ar:core", version.ref = "arcore" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

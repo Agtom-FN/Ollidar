@@ -72,6 +72,26 @@ class FileProjectStore(
         return dir.deleteRecursively()
     }
 
+    override fun updateManifest(id: String, transform: (ProjectManifest) -> ProjectManifest): Project? {
+        val dir = File(rootDir, id)
+        if (!dir.isDirectory) return null
+        val current = readProject(dir) ?: return null
+        val updated = transform(current.manifest)
+        // Write via a temp file + rename: a manifest truncated by a kill
+        // mid-write would make the whole project unreadable
+        // (`readProject` returns null on a parse failure, and the Projects
+        // list skips it), which is a much worse outcome than losing the last
+        // edit.
+        val tmp = File(dir, "$MANIFEST_FILE_NAME.tmp")
+        tmp.writeText(json.encodeToString(ProjectManifest.serializer(), updated))
+        val target = File(dir, MANIFEST_FILE_NAME)
+        if (!tmp.renameTo(target)) {
+            target.delete()
+            if (!tmp.renameTo(target)) return null
+        }
+        return Project(id = id, directory = dir, manifest = updated)
+    }
+
     private fun readProject(dir: File): Project? {
         val manifestFile = File(dir, MANIFEST_FILE_NAME)
         if (!manifestFile.isFile) return null

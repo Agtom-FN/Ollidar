@@ -33,4 +33,13 @@ object Routes {
     fun replayCapture(projectId: String): String = "project/${Uri.encode(projectId)}/capture/replay"
 
     const val CONNECT_WIZARD = "connect_wizard"
+
+    // B7: Device setup -> Mount calibration (Tech Spec §3.13's app structure,
+    // WIZARD.md §2's "a five-screen wizard inside Device setup -> Mount
+    // calibration"). Per-project because the resulting calibration is written
+    // into that project's manifest; the device-level per-bracket store is what
+    // makes it reusable across projects.
+    private const val MOUNT_CALIBRATION_PATTERN = "project/{projectId}/mount_calibration"
+    const val MOUNT_CALIBRATION = MOUNT_CALIBRATION_PATTERN
+    fun mountCalibration(projectId: String): String = "project/${Uri.encode(projectId)}/mount_calibration"
 }

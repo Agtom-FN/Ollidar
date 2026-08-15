@@ -220,6 +220,9 @@ dependencies {
     implementation(libs.filament.android)
     implementation(libs.filament.utils.android)
 
+    // B7/B8: ARCore session management, VIO poses, camera frames + metadata.
+    implementation(libs.arcore)
+
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
 }

@@ -1,7 +1,16 @@
 package com.lidarscan.app.di
 
+import android.Manifest
+import android.app.Activity
 import android.content.Context
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import com.lidarscan.app.BuildConfig
+import com.lidarscan.app.ar.ArInstaller
+import com.lidarscan.app.ar.CaptureArController
+import com.lidarscan.app.render.NativePointCloudProvider
+import com.lidarscan.app.render.PointCloudSource
+import com.lidarscan.core.calib.FileMountCalibrationStore
 import com.lidarscan.app.data.SettingsRepository
 import com.lidarscan.app.engine.RealEngineBridge
 import com.lidarscan.app.engine.ReplayEngineBridge
@@ -92,6 +101,49 @@ class AppContainer(context: Context) {
 
     /** Pure-Kotlin D6 connect-wizard state machine (`:core`), driving [engineBridge]. */
     val d6ConnectController = D6ConnectController(engineBridge, containerScope)
+
+    /**
+     * B7: one ARCore session for the whole app. Both the Capture screen's AR
+     * overlay and the mount-calibration wizard drive the *same* controller —
+     * ARCore permits only one `Session` per process, and two screens each
+     * creating their own is the classic way to get
+     * `CameraNotAvailableException` when navigating between them.
+     */
+    val arController = CaptureArController(appContext)
+
+    /**
+     * B7: the device-level, per-bracket calibration store (WIZARD.md §3 —
+     * "Calibration belongs to the bracket, not the project"). Lives beside
+     * the projects root rather than inside any project, keyed by
+     * (phone model, bracket ID, lidar serial).
+     */
+    val mountCalibrationStore = FileMountCalibrationStore(
+        File(projectsRootDir.parentFile ?: projectsRootDir, "mount_calibrations.json"),
+    )
+
+    fun hasCameraPermission(): Boolean =
+        ContextCompat.checkSelfPermission(appContext, Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED
+
+    /** The ARCore install dance (see [com.lidarscan.app.ar.ArInstaller]); returns true when a session may be created now. */
+    fun requestArInstall(activity: Activity): Boolean {
+        val result = arInstaller.requestInstall(activity)
+        arController.refreshAvailability()
+        return result.getOrDefault(false)
+    }
+
+    private val arInstaller = ArInstaller()
+
+    /**
+     * The live capture engine's `scan_engine*`, or 0. Exposed so B7's wizard
+     * can push mount extrinsics into whatever session is current without
+     * holding a reference to the bridge implementation.
+     */
+    fun currentEngineHandle(): Long = (engineBridge as? RealEngineBridge)?.engineHandleOrZero() ?: 0L
+
+    /** The live point-page source, or null — the wizard's lidar-side segmentation reads the board's returns through it. */
+    fun currentPointCloudSource(): PointCloudSource? =
+        (engineBridge as? NativePointCloudProvider)?.currentPointCloudSource()
 
     /**
      * B4: a fresh [ReplayEngineBridge] for the "Replay synthetic capture"
