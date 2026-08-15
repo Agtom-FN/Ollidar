@@ -1,0 +1,247 @@
+name: desktop-ci
+
+# The cross-platform leg of spike S3.
+#
+# S3's exit criterion was "Filament embedded in a Qt window on macOS **and**
+# Windows or Linux". Only the macOS half was ever met: engine-ci.yml's
+# `desktop-build` job builds desktop/ on macos-latest, and
+# desktop/NOTES.md §6 records that as the one measured platform.
+# src/render/NativeSurface_win.cpp, NativeSurface_linux.cpp and
+# DisplayLink_generic.cpp were written by C1 from S3 REPORT.md §8's analysis and
+# had **never been compiled by anyone** — NOTES.md said so in three places.
+#
+# This workflow compiles them. What each job proves, and what it deliberately
+# does not, is spelled out in the job's own header and in NOTES.md §14.
+#
+# It is a separate workflow from engine-ci.yml on purpose: the desktop app has a
+# different dependency shape (Qt binaries + a ~790 MB Filament release) and a
+# different failure mode from the engine's five-target matrix, and mixing them
+# makes a red engine-ci ambiguous.
+
+on:
+  push:
+    # main: guard the desktop against a regression from either side of the seam.
+    # ci/**: the iteration branch this workflow was developed on — pushing to it
+    # is how the Windows/Linux compilers get asked a question at all, since
+    # neither platform exists on the development machine.
+    branches:
+      - main
+      - "ci/**"
+    paths:
+      - "desktop/**"
+      - "engine/**"
+      - ".github/workflows/desktop-ci.yml"
+  pull_request:
+    paths:
+      - "desktop/**"
+      - "engine/**"
+      - ".github/workflows/desktop-ci.yml"
+  workflow_dispatch: {}
+
+env:
+  # Both pins are load-bearing.
+  #
+  # FILAMENT_VERSION: S3 found Filament's own documentation wrong in two places
+  # in this very release (the NSView-vs-CAMetalLayer swapchain handle, and a
+  # README link list missing libzstd, which libfilament hard-needs), so the
+  # version is not fungible. REPORT.md §9 caveat 2.
+  #
+  # QT_VERSION: the exact Qt every macOS measurement in NOTES.md §6/§8/§11/§13
+  # was taken against. Using the distro's Qt on Linux instead would have made a
+  # Linux-only compile error indistinguishable from a Qt-version difference.
+  FILAMENT_VERSION: v1.75.0
+  QT_VERSION: 6.11.1
+
+jobs:
+  # =====================================================================
+  # Windows: a REAL LINK.
+  #
+  # The Windows Filament release is MSVC-built against the /MD CRT, which is
+  # what CMake's Release config uses, so there is no standard-library ABI
+  # question here the way there is on Linux — this job builds and links the
+  # whole app, engine included, and the artifact is a lidarscan.exe.
+  #
+  # It does NOT run it: NativeSurface_win.cpp hands Filament an HWND for a
+  # Vulkan swapchain, and a GitHub runner has no GPU and no interactive session
+  # to present to. Everything in NOTES.md §3.1's Windows column below the
+  # "compiles" line — resize under VK_ERROR_OUT_OF_DATE_KHR, gl_PointSize
+  # clamping, the timer render clock — is still unproven.
+  # =====================================================================
+  windows:
+    name: windows-latest / desktop (compile + link)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable MSVC dev command prompt (x64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - uses: lukka/get-cmake@latest
+
+      - name: Install Ninja
+        run: choco install ninja -y --no-progress
+
+      - name: Install Qt ${{ env.QT_VERSION }}
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          # qtserialport is an add-on, not part of qtbase: CaptureWindow.cpp
+          # opens a real QSerialPort for the COIN-D6.
+          modules: qtserialport
+          cache: true
+
+      # ~790 MB compressed. Cached on the version tag, which is pinned, so this
+      # downloads once per repo per Filament bump.
+      - name: Cache Filament
+        id: cache-filament
+        uses: actions/cache@v4
+        with:
+          path: desktop/third_party/filament
+          key: filament-${{ env.FILAMENT_VERSION }}-windows-x64
+
+      - name: Fetch Filament ${{ env.FILAMENT_VERSION }}
+        if: steps.cache-filament.outputs.cache-hit != 'true'
+        working-directory: desktop
+        shell: pwsh
+        run: ./tools/fetch_filament.ps1 -Version $env:FILAMENT_VERSION
+
+      # ENGINE_FETCH_EIGEN=ON, not vcpkg: engine-ci.yml's own Windows jobs
+      # document why (vcpkg's eigen3 port probes for a Fortran compiler that the
+      # GitHub Windows image does not ship, and Strawberry Perl's broken gfortran
+      # on PATH turns the probe into a hard configure failure).
+      - name: Configure
+        working-directory: desktop
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DENGINE_FETCH_EIGEN=ON
+
+      - name: Build
+        working-directory: desktop
+        run: cmake --build build
+
+      - name: What was produced
+        working-directory: desktop
+        shell: pwsh
+        run: |
+          Get-Item build/lidarscan.exe | Format-List Name,Length,LastWriteTime
+          Get-Item build/points.filamat | Format-List Name,Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lidarscan-windows-x64-unpackaged
+          path: |
+            desktop/build/lidarscan.exe
+            desktop/build/points.filamat
+          if-no-files-found: error
+
+  # =====================================================================
+  # Linux: COMPILE-ONLY, and the reason is a measured ABI fact, not caution.
+  #
+  # filament-v1.75.0-linux.tgz is built against **libc++**: its libutils.a
+  # exports 171 distinct `_ZNSt3__1...` (i.e. std::__1::) symbols. Qt's own
+  # Linux binaries and every g++ on the runner are **libstdc++**
+  # (std::__cxx11::). Those two standard libraries do not share an ABI, and
+  # anywhere Filament's headers put a std:: type in a signature the two sides
+  # mangle it differently — an undefined symbol at link, not a diagnosable
+  # compile error.
+  #
+  # The documented fix is to build Filament from source against libstdc++.
+  # That is a ~40 minute from-scratch build (C8 measured the much smaller
+  # x86_64-only macOS slice at 2 minutes of compile after a 3 minute clone,
+  # with most of the tree already prebuilt) and it belongs in the Linux
+  # packaging job, not in a per-push compile gate.
+  #
+  # So this job asks the question it CAN answer honestly:
+  #   does every desktop translation unit — including NativeSurface_linux.cpp
+  #   and DisplayLink_generic.cpp, which no compiler had ever seen — compile
+  #   on Linux, against the real Filament headers, the real engine and a real
+  #   Qt, with -Wall -Wextra?
+  # LIDARSCAN_COMPILE_ONLY=ON builds them all into an object library and stops
+  # before the executable link. The engine, engine_cli and points.filamat are
+  # all still fully built and linked, so the Linux leg of the *engine* and of
+  # matc is proven end to end; only the app's final link is out of scope.
+  # NOTES.md §14 states this in the same words.
+  # =====================================================================
+  linux:
+    name: ubuntu-latest / desktop (compile-only, see job header)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: lukka/get-cmake@latest
+
+      # The X11/xcb/GL set is what Qt 6's own binaries need to be *found* and
+      # linked against (Qt6GuiConfig pulls in GL), plus the headers
+      # NativeSurface_linux.cpp's X11 path documents. libvulkan-dev is here
+      # because the surface this file exists to create is a VkSurfaceKHR.
+      - name: Toolchain and Qt platform dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build g++ \
+            libgl1-mesa-dev libglu1-mesa-dev libvulkan-dev \
+            libx11-dev libx11-xcb-dev libxcb1-dev libxkbcommon-dev \
+            libxkbcommon-x11-dev libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
+            libxcb-xinerama0 libxcb-xkb1 libegl1-mesa-dev
+
+      - name: Install Qt ${{ env.QT_VERSION }}
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          modules: qtserialport
+          cache: true
+
+      - name: Cache Filament
+        id: cache-filament
+        uses: actions/cache@v4
+        with:
+          path: desktop/third_party/filament
+          key: filament-${{ env.FILAMENT_VERSION }}-linux-x64
+
+      - name: Fetch Filament ${{ env.FILAMENT_VERSION }}
+        if: steps.cache-filament.outputs.cache-hit != 'true'
+        working-directory: desktop
+        run: ./tools/fetch_filament.sh "$FILAMENT_VERSION"
+
+      - name: Configure
+        working-directory: desktop
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DENGINE_FETCH_EIGEN=ON
+          -DLIDARSCAN_COMPILE_ONLY=ON
+
+      - name: Build (every desktop TU + the engine + matc)
+        working-directory: desktop
+        run: cmake --build build
+
+      # Proof, not assertion: name the object files that came out. If a source
+      # silently stopped being compiled, this step is where it shows up.
+      - name: What was produced
+        working-directory: desktop
+        run: |
+          set -euo pipefail
+          echo "--- desktop objects ---"
+          find build -name '*.o' -path '*lidarscan*' | sort
+          echo "--- object count ---"
+          find build -name '*.o' -path '*lidarscan*' | wc -l
+          echo "--- the two files that had never been compiled anywhere ---"
+          find build -name 'NativeSurface_linux.cpp.o' -o -name 'DisplayLink_generic.cpp.o'
+          echo "--- engine + material ---"
+          ls -la build/points.filamat
+          ls -la build/engine/libscanengine.a build/engine/engine_cli
+      - name: Engine CLI selftest (the engine half DOES link and run here)
+        working-directory: desktop
+        run: ./build/engine/engine_cli --selftest

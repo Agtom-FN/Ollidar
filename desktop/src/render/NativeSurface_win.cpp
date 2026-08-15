@@ -42,6 +42,8 @@
 
 #include <QWindow>
 
+#include <cstdint>  // uintptr_t — QWindow::winId() returns quintptr on every OS
+
 namespace lidarscan {
 namespace {
 
