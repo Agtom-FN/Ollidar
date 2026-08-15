@@ -5,15 +5,31 @@ name: engine-ci
 # Android arm64 (build-only). Proven on the S7 stub first
 # (spikes/s7-windows-toolchain/, kept as the historical record); A1 moved the
 # real engine into engine/ and this workflow now builds that.
+#
+# E1 (2026-08-15 refresh) added three more jobs past the original five:
+#   - macos-sim-labelled-tests: the "sim"/"sim-rtk" ctest labels the five
+#     build-matrix jobs above deliberately exclude (loopback-port tests are
+#     not safe on a shared/parallel runner) — one dedicated macOS job that
+#     DOES run them, serially.
+#   - android-app: the Kotlin/Compose app (android/), not just the engine's
+#     own NDK cross-compile leg. continue-on-error while the toolchain proves
+#     itself in CI (see that job's comment).
+#   - desktop-build: the Qt 6 + Filament app (desktop/), build-only.
+# The trigger paths below now cover android/** and desktop/** too so those
+# two jobs actually run when the code they build changes.
 
 on:
   push:
     paths:
       - "engine/**"
+      - "android/**"
+      - "desktop/**"
       - ".github/workflows/engine-ci.yml"
   pull_request:
     paths:
       - "engine/**"
+      - "android/**"
+      - "desktop/**"
       - ".github/workflows/engine-ci.yml"
   workflow_dispatch: {}
 
@@ -53,9 +69,13 @@ jobs:
         working-directory: ${{ env.SOURCE_DIR }}
         run: cmake --build --preset windows-msvc-x64
 
+      # -LE 'sim|sim-rtk': the loopback-port simulator tests (A3's Mid-360
+      # soak, A10's live NMEA/NTRIP cases) bind real ports on the runner and
+      # are not safe on a shared/parallel CI runner — see the dedicated
+      # macos-sim-labelled-tests job below, which is the only place they run.
       - name: Test
         working-directory: ${{ env.SOURCE_DIR }}
-        run: ctest --preset windows-msvc-x64
+        run: ctest --preset windows-msvc-x64 -LE "sim|sim-rtk"
 
       - name: Engine CLI selftest
         working-directory: ${{ env.SOURCE_DIR }}
@@ -94,9 +114,10 @@ jobs:
         working-directory: ${{ env.SOURCE_DIR }}
         run: cmake --build --preset windows-clangcl-x64
 
+      # See the windows-msvc job above for why -LE 'sim|sim-rtk' is here.
       - name: Test
         working-directory: ${{ env.SOURCE_DIR }}
-        run: ctest --preset windows-clangcl-x64
+        run: ctest --preset windows-clangcl-x64 -LE "sim|sim-rtk"
 
   # ---------------------------------------------------------------------
   macos-universal:
@@ -121,9 +142,10 @@ jobs:
         working-directory: ${{ env.SOURCE_DIR }}
         run: cmake --build --preset macos-universal
 
+      # See the windows-msvc job above for why -LE 'sim|sim-rtk' is here.
       - name: Test
         working-directory: ${{ env.SOURCE_DIR }}
-        run: ctest --preset macos-universal
+        run: ctest --preset macos-universal -LE "sim|sim-rtk"
 
       - name: Verify universal (fat) binaries
         working-directory: ${{ env.SOURCE_DIR }}
@@ -164,9 +186,10 @@ jobs:
         working-directory: ${{ env.SOURCE_DIR }}
         run: cmake --build --preset linux-x64
 
+      # See the windows-msvc job above for why -LE 'sim|sim-rtk' is here.
       - name: Test
         working-directory: ${{ env.SOURCE_DIR }}
-        run: ctest --preset linux-x64
+        run: ctest --preset linux-x64 -LE "sim|sim-rtk"
 
       # The Linux build doubles as the cloud worker (§3 key rule 4 / D1), so
       # the headless CLI must work here, not just the unit tests.
@@ -218,3 +241,138 @@ jobs:
         run: |
           file build/android-arm64/scanengine_tests || true
           "${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readobj" -h build/android-arm64/libscanengine.a 2>/dev/null | head -20 || true
+
+  # ---------------------------------------------------------------------
+  # E1: the loopback-port simulator suites, run where nothing else on the
+  # runner can collide with them. mid360_sim_e2e (label "sim", A3) binds the
+  # real Mid-360 ports (56000, 561xx-564xx) on loopback and is RUN_SERIAL in
+  # CMakeLists.txt already (see engine/CMakeLists.txt's ENGINE_SIM_TESTS
+  # block) — no two instances of it may run at once, anywhere, which is
+  # exactly the property a shared/parallel CI runner cannot guarantee for the
+  # five build-matrix jobs above. gnss_rtk_sim_e2e (label "sim-rtk", A10)
+  # binds per-process ports so it does not need RUN_SERIAL, but it belongs
+  # here too: same "needs its own runner, needs python3, needs the spike
+  # trees" shape. One macOS job, both labels, always serial with each other
+  # (ctest's default is to honour RUN_SERIAL; -j1 makes that explicit and
+  # keeps the two labels from racing each other's ports as well).
+  #
+  # This job DOES run the sim tests (not build-only): it fetches and builds
+  # the S2 Mid-360 simulator (spikes/s2-mid360-sim, a public-source vendored
+  # SDK2 tarball — no license/network blocker) so mid360_sim_e2e has a real
+  # ${ENGINE_S2_SIM_DIR}/build/spike/mid360_sim to run against; the S5 RTK
+  # simulators (spikes/s5-rtk-sim/nmea_sim.py etc.) are pure-stdlib Python and
+  # already committed, so gnss_rtk_sim_e2e needs nothing extra fetched.
+  macos-sim-labelled-tests:
+    name: macos-latest / simulator suites (sim, sim-rtk)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: lukka/get-cmake@latest
+
+      - name: Bootstrap vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT }}
+
+      - name: Fetch + build the S2 Mid-360 simulator
+        run: |
+          spikes/s2-mid360-sim/scripts/fetch_sdk2.sh
+          cmake -S spikes/s2-mid360-sim -B spikes/s2-mid360-sim/build/spike \
+            -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build spikes/s2-mid360-sim/build/spike -j
+          test -x spikes/s2-mid360-sim/build/spike/mid360_sim
+
+      - name: Configure
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: cmake --preset macos-universal
+
+      - name: Build
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: cmake --build --preset macos-universal
+
+      # sim-rtk needs python3; no pip installs required — nmea_sim.py and
+      # ntrip_caster_sim.py are stdlib-only (spikes/s5-rtk-sim/REPORT.md).
+      - name: Verify python3
+        run: python3 --version
+
+      - name: Run the sim + sim-rtk suites (serially, both labels)
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: ctest --preset macos-universal -L "sim|sim-rtk" -j1
+
+  # ---------------------------------------------------------------------
+  # E1: the Android APP build (Kotlin/Compose, android/) — NOT the engine's
+  # own Android NDK leg above, which cross-compiles libscanengine only.
+  # `continue-on-error: true` for now: this is a first CI pass at a toolchain
+  # (JDK17 + cmdline-tools + a specific AGP/Gradle pairing, see
+  # android/NOTES.md's "Version pinning" section) that has only ever been
+  # exercised on one developer machine, and B-workstream's app code is still
+  # landing feature by feature. Flipping this to a hard gate is a one-line
+  # change once a few green runs build confidence that a red run here means a
+  # real regression and not e.g. a flaky SDK component download.
+  android-app:
+    name: ubuntu-latest / Android app (:core:test, :app:assembleDebug)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: |
+            platform-tools
+            platforms;android-36
+            build-tools;36.1.0
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle/wrapper/gradle-wrapper.properties', 'android/gradle/libs.versions.toml') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      - name: gradlew :core:test :app:assembleDebug
+        run: ./gradlew --no-daemon :core:test :app:assembleDebug
+
+  # ---------------------------------------------------------------------
+  # E1: desktop app (Qt 6 Widgets + Filament, desktop/) — build-only, per
+  # NOTES.md's own build recipe. Not run: the desktop app opens a real window
+  # (createWindowContainer()'d Filament viewport) and this is a headless
+  # runner; C8's packaging task is where a launch/screenshot smoke test would
+  # belong, on a machine that can drive one.
+  desktop-build:
+    name: macos-latest / desktop app (build-only)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: brew install qt ninja
+        run: brew install qt ninja
+
+      - name: Fetch Filament (pinned v1.75.0 — see desktop/NOTES.md)
+        working-directory: desktop
+        run: ./tools/fetch_filament.sh v1.75.0
+
+      - name: Configure
+        working-directory: desktop
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        working-directory: desktop
+        run: cmake --build build
