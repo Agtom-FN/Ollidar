@@ -1,0 +1,48 @@
+# /etc/systemd/system/lidarscan-service.service
+#
+#   sudo cp deploy/lidarscan-service.service /etc/systemd/system/
+#   sudo cp deploy/lidarscan.env.example /etc/lidarscan/service.env   # then edit
+#   sudo chmod 600 /etc/lidarscan/service.env
+#   sudo systemctl daemon-reload && sudo systemctl enable --now lidarscan-service
+#
+[Unit]
+Description=LidarScan cloud job service (single-tenant MVP)
+Documentation=https://example.invalid/lidarscan/cloud/service/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=lidarscan
+Group=lidarscan
+WorkingDirectory=/opt/lidarscan/service
+EnvironmentFile=/etc/lidarscan/service.env
+ExecStart=/opt/lidarscan/service/.venv/bin/python -m uvicorn lidarscan_service.asgi:app \
+          --host 127.0.0.1 --port 8080 --no-access-log
+Restart=on-failure
+RestartSec=2
+KillMode=mixed
+# A running job is a child process group; give it a moment to die with us.
+TimeoutStopSec=30
+
+# --- hardening ---------------------------------------------------------------
+# The service needs exactly two writable places: its data dir and /tmp.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/lidarscan
+StateDirectory=lidarscan
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=no
+# The worker is a compute job; cap it so one bad upload cannot take the box.
+CPUQuota=400%
+MemoryMax=8G
+
+[Install]
+WantedBy=multi-user.target
