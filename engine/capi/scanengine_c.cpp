@@ -119,6 +119,20 @@ SCAN_CHECK_ENUM(SCAN_NTRIP_FAILED, NtripState::kFailed);
 SCAN_CHECK_ENUM(SCAN_TRAJECTORY_EXTERNAL, TrajectorySource::kExternal);
 SCAN_CHECK_ENUM(SCAN_TRAJECTORY_GNSS, TrajectorySource::kGnss);
 
+// ABI 5. The device config now CASTS an int32 straight to this enum, so a
+// value inserted in the middle of Mid360Backend would silently select a
+// different backend for every existing caller — exactly the class of drift
+// this macro exists for.
+SCAN_CHECK_ENUM(SCAN_MID360_BACKEND_SDK2, Mid360Backend::kSdk2);
+SCAN_CHECK_ENUM(SCAN_MID360_BACKEND_RAW_UDP, Mid360Backend::kRawUdp);
+SCAN_CHECK_ENUM(SCAN_MID360_BACKEND_INJECT, Mid360Backend::kInject);
+
+SCAN_CHECK_ENUM(SCAN_MID360_LINK_DOWN, Mid360LinkState::kDown);
+SCAN_CHECK_ENUM(SCAN_MID360_LINK_WAITING, Mid360LinkState::kWaiting);
+SCAN_CHECK_ENUM(SCAN_MID360_LINK_UP, Mid360LinkState::kUp);
+SCAN_CHECK_ENUM(SCAN_MID360_LINK_SILENT, Mid360LinkState::kSilent);
+SCAN_CHECK_ENUM(SCAN_MID360_LINK_REINITIALIZING, Mid360LinkState::kReinitializing);
+
 SCAN_CHECK_ENUM(SCAN_LOG_TRACE, LogLevel::kTrace);
 SCAN_CHECK_ENUM(SCAN_LOG_ERROR, LogLevel::kError);
 SCAN_CHECK_ENUM(SCAN_LOG_OFF, LogLevel::kOff);
@@ -650,10 +664,70 @@ scan_error_t scan_engine_add_device(scan_engine* engine, const scan_device_confi
       }
       dc.d6.send_start_stop_commands = cfg->send_start_stop_commands != 0;
       break;
-    case DeviceKind::kMid360:
+    case DeviceKind::kMid360: {
       if (cfg->lidar_ip != nullptr) dc.mid360.udp.lidar_ip = cfg->lidar_ip;
       if (cfg->host_ip != nullptr) dc.mid360.udp.host_ip = cfg->host_ip;
+
+      // --- ABI 5 -----------------------------------------------------------
+      //
+      // Every field is "0 keeps the C++ default", except the three that carry
+      // an explicit _set flag because 0 is a value a caller may mean.
+      if (cfg->mid360_backend < 0 || cfg->mid360_backend > 2) {
+        return to_c(set_last_error(
+            ScanError::kInvalidArgument,
+            "scan_device_config::mid360_backend %d is not a SCAN_MID360_BACKEND_* value",
+            static_cast<int>(cfg->mid360_backend)));
+      }
+      dc.mid360.backend = static_cast<Mid360Backend>(cfg->mid360_backend);
+
+      UdpConfig& u = dc.mid360.udp;
+      // A 0 fd is never a descriptor an app hands over (it is its stdin), so
+      // treating it as "unset" costs nothing and makes memset(0) mean ABI 4.
+      if (cfg->mid360_prebound_fd > 0) u.prebound_fd = cfg->mid360_prebound_fd;
+      if (cfg->mid360_prebound_imu_fd > 0) u.prebound_imu_fd = cfg->mid360_prebound_imu_fd;
+      if (cfg->mid360_point_port != 0) u.point_port = cfg->mid360_point_port;
+      if (cfg->mid360_imu_port != 0) u.imu_port = cfg->mid360_imu_port;
+      if (cfg->mid360_cmd_port != 0) u.cmd_port = cfg->mid360_cmd_port;
+      if (cfg->mid360_push_port != 0) u.push_port = cfg->mid360_push_port;
+      if (cfg->mid360_log_port != 0) u.log_port = cfg->mid360_log_port;
+      if (cfg->mid360_host_cmd_port != 0) u.host_cmd_port = cfg->mid360_host_cmd_port;
+      if (cfg->mid360_host_push_port != 0) u.host_push_port = cfg->mid360_host_push_port;
+      if (cfg->mid360_host_point_port != 0) u.host_point_port = cfg->mid360_host_point_port;
+      if (cfg->mid360_host_imu_port != 0) u.host_imu_port = cfg->mid360_host_imu_port;
+      if (cfg->mid360_host_log_port != 0) u.host_log_port = cfg->mid360_host_log_port;
+      if (cfg->mid360_recv_buffer_bytes != 0) u.recv_buffer_bytes = cfg->mid360_recv_buffer_bytes;
+
+      if (cfg->mid360_live_points_per_sec_set != 0) {
+        dc.mid360.live_points_per_sec = cfg->mid360_live_points_per_sec;
+      }
+      if (cfg->mid360_publish_imu_set != 0) {
+        dc.mid360.publish_imu = cfg->mid360_publish_imu != 0;
+      }
+      if (cfg->mid360_verify_crc_set != 0) {
+        dc.mid360.verify_crc = cfg->mid360_verify_crc != 0;
+      }
+      if (cfg->mid360_filter_set != 0) {
+        mid360::PointFilterConfig& f = dc.mid360.filter;
+        f.drop_no_return = cfg->mid360_drop_no_return != 0;
+        f.tag_reject_mask = cfg->mid360_tag_reject_mask;
+        f.min_reflectivity = cfg->mid360_min_reflectivity;
+        f.min_range_m = cfg->mid360_min_range_m;
+        f.max_range_m = cfg->mid360_max_range_m;
+      }
+      if (cfg->mid360_sdk_config_path != nullptr && cfg->mid360_sdk_config_path[0] != '\0') {
+        dc.mid360.sdk_config_path = cfg->mid360_sdk_config_path;
+      }
+
+      // Caught HERE rather than at start(): add_device() is where the app can
+      // still do something about it, and the message names the field.
+      if (u.prebound_fd >= 0 && dc.mid360.backend != Mid360Backend::kRawUdp) {
+        return fail(ScanError::kInvalidArgument,
+                    "scan_device_config: a pre-bound descriptor only reaches the raw-UDP backend "
+                    "(SCAN_MID360_BACKEND_RAW_UDP); SDK2 creates its own sockets inside the "
+                    "vendored SDK, so binding one to a Network here would have no effect");
+      }
       break;
+    }
     default:
       break;
   }
@@ -695,6 +769,48 @@ scan_error_t scan_engine_device_health(scan_engine* engine, uint32_t device_id,
   out->rotation_hz = src.rotation_hz;
   out->checksum_pass_rate = src.checksum_pass_rate;
   out->t_last_data_ns = src.t_last_data_ns;
+  return SCAN_OK;
+  SCAN_GUARD_END
+}
+
+scan_error_t scan_engine_mid360_stats(scan_engine* engine, uint32_t device_id,
+                                      scan_mid360_stats* out) {
+  SCAN_GUARD_BEGIN
+  if (engine == nullptr || out == nullptr) {
+    return fail(ScanError::kInvalidArgument, "null argument");
+  }
+  std::memset(out, 0, sizeof(*out));
+  auto s = handle_of(engine)->engine->mid360_stats(device_id);
+  if (!s.ok()) return to_c(s.error());
+  const Mid360Stats& m = s.value();
+  out->link = static_cast<std::uint8_t>(m.link);
+  out->state = static_cast<std::uint8_t>(m.state);
+  out->point_packets = m.point_packets;
+  out->imu_packets = m.imu_packets;
+  out->points_received = m.points_received;
+  out->points_kept = m.points_kept;
+  out->points_appended = m.points_appended;
+  out->points_dropped_store = m.points_dropped_store;
+  out->bad_packets = m.bad_packets;
+  out->imu_dropped = m.imu_dropped;
+  out->packets_lost = m.packets_lost;
+  out->packets_duplicated = m.packets_duplicated;
+  out->counter_resets = m.counter_resets;
+  out->points_per_sec = m.points_per_sec;
+  out->points_appended_per_sec = m.points_appended_per_sec;
+  out->imu_hz = m.imu_hz;
+  out->loss_pct_window = m.loss_pct_window;
+  out->loss_pct_total = m.loss_pct_total;
+  out->watchdog_trips = m.watchdog_trips;
+  out->clean_resumes = m.clean_resumes;
+  out->forced_reinits = m.forced_reinits;
+  out->reinit_failures = m.reinit_failures;
+  out->t_last_point_ns = m.t_last_point_ns;
+  out->t_last_imu_ns = m.t_last_imu_ns;
+  out->t_last_heartbeat_ns = m.t_last_heartbeat_ns;
+  out->t_silent_since_ns = m.t_silent_since_ns;
+  copy_str(out->device_sn, sizeof(out->device_sn), m.device_sn);
+  copy_str(out->device_ip, sizeof(out->device_ip), m.device_ip);
   return SCAN_OK;
   SCAN_GUARD_END
 }
@@ -1034,6 +1150,15 @@ const char* scan_engine_crs_wkt(scan_engine* engine) {
   } catch (...) {
     return "";
   }
+}
+
+scan_error_t scan_engine_set_crs(scan_engine* engine, const char* epsg, const char* wkt) {
+  SCAN_GUARD_BEGIN
+  if (engine == nullptr) return fail(ScanError::kInvalidArgument, "engine handle is null");
+  // NULL is "", which is how a caller clears the override.
+  return to_c(handle_of(engine)->engine->set_crs(epsg != nullptr ? std::string(epsg) : std::string(),
+                                                 wkt != nullptr ? std::string(wkt) : std::string()));
+  SCAN_GUARD_END
 }
 
 const char* scan_engine_crs_epsg(scan_engine* engine) {

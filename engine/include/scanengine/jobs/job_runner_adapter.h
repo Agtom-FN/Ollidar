@@ -116,6 +116,13 @@ class QueueJobRunner final : public JobRunner {
   //     pipeline ""/"post"  → kPostProcess
   //     pipeline "colorize" → kPostProcess → kColorize (chained)
   //     pipeline "export"   → kPostProcess → kExportPoints (chained)
+  //     pipeline "colorize-export"
+  //                         → kPostProcess → kColorize → kExportPoints
+  //                            (INT-FINAL: the cloud worker's whole job —
+  //                             `engine_cli --post --colorize --out`. Two
+  //                             separate requests cannot express it, because
+  //                             chaining is by job id and the second request
+  //                             would re-run the post pipeline.)
   //     pipeline "plan"/"merge" → kUnimplemented: A12/A13 have no job kind,
   //                            and inventing one here would hide that.
   //   mode = kExtractForTransfer → kTransferExport

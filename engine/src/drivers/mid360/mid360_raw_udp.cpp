@@ -29,8 +29,24 @@ class RawUdpBackend final : public Mid360BackendImpl {
   Status open() override {
     close();
 
+    // The Android seam needs a descriptor PER SOURCE (android/NOTES.md §8,
+    // B3 finding 2): two receive threads on one socket steal each other's
+    // datagrams. A pre-bound point socket with no IMU socket beside it is
+    // therefore refused rather than "fixed" by creating an ordinary socket
+    // for the IMU — on Android that socket is not bound to the USB-Ethernet
+    // Network and would receive nothing, which looks exactly like a device
+    // that is not sending IMU.
+    if (cfg_.udp.prebound_fd >= 0 && cfg_.publish_imu && cfg_.udp.prebound_imu_fd < 0) {
+      return set_last_error(ScanError::kInvalidArgument,
+                            "mid360 raw-UDP: udp.prebound_fd is set but udp.prebound_imu_fd is "
+                            "not; this backend opens TWO sockets, so it needs one descriptor per "
+                            "stream. Supply the IMU fd, or set publish_imu = false for a "
+                            "point-only capture.");
+    }
+
     UdpConfig point_cfg = cfg_.udp;
     point_cfg.bind_port = cfg_.udp.host_point_port;
+    point_cfg.prebound_imu_fd = -1;  // a source owns exactly one socket
     point_ = std::make_unique<UdpSource>(point_cfg);
     point_->set_sink([this](ByteSpan d, TimePoint t) {
       driver_.on_point_packet(d.data(), d.size(), t);
@@ -40,6 +56,9 @@ class RawUdpBackend final : public Mid360BackendImpl {
     if (cfg_.publish_imu) {
       UdpConfig imu_cfg = cfg_.udp;
       imu_cfg.bind_port = cfg_.udp.host_imu_port;
+      // The IMU source gets the IMU descriptor, never the point one.
+      imu_cfg.prebound_fd = cfg_.udp.prebound_imu_fd;
+      imu_cfg.prebound_imu_fd = -1;
       imu_ = std::make_unique<UdpSource>(imu_cfg);
       imu_->set_sink([this](ByteSpan d, TimePoint t) {
         driver_.on_imu_packet(d.data(), d.size(), t);

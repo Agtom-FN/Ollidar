@@ -245,6 +245,34 @@ class MergeProject {
   // -1 when no session carries that provenance id.
   int find(const std::string& provenance_id) const;
 
+  // Removes a session from the project (desktop NOTES §11.8: "'Remove
+  // selected' is a message box, not a real removal … a future desktop pass
+  // that wants this needs an engine-side seam"). kNotFound for an unknown id.
+  //
+  // IDS ARE INDICES, AND THEY RENUMBER. `session(id)` is a direct index into
+  // the session vector and `MergeSession::id` is that index, so removing
+  // session k decrements the id of every session after it. This is stated
+  // rather than avoided: the alternative — leaving a hole — would make
+  // `session(id)` return a tombstone every caller would have to test for, and
+  // `sessions()` a vector with gaps, which is a worse contract than "re-read
+  // the list after a removal". Provenance ids do NOT change, so a UI that keys
+  // its rows on `provenance_id` (and re-reads `find()`) needs no remapping at
+  // all — which is the recommended way to hold a reference across a removal.
+  //
+  // THE PAIR REPORT IS INVALIDATED. `report().pairs` names sessions by id and
+  // every pair involving the removed session is meaningless, so the pairs, the
+  // graph summary and the aggregate counters are CLEARED; the per-session
+  // summaries are rebuilt. Call refine()/survey_overlap() again for a fresh
+  // report — the same thing those methods do anyway ("the report is rebuilt
+  // from scratch").
+  //
+  // THE ANCHOR SURVIVES. Removing a non-anchor session leaves every alignment
+  // untouched (the merged frame is unchanged). Removing the ANCHOR moves it to
+  // what is then session 0 and rebases every remaining alignment onto it, so
+  // the relative geometry the operator already established is preserved and
+  // only the origin moves. Removing the last session leaves an empty project.
+  Status remove_session(std::uint32_t id);
+
   Status set_anchor(std::uint32_t id);
   std::uint32_t anchor() const;
 

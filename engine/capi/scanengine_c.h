@@ -76,7 +76,24 @@ extern "C" {
  *     distinguishable from an append (docs/A11-color.md §8.1).
  * The scan_event union changed layout, so per DESIGN.md §6 item 9 this and
  * scanengine::kEngineAbiVersion move together. */
-#define SCAN_ABI_VERSION 4u
+/* 4 -> 5 (INT-FINAL): the Android capture seam and the CRS escape hatch.
+ *   * scan_device_config's Mid-360 half is no longer lidar_ip + host_ip. It
+ *     carries the BACKEND selector, the two PRE-BOUND descriptors (points and
+ *     IMU), all ten ports, the receive-buffer request, the point filter, the
+ *     live decimation budget and the SDK config path. android/NOTES.md §8
+ *     finding 1 is the reason: `UdpConfig::prebound_fd` is the field
+ *     udp_source.h documents AS the Android seam and it was unreachable from
+ *     C, so "the capture session cannot use a pre-bound socket at all". It can
+ *     now. Findings 2 (one fd is not enough for a two-socket backend) and 4
+ *     (sdk_config_path, which forced a TMPDIR work-around) are the same
+ *     struct's other two holes and are closed with it.
+ *   * scan_engine_set_crs() — docs/INT29-wiring.md §7 item 5: a C consumer
+ *     needing a national grid had no way to supply the WKT its authority
+ *     publishes, and the engine ships no PROJ to derive one.
+ * scan_device_config changed layout, so per DESIGN.md §6 item 9 this and
+ * scanengine::kEngineAbiVersion move together. Every OTHER struct, every
+ * function signature and every enum value from ABI 4 is unchanged. */
+#define SCAN_ABI_VERSION 5u
 
 /* --- errors: mirror of scanengine::ScanError --------------------------- */
 typedef int32_t scan_error_t;
@@ -634,6 +651,68 @@ typedef struct scan_georef_solution {
   char blocker[64];
 } scan_georef_solution;
 
+/* --- Mid-360 link state: mirror of drivers/mid360/mid360_driver.h, ABI 5 ---
+ *
+ * Orthogonal to SCAN_DEV_*: a SILENT link shows up as SCAN_DEV_DEGRADED, and a
+ * link still silent through a forced re-init as SCAN_DEV_FAULT. */
+enum {
+  SCAN_MID360_LINK_DOWN = 0,           /* not started, or stopped */
+  SCAN_MID360_LINK_WAITING = 1,        /* started; no packet has ever arrived */
+  SCAN_MID360_LINK_UP = 2,             /* data within the watchdog window */
+  SCAN_MID360_LINK_SILENT = 3,         /* watchdog fired; may still self-heal */
+  SCAN_MID360_LINK_REINITIALIZING = 4  /* tearing the SDK down and back up */
+};
+
+/* The Mid-360's own counters (ABI 5). scan_device_health answers "is data
+ * arriving"; this answers the question a flaky bench session raises — how many
+ * watchdog trips, clean resumes and FORCED SDK RE-INITS this capture has had.
+ * android/NOTES.md §8 finding 5 and desktop/NOTES.md §8.3 both name this gap: the
+ * Engine had no concrete-driver accessor, so these were unreachable from an
+ * app even in C++.
+ *
+ * The two loss figures are NOT the same number: `loss_pct_window` is the last
+ * health window's and snaps back after a transient burst, `loss_pct_total` is
+ * the session's and does not. A gauge should say which it is showing. */
+typedef struct scan_mid360_stats {
+  uint8_t link;  /* SCAN_MID360_LINK_* */
+  uint8_t state; /* SCAN_DEV_* */
+
+  uint64_t point_packets;
+  uint64_t imu_packets;
+  uint64_t points_received;    /* before filtering */
+  uint64_t points_kept;        /* after filtering, before decimation */
+  uint64_t points_appended;    /* what actually reached the page store */
+  uint64_t points_dropped_store;
+  uint64_t bad_packets;
+  uint64_t imu_dropped;
+
+  uint64_t packets_lost;       /* the free-running udp_cnt model */
+  uint64_t packets_duplicated;
+  uint64_t counter_resets;
+
+  double points_per_sec;
+  double points_appended_per_sec;
+  double imu_hz;
+  double loss_pct_window;
+  double loss_pct_total;
+
+  /* The two failure modes S2 separated: a cable pull the SDK recovers from on
+   * its own, and a power-cycle it never recovers from. */
+  uint64_t watchdog_trips;
+  uint64_t clean_resumes;
+  uint64_t forced_reinits;
+  uint64_t reinit_failures;
+
+  int64_t t_last_point_ns;
+  int64_t t_last_imu_ns;
+  int64_t t_last_heartbeat_ns; /* the SDK's 1 Hz push-state, a SECOND outage signal */
+  int64_t t_silent_since_ns;   /* 0 unless link != UP */
+
+  /* Copied in, NUL-terminated, never a pointer into the engine. */
+  char device_sn[32];
+  char device_ip[48];
+} scan_mid360_stats;
+
 typedef struct scan_device_health {
   uint32_t id;
   uint8_t kind;
@@ -683,6 +762,21 @@ typedef struct scan_session_config {
   uint8_t trajectory;
 } scan_session_config;
 
+/* Which layer owns the Mid-360's sockets. Mirror of
+ * drivers/mid360/mid360_driver.h's Mid360Backend, ABI 5.
+ *
+ * SDK2 (0, the default and what a zeroed struct selects) is the only backend
+ * that can bring an OUT-OF-THE-BOX device up: discovery, the host-IP
+ * configuration push and the heartbeat live in its command state machine.
+ * RAW_UDP is listen-only against a device that is ALREADY configured to stream
+ * at this host — it is the backend the pre-bound descriptors below belong to.
+ * INJECT owns no transport at all. */
+enum {
+  SCAN_MID360_BACKEND_SDK2 = 0,
+  SCAN_MID360_BACKEND_RAW_UDP = 1,
+  SCAN_MID360_BACKEND_INJECT = 2
+};
+
 typedef struct scan_device_config {
   int32_t kind; /* SCAN_DEVICE_* */
 
@@ -693,9 +787,96 @@ typedef struct scan_device_config {
   void* serial_write_user_data;
   uint8_t send_start_stop_commands;
 
-  /* Mid-360 (UDP) — A3 */
+  /* Mid-360 (UDP) — A3. Both are REQUIRED: the device is TOLD where to stream
+   * and never discovers its host, and there is no broadcast discovery on
+   * macOS. */
   const char* lidar_ip;
   const char* host_ip;
+
+  /* --- Mid-360, ABI 5 (android/NOTES.md §8 findings 1, 2 and 4) ------------
+   *
+   * ZERO IS THE ABI-4 BEHAVIOUR for every field below, with the two
+   * exceptions that carry an explicit `_set` flag (a zero there is a real
+   * value a caller may want). A memset(0) config is therefore exactly what it
+   * was: SDK2, engine-created sockets, the A3 default ports, the A3 default
+   * filter and 40k pts/s of live decimation. */
+  int32_t mid360_backend; /* SCAN_MID360_BACKEND_* */
+
+  /* THE ANDROID SEAM. A socket the app has ALREADY created, sized
+   * (SO_RCVBUF — a pre-bound socket bypasses the engine's own sizing), bound
+   * to the host address and bound to the USB-Ethernet Network object
+   * (ConnectivityManager TRANSPORT_ETHERNET + Network.bindSocket), because the
+   * engine cannot reach ConnectivityManager. -1 (and 0, which is never a
+   * socket an app hands over) means "the engine creates its own".
+   *
+   * OWNERSHIP: the engine NEVER closes a descriptor it did not create. The app
+   * closes both AFTER scan_engine_remove_device()/scan_engine_stop() has
+   * returned — no receive thread may still be inside recvfrom on them.
+   *
+   * BOTH are needed for a full capture: SCAN_MID360_BACKEND_RAW_UDP opens two
+   * sockets (points and IMU), and one descriptor read by two receive threads
+   * has them steal each other's datagrams. Supplying the point fd with no IMU
+   * fd while the IMU is enabled is REFUSED (SCAN_ERR_INVALID_ARGUMENT) rather
+   * than silently creating an unrouted socket; for a deliberately point-only
+   * capture set mid360_publish_imu_set = 1 with mid360_publish_imu = 0.
+   * They are only consulted by the raw-UDP backend — SDK2 creates its own
+   * sockets inside the vendored SDK (android/NOTES.md §8 finding 3). */
+  int32_t mid360_prebound_fd;
+  int32_t mid360_prebound_imu_fd;
+
+  /* Ports. 0 = the A3 default for that port. Device-side first (where the
+   * lidar listens / sends from), then the host-side ports the device is told
+   * to stream to. */
+  uint16_t mid360_point_port;      /* 56300 */
+  uint16_t mid360_imu_port;        /* 56400 */
+  uint16_t mid360_cmd_port;        /* 56100 */
+  uint16_t mid360_push_port;       /* 56200 */
+  uint16_t mid360_log_port;        /* 56500 */
+  uint16_t mid360_host_cmd_port;   /* 56101 */
+  uint16_t mid360_host_push_port;  /* 56201 */
+  uint16_t mid360_host_point_port; /* 56301 */
+  uint16_t mid360_host_imu_port;   /* 56401 */
+  uint16_t mid360_host_log_port;   /* 56501 */
+
+  /* SO_RCVBUF request for sockets the ENGINE creates, bytes. 0 = the A3
+   * default (4 MB ~ 1.4 s of slack at the Mid-360's ~23 Mbit/s). Ignored for a
+   * pre-bound socket: the app sized that one when it bound it. */
+  int32_t mid360_recv_buffer_bytes;
+
+  /* Live decimation budget, points/second into the PageStore (Tech Spec §3.3:
+   * ~40k of the sensor's 200k). Because 0 legitimately means "no decimation"
+   * (post-processing / replay), this one needs the flag. */
+  uint8_t mid360_live_points_per_sec_set;
+  uint32_t mid360_live_points_per_sec;
+
+  /* IMU publication. Flagged for the same reason: 0 means "point-only", which
+   * is a real choice (see the pre-bound descriptors above). */
+  uint8_t mid360_publish_imu_set;
+  uint8_t mid360_publish_imu;
+
+  /* Point filter (drivers/mid360/mid360_packets.h's PointFilterConfig). The
+   * defaults come from real Livox recordings, so a caller that does not care
+   * should leave all of this zeroed. */
+  uint8_t mid360_filter_set;           /* 0 = keep every default below */
+  uint8_t mid360_drop_no_return;       /* default 1 */
+  uint8_t mid360_tag_reject_mask;      /* default: the spatial-noise mask */
+  uint8_t mid360_min_reflectivity;     /* default 0 */
+  float mid360_min_range_m;            /* default 0.10 */
+  float mid360_max_range_m;            /* 0 = unbounded (~70 m sensor) */
+
+  /* Verify the packet CRC32 in software. The SDK already did it; the raw-UDP
+   * backend has nobody else to trust, so a caller on that path usually wants
+   * this on. Flagged because 0 is the default AND a real choice. */
+  uint8_t mid360_verify_crc_set;
+  uint8_t mid360_verify_crc;
+
+  /* SDK2 only. SDK2's entry point takes a config FILE path; with this empty
+   * the driver writes one into the temp directory. On Android there is no
+   * writable temp directory unless the app sets TMPDIR (android/NOTES.md §8
+   * finding 4 — the work-around this field removes the need for), so an
+   * Android caller should point this at a path inside its own cacheDir. NULL
+   * or "" keeps the ABI-4 behaviour. */
+  const char* mid360_sdk_config_path;
 } scan_device_config;
 
 /* --- engine ------------------------------------------------------------- */
@@ -718,6 +899,10 @@ SCAN_API scan_error_t scan_engine_add_device(scan_engine* engine,
 SCAN_API scan_error_t scan_engine_remove_device(scan_engine* engine, uint32_t device_id);
 SCAN_API scan_error_t scan_engine_device_health(scan_engine* engine, uint32_t device_id,
                                                 scan_device_health* out);
+/* ABI 5. SCAN_ERR_NOT_FOUND for an unknown id, SCAN_ERR_INVALID_ARGUMENT for a
+ * device that is not a Mid-360. Always writes *out (zeroed) first. */
+SCAN_API scan_error_t scan_engine_mid360_stats(scan_engine* engine, uint32_t device_id,
+                                               scan_mid360_stats* out);
 
 /* Bytes from the app's serial reader. t_mono_ns 0 = "stamp on arrival". */
 SCAN_API scan_error_t scan_engine_push_serial_bytes(scan_engine* engine, uint32_t device_id,
@@ -840,6 +1025,33 @@ SCAN_API scan_error_t scan_engine_georef_solution(scan_engine* engine,
  * scan_engine_crs_epsg() returns "EPSG:32650" or "". */
 SCAN_API const char* scan_engine_crs_wkt(scan_engine* engine);
 SCAN_API const char* scan_engine_crs_epsg(scan_engine* engine);
+
+/* The survey profile's EPSG picker (Tech Spec §3.4), ABI 5.
+ *
+ * The engine can render a WKT for WGS 84 and the UTM zones and NOTHING else —
+ * it ships no PROJ and no proj.db (gnss/crs.h explains the trade). A national
+ * grid (HK1980 EPSG:2326, OSGB36 EPSG:27700, RD New EPSG:28992, ...) is
+ * therefore only expressible if the CALLER supplies the WKT its own geodetic
+ * authority publishes. This is the way in, and before ABI 5 there was none
+ * from C at all (docs/INT29-wiring.md §7 item 5).
+ *
+ *   scan_engine_set_crs(e, "EPSG:2326", wkt)  label exports with that CRS
+ *   scan_engine_set_crs(e, "EPSG:32650", "")  an EPSG the engine can render
+ *   scan_engine_set_crs(e, NULL, NULL)        clear; back to auto-UTM
+ *
+ * Both strings are COPIED (convention 3). NULL is treated as "". VALIDATED:
+ * SCAN_ERR_INVALID_ARGUMENT for an EPSG string that does not parse, for a WKT
+ * that is not one (a PROJ.4 string, a bare code, a truncated paste), and for
+ * an EPSG the engine cannot render supplied with no WKT — that combination
+ * silently produces an unlabelled export, which is the failure this call
+ * exists to prevent.
+ *
+ * It changes WHAT label a georeferenced cloud gets, never WHETHER an
+ * ungeoreferenced one may be labelled: scan_engine_crs_wkt() and
+ * scan_engine_crs_epsg() stay EMPTY until the georef transform converges
+ * either way. */
+SCAN_API scan_error_t scan_engine_set_crs(scan_engine* engine, const char* epsg,
+                                          const char* wkt);
 
 /* --- NTRIP client (A10) --------------------------------------------------
  *

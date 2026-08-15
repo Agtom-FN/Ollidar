@@ -220,6 +220,58 @@ int MergeProject::find(const std::string& provenance_id) const {
   return -1;
 }
 
+Status MergeProject::remove_session(std::uint32_t id) {
+  if (!impl_->valid(id)) {
+    return set_last_error(ScanError::kNotFound, "merge: no session %u to remove", id);
+  }
+  const bool was_anchor = impl_->sessions[id].anchor;
+
+  impl_->sessions.erase(impl_->sessions.begin() + static_cast<std::ptrdiff_t>(id));
+  // Ids ARE indices (merge.h states this), so everything after the hole
+  // renumbers. Default priorities were handed out as the id at add time; a
+  // caller-supplied priority is left alone, because it is a caller's ordering
+  // and not an index.
+  for (std::size_t i = 0; i < impl_->sessions.size(); ++i) {
+    impl_->sessions[i].id = static_cast<std::uint32_t>(i);
+  }
+
+  // Every pair names sessions by id, so all of them are now either stale or
+  // wrong. Clearing is the honest answer; refine()/survey_overlap() rebuild.
+  impl_->report.pairs.clear();
+  impl_->report.worst_rms_m = 0.f;
+  impl_->report.worst_overlap = 0.f;
+  impl_->report.pairs_refined = 0;
+  impl_->report.pairs_converged = 0;
+  impl_->report.pairs_low_overlap = 0;
+  impl_->report.relaxed = false;
+  impl_->report.graph = post::PoseGraphSummary{};
+  impl_->report.merged_points = 0;
+  impl_->report.dedup_dropped_points = 0;
+  impl_->report.priority_dropped_points = 0;
+  impl_->report.pages_appended = 0;
+  impl_->report.pages_shared = 0;
+
+  if (impl_->sessions.empty()) {
+    impl_->anchor_id = 0;
+    impl_->refresh_session_summaries();
+    return kOkStatus;
+  }
+
+  if (was_anchor) {
+    // set_anchor() rebases everything onto the new anchor's frame, so the
+    // relative geometry survives and only the origin moves.
+    impl_->anchor_id = 0;
+    for (MergeSession& s : impl_->sessions) s.anchor = false;
+    const Status st = set_anchor(0);
+    if (!st.ok()) return st;
+  } else {
+    // The anchor is still there; its index shifted iff it sat after the hole.
+    if (impl_->anchor_id > id) --impl_->anchor_id;
+  }
+  impl_->refresh_session_summaries();
+  return kOkStatus;
+}
+
 Status MergeProject::set_anchor(std::uint32_t id) {
   if (!impl_->valid(id)) {
     return set_last_error(ScanError::kNotFound, "merge: no session %u", id);

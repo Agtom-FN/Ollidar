@@ -490,6 +490,112 @@ int scan_capi_smoke_run(const uint8_t* d6_bytes, size_t d6_len) {
     }
   }
 
+  /* --- ABI 5 (INT-FINAL): the Android capture seam ------------------------
+   *
+   * The reference call sequence for android/NOTES.md §8 finding 1: the app
+   * binds its own sockets to the USB-Ethernet Network, hands BOTH descriptors
+   * down, and the capture session — the same scan_engine* everything else
+   * runs on — receives points AND IMU through them. That is the whole thing
+   * B3 could not do and had to work around with a standalone C++ engine.
+   *
+   * The descriptors here are deliberately bogus: add_device does not open
+   * anything (no session is running), and a smoke test must not depend on a
+   * network. The point is that the FIELDS exist and convert. */
+  {
+    scan_device_config mid;
+    scan_engine_config c5;
+    scan_engine* e5 = NULL;
+    uint32_t mid_id = 0;
+
+    /* A fresh engine: the one above was destroyed at the end of the ABI-3
+     * block, and these two ABI-5 surfaces need no session. */
+    memset(&c5, 0, sizeof c5);
+    c5.app_name = "capi-smoke-abi5";
+    c5.log_level = SCAN_LOG_WARN;
+    if (scan_engine_create(&c5, &e5) != SCAN_OK || e5 == NULL) return 128;
+
+    memset(&mid, 0, sizeof mid);
+    mid.kind = SCAN_DEVICE_MID360;
+    mid.lidar_ip = "192.168.1.100";
+    mid.host_ip = "192.168.1.5";
+    mid.mid360_backend = SCAN_MID360_BACKEND_RAW_UDP;
+    mid.mid360_prebound_fd = 1001;      /* Os.socket() + Network.bindSocket() */
+    mid.mid360_prebound_imu_fd = 1002;  /* the SECOND one: finding 2 */
+    mid.mid360_host_point_port = 56301;
+    mid.mid360_host_imu_port = 56401;
+    mid.mid360_recv_buffer_bytes = 4 * 1024 * 1024;
+    mid.mid360_live_points_per_sec_set = 1;
+    mid.mid360_live_points_per_sec = 40000;
+    mid.mid360_publish_imu_set = 1;
+    mid.mid360_publish_imu = 1;
+    mid.mid360_filter_set = 1;
+    mid.mid360_drop_no_return = 1;
+    mid.mid360_min_range_m = 0.1f;
+    mid.mid360_sdk_config_path = "/data/user/0/app/cache/mid360.json"; /* finding 4 */
+    if (scan_engine_add_device(e5, &mid, &mid_id) != SCAN_OK) return 129;
+    if (scan_engine_remove_device(e5, mid_id) != SCAN_OK) return 130;
+
+    /* A pre-bound descriptor cannot reach SDK2 (finding 3), and saying so at
+     * add_device is the difference between a clear message and a bench
+     * session spent wondering why the seam does nothing. */
+    mid.mid360_backend = SCAN_MID360_BACKEND_SDK2;
+    if (scan_engine_add_device(e5, &mid, &mid_id) != SCAN_ERR_INVALID_ARGUMENT) return 131;
+
+    /* A zeroed Mid-360 config is still exactly the ABI-4 device. */
+    memset(&mid, 0, sizeof mid);
+    mid.kind = SCAN_DEVICE_MID360;
+    mid.lidar_ip = "192.168.1.100";
+    mid.host_ip = "192.168.1.5";
+    if (scan_engine_add_device(e5, &mid, &mid_id) != SCAN_OK) return 132;
+
+    /* The Mid-360's OWN counters (finding 5). Nothing has streamed, so what is
+     * asserted is that the question is ASKABLE and that the wrong device kind
+     * is refused rather than silently zeroed. */
+    {
+      scan_mid360_stats ms;
+      memset(&ms, 0xAB, sizeof ms);
+      if (scan_engine_mid360_stats(e5, mid_id, &ms) != SCAN_OK) return 133;
+      if (ms.link != SCAN_MID360_LINK_DOWN) return 134;
+      if (ms.forced_reinits != 0 || ms.watchdog_trips != 0) return 135;
+      if (ms.device_sn[0] != '\0') return 136;
+      if (scan_engine_mid360_stats(e5, 4242u, &ms) != SCAN_ERR_NOT_FOUND) return 137;
+      if (scan_engine_mid360_stats(e5, mid_id, NULL) != SCAN_ERR_INVALID_ARGUMENT) return 138;
+    }
+    if (scan_engine_remove_device(e5, mid_id) != SCAN_OK) return 139;
+    scan_engine_destroy(e5);
+  }
+
+  /* --- ABI 5 (INT-FINAL): the CRS escape hatch ---------------------------- */
+  {
+    scan_engine_config c6;
+    scan_engine* e6 = NULL;
+    /* EPSG:2326 is Hong Kong 1980 Grid — a national grid the engine has no
+     * table entry for, which is exactly why the WKT has to come from here. */
+    static const char* const hk_wkt =
+        "PROJCS[\"Hong Kong 1980 Grid System\",GEOGCS[\"Hong Kong 1980\","
+        "DATUM[\"Hong_Kong_1980\",SPHEROID[\"International 1924\",6378388,297]],"
+        "PRIMEM[\"Greenwich\",0],UNIT[\"degree\",0.0174532925199433]],"
+        "PROJECTION[\"Transverse_Mercator\"],PARAMETER[\"scale_factor\",1],"
+        "UNIT[\"metre\",1],AUTHORITY[\"EPSG\",\"2326\"]]";
+    memset(&c6, 0, sizeof c6);
+    c6.app_name = "capi-smoke-crs";
+    c6.log_level = SCAN_LOG_WARN;
+    if (scan_engine_create(&c6, &e6) != SCAN_OK || e6 == NULL) return 140;
+    if (scan_engine_set_crs(e6, "EPSG:2326", hk_wkt) != SCAN_OK) return 141;
+    /* The code alone is refused: the engine cannot render a WKT for it, and
+     * an unlabelled export is the failure this call exists to prevent. */
+    if (scan_engine_set_crs(e6, "EPSG:2326", "") != SCAN_ERR_INVALID_ARGUMENT) return 142;
+    /* A UTM zone it CAN render needs no WKT. */
+    if (scan_engine_set_crs(e6, "EPSG:32650", NULL) != SCAN_OK) return 143;
+    if (scan_engine_set_crs(e6, "not-an-epsg", hk_wkt) != SCAN_ERR_INVALID_ARGUMENT) {
+      return 144;
+    }
+    /* Still gated on convergence: nothing here georeferenced anything. */
+    if (scan_engine_crs_wkt(e6)[0] != '\0') return 145;
+    if (scan_engine_set_crs(e6, NULL, NULL) != SCAN_OK) return 146;  /* clear */
+    scan_engine_destroy(e6);
+  }
+
   return 0;
 }
 

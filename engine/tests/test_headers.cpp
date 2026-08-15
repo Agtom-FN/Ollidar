@@ -7,6 +7,7 @@
 #include "scanengine/color/clock_sweep.h"
 #include "scanengine/color/colorize.h"
 #include "scanengine/color/colorizer.h"
+#include "scanengine/color/extrinsics_solver.h"
 #include "scanengine/color/frames_idx.h"
 #include "scanengine/color/image_source.h"
 #include "scanengine/core/engine.h"
@@ -182,4 +183,16 @@ TEST_CASE("headers/A11_color_and_INT34_types_are_usable") {
   CHECK(cw.timesync == nullptr);           // null leaves the refusal in place
   CHECK(cw.sync_stream == StreamId::kLidarMid360);
   CHECK(cw.imu_window_ns == 250'000'000);  // A11 §8.3's one-liner
+
+  // INT-FINAL: the ExtrinsicsSolver seam is no longer only a seam.
+  CHECK(std::is_abstract<ExtrinsicsSolver>::value);
+  CHECK_FALSE(std::is_abstract<color::MountExtrinsicsSolver>::value);
+  color::ExtrinsicsSolverConfig esc;
+  CHECK(esc.camera_from_keyframes);
+  CHECK(esc.match_tolerance_ns == 2'000'000);
+  CHECK(esc.default_sigma_m == 0.02);        // the Mid-360's range noise
+  CHECK(esc.cad_camera_from_lidar[0] == 1.0);
+  color::BoardDetection bd;
+  CHECK(bd.d == 0.0);                        // refused until the app fills it in
+  CHECK(bd.sigma_m < 0.0);                   // < 0 = take the config's default
 }

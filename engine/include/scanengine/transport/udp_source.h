@@ -82,7 +82,30 @@ struct UdpConfig {
   // Android: a socket already bound to the USB-Ethernet Network, or -1.
   // When set, UdpSource does not create or bind a socket, and does not close
   // the descriptor on stop() — the app owns it.
+  //
+  // ONE UdpSource, ONE descriptor: this is the socket THIS source receives on,
+  // whichever port it is. `bind_port` is ignored when it is set (the app
+  // already chose the port when it bound).
   int prebound_fd = -1;
+
+  // The SECOND half of the Android seam (android/NOTES.md §8, B3 finding 2).
+  //
+  // `Mid360Backend::kRawUdp` opens TWO sources — points and IMU — from ONE
+  // UdpConfig, so before this field a pre-bound capture could only be
+  // point-only: a single descriptor recvfrom()'d by two receive threads has
+  // them steal each other's datagrams, silently and at random. B3 worked
+  // around it by setting `publish_imu = false` and saying so in the UI.
+  //
+  // `RawUdpBackend` gives this one to the IMU source and `prebound_fd` to the
+  // point source. It is NOT read by UdpSource itself — a source has exactly
+  // one socket — which is why it can live here without making the
+  // one-source-one-fd rule above ambiguous.
+  //
+  // Never-close applies to BOTH: whichever source receives a pre-bound
+  // descriptor leaves it open at stop(), because the app owns it and will
+  // close it after the engine has torn down (order matters: no receive thread
+  // may still be inside recvfrom on it).
+  int prebound_imu_fd = -1;
 };
 
 // Receive-side statistics beyond the generic TransportStats.

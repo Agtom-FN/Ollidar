@@ -40,9 +40,13 @@
 #include <vector>
 
 #include "packet_builder.h"
+#include "scanengine/color/colorizer.h"
+#include "scanengine/color/frames_idx.h"
 #include "scanengine/core/engine.h"
 #include "scanengine/drivers/mid360/mid360_packets.h"
+#include "scanengine/jobs/colorize_wiring.h"
 #include "scanengine/jobs/job_runner_adapter.h"
+#include "scanengine/poses/se3.h"
 #include "scanengine/record/lscan.h"
 
 using namespace scanengine;
@@ -66,9 +70,16 @@ int usage() {
       "  engine_cli --replay <capture.bin> [--chunk N]\n"
       "  engine_cli --post <lscan-dir> [--out <dir>] [--no-loops] [--no-outlier]\n"
       "                                [--dedup <metres>] [--quiet]\n"
-      "  engine_cli --synth-lscan <dir> [seconds]\n"
+      "                                [--colorize --sync-quality good|gated|poor\n"
+      "                                 [--allow-poor-sync] [--clock-offset <ns>]]\n"
+      "  engine_cli --synth-lscan <dir> [seconds] [--frames N]\n"
       "  engine_cli --post-selftest [--quiet]\n"
       "  engine_cli --version\n"
+      "\n"
+      "--sync-quality is MANDATORY with --colorize and has no default: it is A4's\n"
+      "verdict on the capture's camera/lidar time sync, only the capture side knows\n"
+      "it, and colorizing on a guess produces a plausible, wrong cloud. Omitting it\n"
+      "is refused (docs/A11-color.md §2 — the gate fails closed).\n"
       "\n"
       "exit: 0 ok, 1 failed, 2 usage, 3 cancelled\n");
   return kExitUsage;
@@ -380,9 +391,197 @@ bool write_synth_lscan(const std::string& dir, double duration_s) {
   return w.close().ok();
 }
 
-int cmd_synth_lscan(const char* dir, double seconds) {
+// --- synthetic camera keyframes (INT-FINAL) ---------------------------------
+//
+// `--post --colorize` needs a session with a camera, and the whole point of
+// --synth-lscan is that no rig and no committed binary fixture is required. So
+// the keyframes are synthesized the same way the points are: N images written
+// to streams/frames/ and N records written to streams/frames/frames.idx
+// through A11's own KeyframeIndexWriter — the same writer B8's capture path
+// uses, so this exercises the real format and not a test-only one.
+//
+// The images are PNG rather than JPEG because a PNG can be produced exactly,
+// in ~40 lines, with no encoder: deflate has a STORED block type, so the
+// "compressed" stream is the raw bytes plus a 5-byte header per block. The
+// vendored stb_image decodes PNG and JPEG both, and a keyframe's image name
+// carries no extension requirement.
+
+std::uint32_t crc32_of(const std::uint8_t* p, std::size_t n, std::uint32_t crc = 0xFFFFFFFFu) {
+  static std::uint32_t table[256];
+  static bool built = false;
+  if (!built) {
+    for (std::uint32_t i = 0; i < 256; ++i) {
+      std::uint32_t c = i;
+      for (int k = 0; k < 8; ++k) c = (c & 1u) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
+      table[i] = c;
+    }
+    built = true;
+  }
+  for (std::size_t i = 0; i < n; ++i) crc = table[(crc ^ p[i]) & 0xFFu] ^ (crc >> 8);
+  return crc;
+}
+
+void put_be32(std::vector<std::uint8_t>* out, std::uint32_t v) {
+  out->push_back(static_cast<std::uint8_t>(v >> 24));
+  out->push_back(static_cast<std::uint8_t>(v >> 16));
+  out->push_back(static_cast<std::uint8_t>(v >> 8));
+  out->push_back(static_cast<std::uint8_t>(v));
+}
+
+void png_chunk(std::vector<std::uint8_t>* out, const char tag[4],
+               const std::vector<std::uint8_t>& body) {
+  put_be32(out, static_cast<std::uint32_t>(body.size()));
+  const std::size_t start = out->size();
+  out->insert(out->end(), tag, tag + 4);
+  out->insert(out->end(), body.begin(), body.end());
+  put_be32(out, crc32_of(out->data() + start, out->size() - start) ^ 0xFFFFFFFFu);
+}
+
+// 8-bit RGB PNG from a row-major buffer (stride = w*3).
+std::vector<std::uint8_t> encode_png_rgb(std::uint32_t w, std::uint32_t h,
+                                         const std::vector<std::uint8_t>& rgb) {
+  std::vector<std::uint8_t> raw;  // filter byte + row, per row
+  raw.reserve(static_cast<std::size_t>(h) * (1 + static_cast<std::size_t>(w) * 3));
+  for (std::uint32_t y = 0; y < h; ++y) {
+    raw.push_back(0);  // filter: none
+    const std::uint8_t* row = rgb.data() + static_cast<std::size_t>(y) * w * 3;
+    raw.insert(raw.end(), row, row + static_cast<std::size_t>(w) * 3);
+  }
+
+  // zlib stream: 0x78 0x01, stored deflate blocks, Adler-32.
+  std::vector<std::uint8_t> z;
+  z.push_back(0x78);
+  z.push_back(0x01);
+  for (std::size_t off = 0; off < raw.size();) {
+    const std::size_t n = std::min<std::size_t>(65535, raw.size() - off);
+    const bool last = (off + n) >= raw.size();
+    z.push_back(last ? 1 : 0);
+    z.push_back(static_cast<std::uint8_t>(n & 0xFF));
+    z.push_back(static_cast<std::uint8_t>(n >> 8));
+    z.push_back(static_cast<std::uint8_t>(~n & 0xFF));
+    z.push_back(static_cast<std::uint8_t>((~n >> 8) & 0xFF));
+    z.insert(z.end(), raw.begin() + static_cast<std::ptrdiff_t>(off),
+             raw.begin() + static_cast<std::ptrdiff_t>(off + n));
+    off += n;
+  }
+  std::uint32_t a = 1, b = 0;
+  for (std::uint8_t c : raw) {
+    a = (a + c) % 65521u;
+    b = (b + a) % 65521u;
+  }
+  put_be32(&z, (b << 16) | a);
+
+  std::vector<std::uint8_t> png = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+  std::vector<std::uint8_t> ihdr;
+  put_be32(&ihdr, w);
+  put_be32(&ihdr, h);
+  ihdr.push_back(8);  // bit depth
+  ihdr.push_back(2);  // colour type: truecolour
+  ihdr.push_back(0);
+  ihdr.push_back(0);
+  ihdr.push_back(0);
+  png_chunk(&png, "IHDR", ihdr);
+  png_chunk(&png, "IDAT", z);
+  png_chunk(&png, "IEND", {});
+  return png;
+}
+
+// Writes `count` keyframes around the synthetic 3 m shell: the camera sits at
+// the origin (where the synthetic sensor is) and looks outward, yawing all the
+// way round so the whole shell is covered. Each image is a flat, per-keyframe
+// colour, which is what makes the selftest's assertion meaningful: a coloured
+// point must carry one of the colours that were actually written.
+bool write_synth_keyframes(const std::string& dir, int count, std::int64_t t0_ns,
+                           double duration_s) {
+  if (count <= 0) return true;
+  std::error_code ec;
+  std::filesystem::create_directories(std::filesystem::path(dir) / "streams" / "frames", ec);
+
+  const std::uint32_t w = 64, h = 48;
+  // A 90-degree horizontal field of view: fx = (w/2) / tan(45 deg) = w/2.
+  const float fx = static_cast<float>(w) * 0.5f;
+
+  color::KeyframeIndexWriter idx;
+  if (!idx.open(dir).ok()) {
+    std::fprintf(stderr, "synth-frames: cannot open the frame index: %s\n", last_error_message());
+    return false;
+  }
+
+  for (int i = 0; i < count; ++i) {
+    const std::uint8_t r = static_cast<std::uint8_t>(40 + (i * 60) % 200);
+    const std::uint8_t g = static_cast<std::uint8_t>(90 + (i * 35) % 150);
+    const std::uint8_t b = static_cast<std::uint8_t>(200 - (i * 45) % 180);
+    std::vector<std::uint8_t> rgb(static_cast<std::size_t>(w) * h * 3);
+    for (std::size_t p = 0; p < rgb.size(); p += 3) {
+      rgb[p] = r;
+      rgb[p + 1] = g;
+      rgb[p + 2] = b;
+    }
+    char name[64];
+    std::snprintf(name, sizeof(name), "kf_%06d.png", i);
+    const auto png = encode_png_rgb(w, h, rgb);
+    const std::string path = dir + "/streams/frames/" + name;
+    FILE* f = std::fopen(path.c_str(), "wb");
+    if (f == nullptr) {
+      std::fprintf(stderr, "synth-frames: cannot write %s\n", path.c_str());
+      (void)idx.close();
+      return false;
+    }
+    std::fwrite(png.data(), 1, png.size(), f);
+    std::fclose(f);
+
+    // world_from_camera: at the origin, yawing round, tilted up into the
+    // shell's elevation band, with image y pointing down (world -z).
+    const double yaw = 2.0 * kPi * static_cast<double>(i) / static_cast<double>(count);
+    const double pitch = 20.0 * kPi / 180.0;
+    double z_cam[3] = {std::cos(pitch) * std::cos(yaw), std::cos(pitch) * std::sin(yaw),
+                       std::sin(pitch)};
+    const double up[3] = {0.0, 0.0, 1.0};
+    double x_cam[3];
+    se3::cross3(z_cam, up, x_cam);
+    se3::normalize3(x_cam);
+    double y_cam[3];
+    se3::cross3(z_cam, x_cam, y_cam);
+    // Column-major fill of a row-major 3x3: column k is the camera axis.
+    const double R[9] = {x_cam[0], y_cam[0], z_cam[0], x_cam[1], y_cam[1],
+                         z_cam[1], x_cam[2], y_cam[2], z_cam[2]};
+    Keyframe kf;
+    se3::matrix_to_quat(R, kf.pose.orientation);
+    kf.t_mono_ns = t0_ns + static_cast<std::int64_t>(duration_s * 1e9 *
+                                                     (static_cast<double>(i) + 0.5) /
+                                                     static_cast<double>(count));
+    kf.pose.t_mono_ns = kf.t_mono_ns;
+    kf.pose.source = StreamId::kPoseAr;
+    kf.pose.quality = PoseQuality::kGood;
+    kf.image_path = std::string("streams/frames/") + name;
+    kf.intrinsics.fx = fx;
+    kf.intrinsics.fy = fx;
+    kf.intrinsics.cx = static_cast<float>(w) * 0.5f;
+    kf.intrinsics.cy = static_cast<float>(h) * 0.5f;
+    kf.intrinsics.width = w;
+    kf.intrinsics.height = h;
+    kf.flags = kKeyframeFlagMotionValid;  // stationary rig: the motion gate passes
+    kf.angular_rate_rad_s = 0.f;
+    kf.linear_speed_m_s = 0.f;
+    kf.image_bytes = static_cast<std::uint32_t>(png.size());
+    if (!idx.add(kf).ok()) {
+      std::fprintf(stderr, "synth-frames: frames.idx rejected keyframe %d: %s\n", i,
+                   last_error_message());
+      (void)idx.close();
+      return false;
+    }
+  }
+  return idx.close().ok();
+}
+
+int cmd_synth_lscan(const char* dir, double seconds, int frames) {
   if (!write_synth_lscan(dir, seconds)) return kExitFailed;
-  std::printf("wrote a %.1f s synthetic Mid-360 .lscan to %s\n", seconds, dir);
+  if (!write_synth_keyframes(dir, frames, 1'700'000'000'000'000'000LL, seconds)) {
+    return kExitFailed;
+  }
+  std::printf("wrote a %.1f s synthetic Mid-360 .lscan to %s", seconds, dir);
+  if (frames > 0) std::printf(" (with %d camera keyframes)", frames);
+  std::printf("\n");
   return kExitOk;
 }
 
@@ -399,10 +598,48 @@ struct PostOptions {
   bool detect_loops = true;
   bool outlier_filter = true;
   double dedup_voxel_m = 0.0;  // 0 = A7's default
+
+  // --- colorization (INT-FINAL, closing docs/INT34-wiring.md §9 item 6) ----
+  //
+  // §9 item 6 named the two things a --colorize flag needed before it could
+  // exist: keyframe JPEGs in the uploaded bundle, and "a decision about
+  // sync_quality that only the capture side can make". The first is now a
+  // property of the bundle the worker is handed (frames/ is either there or it
+  // is not, and its absence is §3.5's "gracefully unavailable", not a
+  // failure); the second is this field, and it FAILS CLOSED.
+  //
+  // kUnknown is what an un-converged A4 estimator reports and what a caller
+  // who never wired A4 gets, and `policy_for(kUnknown)` refuses
+  // (kNotSupported) — docs/A11-color.md §2. So --colorize without
+  // --sync-quality does not colorize; it says which flag is missing and why
+  // the engine will not guess. A worker gets this value from the capture
+  // side's own A4 convergence, carried in the job it was given.
+  bool colorize = false;
+  SyncQuality sync_quality = SyncQuality::kUnknown;
+  bool allow_poor_sync = false;
+  std::int64_t camera_clock_offset_ns = 0;
 };
 
+const char* sync_quality_name(SyncQuality q) {
+  switch (q) {
+    case SyncQuality::kGood: return "good (<= 5 ms)";
+    case SyncQuality::kGated: return "gated (<= 15 ms)";
+    case SyncQuality::kPoor: return "poor (> 15 ms)";
+    case SyncQuality::kUnknown: break;
+  }
+  return "unknown (not converged)";
+}
+
+bool parse_sync_quality(const char* s, SyncQuality* out) {
+  if (std::strcmp(s, "good") == 0) { *out = SyncQuality::kGood; return true; }
+  if (std::strcmp(s, "gated") == 0) { *out = SyncQuality::kGated; return true; }
+  if (std::strcmp(s, "poor") == 0) { *out = SyncQuality::kPoor; return true; }
+  if (std::strcmp(s, "unknown") == 0) { *out = SyncQuality::kUnknown; return true; }
+  return false;
+}
+
 int cmd_post(const std::string& lscan_dir, const std::string& out_dir, const PostOptions& po,
-             bool quiet) {
+             bool quiet, color::ColorizeStats* out_cstats = nullptr) {
   std::error_code ec;
   if (!std::filesystem::is_directory(lscan_dir, ec)) {
     std::fprintf(stderr, "post: '%s' is not a directory\n", lscan_dir.c_str());
@@ -442,6 +679,30 @@ int cmd_post(const std::string& lscan_dir, const std::string& out_dir, const Pos
   opts.store = std::make_shared<PageStore>();
   opts.export_format = ExportFormat::kPlyBinary;
   opts.export_basename = "cloud";
+
+  // --colorize. The colorizer is built HERE and borrowed by the job, because
+  // JobRunnerOptions::colorizer is not owned — the same posture B6's Android
+  // service and the Qt processing panel have. Everything it is configured
+  // with comes through jobs/colorize_wiring.h so the CLI is not a second
+  // place that decides how A4 feeds A11.
+  //
+  // `timesync` is deliberately null: this process never captured anything, so
+  // its TimeSync has nothing to say and reading it would be worse than
+  // useless — it would report kUnknown for a session whose capture side had
+  // converged. The value therefore arrives on the command line, and the
+  // engine still refuses if it was not supplied.
+  jobs::ColorizeWiring wiring;
+  wiring.allow_poor_sync = po.allow_poor_sync;
+  wiring.camera_clock_offset_ns = po.camera_clock_offset_ns;
+  color::ColorizeConfig ccfg = jobs::colorize_config_from(wiring);
+  ccfg.sync_quality = po.sync_quality;
+  ccfg.allow_poor_sync = po.allow_poor_sync;
+  color::PointColorizer colorizer(ccfg);
+  if (po.colorize) {
+    (void)jobs::wire_colorizer(wiring, &colorizer);
+    opts.colorizer = &colorizer;
+  }
+
   jobs::QueueJobRunner runner(&e.jobs(), opts);
 
   JobRequest req;
@@ -451,8 +712,19 @@ int cmd_post(const std::string& lscan_dir, const std::string& out_dir, const Pos
   // With an --out, the request is "post then export"; without one it is
   // "post" and the result stays in the process's PageStore, which is what a
   // caller wanting only a validity check (or a chained in-process step)
-  // wants.
-  req.pipeline = out_dir.empty() ? "post" : "export";
+  // wants. --colorize inserts A11's stage between the two, which is why the
+  // adapter grew a "colorize-export" pipeline rather than the CLI running two
+  // requests: chaining is by job id, and a second request would re-run the
+  // post pipeline over the same .lscan.
+  if (po.colorize) {
+    req.pipeline = out_dir.empty() ? "colorize" : "colorize-export";
+  } else {
+    req.pipeline = out_dir.empty() ? "post" : "export";
+  }
+  if (po.colorize && !quiet) {
+    std::fprintf(stderr, "post: colorize enabled, sync quality %s\n",
+                 sync_quality_name(po.sync_quality));
+  }
 
   auto id = runner.submit(req);
   if (!id.ok()) {
@@ -478,6 +750,8 @@ int cmd_post(const std::string& lscan_dir, const std::string& out_dir, const Pos
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
   }
 
+  if (po.colorize && out_cstats != nullptr) *out_cstats = colorizer.stats();
+
   if (st.state == JobState::kCancelled) {
     std::fprintf(stderr, "post: cancelled\n");
     return kExitCancelled;
@@ -491,6 +765,22 @@ int cmd_post(const std::string& lscan_dir, const std::string& out_dir, const Pos
   std::printf("  points published    : %llu\n",
               static_cast<unsigned long long>(opts.store->total_points()));
   std::printf("  pages               : %zu\n", opts.store->page_count());
+  if (po.colorize) {
+    const color::ColorizeStats& cs = colorizer.stats();
+    std::printf("  keyframes used/total: %u / %u\n", cs.keyframes_used, cs.keyframes_total);
+    std::printf("  points colorized    : %llu (%.1f%% coverage)\n",
+                static_cast<unsigned long long>(cs.points_colorized),
+                100.0 * static_cast<double>(cs.coverage_fraction()));
+    std::printf("  low conf / uncovered: %llu / %llu\n",
+                static_cast<unsigned long long>(cs.points_low_confidence),
+                static_cast<unsigned long long>(cs.points_uncovered));
+    if (cs.keyframes_total == 0) {
+      // Tech Spec §3.5: a session with no camera is "gracefully unavailable",
+      // and the Colorize job reports kOk for it. Say so, rather than leaving a
+      // row of zeros that reads like a bug.
+      std::printf("  (this session has no camera — nothing to colorize)\n");
+    }
+  }
   if (!out_dir.empty()) {
     const std::string path = out_dir + "/cloud.ply";
     const std::uintmax_t sz = std::filesystem::file_size(path, ec);
@@ -521,7 +811,10 @@ int cmd_post_selftest(bool quiet) {
   std::printf("post-selftest: synthesize -> --post --out -> verify\n");
 
   int rc = kExitFailed;
-  if (write_synth_lscan(lscan, 2.2)) {
+  // 6 camera keyframes around the shell (INT-FINAL), so the colorize leg
+  // below has a real frames.idx and real images to read.
+  if (write_synth_lscan(lscan, 2.2) &&
+      write_synth_keyframes(lscan, 6, 1'700'000'000'000'000'000LL, 2.2)) {
     PostOptions po;
     // The synthetic capture's 96 points per packet repeat identically at
     // every keyframe and dedup down to ~96 points thinly scattered over a 3 m
@@ -543,6 +836,53 @@ int cmd_post_selftest(bool quiet) {
                      "no points\n",
                      ec ? 0ull : static_cast<unsigned long long>(sz));
         rc = kExitFailed;
+      }
+    }
+
+    // --- the colorize leg (INT-FINAL) ------------------------------------
+    //
+    // Same .lscan, same job queue, one more stage: post -> colorize ->
+    // export. Two things are asserted, and the first matters more than the
+    // second: that the gate REFUSES a run with no sync quality (which is the
+    // whole reason --sync-quality is mandatory), and that a run with one
+    // actually puts colour on points.
+    if (rc == kExitOk) {
+      const std::string cout_dir = (root / "out-colour").string();
+      std::printf("post-selftest: colorize leg (refuse-then-run)\n");
+
+      PostOptions cpo;
+      cpo.outlier_filter = false;
+      cpo.detect_loops = false;
+      cpo.dedup_voxel_m = 0.05;
+      cpo.colorize = true;
+      cpo.sync_quality = SyncQuality::kUnknown;  // the fail-closed default
+      const int refused = cmd_post(lscan, cout_dir, cpo, quiet);
+      if (refused == kExitOk) {
+        std::fprintf(stderr,
+                     "post-selftest: a colorize with NO sync quality succeeded; the gate is "
+                     "supposed to fail closed (docs/A11-color.md §2)\n");
+        rc = kExitFailed;
+      }
+
+      if (rc == kExitOk) {
+        cpo.sync_quality = SyncQuality::kGood;
+        color::ColorizeStats cs;
+        rc = cmd_post(lscan, cout_dir, cpo, quiet, &cs);
+        if (rc == kExitOk) {
+          const std::uintmax_t sz = std::filesystem::file_size(cout_dir + "/cloud.ply", ec);
+          if (ec || sz < 512) {
+            std::fprintf(stderr, "post-selftest: the colorized export is empty\n");
+            rc = kExitFailed;
+          }
+          if (cs.keyframes_used == 0 || cs.points_colorized == 0) {
+            std::fprintf(stderr,
+                         "post-selftest: the colorize stage ran but coloured nothing "
+                         "(%u/%u keyframes used, %llu points coloured)\n",
+                         cs.keyframes_used, cs.keyframes_total,
+                         static_cast<unsigned long long>(cs.points_colorized));
+            rc = kExitFailed;
+          }
+        }
       }
     }
   } else {
@@ -589,19 +929,57 @@ int main(int argc, char** argv) {
     if (argc < 3 || argv[2][0] == '-') return usage();
     std::string out_dir;
     PostOptions po;
+    bool sync_given = true;
     for (int i = 3; i < argc; ++i) {
       if (std::strcmp(argv[i], "--no-loops") == 0) po.detect_loops = false;
       if (std::strcmp(argv[i], "--no-outlier") == 0) po.outlier_filter = false;
+      if (std::strcmp(argv[i], "--colorize") == 0) {
+        po.colorize = true;
+        sync_given = false;  // until --sync-quality is seen
+      }
+      if (std::strcmp(argv[i], "--allow-poor-sync") == 0) po.allow_poor_sync = true;
       if (i + 1 >= argc) continue;
       if (std::strcmp(argv[i], "--out") == 0) out_dir = argv[i + 1];
       if (std::strcmp(argv[i], "--dedup") == 0) po.dedup_voxel_m = std::atof(argv[i + 1]);
+      if (std::strcmp(argv[i], "--clock-offset") == 0) {
+        po.camera_clock_offset_ns = std::atoll(argv[i + 1]);
+      }
+      if (std::strcmp(argv[i], "--sync-quality") == 0) {
+        if (!parse_sync_quality(argv[i + 1], &po.sync_quality)) {
+          std::fprintf(stderr, "post: --sync-quality '%s' is not good|gated|poor|unknown\n",
+                       argv[i + 1]);
+          return kExitUsage;
+        }
+        sync_given = true;
+      }
+    }
+    // Fail closed, and fail EARLY: the refusal is a property of the gate
+    // (docs/A11-color.md §2), and there is no reason to run a post pipeline
+    // first just to reach it. The engine refuses too — this only moves the
+    // same answer to where the operator can act on it.
+    if (!sync_given) {
+      std::fprintf(stderr,
+                   "post: --colorize needs --sync-quality good|gated|poor. It is A4's verdict on "
+                   "this capture's camera/lidar sync and only the capture side knows it; the "
+                   "engine will not guess (the gate fails closed — docs/A11-color.md §2).\n");
+      return kExitUsage;
+    }
+    if (po.sync_quality == SyncQuality::kPoor && !po.allow_poor_sync) {
+      std::fprintf(stderr,
+                   "post: --sync-quality poor is refused unless --allow-poor-sync is given "
+                   "(S6: above 15 ms of jitter the colours smear off the geometry).\n");
+      return kExitUsage;
     }
     return cmd_post(argv[2], out_dir, po, quiet);
   }
   if (cmd == "--synth-lscan") {
     if (argc < 3 || argv[2][0] == '-') return usage();
     const double seconds = (argc > 3 && argv[3][0] != '-') ? std::atof(argv[3]) : 2.2;
-    return cmd_synth_lscan(argv[2], seconds);
+    int frames = 0;
+    for (int i = 3; i + 1 < argc; ++i) {
+      if (std::strcmp(argv[i], "--frames") == 0) frames = std::atoi(argv[i + 1]);
+    }
+    return cmd_synth_lscan(argv[2], seconds, frames);
   }
   if (cmd == "--post-selftest") return cmd_post_selftest(quiet);
   return usage();

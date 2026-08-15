@@ -202,7 +202,10 @@ TEST_CASE("engine/create_starts_idle_and_reports_a_version") {
   // 3: INT-29's GNSS/RTK surface (NMEA in, fix/NTRIP/georef out).
   // 4: INT-34's colorization + jobs surface (record_keyframe, the colorizer
   //    handle, the clock sweep, the kJobProgress union case).
-  CHECK(kEngineAbiVersion == 4);
+  // 5: INT-FINAL's Android capture seam (scan_device_config's Mid-360 half
+  //    grew the backend, the two pre-bound fds, the ports and the filter) plus
+  //    scan_engine_set_crs() and scan_engine_mid360_stats().
+  CHECK(kEngineAbiVersion == 5);
 }
 
 TEST_CASE("engine/session_transitions_are_enforced_and_announced") {

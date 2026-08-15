@@ -121,7 +121,8 @@ Result<std::uint64_t> QueueJobRunner::submit(const JobRequest& req) {
   switch (req.mode) {
     case JobMode::kLocal: {
       const std::string& p = req.pipeline;
-      if (!(p.empty() || p == "post" || p == "colorize" || p == "export")) {
+      if (!(p.empty() || p == "post" || p == "colorize" || p == "export" ||
+            p == "colorize-export")) {
         return set_last_error(ScanError::kUnimplemented,
                               "jobs/runner: pipeline '%s' has no job kind (A12 plan / A13 merge "
                               "are not job kinds; see jobs/job_types.h)",
@@ -141,10 +142,17 @@ Result<std::uint64_t> QueueJobRunner::submit(const JobRequest& req) {
       }
       if (p.empty() || p == "post") break;
 
-      if (p == "colorize") {
+      // "colorize" and "colorize-export" share this stage; the second one
+      // then falls through into the export stage below, which is the whole
+      // difference between them. A cloud worker asked to colour a session and
+      // hand back a file needs both, and the two-request alternative cannot
+      // work: chaining is by job id, and a second request would re-run the
+      // post pipeline over the same .lscan (INT-34 §9 item 6).
+      if (p == "colorize" || p == "colorize-export") {
         if (impl_->opts.colorizer == nullptr) {
           return unwind(ScanError::kUnimplemented,
-                        "jobs/runner: pipeline 'colorize' needs JobRunnerOptions::colorizer");
+                        "jobs/runner: pipelines 'colorize'/'colorize-export' need "
+                        "JobRunnerOptions::colorizer");
         }
         JobSpec col;
         col.kind = JobKind::kColorize;
@@ -156,13 +164,14 @@ Result<std::uint64_t> QueueJobRunner::submit(const JobRequest& req) {
         if (!submit_spec(std::move(col))) {
           return unwind(ScanError::kInvalidArgument, "jobs/runner: Colorize spec rejected");
         }
-        break;
+        if (p == "colorize") break;
       }
 
-      // p == "export"
+      // p == "export" or the export half of "colorize-export"
       if (req.output_dir.empty()) {
         return unwind(ScanError::kInvalidArgument,
-                      "jobs/runner: pipeline 'export' needs JobRequest::output_dir");
+                      "jobs/runner: pipelines 'export'/'colorize-export' need "
+                      "JobRequest::output_dir");
       }
       JobSpec ex;
       ex.kind = JobKind::kExportPoints;

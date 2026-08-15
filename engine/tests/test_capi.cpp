@@ -57,7 +57,7 @@ TEST_CASE("capi/smoke_sequence_from_C_with_a_synthetic_D6_capture") {
 
 TEST_CASE("capi/abi_version_and_error_strings") {
   CHECK(scan_engine_abi_version() == SCAN_ABI_VERSION);
-  CHECK(SCAN_ABI_VERSION == 4u);  // moves with scanengine::kEngineAbiVersion
+  CHECK(SCAN_ABI_VERSION == 5u);  // moves with scanengine::kEngineAbiVersion
   CHECK(std::string(scan_error_str(SCAN_OK)) == "ok");
   CHECK(std::string(scan_error_str(SCAN_ERR_CHECKSUM)) == "checksum failed");
   CHECK(std::string(scan_error_str(9999)) == "unrecognized error code");

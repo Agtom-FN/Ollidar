@@ -2,9 +2,11 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <utility>
 
 #include "scanengine/color/frames_idx.h"
@@ -14,7 +16,68 @@
 namespace scanengine {
 namespace {
 constexpr const char* kMod = "engine";
+
+std::string trim_copy(const std::string& s) {
+  const auto not_space = [](unsigned char c) { return std::isspace(c) == 0; };
+  auto b = std::find_if(s.begin(), s.end(), not_space);
+  auto e = std::find_if(s.rbegin(), s.rend(), not_space).base();
+  return b < e ? std::string(b, e) : std::string();
 }
+
+// A structural check on a caller-supplied CRS string, NOT a geodetic one.
+//
+// The engine cannot verify that a WKT describes the grid it claims to — that
+// needs the registry it deliberately does not ship. What it CAN refuse is the
+// class of mistake that actually happens across an FFI: a PROJ.4 string, a
+// bare EPSG code, a truncated copy-paste, or a JSON blob handed to a field
+// that a LAS writer will embed verbatim. Every one of those produces a file
+// that opens and is wrong, which is the failure mode gnss/crs.h's header calls
+// out. Balanced brackets outside quotes is the cheap half of "it parses".
+Status validate_wkt(const std::string& w) {
+  static const char* const kHeads[] = {"PROJCS",  "GEOGCS",   "GEOCCS",  "COMPD_CS", "VERT_CS",
+                                       "LOCAL_CS", "PROJCRS", "GEOGCRS", "GEODCRS",  "COMPOUNDCRS",
+                                       "VERTCRS",  "ENGCRS",  "BOUNDCRS"};
+  std::string head;
+  for (char c : w) {
+    if (c == '[' || c == '(') break;
+    head.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+  }
+  bool known = false;
+  for (const char* h : kHeads) known = known || (head == h);
+  if (!known) {
+    return set_last_error(ScanError::kInvalidArgument,
+                          "Engine::set_crs: '%s' does not start with an OGC WKT CRS keyword "
+                          "(PROJCS/GEOGCS/COMPD_CS/… or their WKT2 spellings) — a PROJ.4 string "
+                          "or a bare EPSG code is not a WKT",
+                          head.empty() ? w.c_str() : head.c_str());
+  }
+  int depth = 0;
+  bool in_quotes = false, saw_name = false, deepest_ok = true;
+  for (std::size_t i = 0; i < w.size(); ++i) {
+    const char c = w[i];
+    if (c == '"') {
+      in_quotes = !in_quotes;
+      if (in_quotes && depth == 1 && !saw_name) saw_name = true;
+      continue;
+    }
+    if (in_quotes) continue;
+    if (c == '[' || c == '(') ++depth;
+    if (c == ']' || c == ')') {
+      if (--depth < 0) deepest_ok = false;
+    }
+  }
+  if (in_quotes || depth != 0 || !deepest_ok) {
+    return set_last_error(ScanError::kInvalidArgument,
+                          "Engine::set_crs: the WKT's brackets/quotes do not balance — it is "
+                          "truncated or corrupted (a LAS VLR would embed it verbatim)");
+  }
+  if (!saw_name) {
+    return set_last_error(ScanError::kInvalidArgument,
+                          "Engine::set_crs: the WKT has no quoted CRS name");
+  }
+  return kOkStatus;
+}
+}  // namespace
 
 const char* to_string(TrajectorySource s) noexcept {
   switch (s) {
@@ -173,6 +236,10 @@ struct Engine::Impl {
   Engine::RtcmSink rtcm_sink = nullptr;
   void* rtcm_user = nullptr;
   bool georef_converged = false;
+  // The §3.4 EPSG-picker override (Engine::set_crs). Guarded by gnss_m, which
+  // is the lock the rest of the CRS surface already reads under.
+  std::string crs_override_epsg;
+  std::string crs_override_wkt;
 
   // --- A4/A6: one estimator for the Mid-360's device clock ----------------
   //
@@ -801,6 +868,22 @@ Result<DeviceHealth> Engine::device_health(DeviceId id) const {
   return d->health();
 }
 
+Result<Mid360Stats> Engine::mid360_stats(DeviceId id) const {
+  std::lock_guard<std::mutex> lock(impl_->m);
+  Driver* d = impl_->find(id);
+  if (d == nullptr) return set_last_error(ScanError::kNotFound, "no device %u", id);
+  // dynamic_cast rather than a virtual on Driver: these counters are the
+  // Mid-360's own vocabulary (a forced SDK re-init has no D6 analogue), and a
+  // virtual returning a per-driver struct would be a Driver interface that
+  // knows about every driver.
+  auto* m = dynamic_cast<Mid360Driver*>(d);
+  if (m == nullptr) {
+    return set_last_error(ScanError::kInvalidArgument, "device %u is %s, not a Mid-360", id,
+                          to_string(d->kind()));
+  }
+  return m->stats();
+}
+
 Status Engine::push_serial_bytes(DeviceId id, ByteSpan bytes, TimePoint t_arrival) {
   Driver* d = nullptr;
   {
@@ -1011,11 +1094,84 @@ GeorefSolution Engine::georef_solution() const { return impl_->georef->solution(
 // file that opens in QGIS, lands in the wrong hemisphere, and never says why.
 // Empty is exactly A9's documented "embed the local-frame placeholder" input.
 std::string Engine::crs_wkt() const {
-  return impl_->georef->converged() ? impl_->georef->crs_wkt() : std::string();
+  if (!impl_->georef->converged()) return std::string();
+  {
+    std::lock_guard<std::mutex> lock(impl_->gnss_m);
+    if (!impl_->crs_override_wkt.empty()) return impl_->crs_override_wkt;
+    if (!impl_->crs_override_epsg.empty()) {
+      // An EPSG the engine CAN render, supplied without a WKT.
+      return crs::wkt1_for_epsg(crs::parse_epsg_string(impl_->crs_override_epsg));
+    }
+  }
+  return impl_->georef->crs_wkt();
 }
 
 std::string Engine::crs_epsg() const {
-  return impl_->georef->converged() ? impl_->georef->epsg_string() : std::string();
+  if (!impl_->georef->converged()) return std::string();
+  {
+    std::lock_guard<std::mutex> lock(impl_->gnss_m);
+    if (!impl_->crs_override_epsg.empty()) return impl_->crs_override_epsg;
+    // A caller-supplied WKT with no EPSG is legal (some grids have no code);
+    // reporting the auto-UTM zone beside it would name a CRS the exported WKT
+    // is not, so the code is empty rather than wrong.
+    if (!impl_->crs_override_wkt.empty()) return std::string();
+  }
+  return impl_->georef->epsg_string();
+}
+
+// The survey profile's escape hatch. See engine.h for the contract; this is
+// the validation, which is the whole of the implementation.
+Status Engine::set_crs(const std::string& epsg, const std::string& wkt) {
+  const std::string e = trim_copy(epsg);
+  const std::string w = trim_copy(wkt);
+
+  if (e.empty() && w.empty()) {  // clear
+    std::lock_guard<std::mutex> lock(impl_->gnss_m);
+    impl_->crs_override_epsg.clear();
+    impl_->crs_override_wkt.clear();
+    SCAN_LOG_INFO(kMod, "CRS override cleared (back to auto-UTM)");
+    return kOkStatus;
+  }
+
+  int code = 0;
+  if (!e.empty()) {
+    code = crs::parse_epsg_string(e);
+    if (code <= 0) {
+      return set_last_error(ScanError::kInvalidArgument,
+                            "Engine::set_crs: '%s' is not an EPSG code (expected \"EPSG:2326\" "
+                            "or \"2326\")",
+                            e.c_str());
+    }
+  }
+  if (!w.empty()) {
+    SCAN_TRY(validate_wkt(w));
+  } else if (crs::wkt1_for_epsg(code).empty()) {
+    // The combination that would silently produce an unlabelled export.
+    return set_last_error(ScanError::kInvalidArgument,
+                          "Engine::set_crs: this engine cannot render a WKT for EPSG:%d (it "
+                          "knows WGS 84 and the UTM zones only — gnss/crs.h explains why there "
+                          "is no PROJ here), so a national grid must arrive WITH the WKT its "
+                          "geodetic authority publishes",
+                          code);
+  }
+
+  std::lock_guard<std::mutex> lock(impl_->gnss_m);
+  impl_->crs_override_epsg = e.empty() ? std::string() : crs::epsg_string(code);
+  impl_->crs_override_wkt = w;
+  SCAN_LOG_INFO(kMod, "CRS override set: %s%s",
+                impl_->crs_override_epsg.empty() ? "(no EPSG)" : impl_->crs_override_epsg.c_str(),
+                w.empty() ? "" : " with a caller-supplied WKT");
+  return kOkStatus;
+}
+
+std::string Engine::configured_crs_epsg() const {
+  std::lock_guard<std::mutex> lock(impl_->gnss_m);
+  return impl_->crs_override_epsg;
+}
+
+std::string Engine::configured_crs_wkt() const {
+  std::lock_guard<std::mutex> lock(impl_->gnss_m);
+  return impl_->crs_override_wkt;
 }
 
 void Engine::set_georef_local_source(const PoseInterpolator* src) {

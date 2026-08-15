@@ -67,7 +67,13 @@ class JobQueue;
 //             scan_colorizer_* handle, scan_clock_sweep_estimate) and A15's
 //             jobs (the kJobProgress union case + SCAN_JOB_* mirror), plus
 //             `update_kind` on the points payload.
-inline constexpr std::uint32_t kEngineAbiVersion = 4;
+// 5 (INT-FINAL): the Android capture seam and the CRS escape hatch —
+//             scan_device_config's Mid-360 half grew the backend selector, the
+//             two pre-bound descriptors, every port, the receive buffer, the
+//             point filter, the decimation budget and the SDK config path
+//             (android/NOTES.md §8 findings 1, 2 and 4), and
+//             scan_engine_set_crs() landed (docs/INT29-wiring.md §7 item 5).
+inline constexpr std::uint32_t kEngineAbiVersion = 5;
 const char* engine_version_string();  // "scanengine 0.1.0 (<clock backend>)"
 
 struct EngineConfig {
@@ -182,6 +188,19 @@ class Engine {
   std::vector<DeviceId> device_ids() const;
   Result<DeviceHealth> device_health(DeviceId id) const;
 
+  // The Mid-360's OWN counters, which `DeviceHealth` cannot carry
+  // (android/NOTES.md §8 finding 5, desktop/NOTES.md §8.3: "Engine exposes no
+  // concrete-driver accessor", so Mid360Stats was unreachable from an app even
+  // in C++). The generic health row answers "is data arriving"; this answers
+  // the question a flaky bench session actually raises — how many watchdog
+  // trips, clean resumes and FORCED SDK RE-INITS this capture has had, what
+  // the link state is, and which device SN/IP is on the other end.
+  //
+  // kNotFound for an unknown id, kInvalidArgument for a device that is not a
+  // Mid-360. Note the two loss figures mean different things: `loss_pct_window`
+  // is this health window's, `loss_pct_total` the session's.
+  Result<Mid360Stats> mid360_stats(DeviceId id) const;
+
   // App → engine bytes for push-mode transports (D6 over USB serial).
   // t_arrival {0} means "stamp now".
   Status push_serial_bytes(DeviceId id, ByteSpan bytes, TimePoint t_arrival = TimePoint{0});
@@ -281,6 +300,43 @@ class Engine {
   // documents as "embed the local-frame placeholder".
   std::string crs_wkt() const;
   std::string crs_epsg() const;  // "EPSG:32650"
+
+  // --- the survey profile's CRS escape hatch (INT-29 gap 5, INT-FINAL) -----
+  //
+  // §3.4's "EPSG picker (survey profile)". `crs::wkt1_for_epsg()` knows WGS 84
+  // and the two UTM ranges and NOTHING else — deliberately, because the engine
+  // ships no PROJ and no proj.db (gnss/crs.h's header explains the trade). A
+  // national grid (HK1980 EPSG:2326, OSGB36 EPSG:27700, RD New EPSG:28992, …)
+  // is therefore only expressible if the CALLER supplies the WKT its own
+  // geodetic authority publishes. This is where it goes in.
+  //
+  //   set_crs("EPSG:2326", wkt)   label exports with the caller's CRS
+  //   set_crs("EPSG:32650", "")   an EPSG the engine can render itself
+  //   set_crs("", "")             clear the override; back to auto-UTM
+  //
+  // VALIDATED, not stored blind: the EPSG string must parse (`EPSG:<n>` or a
+  // bare positive integer), and the WKT must be a plausible OGC WKT — a known
+  // top-level keyword (PROJCS/GEOGCS/GEOCCS/COMPD_CS/VERT_CS/LOCAL_CS or their
+  // WKT2 spellings), a quoted name, and balanced brackets outside quotes.
+  // kInvalidArgument otherwise, with the reason in last_error_message(). An
+  // EPSG the engine cannot render AND no WKT is also refused: that combination
+  // silently produces an unlabelled export, which is the failure this method
+  // exists to prevent. (`wkt` alone, with no `epsg`, is fine — some grids are
+  // published as WKT with no EPSG code at all.)
+  //
+  // WHAT IT DOES NOT CHANGE: the convergence gate above. An override decides
+  // WHAT label a georeferenced cloud gets, never WHETHER an ungeoreferenced
+  // one may be labelled — a cloud still in the local frame must not be tagged
+  // with a national grid any more than with a UTM zone. crs_wkt()/crs_epsg()
+  // stay empty until the transform converges either way.
+  //
+  // Thread-safe; safe to call before or during a session.
+  Status set_crs(const std::string& epsg, const std::string& wkt);
+  // What was set, verbatim (both empty when nothing was). Unlike crs_wkt(),
+  // these are NOT gated on convergence: they report configuration, not a
+  // label a file may carry.
+  std::string configured_crs_epsg() const;
+  std::string configured_crs_wkt() const;
 
   // Where the georef fusion reads the LOCAL trajectory. Defaults to this
   // Engine's ExternalPoseSource. It must NOT be the GnssSource — pairing GNSS
