@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
 # Fetch the prebuilt Filament release used by spike S3.
-# The macOS release tarball is a universal (arm64 + x86_64) static-lib bundle and
-# ships matc/matinfo, so nothing has to be built from source.
+#
+# CORRECTION (C8, 2026-08-15): this header used to claim the macOS tarball was
+# "a universal (arm64 + x86_64) static-lib bundle". It is NOT. filament-v1.75.0-mac.tgz
+# ships **lib/arm64 only** — there is no lib/x86_64 anywhere in it. C1 found this
+# and recorded it as a C8 blocker (NOTES.md §3.2); C8 resolved it by building the
+# x86_64 slice from source. For an arm64-only dev build this script is still all
+# you need. For the universal DMG, also run:
+#     ./tools/build_filament_x86_64.sh v1.75.0
+#     ./tools/make_universal_filament.sh
+# What IS true: the tarball ships matc/matinfo as native arm64 host tools, and
+# those compile materials/points.mat for either target architecture.
 set -euo pipefail
 
 VERSION="${1:-v1.75.0}"

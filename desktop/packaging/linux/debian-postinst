@@ -1,0 +1,37 @@
+#!/bin/sh
+# Debian postinst for lidarscan.
+#
+# Three things a .deb can do that an AppImage cannot, which is the reason the
+# .deb exists alongside it:
+#   1. install the udev rule so the COIN-D6 works without dialout-group
+#      surgery (99-lidarscan.rules explains the mechanism)
+#   2. register the .lscan / .lscan.zip MIME types
+#   3. put the icon in the hicolor theme so the desktop actually shows it
+set -e
+
+case "$1" in
+  configure)
+    # udev. The rule file itself is shipped in /lib/udev/rules.d (the package
+    # location); reloading makes it take effect without a reboot, and
+    # triggering applies it to a D6 that is ALREADY plugged in.
+    if command -v udevadm >/dev/null 2>&1; then
+      udevadm control --reload-rules >/dev/null 2>&1 || true
+      udevadm trigger --subsystem-match=tty >/dev/null 2>&1 || true
+    fi
+
+    if command -v update-mime-database >/dev/null 2>&1; then
+      update-mime-database /usr/share/mime >/dev/null 2>&1 || true
+    fi
+    if command -v update-desktop-database >/dev/null 2>&1; then
+      update-desktop-database -q /usr/share/applications >/dev/null 2>&1 || true
+    fi
+    if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+      gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor >/dev/null 2>&1 || true
+    fi
+    ;;
+
+  abort-upgrade|abort-remove|abort-deconfigure)
+    ;;
+esac
+
+exit 0

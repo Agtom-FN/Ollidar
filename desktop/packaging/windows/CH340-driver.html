@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>COIN-D6 USB driver (CH340) — LidarScan</title>
+<style>
+  body { font: 15px/1.6 -apple-system, "Segoe UI", Roboto, sans-serif;
+         max-width: 46em; margin: 3em auto; padding: 0 1.5em; color: #1b2027; }
+  h1 { font-size: 1.5em; } h2 { font-size: 1.1em; margin-top: 2em; }
+  code, kbd { background: #f1f3f5; padding: .1em .35em; border-radius: 3px; }
+  .note { border-left: 3px solid #2f9fd0; background: #f4fafd; padding: .8em 1em; margin: 1.5em 0; }
+  .warn { border-left: 3px solid #d08a2f; background: #fdf9f4; padding: .8em 1em; margin: 1.5em 0; }
+  ol li { margin: .4em 0; }
+</style>
+</head>
+<body>
+
+<h1>Connecting a COIN-D6 over USB</h1>
+
+<p>The COIN-D6 lidar presents itself as a <strong>USB-to-serial adapter</strong> built
+around a WCH <strong>CH340</strong> chip. LidarScan talks to it as a plain COM port at
+<code>230400 8N1</code> — no vendor software or SDK is involved.</p>
+
+<div class="note">
+<strong>Try it before installing anything.</strong> Windows 10 and Windows 11 ship an
+in-box CH340 driver, and on most machines the device works the moment you plug it in.
+Install the WCH driver only if the steps below show it is missing.
+</div>
+
+<h2>1. Plug it in and check</h2>
+<ol>
+  <li>Connect the D6 with a <em>data</em> USB cable (charge-only cables are a
+      common cause of "nothing happens").</li>
+  <li>Press <kbd>Win</kbd>+<kbd>X</kbd> and open <strong>Device Manager</strong>.</li>
+  <li>Look under <strong>Ports (COM &amp; LPT)</strong> for
+      <code>USB-SERIAL CH340 (COMn)</code>.</li>
+</ol>
+
+<p><strong>If you see it</strong> — you are done. Open LidarScan, go to
+<em>Capture&nbsp;→&nbsp;COIN-D6</em>, and that <code>COMn</code> will be in the port list.
+Run <strong>Test device</strong> before recording; it passes when the sensor is
+delivering at least 3,000 points/second.</p>
+
+<h2>2. If the driver is missing</h2>
+
+<p>A missing driver shows up as an entry with a yellow warning triangle under
+<strong>Other devices</strong>, usually named <code>USB2.0-Serial</code> or
+<code>Unknown device</code>.</p>
+
+<ol>
+  <li>Download <strong>CH341SER.EXE</strong> from WCH, the chip vendor:<br>
+      <a href="https://www.wch-ic.com/downloads/CH341SER_EXE.html">
+      https://www.wch-ic.com/downloads/CH341SER_EXE.html</a></li>
+  <li>Run it and press <strong>INSTALL</strong>.</li>
+  <li>Unplug the D6, plug it back in, and re-check Device Manager.</li>
+</ol>
+
+<div class="warn">
+<strong>Why LidarScan does not bundle this driver.</strong> CH341SER.EXE is WCH's own
+redistributable, it is updated independently of this app, and a stale bundled copy is
+worse than none — it can downgrade a working in-box driver. Getting it from the vendor
+means you always get the current, vendor-signed version.
+</div>
+
+<h2>3. Counterfeit CH340 chips</h2>
+<p>Some cheap adapters carry cloned CH340s that the official driver refuses. Symptom:
+the port appears but opening it fails, or it disappears after a few seconds. If the D6's
+own cable does this, contact your supplier — it is a hardware problem, not a LidarScan
+one.</p>
+
+<h2>4. Which COM port is it?</h2>
+<p>If several serial devices are attached, unplug the D6, note the ports listed, plug it
+back in, and take the one that appeared. LidarScan's port picker also shows the USB
+vendor/product IDs and flags CH340-based adapters, so the D6 is usually obvious there
+too.</p>
+
+<h2>Mid-360 users</h2>
+<p>The Livox Mid-360 does not use USB at all — it is Ethernet. No driver is needed;
+what it needs is a static IP on the adapter it is plugged into. LidarScan's Mid-360
+capture tab has the settings and a self-test.</p>
+
+</body>
+</html>

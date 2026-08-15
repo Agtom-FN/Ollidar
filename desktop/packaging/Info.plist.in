@@ -51,8 +51,11 @@
   <string>${LIDARSCAN_VERSION}</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
+  <!-- C8: filled from CMake's LIDARSCAN_EXECUTABLE, which is also the target's
+       OUTPUT_NAME, so the plist and the Mach-O in Contents/MacOS cannot drift
+       apart (a mismatch here is a bundle macOS refuses to launch). -->
   <key>CFBundleExecutable</key>
-  <string>lidarscan</string>
+  <string>${LIDARSCAN_EXECUTABLE}</string>
   <key>CFBundleIconFile</key>
   <string>lidarscan.icns</string>
   <key>LSMinimumSystemVersion</key>

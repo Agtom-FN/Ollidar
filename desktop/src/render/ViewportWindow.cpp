@@ -207,7 +207,17 @@ void ViewportWindow::initFilament() {
     view_->setColorGrading(color_grading_);
   }
 
-  const QString matPath = QCoreApplication::applicationDirPath() + "/points.filamat";
+  // C8: inside a .app bundle applicationDirPath() is Contents/MacOS, while
+  // CMake's MACOSX_BUNDLE resource install puts points.filamat in
+  // Contents/Resources — so both are searched, dev-build layout first.
+  // (NOTES.md §7 listed this one line as "fine for a dev build, wrong for a
+  // bundle, and it is C8's to change".)
+  const QString appDir = QCoreApplication::applicationDirPath();
+  QString matPath = appDir + "/points.filamat";
+  if (!QFile::exists(matPath)) {
+    const QString bundled = appDir + "/../Resources/points.filamat";
+    if (QFile::exists(bundled)) matPath = bundled;
+  }
   QFile f(matPath);
   if (!f.open(QIODevice::ReadOnly)) {
     init_error_ = "cannot open " + matPath;

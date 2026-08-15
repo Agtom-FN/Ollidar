@@ -1,0 +1,39 @@
+# udev rules for LidarScan — COIN-D6 USB-serial (CH340) access without root.
+#
+# Tech Spec §3.13/§1 table: "Linux — QSerialPort (/dev/ttyUSB*); udev rule
+# installed by package (vendor ships sc_mini.rules precedent)".
+# desktop/src/app/CaptureWindow.cpp's per-OS guidance text already tells Linux
+# users this rule exists; the .deb installs it (see build_deb.sh's postinst).
+#
+# WHY IT IS NEEDED
+#   Out of the box /dev/ttyUSB0 is root:dialout mode 0660, so opening the D6
+#   fails with "Permission denied" unless the user is in the `dialout` group
+#   and has logged out and back in. That is a poor first-run experience for a
+#   field tool. TAG+="uaccess" instead hands the device to whoever is logged in
+#   at the seat, the same mechanism that makes webcams and joysticks work.
+#
+# INSTALL (the .deb does this for you)
+#   sudo install -m644 99-lidarscan.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#
+# 1a86:7523 = QinHeng (WCH) CH340 — the chip the COIN-D6's USB interface uses,
+#             and the one CaptureWindow's port picker highlights by VID/PID.
+# 1a86:5523 = CH341 in serial mode, same vendor, seen on some adapters.
+# 1a86:7522 = CH340K / CH340N variants.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", MODE="0660", GROUP="dialout", TAG+="uaccess", SYMLINK+="lidarscan-d6"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7522", MODE="0660", GROUP="dialout", TAG+="uaccess"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="5523", MODE="0660", GROUP="dialout", TAG+="uaccess"
+
+# Some COIN-D6 units ship with an FTDI FT232 instead of a CH340; the vendor's
+# own tooling is CH340-based (Tech Spec §1) but field units vary, so cover it.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", MODE="0660", GROUP="dialout", TAG+="uaccess"
+
+# NOTE: /dev/lidarscan-d6 is a CONVENIENCE symlink, not something the app
+# depends on. QSerialPortInfo enumerates real device nodes, and a symlink is
+# not enumerated — CaptureWindow's picker will show /dev/ttyUSB0. The symlink
+# exists so support can say "point it at /dev/lidarscan-d6" when several
+# adapters are attached.
+#
+# The Livox Mid-360 is Ethernet, not USB — no udev rule applies to it. What it
+# needs is a static IP on the interface it is plugged into, which is
+# NetworkManager's job and is covered by the capture window's own guidance.

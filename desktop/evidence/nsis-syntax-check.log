@@ -1,0 +1,25 @@
+MakeNSIS v3.12 - Copyright 1999-2026 Contributors
+See the file COPYING for license details.
+Credits can be found in the Users Manual.
+
+Command line defined: "VERSION=0.1.0"
+Command line defined: "STAGE_DIR=staging"
+Processing script file: "lidarscan.nsi" (UTF8)
+
+Processed 1 file, writing output (x86-unicode):
+
+Output: "/Users/admin/lidarscan/desktop/packaging/windows/LidarScan-0.1.0-x64-setup.exe"
+Install: 6 pages (384 bytes), 5 sections (1 required) (20600 bytes), 760 instructions (21280 bytes), 313 strings (11260 bytes), 1 language table (374 bytes).
+Uninstall: 2 pages (192 bytes), 1 section (4120 bytes), 86 instructions (2408 bytes), 116 strings (3726 bytes), 1 language table (254 bytes).
+Datablock optimizer saved 30194 bytes (~12.1%).
+
+Using lzma (compress whole) compression.
+
+EXE header size:               79872 / 38912 bytes
+Install code:                          (44122 bytes)
+Install data:                          (91130 bytes)
+Uninstall code+data:                   (60308 bytes)
+Compressed data:               66220 / 195560 bytes
+CRC (0x271E753F):                  4 / 4 bytes
+
+Total size:                   146096 / 234476 bytes (62.3%)

@@ -1,0 +1,26 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=LidarScan
+GenericName=Lidar Capture and Review
+Comment=Capture, review, measure and merge lidar scans
+# QT_QPA_PLATFORM=xcb is NOT belt-and-braces — it is required today.
+# desktop/src/render/NativeSurface_linux.cpp refuses a Wayland surface with an
+# explanatory error (Filament needs a wl_surface plus an explicit size, which
+# the current shim does not provide), so on a Wayland session the app must go
+# through XWayland or its 3D viewport will not come up at all. Remove this the
+# day NativeSurface_linux grows a real Wayland path — see desktop/NOTES.md §3.1.
+Exec=env QT_QPA_PLATFORM=xcb lidarscan %f
+Icon=lidarscan
+Terminal=false
+# One main category only (Graphics) plus additional ones — listing Science and
+# Engineering as well makes desktop-file-validate warn that the app can appear
+# more than once in the application menu.
+Categories=Graphics;3DGraphics;Viewer;
+Keywords=lidar;pointcloud;scan;survey;3D;
+# §3.13 file association, the Linux twin of Info.plist's CFBundleDocumentTypes
+# and the NSIS registry keys. The MIME types themselves are declared in
+# lidarscan.xml; this line says which of them this app opens.
+MimeType=application/x-lidarscan-project;application/x-lidarscan-bundle;
+StartupNotify=true
+StartupWMClass=lidarscan

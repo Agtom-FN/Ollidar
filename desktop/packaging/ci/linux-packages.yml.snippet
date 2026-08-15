@@ -1,0 +1,89 @@
+# =============================================================================
+# STAGED JOB — merge into .github/workflows/<release>.yml. Does not run here.
+#
+# !! NEVER EXECUTED ANYWHERE !!
+# desktop/NOTES.md §3.1 marks the Linux renderer UNVERIFIED:
+# NativeSurface_linux.cpp (X11 Window -> Vulkan swapchain) has never been
+# compiled by anyone, **Wayland is refused outright** with an explanatory error,
+# and gl_PointSize on Vulkan may clamp to 1.0 on Intel/AMD. Expect the first run
+# to fail.
+#
+# Validated so far: packaging/linux/lidarscan.desktop passes
+# `desktop-file-validate` cleanly and lidarscan.xml is well-formed XML
+# (`xmllint --noout`). Syntax only.
+# =============================================================================
+jobs:
+  linux-packages:
+    name: Linux AppImage + .deb
+    # ubuntu-22.04 ON PURPOSE, not ubuntu-latest: an AppImage's glibc floor is
+    # whatever the BUILD machine has, so building on the oldest supported image
+    # is what makes it run on older distros. Building on 24.04 would silently
+    # drop every 22.04 user.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build cmake g++ \
+            qt6-base-dev qt6-serialport-dev libgl1-mesa-dev \
+            libvulkan-dev libx11-dev libxcb1-dev \
+            libfuse2 file desktop-file-utils lintian \
+            libxkbcommon-dev libxkbcommon-x11-dev
+          # libfuse2: linuxdeploy and the AppImages it produces are FUSE-mounted.
+          # On a runner without it, AppImages must be run with
+          # --appimage-extract-and-run instead.
+
+      - name: Fetch Filament
+        working-directory: desktop
+        run: ./tools/fetch_filament.sh v1.75.0
+
+      - name: Generate icons
+        working-directory: desktop
+        run: ./tools/make_icon.sh   # writes packaging/linux/lidarscan.png
+
+      - name: Validate the desktop entry and MIME definition
+        working-directory: desktop/packaging/linux
+        run: |
+          desktop-file-validate lidarscan.desktop
+          xmllint --noout lidarscan.xml
+
+      - name: Build AppImage
+        working-directory: desktop
+        run: ./packaging/linux/build_appimage.sh 0.1.0
+        continue-on-error: true   # UNVERIFIED platform
+
+      - name: Build .deb
+        working-directory: desktop
+        env:
+          # The AppImage step already built the tree; do not rebuild it.
+          LIDARSCAN_SKIP_BUILD: "1"
+        run: ./packaging/linux/build_deb.sh 0.1.0
+        continue-on-error: true
+
+      - name: Install the .deb and smoke-test it
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y ./desktop/packaging/linux/lidarscan_0.1.0_amd64.deb
+          # Proves the FHS layout, the Depends line and the loader all agree.
+          # No GPU and no X server on a runner, so --help is the honest limit of
+          # what can be checked here.
+          lidarscan --help | head -5
+          # The udev rule the .deb exists to install (Tech Spec §1's Linux row).
+          test -f /lib/udev/rules.d/99-lidarscan.rules && echo "udev rule installed"
+          # The MIME registration the AppImage structurally cannot do.
+          [ "$(xdg-mime query default application/x-lidarscan-bundle)" = "lidarscan.desktop" ] \
+            && echo "file association registered"
+        continue-on-error: true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LidarScan-linux-x86_64
+          path: |
+            desktop/packaging/linux/LidarScan-*.AppImage
+            desktop/packaging/linux/lidarscan_*.deb
+          if-no-files-found: error

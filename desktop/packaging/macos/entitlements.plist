@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  entitlements.plist — required for a Developer ID (hardened-runtime) build.
+
+  Notarization REQUIRES `codesign --options runtime`, and the hardened runtime
+  turns off several things this app genuinely needs. Each entry below is here
+  because a specific, identifiable part of LidarScan stops working without it —
+  no blanket exceptions.
+
+  Used by tools/package_macos.sh only when CODESIGN_IDENTITY names a real
+  Developer ID; the ad-hoc (`-s -`) path does not need entitlements because the
+  hardened runtime is not enabled for it.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Mid-360 capture. The driver (engine A3 / Livox SDK2) opens UDP sockets to
+       the sensor on a local Ethernet link, and C4's "Submit to cloud…" makes a
+       real QNetworkAccessManager request against A15's REST contract.
+       Without this the sandbox/hardened runtime denies socket creation and the
+       Mid-360 tab fails with a bind error that looks like a driver bug. -->
+  <key>com.apple.security.network.client</key>
+  <true/>
+  <!-- The Mid-360 also SENDS to the host from its own port: the SDK2 backend
+       binds fixed local ports (56100-56501, see NOTES.md §8.7.3) to receive
+       point/IMU datagrams, which is a server-side bind, not a client one. -->
+  <key>com.apple.security.network.server</key>
+  <true/>
+
+  <!-- COIN-D6 capture over USB serial (CH340). QSerialPort talks to
+       /dev/cu.usbserial-*, which is a USB device node. -->
+  <key>com.apple.security.device.usb</key>
+  <true/>
+  <key>com.apple.security.device.serial</key>
+  <true/>
+
+  <!-- Projects, exports (PLY/LAS/PCD), floor-plan DXF/PDF and .lscan.zip
+       transfer bundles are read and written wherever the user points the file
+       dialog. user-selected.read-write covers exactly that and nothing more. -->
+  <key>com.apple.security.files.user-selected.read-write</key>
+  <true/>
+
+  <!-- NOT requested, deliberately, and why:
+       * com.apple.security.cs.allow-unsigned-executable-memory — Filament's
+         Metal backend compiles shaders through the OS Metal compiler, which
+         runs out-of-process; no JIT happens inside this address space.
+       * com.apple.security.cs.disable-library-validation — every dylib in the
+         bundle (Qt frameworks + Qt plugins) is signed with the SAME Developer
+         ID by package_macos.sh's inside-out signing pass, so library
+         validation passes as-is. If you ever add a third-party plugin you
+         cannot re-sign, fix the signing, do not add this.
+       * com.apple.security.app-sandbox — LidarScan is Developer-ID
+         distributed (DMG), not Mac App Store. The sandbox is not required for
+         notarization and would break the serial-device path. Revisit only if
+         MAS distribution is ever wanted. -->
+</dict>
+</plist>

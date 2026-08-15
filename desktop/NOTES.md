@@ -12,7 +12,18 @@ Spec references are to `docs/LidarScan Tech Spec.md` v1.2.1, `engine/DESIGN.md` 
 ```
 desktop/
   CMakeLists.txt              Qt 6 + Filament + add_subdirectory(../engine)
-  tools/fetch_filament.sh     harvested from S3; pins v1.75.0
+                               + C8's universal/.app-bundle path
+  tools/                      C8 build+packaging scripts (§13):
+    fetch_filament.sh          harvested from S3; pins v1.75.0 (arm64 prebuilt)
+    build_filament_x86_64.sh   the x86_64 slice the release tarball omits
+    make_universal_filament.sh lipo the two into filament-universal/
+    fetch_qt_universal.sh      official universal Qt (brew's is arm64-only)
+    make_icon.sh               .icns/.png/.ico, stdlib-only PNG writer
+    package_macos.sh           universal .app + macdeployqt + codesign + DMG
+  packaging/                  installer inputs, per OS — see packaging/README.md
+    PACKAGING.md               the procedure + real signing/notarization
+    Info.plist.in              C7 wrote it, C8 wired it into the bundle
+    macos/ windows/ linux/ ci/
   materials/points.mat        harvested from S3, extended to A14's uniform contract
   scripts/verify.sh           the evidence run in §6, end to end
   scripts/display-params-intensity.json
@@ -295,18 +306,36 @@ only** — there is no `lib/x86_64` in the macOS tarball. §3.13 requires a *uni
 `lipo` them together, or ship two DMGs, or drop Intel. This is not a packaging detail that
 can be discovered late — flag it now.
 
+> **RESOLVED by C8 — see §13.1.** Owner decision: build v1.75.0 x86_64 from source
+> (`tools/build_filament_x86_64.sh`, 2m 00s) and `lipo` it against the prebuilt arm64
+> set (`tools/make_universal_filament.sh`). One universal DMG, Intel kept.
+> C8 found the same "Filament's own layout is not what you'd guess" trap twice more:
+> the ninja target is `filament-abseil`, not `abseil`, and `geometry`/`abseil` ship as
+> `lib<name>_combined.a` — the plain target output for `filament-abseil` is an **empty
+> 656-byte archive**.
+
 ### 3.3 Packaging (C8)
+
+**Done — §13, and `packaging/PACKAGING.md` is the procedure.** The list below is C1's
+original statement of the work; each row now says where it landed.
 
 * **macOS** — the executable is currently a plain binary, not a `.app` bundle. C8 needs
   `MACOSX_BUNDLE`, `Info.plist`, `macdeployqt`, codesign + notarize, and must place
   `points.filamat` inside `Contents/Resources` (the app resolves it via
   `QCoreApplication::applicationDirPath()`, which is the one line that changes).
+  → **all done and verified** (§13.4, §13.5) except notarization, which needs an Apple
+  Developer ID that does not exist in this environment; the DMG is ad-hoc signed and
+  `spctl` says `rejected`, recorded rather than hidden.
 * **Windows** — NSIS/MSIX, `windeployqt`, plus the CH340 driver pointer the capture window
-  already names.
+  already names. → **NSIS script + PowerShell build script + driver page staged**, syntax-
+  validated by `makensis` only; never built or run (§13.6).
 * **Linux** — AppImage + `.deb`, `linuxdeployqt`, and the udev rule for `/dev/ttyUSB*` that
-  the capture window's hint text already tells the user about.
+  the capture window's hint text already tells the user about. → **staged** (§13.6), with
+  `linuxdeploy` rather than `linuxdeployqt` (the latter refuses to run on a modern CI image).
 * Qt is used under **LGPLv3 with dynamic linking** (§1), which every packaging path must
-  preserve — no static Qt.
+  preserve — no static Qt. → **preserved**: Qt frameworks live in `Contents/Frameworks`.
+  Note the new constraint C8 hit: **Homebrew Qt is arm64-only**, so a universal build has
+  to use the Qt Company's own (universal since 6.2) binaries — §13.2.
 
 ---
 
@@ -320,7 +349,7 @@ can be discovered late — flag it now.
 | **C5** floor plan | **Done, §10.** `PlanDock` — the height-clip band in `DisplayParams` is a *display* clip (viewport-only); the plan's own slice band is a completely separate `plan::PlanEditState`, per §10.1. |
 | **C6** merge workbench | **Done, §11.** `MergeDock` over A13's `MergeProject`; colour-by-session is done by overwriting `MergeResult::cloud`'s RGBA per run-table range before `publish()` — no renderer redesign needed, exactly as this row predicted. |
 | **C7** transfer import | **Done, §12.** `TransferExportDialog`/`TransferImportDialog` over `lscan::zip_export`/`zip_import` + `Project.cpp`'s `readProject`; file association (`QEvent::FileOpen`) and drag-drop are on `MainWindow`. |
-| **C8** packaging | §3 above. |
+| **C8** packaging | **Done, §13.** macOS universal DMG is real (built, mounted, launched on both slices); Windows/Linux are staged scripts. Procedure: `packaging/PACKAGING.md`. |
 | **B10** Android params panel | Same `DisplayParamsController`; `points.mat`'s fragment shader is the reference implementation of the uniform contract (B10 consumes the same fields as a std140 UBO). |
 | **A3/A10** | The moment `Engine` grows a push entry point for Mid-360/GNSS raw streams, `ReplayController` replays those too — `ReplayConfig::chunk_type` is already the only thing that changes. |
 | **A14** | `lod_point_budget` currently throttles by dropping whole pages; a real LOD policy in the engine would replace `PagedCloudRenderer::sync()`'s budget branch. |
@@ -339,6 +368,21 @@ cmake --build build
 ```
 
 `--help` lists the CLI. `scripts/verify.sh` runs the whole evidence sequence.
+
+That is the **development build**: arm64-only, Homebrew Qt, a plain binary. To build the
+**shippable universal `.app` + DMG** instead (C8, §13):
+
+```sh
+cd desktop
+./tools/fetch_filament.sh v1.75.0          # arm64 Filament   (prebuilt)
+./tools/build_filament_x86_64.sh v1.75.0   # x86_64 Filament  (from source, ~7 min)
+./tools/make_universal_filament.sh         # lipo -> third_party/filament-universal/
+./tools/fetch_qt_universal.sh 6.11.1       # official UNIVERSAL Qt (brew's is arm64-only)
+./tools/make_icon.sh
+./tools/package_macos.sh                   # -> dist/LidarScan-0.1.0-universal.dmg
+```
+
+Full procedure, including real signing/notarization: `packaging/PACKAGING.md`.
 
 ---
 
@@ -434,7 +478,7 @@ bar and log show it. It is left visible rather than suppressed.
 | **Trajectory / pose-graph overlays** | Nothing produces a trajectory yet (A8/A7). Checkboxes are stored, persisted, disabled with a tooltip. |
 | **Intensity auto-range robustness** | The 1st/99th-percentile range is much better than min/max, but the engine's own synthetic room has a saturated band that is **1.1%** of all points — just wide enough to land on the 99th percentile. A percentile pair is a heuristic; a proper answer is a histogram-mode-based range, and it arguably belongs in A14 next to `evaluate_point_color()` so both apps get it. |
 | **Viewport-side auto-range does not write back to the dock** | The viewport keeps its own `DisplayParams` copy and retargets `manual_min/max` there, so the panel shows the stored (usually 0..1) range while the render uses the data range. Correct output, confusing UI. The fix is for the viewport to push the retargeted range back into the `DisplayParamsController`, which needs a "don't recurse" guard. |
-| **`points.filamat` is loaded from `applicationDirPath()`** | Fine for a dev build, wrong for a bundle — one line, and it is C8's to change. |
+| ~~**`points.filamat` is loaded from `applicationDirPath()`**~~ | ~~Fine for a dev build, wrong for a bundle — one line, and it is C8's to change.~~ **Closed by C8 (§13.4):** `ViewportWindow.cpp` searches `applicationDirPath()` then `../Resources`, so one binary works in both layouts. |
 | **No unit tests on the desktop side** | The verification here is an end-to-end run. A headless test of `Project.cpp` (read/create/import round trip) needs no GPU and is the obvious first one. |
 | **Record-only mode** | The toggle exists and is documented; what it does today is stop the viewport mirroring the PageStore. The engine still fills the PageStore, which for a long capture is the wrong behaviour — A14's eviction policy is the real fix. |
 
@@ -1620,3 +1664,351 @@ the default path now always goes through `exports/`.
   import dialog's file filter; only `.lscan.zip` is wired to `QEvent::FileOpen` (macOS
   file-association is normally one canonical extension per document type, and `docs/A5-lscan.md`
   itself calls the bundle a `.lscan.zip`).
+
+---
+
+## 13. C8 (desktop packaging)
+
+**Status: the macOS universal DMG is real — built, mounted, launched on both
+architectures. Windows and Linux are staged scripts, validated only as far as
+their own tooling allows.**
+
+Owner decision taken at the start of this task, against `NOTES.md` §3.2's
+blocker: **build Filament v1.75.0 x86_64 from source and ship one TRUE universal
+DMG.** Not two DMGs, not Intel dropped.
+
+New/changed files:
+
+```
+tools/build_filament_x86_64.sh   the missing x86_64 Filament slice, from source
+tools/make_universal_filament.sh lipo it against the arm64 prebuilt set
+tools/fetch_qt_universal.sh      official universal Qt via aqtinstall
+tools/make_icon.sh               .icns/.png/.ico from a stdlib-only PNG writer
+tools/package_macos.sh           universal .app + macdeployqt + codesign + DMG
+CMakeLists.txt                   universal-Filament selection, MACOSX_BUNDLE,
+                                  Info.plist configure, Resources placement
+src/render/ViewportWindow.cpp    points.filamat: also search ../Resources (§13.4)
+packaging/PACKAGING.md           the full procedure incl. real signing/notarization
+packaging/README.md              the map of packaging/
+packaging/Info.plist.in          CFBundleExecutable now comes from CMake (§13.4)
+packaging/macos/entitlements.plist
+packaging/windows/lidarscan.nsi, build_installer.ps1, CH340-driver.html
+packaging/linux/build_appimage.sh, build_deb.sh, debian-control.in,
+                 debian-postinst, debian-postrm, lidarscan.desktop,
+                 lidarscan.xml, 99-lidarscan.rules, README-udev.txt
+packaging/ci/{macos-dmg,windows-installer,linux-packages}.yml.snippet + README.md
+.gitignore                       the new third_party/ and dist/ trees
+```
+
+`.github/` is owned by another agent this wave, so the three CI jobs are staged
+in `packaging/ci/` as `.yml.snippet` files for that owner to merge. All three
+parse as valid YAML.
+
+### 13.1 Building Filament x86_64 — what it actually took
+
+`filament-v1.75.0-mac.tgz` ships `lib/arm64` and nothing else. Cross-compiling
+is nominally just `-DCMAKE_OSX_ARCHITECTURES=x86_64`, and that part was true.
+Four things were not obvious:
+
+**1. The build runs tools it just built.** `matc` compiles Filament's ~40
+built-in materials and `resgen` turns the results into assembly that goes
+straight into `libfilament.a`. Under an x86_64 configure those tools are x86_64
+too — the build wants to execute Intel binaries on an Apple-Silicon host.
+**Rosetta 2 handles it transparently** (present on this machine and on GitHub's
+`macos-14` images). The documented alternative is Filament's own
+`-DIMPORT_EXECUTABLES_DIR=<arm64 build dir>` escape hatch, which the script
+accepts from the environment — but it needs a *complete prior arm64 CMake build
+tree of the same revision* because it consumes that build's generated
+`ImportExecutables-Release.cmake`, and the release tarball is not such a tree.
+So that route means building Filament twice; Rosetta means building it once.
+
+**2. `ninja abseil` does not exist.** The target is **`filament-abseil`** —
+Filament prefixes its vendored abseil so it cannot collide with a system one,
+and renames it to `libabseil.a` on the way into the release tarball. First run
+died here.
+
+**3. `geometry` and `abseil` ship as *combined* archives, not the target
+outputs — and getting this wrong is silent.** Both use Filament's own
+`combine_static_libs()` helper (`CMakeLists.txt:777` →
+`build/linux/combine-static-libs.sh`), a POST_BUILD step that merges the target
+plus all of its static dependencies into `lib<name>_combined.a`; an
+`install(FILES … RENAME)` rule is what ships it under the plain name. The plain
+ninja output for `filament-abseil` is an **empty 656-byte archive** (the tnt
+target aggregates dependencies and has no sources of its own). Copy that and
+everything configures, links, and then fails on undefined `absl::` symbols. The
+collector now prefers `*_combined.a` and has a "no archive under 4 KB"
+tripwire so the general class of this bug cannot recur silently.
+
+| lib | arm64 (prebuilt) | x86_64 (this build) |
+| --- | ---: | ---: |
+| `libabseil.a` **before the fix** | 2,013,864 | **656** ← the bug |
+| `libabseil.a` after | 2,013,864 | 1,860,632 |
+| `libgeometry.a` before | 291,736 | 172,896 (target output, not the combined one) |
+| `libgeometry.a` after | 291,736 | 324,944 |
+
+**4. Only build what the app links.** `-DFILAMENT_SKIP_SAMPLES=ON
+-DFILAMENT_SKIP_SDL2=ON` plus passing the 12 needed libraries to ninja as
+explicit targets skips gltfio, viewer, matdbg, samples, image/imageio, assimp,
+the tests and the Java bindings. **1,047 ninja edges, 2m 00s on 10 jobs** — not
+the 30–60 minutes budgeted. (Full clone ≈ 3 min for 1.7 GB, configure ≈ 1.5 min.)
+
+Exact provenance is written to `third_party/filament-x86_64/BUILDINFO.txt` by
+the script itself:
+
+```
+filament version   : v1.75.0
+filament commit    : 0e58877c09afb1aacd09ff640f74d2adcd2a7e80
+build time         : 2m 0s on 10 jobs
+host               : arm64 macOS 26.5.1 (25F80)
+compiler           : Apple clang version 21.0.0 (clang-2100.1.1.101)
+macOS SDK          : 26.5 @ /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
+cmake 4.4.2 / ninja 1.13.2 / deployment target 11.0
+host-tool strategy : Rosetta 2 (x86_64 matc/resgen translated)
+```
+
+`make_universal_filament.sh` then `lipo`s each of the 12 archives against the
+prebuilt arm64 set. It deliberately does **not** rebuild arm64 from source: the
+prebuilt arm64 slice is the one S3 measured 138 fps and 1,105 swapchain
+recreates against, and replacing those bytes with our own rebuild would throw
+that provenance away for no gain. `lipo` keeps them byte-for-byte and only
+*adds* Intel. All 12 outputs verify as `x86_64 arm64`; a single-arch result is a
+hard error, not a warning, because that is precisely the failure that produces a
+"universal" DMG which will not launch on an Intel Mac.
+
+**`matc` is not built for x86_64 and does not need to be.** It is a build-time
+tool that runs on the developer's/CI's own machine; the arm64 one from the
+prebuilt release compiles `materials/points.mat` for either target.
+
+### 13.2 Qt: Homebrew cannot do this, aqtinstall can
+
+```
+$ lipo -info /opt/homebrew/opt/qt/lib/QtCore.framework/QtCore
+Non-fat file: ... is architecture: arm64
+```
+
+Homebrew builds per-architecture bottles by design; there is no universal Qt
+bottle and there will not be one. So a universal `LidarScan.app` **cannot be
+linked against Homebrew Qt at all** — its x86_64 slice would have no Qt. This is
+the Qt-side twin of the Filament blocker and it is not written down anywhere in
+C1–C7, because until now nothing needed two architectures.
+
+Options weighed:
+
+| | Verdict |
+| --- | --- |
+| Qt online installer | Universal and official, but an interactive GUI needing a Qt account login. Unusable headless, unusable in CI. |
+| **aqtinstall** | Downloads **the same official artifacts** from the same Qt CDN, non-interactively, no account. **Taken.** |
+| Build Qt from source universal | Hours, to reproduce binaries the vendor already publishes. |
+
+The Qt Company's macOS desktop builds have been universal since Qt 6.2, and the
+archive names say so out loud:
+`qtbase-MacOS-MacOS_15-Clang-MacOS-MacOS_15-X86_64-ARM64.7z`. Verified:
+
+```
+QtCore         x86_64 arm64
+QtGui          x86_64 arm64
+QtWidgets      x86_64 arm64
+QtNetwork      x86_64 arm64
+QtSerialPort   x86_64 arm64
+macdeployqt    x86_64 arm64
+```
+
+**6.11.1 deliberately** — the exact version S3 and C1–C7 built and measured
+against (§6), so switching from Homebrew to the official binaries changes the
+*architecture* and nothing else. Qt stays **dynamically linked** (frameworks in
+`Contents/Frameworks`), which Tech Spec §1's "LGPLv3 with dynamic linking" makes
+mandatory: no static Qt, ever, without a commercial licence.
+
+### 13.3 The engine needed nothing
+
+`add_subdirectory(../engine)` inherits `CMAKE_OSX_ARCHITECTURES`, and the
+universal build — including the vendored Livox SDK2 — went through first time,
+with the same 239-warning vendored baseline §6 and §8.7 record and zero warnings
+from `desktop/src`. The `macos-universal` preset had already proved this on the
+engine's own; this task confirms it holds when the engine is consumed as a
+subdirectory.
+
+### 13.4 Bundle changes
+
+`-DLIDARSCAN_MACOS_BUNDLE=ON` (default **OFF**). Default-off is deliberate:
+`scripts/verify{,_c2c3,_c4c5,_c6c7}.sh` — all of C1–C7's evidence — invoke
+`build/lidarscan`, and moving the executable to
+`build/LidarScan.app/Contents/MacOS/LidarScan` would silently break all four.
+`tools/package_macos.sh` turns it on for its own build tree.
+
+* **`points.filamat` → `Contents/Resources`.** `ViewportWindow.cpp` now searches
+  `applicationDirPath()` first and `applicationDirPath()/../Resources` second,
+  so one binary works in both the dev-build and the bundle layout. This is the
+  one line §7 listed as "fine for a dev build, wrong for a bundle, and it is
+  C8's to change".
+* **`CFBundleExecutable` is filled from CMake.** C7's `Info.plist.in` hard-coded
+  `lidarscan`, but the bundle wants to be `LidarScan.app` with a matching
+  `Contents/MacOS/LidarScan` (the name Finder, the Dock and the Applications
+  folder show). Rather than let a hand-written plist and a CMake `OUTPUT_NAME`
+  drift — a mismatch there is a bundle macOS refuses to launch outright — both
+  now come from the same `LIDARSCAN_EXECUTABLE` variable.
+* **CMakeLists hard-fails on a half-built universal tree.** Asking for both
+  architectures makes `third_party/filament-universal/` *required*, with an
+  error naming the three scripts to run. The alternative — falling back to the
+  arm64-only prebuilt — links with warnings and produces an app whose Intel
+  slice is missing every Filament symbol, i.e. exactly the silent failure this
+  whole task exists to prevent.
+
+### 13.5 Verification (2026-08-15, same host as §6: Apple M4, macOS 26.5.1)
+
+**The DMG is real.** `dist/LidarScan-0.1.0-universal.dmg`, 30 MB (66 MB app),
+UDZO/zlib, with an `/Applications` symlink.
+
+```
+$ lipo -info build-universal/LidarScan.app/Contents/MacOS/LidarScan
+Architectures in the fat file: .../LidarScan are: x86_64 arm64
+```
+
+Every deployed Qt framework too — `macdeployqt` from the universal Qt copied fat
+frameworks, it did not thin them:
+
+```
+QtCore  QtDBus  QtGui  QtNetwork  QtSerialPort  QtSvg  QtWidgets   →  all "x86_64 arm64"
+```
+
+**Mounted and launched from the mounted image** (not from the build tree):
+
+```
+$ hdiutil attach dist/LidarScan-0.1.0-universal.dmg -readonly
+/dev/disk5s1   ...   /Volumes/LidarScan 0.1.0
+
+$ lipo -info "/Volumes/LidarScan 0.1.0/LidarScan.app/Contents/MacOS/LidarScan"
+Architectures in the fat file: ... are: x86_64 arm64
+
+$ "/Volumes/LidarScan 0.1.0/LidarScan.app/Contents/MacOS/LidarScan" \
+    --project=evidence/synth.lscan --replay=0 --shot=evidence/15-dmg-launch.png ...
+[lidarscan] screenshot OK -> evidence/15-dmg-launch.png | 120300 pts / 1 pages |
+            51.6 fps | cpu p95 0.22 ms | gpu p95 1.98 ms | 758x946 px dpr 1.00 | swapchains 0
+```
+
+That is the full C1 pipeline — the 120,300-point synthetic D6 capture replayed
+through the engine into the Filament viewport — running out of a read-only
+mounted DMG, with `points.filamat` resolved from `Contents/Resources` and Qt
+resolved from `Contents/Frameworks`. `FEngine resolved backend: Metal`,
+`Selected physical device 'Apple M4'`.
+
+**And the Intel slice was actually executed, not merely counted.** Running the
+same binary through Rosetta forces the x86_64 slice:
+
+```
+$ arch -x86_64 "/Volumes/LidarScan 0.1.0/LidarScan.app/Contents/MacOS/LidarScan" \
+    --project=evidence/synth.lscan --replay=0 --shot=evidence/16-dmg-launch-x86_64.png ...
+[lidarscan] screenshot OK -> evidence/16-dmg-launch-x86_64.png | 120300 pts / 1 pages |
+            55.5 fps | cpu p95 0.32 ms | gpu p95 1.34 ms | 758x946 px dpr 1.00 | swapchains 0
+```
+
+Same 120,300 points, same Metal backend, and the two screenshots are
+**byte-identical** (`sha256 9708459017…`), which is a stronger result than "it
+launched": the x86_64 Filament we built from source, the x86_64 Qt and the
+x86_64 engine produce bit-for-bit the same framebuffer as the arm64 ones.
+
+**A Finder-style launch works too** — `open "/Volumes/LidarScan 0.1.0/LidarScan.app"`
+gave a running process from the mounted image, visible to System Events as
+`LidarScan`.
+
+**C7's file association is now verified end to end for the first time.** §12.6
+listed macOS document-type registration as unverifiable without a bundle.
+LaunchServices registered the app *from the mounted DMG*:
+
+```
+$ lsregister -dump | grep -A2 com.lidarscan
+identifier:   com.lidarscan.desktop
+claimed UTIs: com.lidarscan.project, com.lidarscan.transfer-bundle
+type id:      com.lidarscan.transfer-bundle   flags: exported
+type id:      com.lidarscan.project
+```
+
+**Signing, honestly.** Ad-hoc (`codesign -s -`), inside-out, and it validates:
+`valid on disk` + `satisfies its Designated Requirement`, `Format=app bundle
+with Mach-O universal (x86_64 arm64)`. But:
+
+```
+$ spctl -a -vvv -t exec build-universal/LidarScan.app
+build-universal/LidarScan.app: rejected
+```
+
+That is recorded, not hidden. On any *other* Mac this app is quarantined and
+refused until it is notarized. `packaging/PACKAGING.md` §1.4 has the complete
+Developer ID + `notarytool` + `stapler` procedure, the four entitlements the
+hardened runtime needs and why each one is needed, the four things deliberately
+*not* requested and why, and the four notarization rejections this build is
+already shaped to avoid.
+
+Evidence: `evidence/15-dmg-launch.png` (arm64),
+`evidence/16-dmg-launch-x86_64.png` (x86_64, byte-identical),
+`evidence/nsis-syntax-check.log`.
+
+### 13.6 Windows and Linux: what was actually validated
+
+Both are **staged, never executed**, and the reason is not laziness — §3.1 marks
+both renderers UNVERIFIED and neither `NativeSurface_win.cpp` nor
+`NativeSurface_linux.cpp` has ever been compiled by anyone. A working installer
+for an app that does not build is groundwork, not a deliverable. What *was*
+checked, with the tooling that exists on macOS:
+
+| Check | Result |
+| --- | --- |
+| `makensis -V3` on `lidarscan.nsi` (Homebrew NSIS 3.12, stub staging tree) | **compiles clean, emits a real 146 KB installer** — 6 pages, 5 sections, 760 instructions, LZMA. `evidence/nsis-syntax-check.log` |
+| `desktop-file-validate lidarscan.desktop` | clean (one `Categories` warning found and fixed) |
+| `xmllint --noout lidarscan.xml` | well-formed |
+| `plutil -lint` on `entitlements.plist` + the generated `Info.plist` | OK |
+| `shellcheck -S warning` across all 9 new shell scripts | clean |
+| `yaml.safe_load` on the 3 CI snippets | valid |
+
+Three design decisions worth carrying forward:
+
+* **NSIS, not MSIX.** MSIX cannot be installed at all without a code-signing
+  certificate (even for a local test), forces the packaged-app identity model
+  onto an app that opens raw COM ports, and would still need a separate
+  unpackaged build for CI smoke tests.
+* **The CH340 driver is a pointer page, not a bundled binary.** WCH's
+  `CH341SER.EXE` redistribution terms are not something this task can clear, the
+  file churns, and a stale bundled driver can *downgrade* a working in-box one —
+  Windows 10/11 both ship a CH340 driver that works for most units. So the
+  installer ships `drivers/CH340-driver.html`: try plugging it in first, how to
+  check Device Manager, then the vendor link. Same message
+  `CaptureWindow`'s per-OS guidance already gives.
+* **The Windows installer does not claim `.zip`.** Windows has no `.lscan.zip`
+  extension — only `.zip`, owned by the shell's zip handler — so claiming it
+  would hijack every archive on the machine. `.lscan` gets a ProgID outright;
+  `.lscan.zip` is exposed through `OpenWithProgids` as an "Open with →
+  LidarScan" entry. §12.6's note that only `.lscan.zip` is wired to
+  `QEvent::FileOpen` has this as its Windows counterpart.
+
+On Linux both artifacts are produced because they do different jobs: the
+AppImage bundles Qt and needs no root but **structurally cannot** install the
+udev rule or register the MIME types; the `.deb` depends on the distro's Qt (so
+security updates arrive via apt) and does both in its postinst.
+`99-lidarscan.rules` uses `TAG+="uaccess"` rather than requiring
+`usermod -aG dialout` + a re-login, which is a poor first-run experience for a
+field tool. And `lidarscan.desktop` forces `QT_QPA_PLATFORM=xcb` because
+`NativeSurface_linux.cpp` **refuses Wayland outright** — on a default Ubuntu
+22.04+/Fedora session the viewport would not come up at all without XWayland.
+
+### 13.7 Not verified
+
+* **No real Intel Mac.** The x86_64 slice was executed under **Rosetta 2 on an
+  M4**, which proves the code is correct x86_64 and that every x86_64 library in
+  the bundle links and runs. It does **not** prove behaviour on genuine Intel
+  hardware, where the GPU is an Intel Iris / AMD Radeon with a different Metal
+  feature level — Filament's Metal backend reported `MTLGPUFamilyApple7` here.
+  Renderer behaviour on real Intel silicon is an expectation, not a measurement.
+* **Not notarized, and not signable here** — no Apple Developer ID exists in
+  this environment. `spctl` says `rejected`, as it should.
+* **`create-dmg` was not used** (not installed); the DMG came from `hdiutil`.
+  The `create-dmg` branch of `package_macos.sh` — the one that sets icon
+  positions and window size — has never run.
+* **Windows and Linux: nothing beyond syntax.** No compile, no install, no
+  launch, on either.
+* **No cross-machine install test.** The DMG was mounted on the machine that
+  built it, so the quarantine/Gatekeeper path a downloaded DMG takes was never
+  exercised.
+* **The icon is a generated placeholder**, not designed artwork —
+  `tools/make_icon.sh` draws it with a stdlib-only PNG writer so that swapping in
+  a real mark later is "edit the script, re-run, commit" rather than hunting for
+  whoever produced a binary blob.

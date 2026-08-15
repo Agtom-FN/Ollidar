@@ -1,0 +1,53 @@
+LidarScan Desktop
+=================
+
+Copyright (c) LidarScan. All rights reserved.
+
+This installer shows this page because NSIS's licence page requires a real
+file. Replace the paragraph above with the actual end-user licence before any
+public release — the third-party notices below are correct as they stand and
+must be kept.
+
+
+Third-party components
+----------------------
+
+Qt 6
+    Used under the GNU Lesser General Public License version 3 (LGPLv3) with
+    DYNAMIC LINKING. The Qt libraries are shipped as separate DLLs next to the
+    application and are not statically linked into it, which is what the LGPL
+    requires for this form of use.
+
+    You have the right to obtain the Qt source code and to relink this
+    application against a modified Qt. Qt's source is available from
+    https://download.qt.io/. The Qt version shipped here is recorded in the
+    DLLs' own file properties.
+
+    LGPLv3: https://www.gnu.org/licenses/lgpl-3.0.html
+
+Google Filament
+    Apache License 2.0. https://github.com/google/filament
+    Copyright (c) Google LLC.
+
+Livox SDK2
+    MIT License. https://github.com/Livox-SDK/Livox-SDK2
+    Copyright (c) Livox Technology.
+
+Eigen
+    Mozilla Public License 2.0. https://eigen.tuxfamily.org
+
+Zstandard
+    Dual BSD-3-Clause / GPLv2 (used under BSD-3-Clause).
+    Copyright (c) Meta Platforms, Inc. and affiliates.
+
+Abseil
+    Apache License 2.0. Copyright (c) Google LLC.
+
+
+CH340 USB serial driver
+-----------------------
+
+This installer does NOT redistribute WCH's CH341SER driver. It installs a local
+page (drivers\CH340-driver.html) that explains how to check whether Windows'
+in-box driver already covers your device and, if not, links WCH's own official
+download. See that page for details.

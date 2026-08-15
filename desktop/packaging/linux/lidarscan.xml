@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  shared-mime-info definition for LidarScan's two document types. Installed to
+  /usr/share/mime/packages/lidarscan.xml and activated by `update-mime-database
+  /usr/share/mime` (the .deb's postinst does this; the AppImage cannot, which
+  is why file association only works for the .deb).
+
+  This is the Linux third of the same job Info.plist's UTExportedTypeDeclarations
+  does on macOS and the HKCR ProgID keys do on Windows.
+-->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+
+  <mime-type type="application/x-lidarscan-bundle">
+    <comment>LidarScan transfer bundle</comment>
+    <!-- A .lscan.zip is a zip; declaring the supertype means file managers
+         still know it can be unpacked, while the more specific glob below wins
+         for icon/handler purposes (weight 60 > the default 50 that
+         application/zip's own "*.zip" glob carries). -->
+    <sub-class-of type="application/zip"/>
+    <glob pattern="*.lscan.zip" weight="60"/>
+    <icon name="lidarscan"/>
+  </mime-type>
+
+  <mime-type type="application/x-lidarscan-project">
+    <comment>LidarScan project</comment>
+    <!-- A .lscan project is a DIRECTORY (Tech Spec §3.11), not a file. Linux
+         has no equivalent of macOS's LSTypeIsPackage — a directory is always a
+         directory to a Linux file manager, and there is no way to make one
+         open in an application on double-click. The glob is therefore only
+         useful for the single-file archive form; opening a project directory
+         is done from the app's own "Open project…" dialog or by passing the
+         path on the command line. Stated here so nobody spends an afternoon
+         trying to make Nautilus do the macOS thing. -->
+    <glob pattern="*.lscan"/>
+    <icon name="lidarscan"/>
+  </mime-type>
+
+</mime-info>

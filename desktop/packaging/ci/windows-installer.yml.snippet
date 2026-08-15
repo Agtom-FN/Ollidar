@@ -1,0 +1,100 @@
+# =============================================================================
+# STAGED JOB — merge into .github/workflows/<release>.yml. Does not run here.
+#
+# !! NEVER EXECUTED ANYWHERE !!
+# desktop/NOTES.md §3.1 marks the Windows renderer UNVERIFIED:
+# NativeSurface_win.cpp (HWND -> Vulkan swapchain) has never been compiled by
+# anyone, gl_PointSize on Vulkan may clamp to 1.0, and the render clock is a
+# plain timer rather than a DXGI waitable object. This job will very likely
+# fail on its first run, and that failure is information, not an accident.
+#
+# The one thing here that HAS been validated is packaging/windows/lidarscan.nsi
+# itself: `makensis -V3` compiles it cleanly on macOS against stub staging
+# files and emits a real 146 KB installer. Syntax only — no behaviour.
+# =============================================================================
+jobs:
+  windows-installer:
+    name: Windows x64 installer
+    runs-on: windows-2022
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Toolchain
+        run: choco install ninja nsis -y
+
+      # Same aqtinstall path the macOS job uses, for the same reason: it is the
+      # only non-interactive way to get official Qt binaries. Windows needs no
+      # universal trickery — win64_msvc2022_64 is simply the x64 build.
+      - name: Cache Qt
+        id: cache-qt
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/desktop/third_party/qt-windows
+          key: qt-6.11.1-win64-msvc2022
+
+      - name: Install Qt
+        if: steps.cache-qt.outputs.cache-hit != 'true'
+        run: |
+          python -m pip install aqtinstall
+          python -m aqt install-qt windows desktop 6.11.1 win64_msvc2022_64 `
+            -m qtserialport -O "${{ github.workspace }}/desktop/third_party/qt-windows"
+
+      # The Windows Filament release tarball has the only architecture Windows
+      # needs, so unlike macOS there is nothing to build from source here.
+      - name: Fetch Filament
+        working-directory: desktop
+        run: |
+          $ver = "v1.75.0"
+          $url = "https://github.com/google/filament/releases/download/$ver/filament-$ver-windows.tgz"
+          New-Item -ItemType Directory -Force third_party/filament | Out-Null
+          Invoke-WebRequest -Uri $url -OutFile "$env:TEMP/filament.tgz"
+          tar xzf "$env:TEMP/filament.tgz" -C third_party/filament
+
+      - name: Build + package
+        working-directory: desktop
+        env:
+          QT_ROOT: ${{ github.workspace }}/desktop/third_party/qt-windows/6.11.1/msvc2022_64
+        run: |
+          ./packaging/windows/build_installer.ps1 -Version 0.1.0 -QtRoot $env:QT_ROOT
+        shell: pwsh
+
+      # Authenticode. Without it SmartScreen warns every user until the
+      # installer builds reputation — see PACKAGING.md.
+      - name: Sign the installer
+        if: ${{ secrets.WINDOWS_CERT_PFX != '' }}
+        working-directory: desktop/packaging/windows
+        env:
+          CERT_PFX: ${{ secrets.WINDOWS_CERT_PFX }}
+          CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          [IO.File]::WriteAllBytes("$env:TEMP\cert.pfx", [Convert]::FromBase64String($env:CERT_PFX))
+          # Both the app AND the installer: signing only the installer leaves an
+          # unsigned lidarscan.exe on disk after install.
+          signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
+            /f "$env:TEMP\cert.pfx" /p $env:CERT_PASSWORD `
+            staging\lidarscan.exe LidarScan-0.1.0-x64-setup.exe
+          Remove-Item "$env:TEMP\cert.pfx"
+        shell: pwsh
+
+      - name: Smoke test
+        working-directory: desktop
+        run: |
+          # /S = silent install. If the app cannot even print its own help
+          # after installing, the packaging is wrong regardless of whether the
+          # Vulkan renderer works.
+          Start-Process -Wait -FilePath ".\packaging\windows\LidarScan-0.1.0-x64-setup.exe" -ArgumentList "/S"
+          & "$env:ProgramFiles\LidarScan\lidarscan.exe" --help
+        shell: pwsh
+        continue-on-error: true   # UNVERIFIED platform; do not block the artifact
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LidarScan-windows-x64-installer
+          path: desktop/packaging/windows/LidarScan-*-x64-setup.exe
+          if-no-files-found: error

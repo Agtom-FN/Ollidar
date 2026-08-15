@@ -14,10 +14,14 @@
 cmake_minimum_required(VERSION 3.20)
 
 if(APPLE)
-    project(lidarscan_desktop LANGUAGES CXX OBJCXX)
+    project(lidarscan_desktop VERSION 0.1.0 LANGUAGES CXX OBJCXX)
 else()
-    project(lidarscan_desktop LANGUAGES CXX)
+    project(lidarscan_desktop VERSION 0.1.0 LANGUAGES CXX)
 endif()
+
+# C8: the single source of the version string that reaches Info.plist,
+# the NSIS installer and the .deb/AppImage metadata.
+set(LIDARSCAN_VERSION "${PROJECT_VERSION}")
 
 set(CMAKE_CXX_STANDARD 20)          # Filament 1.75 requires C++20; so does the engine
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -68,20 +72,52 @@ endif()
 
 # ---------------------------------------------------------------------------
 # Filament (prebuilt release under third_party/, gitignored)
+#
+# C8: a *universal* macOS build needs universal Filament static libs, and the
+# v1.75.0 mac release tarball ships lib/arm64 ONLY (NOTES.md §3.2 — the C8
+# blocker C1 flagged). tools/build_filament_x86_64.sh builds the missing x86_64
+# slice from source and tools/make_universal_filament.sh lipos the two together
+# into third_party/filament-universal/. When this configure asks for both
+# architectures, that tree is REQUIRED — falling back to the arm64-only
+# prebuilt would link (with warnings) and produce an app whose Intel slice is
+# missing every Filament symbol.
 # ---------------------------------------------------------------------------
-set(FILAMENT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/filament/filament")
-if(NOT EXISTS "${FILAMENT_DIR}/include/filament/Engine.h")
-    message(FATAL_ERROR
-        "Filament not found at ${FILAMENT_DIR}.\n"
-        "Run: ./tools/fetch_filament.sh v1.75.0")
+set(LIDARSCAN_MAC_UNIVERSAL OFF)
+if(APPLE AND CMAKE_OSX_ARCHITECTURES MATCHES "arm64" AND CMAKE_OSX_ARCHITECTURES MATCHES "x86_64")
+    set(LIDARSCAN_MAC_UNIVERSAL ON)
 endif()
-if(EXISTS "${FILAMENT_DIR}/lib/arm64" AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
-    set(FILAMENT_LIB_DIR "${FILAMENT_DIR}/lib/arm64")
-elseif(EXISTS "${FILAMENT_DIR}/lib/x86_64")
-    set(FILAMENT_LIB_DIR "${FILAMENT_DIR}/lib/x86_64")
+
+if(LIDARSCAN_MAC_UNIVERSAL)
+    set(FILAMENT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/filament-universal/filament")
+    if(NOT EXISTS "${FILAMENT_DIR}/lib/universal/libfilament.a")
+        message(FATAL_ERROR
+            "CMAKE_OSX_ARCHITECTURES='${CMAKE_OSX_ARCHITECTURES}' asks for a universal "
+            "build, but universal Filament libs are not present at\n"
+            "  ${FILAMENT_DIR}/lib/universal\n"
+            "Build them (measured ~7 min once: 3 min clone + 2 min build):\n"
+            "  ./tools/fetch_filament.sh v1.75.0            # arm64 slice (prebuilt)\n"
+            "  ./tools/build_filament_x86_64.sh v1.75.0     # x86_64 slice (from source)\n"
+            "  ./tools/make_universal_filament.sh           # lipo the two together")
+    endif()
+    set(FILAMENT_LIB_DIR "${FILAMENT_DIR}/lib/universal")
 else()
-    file(GLOB _fil_libdirs "${FILAMENT_DIR}/lib/*")
-    list(GET _fil_libdirs 0 FILAMENT_LIB_DIR)
+    set(FILAMENT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/filament/filament")
+    if(NOT EXISTS "${FILAMENT_DIR}/include/filament/Engine.h")
+        message(FATAL_ERROR
+            "Filament not found at ${FILAMENT_DIR}.\n"
+            "Run: ./tools/fetch_filament.sh v1.75.0")
+    endif()
+    if(EXISTS "${FILAMENT_DIR}/lib/arm64" AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+        set(FILAMENT_LIB_DIR "${FILAMENT_DIR}/lib/arm64")
+    elseif(EXISTS "${FILAMENT_DIR}/lib/x86_64")
+        set(FILAMENT_LIB_DIR "${FILAMENT_DIR}/lib/x86_64")
+    else()
+        file(GLOB _fil_libdirs "${FILAMENT_DIR}/lib/*")
+        list(GET _fil_libdirs 0 FILAMENT_LIB_DIR)
+    endif()
+endif()
+if(NOT EXISTS "${FILAMENT_DIR}/include/filament/Engine.h")
+    message(FATAL_ERROR "Filament headers not found at ${FILAMENT_DIR}/include")
 endif()
 message(STATUS "lidarscan: Filament libs from ${FILAMENT_LIB_DIR}")
 
@@ -116,6 +152,36 @@ add_custom_command(
 add_custom_target(lidarscan_points_material DEPENDS "${POINTS_FILAMAT}")
 
 # ---------------------------------------------------------------------------
+# C8: macOS .app bundle
+#
+# Default OFF, deliberately: scripts/verify*.sh (C1-C7's whole evidence
+# corpus) invoke `build/lidarscan`, and flipping the default would move the
+# executable to build/lidarscan.app/Contents/MacOS/lidarscan and silently
+# break all four of them. tools/package_macos.sh turns it ON.
+#
+# What the bundle changes, concretely:
+#   * points.filamat moves from next-to-the-binary into Contents/Resources.
+#     ViewportWindow.cpp searches both (NOTES.md §7 called that one line out as
+#     C8's to change) so one binary works in both layouts.
+#   * packaging/Info.plist.in (written by C7) becomes the real Info.plist, which
+#     is what makes LaunchServices offer this app for a .lscan.zip at all — a
+#     bare Mach-O is never a document handler no matter what QEvent::FileOpen
+#     handling MainWindow has.
+# ---------------------------------------------------------------------------
+option(LIDARSCAN_MACOS_BUNDLE "Build LidarScan.app instead of a plain binary" OFF)
+set(LIDARSCAN_BUNDLE_FLAG "")
+set(LIDARSCAN_EXECUTABLE "lidarscan")
+if(APPLE AND LIDARSCAN_MACOS_BUNDLE)
+    set(LIDARSCAN_BUNDLE_FLAG MACOSX_BUNDLE)
+    set(LIDARSCAN_EXECUTABLE "LidarScan")
+    # configure_file WITHOUT @ONLY: Info.plist.in uses ${LIDARSCAN_VERSION}
+    # syntax (C7 wrote it that way and documented the choice), which @ONLY
+    # would leave un-substituted.
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/packaging/Info.plist.in"
+                   "${CMAKE_CURRENT_BINARY_DIR}/Info.plist")
+endif()
+
+# ---------------------------------------------------------------------------
 # Per-OS surface + display-link implementations (the S3-recommended shim)
 # ---------------------------------------------------------------------------
 if(APPLE)
@@ -133,6 +199,7 @@ else()
 endif()
 
 add_executable(lidarscan
+    ${LIDARSCAN_BUNDLE_FLAG}
     src/main.cpp
     src/app/EngineHost.cpp
     src/app/Project.cpp
@@ -158,6 +225,36 @@ add_executable(lidarscan
     ${LIDARSCAN_PLATFORM_SOURCES}
 )
 add_dependencies(lidarscan lidarscan_points_material)
+
+if(APPLE AND LIDARSCAN_MACOS_BUNDLE)
+    # OUTPUT_NAME drives BOTH the .app directory name and the Mach-O inside it,
+    # so it is "LidarScan" (the user-visible name in Finder / the Dock / the
+    # Applications folder) and Info.plist.in's CFBundleExecutable is filled from
+    # the same variable — they cannot drift apart.
+    set_target_properties(lidarscan PROPERTIES
+        OUTPUT_NAME "${LIDARSCAN_EXECUTABLE}"
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_BINARY_DIR}/Info.plist"
+        MACOSX_BUNDLE_BUNDLE_NAME "LidarScan")
+    # points.filamat is a generated file, so it cannot go in add_executable()'s
+    # source list with MACOSX_PACKAGE_LOCATION (the copy would race the matc
+    # custom command). A POST_BUILD copy is ordered after both.
+    add_custom_command(TARGET lidarscan POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy "${POINTS_FILAMAT}"
+                "$<TARGET_BUNDLE_CONTENT_DIR:lidarscan>/Resources/points.filamat"
+        COMMENT "bundle: points.filamat -> Contents/Resources"
+        VERBATIM)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/packaging/macos/lidarscan.icns")
+        add_custom_command(TARGET lidarscan POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                    "${CMAKE_CURRENT_SOURCE_DIR}/packaging/macos/lidarscan.icns"
+                    "$<TARGET_BUNDLE_CONTENT_DIR:lidarscan>/Resources/lidarscan.icns"
+            COMMENT "bundle: lidarscan.icns -> Contents/Resources"
+            VERBATIM)
+    else()
+        message(STATUS "lidarscan: no packaging/macos/lidarscan.icns — the bundle "
+                       "will use the generic app icon (run tools/make_icon.sh)")
+    endif()
+endif()
 
 # QT_NO_KEYWORDS is REQUIRED, not stylistic: the engine's D6 parser has a member
 # function called emit() (drivers/d6/d6_parser.h, kept byte-identical to the S1

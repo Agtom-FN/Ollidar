@@ -1,0 +1,31 @@
+Package: lidarscan
+Version: @VERSION@
+Section: science
+Priority: optional
+Architecture: @ARCH@
+Installed-Size: @INSTALLED_SIZE@
+Maintainer: LidarScan <support@lidarscan.invalid>
+Homepage: https://lidarscan.invalid
+Depends: libc6 (>= 2.35),
+ libstdc++6 (>= 12),
+ libqt6core6 (>= 6.4),
+ libqt6gui6 (>= 6.4),
+ libqt6widgets6 (>= 6.4),
+ libqt6network6 (>= 6.4),
+ libqt6serialport6 (>= 6.4),
+ libvulkan1,
+ libx11-6,
+ libxcb1
+Recommends: mesa-vulkan-drivers
+Description: Lidar capture, review and floor-plan workstation
+ LidarScan captures point clouds from a COIN-D6 (USB serial) or a Livox
+ Mid-360 (Ethernet), reviews them in a GPU point-cloud viewer, measures
+ distances, extracts 2D floor plans, merges multiple sessions and exports
+ PLY / LAS / PCD / DXF / PDF.
+ .
+ This package installs a udev rule so the COIN-D6's CH340 USB-serial
+ interface is usable without adding yourself to the dialout group, and
+ registers the .lscan / .lscan.zip file types with the desktop.
+ .
+ The 3D viewport currently requires X11; on a Wayland session the bundled
+ desktop entry starts the application under XWayland automatically.

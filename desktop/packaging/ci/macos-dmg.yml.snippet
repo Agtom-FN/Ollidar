@@ -1,0 +1,174 @@
+# =============================================================================
+# STAGED JOB — merge into .github/workflows/<release>.yml. Does not run here.
+# See packaging/ci/README.md for why this is a snippet and not a workflow.
+#
+# Produces the universal (Intel + Apple Silicon) DMG that Tech Spec §3.13 asks
+# for. Every step below was executed by hand on the development machine on
+# 2026-08-15 and is recorded in desktop/NOTES.md §13 — except notarization,
+# which needs an Apple Developer ID and is therefore conditional.
+# =============================================================================
+jobs:
+  macos-universal-dmg:
+    name: macOS universal DMG
+    # macos-14 is an arm64 runner. The x86_64 Filament slice is CROSS-COMPILED
+    # on it (CMAKE_OSX_ARCHITECTURES=x86_64), and the x86_64 matc/resgen the
+    # build runs mid-flight are translated by Rosetta 2, which GitHub's arm64
+    # macOS images have preinstalled. If that ever stops being true, the
+    # fallback is Filament's own -DIMPORT_EXECUTABLES_DIR escape hatch, which
+    # tools/build_filament_x86_64.sh documents in its header.
+    runs-on: macos-14
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: brew install ninja create-dmg
+
+      # --- Filament ------------------------------------------------------
+      # The arm64 slice is Google's prebuilt release; the x86_64 slice is built
+      # from source because filament-v1.75.0-mac.tgz ships lib/arm64 ONLY
+      # (desktop/NOTES.md §3.2). ~2 min of CPU on 10 jobs, cached because it
+      # changes only when the pinned Filament tag does.
+      - name: Cache Filament x86_64
+        id: cache-filament-x86
+        uses: actions/cache@v4
+        with:
+          path: desktop/third_party/filament-x86_64
+          key: filament-x86_64-v1.75.0-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Fetch Filament (arm64 prebuilt)
+        working-directory: desktop
+        run: ./tools/fetch_filament.sh v1.75.0
+
+      - name: Build Filament x86_64 from source
+        if: steps.cache-filament-x86.outputs.cache-hit != 'true'
+        working-directory: desktop
+        run: ./tools/build_filament_x86_64.sh v1.75.0
+
+      - name: lipo Filament into a universal tree
+        working-directory: desktop
+        run: ./tools/make_universal_filament.sh
+
+      # --- Qt ------------------------------------------------------------
+      # NOT Homebrew Qt: `brew install qt` is arm64-only on Apple Silicon, so a
+      # universal app cannot be linked against it at all. aqtinstall fetches
+      # The Qt Company's own macOS desktop build, which has been universal
+      # since Qt 6.2. tools/fetch_qt_universal.sh has the full reasoning.
+      - name: Cache universal Qt
+        id: cache-qt
+        uses: actions/cache@v4
+        with:
+          path: desktop/third_party/qt-universal
+          key: qt-universal-6.11.1-macos
+
+      - name: Fetch universal Qt
+        if: steps.cache-qt.outputs.cache-hit != 'true'
+        working-directory: desktop
+        run: ./tools/fetch_qt_universal.sh 6.11.1
+
+      # --- signing identity (optional) ------------------------------------
+      - name: Import Developer ID certificate
+        if: ${{ secrets.APPLE_CERT_P12 != '' }}
+        env:
+          CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # A throwaway keychain, not the login one: it is deleted with the
+          # runner, and it never prompts for a password on codesign access.
+          KEYCHAIN="$RUNNER_TEMP/build.keychain"
+          KEYCHAIN_PASS="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN"
+          echo "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "$CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASS" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+      # --- build + package -------------------------------------------------
+      - name: Build universal app + DMG
+        working-directory: desktop
+        env:
+          # Empty -> package_macos.sh falls back to ad-hoc (`-s -`) and says so.
+          CODESIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: ./tools/package_macos.sh
+
+      # --- the check that matters -----------------------------------------
+      # A "universal" DMG that is quietly arm64-only is the exact failure this
+      # whole job exists to prevent, so assert it rather than eyeballing a log.
+      - name: Assert the binary really is universal
+        working-directory: desktop
+        run: |
+          set -euo pipefail
+          BIN="build-universal/LidarScan.app/Contents/MacOS/LidarScan"
+          lipo -info "$BIN"
+          lipo -info "$BIN" | grep -q x86_64 || { echo "::error::no x86_64 slice"; exit 1; }
+          lipo -info "$BIN" | grep -q arm64  || { echo "::error::no arm64 slice";  exit 1; }
+          for fw in build-universal/LidarScan.app/Contents/Frameworks/*.framework; do
+            n="$(basename "$fw" .framework)"
+            lipo -info "$fw/Versions/A/$n" | grep -q x86_64 \
+              || { echo "::error::$n is not universal"; exit 1; }
+          done
+
+      - name: Mount the DMG and launch the app from it
+        working-directory: desktop
+        run: |
+          set -euo pipefail
+          DMG="$(ls dist/*.dmg)"
+          hdiutil attach "$DMG" -readonly -mountpoint /tmp/lsdmg
+          lipo -info /tmp/lsdmg/LidarScan.app/Contents/MacOS/LidarScan
+          # --help needs no GPU and no window server, so it works on a headless
+          # runner and still proves the bundle, its Qt frameworks and the
+          # dynamic loader all agree. The full render evidence (a real replay
+          # into the viewport at ~52 fps) needs a GPU session and was captured
+          # on the development machine instead — NOTES.md §13.
+          /tmp/lsdmg/LidarScan.app/Contents/MacOS/LidarScan --help > /tmp/help.txt
+          head -5 /tmp/help.txt
+          hdiutil detach /tmp/lsdmg
+
+      # --- notarize (only with real credentials) ---------------------------
+      - name: Notarize + staple
+        if: ${{ secrets.APPLE_ID != '' }}
+        working-directory: desktop
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          DMG="$(ls dist/*.dmg)"
+          # --wait blocks until Apple's service returns; typically 1-5 minutes.
+          xcrun notarytool submit "$DMG" \
+            --apple-id "$APPLE_ID" --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" --wait
+          # Stapling puts the ticket INSIDE the DMG so it validates offline.
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+          spctl -a -vvv -t open --context context:primary-signature "$DMG"
+
+      - name: Summary
+        working-directory: desktop
+        run: |
+          {
+            echo "## macOS universal DMG"
+            echo '```'
+            lipo -info build-universal/LidarScan.app/Contents/MacOS/LidarScan
+            codesign -dv build-universal/LidarScan.app 2>&1 | head -6
+            echo '```'
+            if [ -z "${{ secrets.APPLE_ID }}" ]; then
+              echo "> **Not notarized** — no Apple credentials configured."
+              echo "> This DMG is ad-hoc signed and will be quarantined on any"
+              echo "> other Mac. See desktop/packaging/PACKAGING.md."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LidarScan-macos-universal-dmg
+          path: desktop/dist/*.dmg
+          if-no-files-found: error
