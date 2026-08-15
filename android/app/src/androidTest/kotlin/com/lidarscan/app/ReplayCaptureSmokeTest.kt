@@ -85,11 +85,17 @@ class ReplayCaptureSmokeTest {
             // ReplayEngineBridge auto-connects on ViewModel init (no USB
             // wizard for a replay session); once CONNECTED + IDLE the
             // "Start replay" button renders (CaptureScreen.kt's
-            // RecordingControls).
+            // RecordingControls). substring = true: the button's actual
+            // text is "  Start replay" (two leading spaces, for icon
+            // spacing — RecordingControls' Icon+Text row) and
+            // onNodeWithText defaults to an EXACT match, which silently
+            // never matches and spins the full waitUntil timeout — found by
+            // running this test for real and adding temporary diagnostic
+            // logs (see NOTES.md's "Android emulator smoke test" section).
             composeRule.waitUntil(timeoutMillis = 20_000) {
-                composeRule.onAllNodesWithText("Start replay").fetchSemanticsNodes().isNotEmpty()
+                composeRule.onAllNodesWithText("Start replay", substring = true).fetchSemanticsNodes().isNotEmpty()
             }
-            composeRule.onNodeWithText("Start replay").performClick()
+            composeRule.onNodeWithText("Start replay", substring = true).performClick()
 
             composeRule.waitUntil(timeoutMillis = 20_000) { currentPointsCaptured() > 0 }
             val firstSample = currentPointsCaptured()

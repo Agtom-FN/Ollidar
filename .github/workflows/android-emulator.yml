@@ -10,36 +10,52 @@ name: android-emulator
 # :app:assembleDebug — no device) could ever have caught it; only a booted
 # device/emulator attaching a real Filament SurfaceView can.
 #
-# Runs on `macos-latest`, not `ubuntu-latest`: android/app/build.gradle.kts
-# pins `ndk.abiFilters += "arm64-v8a"` ONLY (see NOTES.md's B2 section — the
-# reference hardware is Pixel 7+/Galaxy S22+, all arm64; armeabi-v7a/x86_64
-# would need their own libscanengine cross-compiles, out of scope), so this
-# debug APK ships arm64-v8a native libraries and nothing else. An x86_64
-# emulator (the fast, KVM-accelerated option on an ubuntu-latest x86_64 host)
-# could install the APK but every native call — Filament's own init included,
-# the exact thing this test exists to catch — would fail immediately with a
-# missing-ABI UnsatisfiedLinkError, which would make this test worthless as a
-# regression gate (it would "pass" by finding a *different*, uninteresting
-# crash, or never load Filament at all). `macos-latest` is arm64-v8a-native
-# instead.
+# ============================================================================
+# Runner/ABI history — three real CI iterations got us here (see
+# android/NOTES.md's "Android emulator smoke test" section for the full
+# account; this is the short version so the *current* config isn't a mystery):
 #
-# **`-accel off` is load-bearing, found by running this workflow for real
-# (iteration 1 here):** GitHub-hosted `macos-latest` runners are themselves
-# VMs (Apple's own virtualization), and Apple's Hypervisor.Framework does not
-# support the nested virtualization a *second*-level guest (the Android
-# emulator's QEMU) would need — confirmed directly, not assumed: the first
-# real run here failed with `HVF error: HV_UNSUPPORTED` /
-# `qemu-system-aarch64-headless: failed to initialize HVF: Invalid argument`,
-# the emulator process exited immediately, and the action's boot-wait loop
-# then polled a dead `emulator-5554` for its whole timeout before failing
-# with "Timeout waiting for emulator to boot." A **physical** Apple Silicon
-# Mac (e.g. a self-hosted runner) does not have this restriction — only
-# GitHub's own hosted macOS VMs do — which is why NOTES.md's B4/B7 local
-# `b4_test` AVD (this exact api-level/target/arch) booted hardware-accelerated
-# with no such flag. `-accel off` forces QEMU's software TCG path instead:
-# slower than HVF, but same-architecture (arm64 guest on the arm64 runner) —
-# nothing like the crippling cost cross-arch (e.g. arm64-on-x86_64)
-# translation would have.
+#   1. macos-latest + arm64-v8a (matching the app's arm64-v8a-only native
+#      libs, see below) → FAILED: "HVF error: HV_UNSUPPORTED" /
+#      "qemu-system-aarch64-headless: failed to initialize HVF: Invalid
+#      argument". GitHub-hosted macOS runners are themselves VMs; Apple's
+#      Hypervisor.Framework does not support the nested virtualization a
+#      *second*-level guest (the emulator's own QEMU) needs. Only a
+#      *physical* Apple Silicon Mac (e.g. NOTES.md's local `b4_test` AVD) can
+#      HVF-accelerate this pairing.
+#   2. Same, + `-accel off` (force software TCG) → FAILED the same way. The
+#      emulator's own frontend printed "arm64-v8a emulation may not work
+#      without hardware acceleration!" (i.e. it saw the flag), but the
+#      underlying `qemu-system-aarch64-headless` process still unconditionally
+#      attempted HVF init and crashed regardless — a genuine dead end on this
+#      emulator version (37.1.11.0) on a GitHub-hosted macOS runner, not a
+#      flag we got wrong.
+#   3. (current) ubuntu-latest + x86_64, KVM-accelerated — GitHub-hosted Linux
+#      runners DO expose `/dev/kvm` for a same-arch (x86_64-on-x86_64) guest;
+#      this is reactivecircus/android-emulator-runner's own primary
+#      documented path and is unrelated to the macOS nested-virtualization
+#      restriction above.
+#
+# Switching to x86_64 reopens the ABI problem the original macos-latest
+# design was built to avoid: android/app/build.gradle.kts's
+# `defaultConfig.ndk.abiFilters` was arm64-v8a-only (B2 §1 — Pixel 7+/Galaxy
+# S22+ reference hardware), so an x86_64 emulator could install the APK but
+# every native call, Filament's own init included, would fail immediately
+# with a missing-ABI UnsatisfiedLinkError — worthless as a regression gate.
+# `abiFilters` now also includes `x86_64` (android/app/build.gradle.kts),
+# added specifically to make this CI path possible. **Verified locally**
+# (this environment has a real JDK/NDK/SDK toolchain, see NOTES.md): a clean
+# `:app:externalNativeBuildDebug` cross-compiles `engine/` + the vendored
+# Livox-SDK2 + the JNI shim for x86_64 with no source changes needed —
+# `engine/`'s own macos-universal CI leg already proves the codebase is not
+# arm-only, and that held for the NDK x86_64 target too. **Not yet verified
+# against a live GitHub Actions run**: this repository's Actions minutes were
+# exhausted (billing/quota) before this configuration could be pushed through
+# a real run — see NOTES.md for exactly what is and isn't proven. The KVM
+# enable step below, the x86_64 arch, and google_apis target are
+# reactivecircus/android-emulator-runner's own documented ubuntu-latest
+# pattern, used as-is.
+# ============================================================================
 #
 # Triggers on push to main (the "every push" gate the task asked for) and to
 # ci/** (so this workflow's own iteration commits trigger it), restricted to
@@ -63,17 +79,13 @@ on:
 env:
   AVD_API_LEVEL: 30
   AVD_TARGET: google_apis
-  AVD_ARCH: arm64-v8a
+  AVD_ARCH: x86_64
 
 jobs:
   android-emulator-smoke-test:
-    name: macos-latest / Android emulator smoke test (arm64-v8a)
-    runs-on: macos-latest
-    # Generous: software (TCG, no HVF — see the `-accel off` note above) boot
-    # of an arm64-v8a AVD is meaningfully slower than the hardware-accelerated
-    # boot this was first written against, and the job still has to assemble
-    # the app + androidTest APK and run the test itself on top of that.
-    timeout-minutes: 45
+    name: ubuntu-latest / Android emulator smoke test (x86_64, KVM)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     # A hard gate, not `continue-on-error: true` like engine-ci.yml's
     # android-app job: that job is a first CI pass at a toolchain still
     # proving itself; this job's whole reason to exist is to be the thing
@@ -104,6 +116,16 @@ jobs:
       - name: Accept Android SDK licenses
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
 
+      # reactivecircus/android-emulator-runner's own documented step for
+      # ubuntu-latest: GitHub-hosted Linux runners ship /dev/kvm but with
+      # group perms that block the actions runner user by default.
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
@@ -127,7 +149,7 @@ jobs:
           path: |
             ~/.android/avd/*
             ~/.android/adb*
-          key: avd-${{ env.AVD_API_LEVEL }}-${{ env.AVD_TARGET }}-${{ env.AVD_ARCH }}-v1
+          key: avd-${{ runner.os }}-${{ env.AVD_API_LEVEL }}-${{ env.AVD_TARGET }}-${{ env.AVD_ARCH }}-v2
 
       - name: Create AVD + generate snapshot for caching
         if: steps.avd-cache.outputs.cache-hit != 'true'
@@ -137,16 +159,11 @@ jobs:
           target: ${{ env.AVD_TARGET }}
           arch: ${{ env.AVD_ARCH }}
           force-avd-creation: false
-          # No GPU/graphics acceleration needed or available headlessly —
-          # swiftshader_indirect (software) is exactly what NOTES.md's
-          # `b4_test` AVD also used; this test asserts Filament initializes
-          # and decodes points, not that a frame looks correct. `-accel off`:
-          # see the workflow header comment — GitHub-hosted macOS runners
-          # cannot nest Hypervisor.Framework, so HVF must be forced off
-          # rather than left to auto-detect (which crashes the emulator
-          # process outright instead of falling back on its own).
-          emulator-options: -no-window -gpu swiftshader_indirect -no-audio -no-boot-anim -camera-back none -no-snapshot-save -accel off
-          emulator-boot-timeout: 1800
+          # KVM accelerates the CPU (x86_64 guest on the x86_64 runner);
+          # swiftshader_indirect is still a software GPU — there is no real
+          # GPU on the runner either way. This test asserts Filament
+          # initializes and decodes points, not that a frame looks correct.
+          emulator-options: -no-window -gpu swiftshader_indirect -no-audio -no-boot-anim -camera-back none -no-snapshot-save
           disable-animations: false
           script: echo "Generated AVD snapshot for caching."
 
@@ -173,8 +190,7 @@ jobs:
           target: ${{ env.AVD_TARGET }}
           arch: ${{ env.AVD_ARCH }}
           force-avd-creation: false
-          emulator-options: -no-window -gpu swiftshader_indirect -no-audio -no-boot-anim -camera-back none -no-snapshot-save -accel off
-          emulator-boot-timeout: 1800
+          emulator-options: -no-window -gpu swiftshader_indirect -no-audio -no-boot-anim -camera-back none -no-snapshot-save
           disable-animations: true
           script: |
             adb logcat -c
