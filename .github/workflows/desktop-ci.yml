@@ -302,10 +302,21 @@ jobs:
             | grep -oE "undefined reference to \`[^']*'" \
             | sed "s/.*\`//;s/'\$//" | sort -u > /tmp/undef.txt || true
           total=$(wc -l < /tmp/undef.txt)
-          libcxx=$(grep -c 'std::__1::' /tmp/undef.txt || true)
-          echo "distinct undefined symbols: $total   of those in std::__1:: (libc++): $libcxx"
-          echo "not-libc++ (i.e. a REAL app/Filament ABI boundary problem):"
-          grep -v 'std::__1::' /tmp/undef.txt || echo "  (none)"
+          # Two forms of "this is libc++, not our code":
+          #   std::__1::...   the inline ABI namespace libc++ versions everything with
+          #   std::<the ABI-stable subset libc++abi owns un-namespaced> —
+          #                   exception_ptr, rethrow_exception, bad_optional_access,
+          #                   bad_variant_access, bad_array_new_length
+          # Anything OUTSIDE both is a symbol our own code or Qt failed to
+          # provide, i.e. a genuine app/Filament ABI boundary problem rather
+          # than a missing standard library.
+          grep -vE 'std::__1::|std::(exception_ptr|rethrow_exception|bad_optional_access|bad_variant_access|bad_array_new_length)' \
+            /tmp/undef.txt > /tmp/undef-notlibcxx.txt || true
+          echo "distinct undefined symbols: $total"
+          echo "of those, libc++ runtime: $(( total - $(wc -l < /tmp/undef-notlibcxx.txt) ))"
+          echo "NOT libc++ (a real app/Filament ABI boundary problem):"
+          cat /tmp/undef-notlibcxx.txt
+          test -s /tmp/undef-notlibcxx.txt || echo "  (none — every unresolved symbol is standard-library, not ours)"
 
       # ---------------------------------------------------------------
       # PROBE B — does adding libc++ alongside libstdc++ complete the link?
@@ -320,6 +331,14 @@ jobs:
       # tables, and nothing here runs the result. This probe answers exactly
       # one question — "does it resolve?" — and NOTES.md §14 records it as
       # exactly that, not as a Linux port.
+      #
+      # CMAKE_CXX_STANDARD_LIBRARIES, not CMAKE_EXE_LINKER_FLAGS: the latter
+      # goes in FRONT of the objects and archives on the link line, and Ubuntu
+      # links with --as-needed, so a shared libc++ listed before anything that
+      # references it is dropped outright. Measured: the first attempt used
+      # EXE_LINKER_FLAGS and libc++'s iostream/locale symbols stayed
+      # unresolved. STANDARD_LIBRARIES is appended at the end, where static and
+      # as-needed archive semantics can actually pull members out.
       # ---------------------------------------------------------------
       - name: "Probe B: link with libc++ alongside libstdc++"
         id: linkprobe2
@@ -330,10 +349,12 @@ jobs:
           cmake -S . -B build-link2 -G Ninja \
             -DCMAKE_BUILD_TYPE=Release -DENGINE_FETCH_EIGEN=ON \
             -DLIDARSCAN_COMPILE_ONLY=OFF \
-            -DCMAKE_EXE_LINKER_FLAGS="-lc++ -lc++abi" > /dev/null
+            -DCMAKE_CXX_STANDARD_LIBRARIES="-lc++ -lc++abi" > /dev/null
           cmake --build build-link2 2>&1 | tail -n 40
           ls -la build-link2/lidarscan
           file build-link2/lidarscan
+          echo "--- both runtimes present in the binary's NEEDED list? ---"
+          readelf -d build-link2/lidarscan | grep -E 'NEEDED.*(stdc\+\+|c\+\+)' || true
 
       - name: "Probe verdict"
         if: always()
