@@ -47,6 +47,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -582,7 +583,17 @@ private fun StatusStripCard(stats: CaptureStats, health: DeviceHealth?) {
                 HealthChip(health)
             }
             Spacer(Modifier.height(8.dp))
-            StatRow("Points captured", "%,d".format(stats.pointsCaptured))
+            // testTag: the CI Android-emulator smoke test polls this exact
+            // node (ReplayCaptureSmokeTest.kt) to assert the decoded point
+            // count grows during a replay session — see NOTES.md's "Android
+            // emulator smoke test" section for why (it is the same "connect
+            // the 3D view up and watch it not crash" class of check that
+            // caught B4's Utils.init() bug, which no unit test could).
+            StatRow(
+                "Points captured",
+                "%,d".format(stats.pointsCaptured),
+                valueTestTag = "pointsCapturedValue",
+            )
             StatRow("Points/sec", "%.0f".format(stats.pointsPerSecond))
             StatRow("Duration", "%.1f s".format(stats.elapsedMillis / 1000.0))
             StatRow("Storage", "%.2f MB".format(stats.recordingSizeBytes / 1_000_000.0))
@@ -744,13 +755,17 @@ private fun SessionSummaryContent(summary: CaptureStats, onDismiss: () -> Unit) 
 }
 
 @Composable
-private fun StatRow(label: String, value: String) {
+private fun StatRow(label: String, value: String, valueTestTag: String? = null) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, style = MaterialTheme.typography.bodyMedium)
+        Text(
+            value,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = if (valueTestTag != null) Modifier.testTag(valueTestTag) else Modifier,
+        )
     }
 }
 

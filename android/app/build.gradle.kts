@@ -116,6 +116,11 @@ android {
         versionCode = 1
         versionName = "0.1.0"
 
+        // CI Android-emulator smoke test (:app:connectedDebugAndroidTest,
+        // android/app/src/androidTest/) — see NOTES.md's "Android emulator
+        // smoke test" section.
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
         vectorDrawables {
             useSupportLibrary = true
         }
@@ -128,11 +133,23 @@ android {
         // APK with no hardware access) without touching Settings.
         buildConfigField("boolean", "FORCE_FAKE_ENGINE", "false")
 
-        // arm64-v8a only for now (Tech Spec §3.1: Android capture hardware is
-        // Pixel 7+/Galaxy S22+ class, all arm64). armeabi-v7a/x86_64 would
-        // need their own libscanengine cross-compiles; not this task's scope.
+        // arm64-v8a is the real-hardware target (Tech Spec §3.1: Android
+        // capture hardware is Pixel 7+/Galaxy S22+ class, all arm64) and
+        // stays first/primary. x86_64 was added on top for the Android
+        // emulator smoke test's CI leg (.github/workflows/android-emulator.yml,
+        // see NOTES.md's "Android emulator smoke test" section) — GitHub-hosted
+        // macOS runners can't hardware-accelerate an arm64-v8a emulator (no
+        // nested Hypervisor.Framework), so that CI job runs on ubuntu-latest
+        // with a KVM-accelerated x86_64 emulator instead, which needs a
+        // native lib actually built for that ABI or every native call
+        // (Filament's init included — the exact thing that test exists to
+        // catch) fails immediately with a missing-ABI UnsatisfiedLinkError.
+        // Verified locally that engine/ + the vendored Livox-SDK2 need zero
+        // source changes to cross-compile for x86_64 — armeabi-v7a is still
+        // not built, and still not this task's scope.
         ndk {
             abiFilters += "arm64-v8a"
+            abiFilters += "x86_64"
         }
 
         externalNativeBuild {
@@ -209,6 +226,16 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+
+    // CI Android-emulator smoke test: belt-and-suspenders on top of the
+    // workflow's own `disable-animations: true` step — this flag makes AGP's
+    // test runner call `Settings.Global` animation-scale writes itself before
+    // each test, which also covers running `connectedDebugAndroidTest`
+    // locally against an emulator/device that was not booted through that
+    // action.
+    testOptions {
+        animationsDisabled = true
+    }
 }
 
 // Every variant's asset-merge step needs the compiled .filamat(s) to exist
@@ -270,4 +297,14 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+
+    // CI Android-emulator smoke test (:app:connectedDebugAndroidTest) — see
+    // android/app/src/androidTest/ and NOTES.md's "Android emulator smoke
+    // test" section.
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.espresso.core)
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
 }

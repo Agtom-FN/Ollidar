@@ -6,6 +6,7 @@ import com.lidarscan.app.data.AppSettings
 import com.lidarscan.app.data.SettingsRepository
 import com.lidarscan.app.data.ThemeMode
 import com.lidarscan.app.data.Units
+import com.lidarscan.app.debug.REPLAY_PROJECT_NAME
 import com.lidarscan.core.model.SensorType
 import com.lidarscan.core.model.WorkflowProfile
 import com.lidarscan.core.store.ProjectStore
@@ -65,9 +66,5 @@ class SettingsViewModel(
                 ?: projectStore.create(REPLAY_PROJECT_NAME, SensorType.COIN_D6, WorkflowProfile.QUICK_SCAN)
             withContext(Dispatchers.Main) { onReady(project.id) }
         }
-    }
-
-    private companion object {
-        const val REPLAY_PROJECT_NAME = "Synthetic Replay Demo"
     }
 }

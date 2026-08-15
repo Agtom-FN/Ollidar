@@ -13,11 +13,16 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.compose.rememberNavController
 import com.lidarscan.app.data.AppSettings
+import com.lidarscan.app.debug.EXTRA_LAUNCH_REPLAY_CAPTURE
+import com.lidarscan.app.debug.findOrCreateReplayProjectId
 import com.lidarscan.app.ui.nav.LidarScanApp
+import com.lidarscan.app.ui.nav.Routes
 import com.lidarscan.app.ui.theme.LidarScanTheme
 
 class MainActivity : ComponentActivity() {
@@ -58,10 +63,24 @@ class MainActivity : ComponentActivity() {
         setContent {
             val settings by container.settingsRepository.settings
                 .collectAsStateWithLifecycle(initialValue = AppSettings())
+            val navController = rememberNavController()
+
+            // Debug-only deep link (see com.lidarscan.app.debug.ReplayDeepLink):
+            // `-e EXTRA_LAUNCH_REPLAY_CAPTURE true` / an Intent extra jumps
+            // straight to the "Replay synthetic capture" acceptance path
+            // instead of requiring Projects -> Settings -> tap. Read once per
+            // Activity instance (LaunchedEffect(Unit)); a config change does
+            // not re-trigger a second navigate.
+            LaunchedEffect(Unit) {
+                if (intent.getBooleanExtra(EXTRA_LAUNCH_REPLAY_CAPTURE, false)) {
+                    val projectId = findOrCreateReplayProjectId(container)
+                    navController.navigate(Routes.replayCapture(projectId))
+                }
+            }
 
             LidarScanTheme(themeMode = settings.themeMode) {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    LidarScanApp(container = container)
+                    LidarScanApp(container = container, navController = navController)
                 }
             }
         }

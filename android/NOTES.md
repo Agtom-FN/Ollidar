@@ -2356,3 +2356,280 @@ for the first time. Still arm64-v8a only, so `abiFilters` holds.
 - `material-icons-extended` is used instead of `material-icons-core` —
   pulling in both causes duplicate-class build failures (extended already
   contains everything core does), so only one is declared.
+
+## Android emulator smoke test
+
+A permanent instrumentation test (`android/app/src/androidTest/`), gated on
+every push in `.github/workflows/android-emulator.yml`, added specifically
+because unit tests, `javap`, and `llvm-nm` all missed a real crash and only a
+booted device found it — see §8.1 above ("The crash only a device could
+find"): `Manipulator.nCreateBuilder()` threw `UnsatisfiedLinkError` the first
+time a Filament view attached, because `Filament.init()` loads
+`libfilament-jni.so` and nothing else — `Manipulator` needs the separate
+`filament-utils` artifact's `libfilament-utils-jni.so`, loaded only by
+`Utils.init()`. B4 called just the first. It compiled cleanly, passed every
+unit test, and was invisible to static inspection of the `.so` — the classes
+and symbols all existed, just in an unloaded library. Nothing before this
+test ran that check automatically; every prior "on device" verification
+pass in this file (B4 §8, B3/B7/B8/B5-B12 §8) was a one-off, run by hand,
+never wired into CI.
+
+### What it covers
+
+`android/app/src/androidTest/kotlin/com/lidarscan/app/ReplayCaptureSmokeTest.kt`,
+two `@Test`s, both driven through `MainActivity` (a real Activity launch, not
+a Robolectric shadow):
+
+1. `launchReachesProjectsListWithoutCrashing` — the cheap end. A cold launch
+   alone exercises `LidarScanApplication`/`AppContainer` construction (which
+   touches `ScanEngineNative`'s `System.loadLibrary("scanengine_jni")`) and
+   Compose's first composition. This is the JNI_OnLoad class of crash the
+   task brief calls out, and it is everything a crash *before* any
+   `SurfaceView` screen is reachable would look like.
+2. `replaySyntheticCaptureDecodesPointsWithoutCrashing` — the one that
+   actually reaches Filament. It launches `MainActivity` with a debug-only
+   intent extra that deep-links straight to the "Replay synthetic capture"
+   acceptance path (bundled `assets/replay/synth.lscan/`, no hardware — see
+   B4 §3 above), taps "Start replay", then polls the live stats panel's
+   "Points captured" value for ~10s, asserting it is positive, never goes
+   backwards, and grows at some point in that window. A crash anywhere in
+   that path (Filament init, the native replay engine, the JNI page-read
+   marshalling) fails the whole instrumentation run outright — the same
+   failure mode B4's own bug had — rather than tripping a normal assertion.
+
+### Hooks added to app code (kept minimal, documented at each site)
+
+- **`com.lidarscan.app.debug.ReplayDeepLink`** (new file): a debug-only
+  launch intent extra, `EXTRA_LAUNCH_REPLAY_CAPTURE` (boolean). When
+  `MainActivity.onCreate` sees it set, it find-or-creates the same
+  "Synthetic Replay Demo" project `SettingsViewModel.replaySyntheticCapture`
+  does and navigates straight to `Routes.replayCapture(projectId)` —
+  skipping the Projects -> Settings -> tap path a human uses. This is a real,
+  reusable deep link, not a test-only branch: nothing about it depends on
+  the instrumentation-test process, and it is what let the smoke test avoid
+  tapping through two screens (and their own async project-list load) on
+  every run. `SettingsViewModel` was refactored to import the shared
+  `REPLAY_PROJECT_NAME` constant from this file instead of keeping its own
+  private copy, so the two call sites can't drift on the project name.
+- **`Modifier.testTag("pointsCapturedValue")`** on the "Points captured"
+  `StatRow`'s value `Text` in `CaptureScreen.kt` (`StatRow` gained an
+  optional `valueTestTag` parameter — every other call site is unaffected).
+  This is what the test polls; parsing the on-screen `"%,d"`-formatted
+  string is simpler and more honest than adding a second, parallel
+  test-only data path that could itself drift from what a user sees.
+- **`Modifier.testTag("replaySyntheticCaptureButton")`** on the Settings
+  screen's "Replay synthetic capture" button — not used by the current test
+  (which uses the deep link instead), but added because that screen has two
+  `Text` nodes with the identical string ("Replay synthetic capture" is both
+  the button's label and the line of copy above it), which would make a
+  plain-text UI-navigation variant of this test ambiguous without it. Left
+  in place for exactly that future variant.
+
+### Workflow: `.github/workflows/android-emulator.yml` — three real CI
+attempts, a pivot, and the status this task ends on
+
+Separate from `engine-ci.yml`'s `android-app` job (JDK/SDK setup,
+`:core:test`, `:app:assembleDebug`, `continue-on-error: true`, no device) —
+this new job is meant as a hard gate (`continue-on-error: false`) that
+actually boots a device. What follows is the real sequence three pushes to
+`ci/emulator` produced, not the plan written before any of them ran — worth
+keeping honest because iteration 2 alone cost real CI minutes finding out a
+flag didn't do what its own documentation implied.
+
+**Iteration 1 — `macos-latest` + `arm64-v8a`, no special flags.** The
+original design: `android/app/build.gradle.kts` pinned `ndk.abiFilters` to
+`arm64-v8a` only (B2 §1 — Pixel 7+/Galaxy S22+ reference hardware), so the
+debug APK shipped **only** arm64-v8a native libraries
+(`libscanengine_jni.so`, `libfilament-jni.so`, `libfilament-utils-jni.so`,
+all of it) — an x86_64 emulator could install that APK but every native
+call, Filament's own init included, would fail immediately with a
+missing-ABI `UnsatisfiedLinkError`, worthless as a regression gate. GitHub's
+`macos-latest` runners are Apple Silicon hosts, so an arm64-v8a system image
+looked like the natural hardware-accelerated pairing (Apple's
+Hypervisor.Framework doing for arm64-on-arm64 what KVM does for
+x86_64-on-x86_64) — the exact ABI NOTES.md's B4/B7 sections already used on
+a real Mac (the `b4_test` AVD, §8.0 above). **Result: FAILED.**
+`HVF error: HV_UNSUPPORTED` / `qemu-system-aarch64-headless: failed to
+initialize HVF: Invalid argument`, emulator process exited at start, the
+action's boot-wait loop then polled a dead `emulator-5554` for its full
+timeout. **Root cause**: GitHub-hosted macOS runners are themselves VMs, and
+Apple's Hypervisor.Framework does not support the nested virtualization a
+*second*-level guest (the Android emulator's own QEMU) needs. This is a
+restriction on GitHub's *hosted* macOS VMs specifically — a physical Apple
+Silicon Mac (this task's own dev environment, see "Local validation" below)
+has no such restriction.
+
+**Iteration 2 — same, + `-accel off`.** The obvious fix for iteration 1:
+force software (TCG) CPU emulation instead of HVF, same architecture so not
+the crippling cost cross-arch translation would be. **Result: FAILED the
+same way.** The emulator's own frontend printed "arm64-v8a emulation may not
+work without hardware acceleration!" (i.e. it saw and accepted the flag),
+but the underlying `qemu-system-aarch64-headless` process still
+unconditionally attempted HVF init and crashed regardless — confirmed from
+the run's own log, not assumed. On this emulator build (37.1.11.0),
+`-accel off` does not fully suppress the HVF attempt on a GitHub-hosted
+macOS runner. This is a genuine dead end for `macos-latest`, not a flag this
+task got wrong.
+
+**Iteration 3 (current) — pivot to `ubuntu-latest` + `x86_64`, KVM.**
+GitHub-hosted Linux runners expose `/dev/kvm` (after the standard "Enable
+KVM group perms" udev step — `reactivecircus/android-emulator-runner`'s own
+documented pattern, now in the workflow) for a same-arch
+(x86_64-on-x86_64) guest; this is that action's primary documented path and
+is unrelated to the macOS nested-virtualization restriction above. Switching
+architectures reopens the ABI problem iteration 1's design was built to
+avoid, so `android/app/build.gradle.kts`'s `defaultConfig.ndk.abiFilters`
+now lists **both** `arm64-v8a` and `x86_64` (previously arm64-v8a-only) —
+purely additive, and also lets any developer run this app on a plain x86_64
+Android Studio emulator locally, which arm64-only never allowed.
+**Verified locally that this compiles**: a clean
+`:app:externalNativeBuildDebug` cross-compiles `engine/` + the vendored
+Livox-SDK2 + the JNI shim for x86_64 with zero source changes needed (no
+ARM-specific code anywhere in that path — unsurprising given `engine/`'s own
+`macos-universal` CI leg already lipo's arm64+x86_64 together, just not
+through the Android NDK before now).
+
+**This task ends with the ubuntu-latest+x86_64+KVM workflow committed but
+NOT verified against a live GitHub Actions run** — this repository's Actions
+minutes were exhausted (billing/quota) partway through iteration 3, before
+it could be pushed through a real run. New pushes to `ci/emulator` after
+this task's commits will insta-fail with zero steps executed (a runner
+refusal, not a code problem) until quota/billing is restored. The KVM step,
+`x86_64` arch, and `google_apis` target are the action's own documented
+`ubuntu-latest` pattern used as-is, and nothing in this pairing has the
+class of surprise iterations 1–2 found (KVM-for-same-arch on Linux is by far
+the most common, most battle-tested configuration for this action across
+the wider ecosystem) — but "should work" is exactly the confidence level
+iteration 1 also started at, so treat this as unverified until a real run
+says otherwise.
+
+### Local validation (while CI quota is unavailable)
+
+This task's own environment turned out to be a **physical** machine with a
+real JDK/NDK/SDK toolchain and — critically — the `b4_test` AVD (§8.0 above:
+android-34, google_apis, **arm64-v8a**) already present, i.e. the exact ABI
+the original macos-latest design needed, hardware-accelerated for real
+because this machine is not a nested GitHub-hosted VM. Booting it and
+running `./gradlew :app:connectedDebugAndroidTest` against it is the closest
+substitute available for the blocked CI run, and it is what this task used
+for its last two iterations instead of consuming (nonexistent) Actions
+minutes:
+
+- **First local run: 1 of 2 tests failed** —
+  `replaySyntheticCaptureDecodesPointsWithoutCrashing` timed out after 20s
+  waiting for the "Start replay" button. Diagnostic `Log.d` calls added
+  temporarily (and removed again once done) to `MainActivity`'s
+  `LaunchedEffect` and `CaptureViewModel`'s replay-connect coroutine showed
+  the deep link, project creation, navigation, and
+  `ReplayEngineBridge.connect()` all completing correctly in under 200ms —
+  `connectionState` really did reach `CONNECTED` almost immediately. **The
+  bug was in the test, not the app**: `RecordingControls`' button text is
+  `"  Start replay"` — two literal leading spaces, from the
+  `Icon(...) + Text(...)` row layout — and Compose's `onNodeWithText`/
+  `onAllNodesWithText` default to an **exact** match, which silently never
+  matched and spun the full `waitUntil` budget before failing. Fixed by
+  passing `substring = true` to both call sites
+  (`ReplayCaptureSmokeTest.kt`).
+- **Second local run, after the fix: both tests passed.**
+  `./gradlew :app:connectedDebugAndroidTest` → `BUILD SUCCESSFUL`, 0
+  failures, on the real `b4_test` (arm64-v8a) AVD. The full
+  `replaySyntheticCaptureDecodesPointsWithoutCrashing` run (navigate,
+  connect, start replay, wait for points > 0, hold ~10s re-sampling) took
+  about 11.7 seconds end to end and the point count genuinely grew during
+  the hold window (not just a single sample above zero). This is real
+  acceptance evidence that the test class works exactly as designed: it
+  reaches Filament, reaches the native replay engine, and would fail loudly
+  (an instrumentation-run abort, not a normal assertion) on a repeat of
+  B4's `Utils.init()` bug.
+- This local pass used **arm64-v8a**, the same ABI/target as the original
+  design and as NOTES.md's other on-device verification passes — it is not
+  evidence for the ubuntu-latest+x86_64+KVM *workflow* specifically (that
+  pairing is still CI-unverified, see above), only for the **test code and
+  app code** being correct, which is the harder-to-fake part.
+
+### Hooks added to app code (kept minimal, documented at each site)
+
+- **`com.lidarscan.app.debug.ReplayDeepLink`** (new file): a debug-only
+  launch intent extra, `EXTRA_LAUNCH_REPLAY_CAPTURE` (boolean). When
+  `MainActivity.onCreate` sees it set, it find-or-creates the same
+  "Synthetic Replay Demo" project `SettingsViewModel.replaySyntheticCapture`
+  does and navigates straight to `Routes.replayCapture(projectId)` —
+  skipping the Projects -> Settings -> tap path a human uses. This is a real,
+  reusable deep link, not a test-only branch: nothing about it depends on
+  the instrumentation-test process, and it is what let the smoke test avoid
+  tapping through two screens (and their own async project-list load) on
+  every run. `SettingsViewModel` was refactored to import the shared
+  `REPLAY_PROJECT_NAME` constant from this file instead of keeping its own
+  private copy, so the two call sites can't drift on the project name.
+- **`Modifier.testTag("pointsCapturedValue")`** on the "Points captured"
+  `StatRow`'s value `Text` in `CaptureScreen.kt` (`StatRow` gained an
+  optional `valueTestTag` parameter — every other call site is unaffected).
+  This is what the test polls; parsing the on-screen `"%,d"`-formatted
+  string is simpler and more honest than adding a second, parallel
+  test-only data path that could itself drift from what a user sees.
+- **`Modifier.testTag("replaySyntheticCaptureButton")`** on the Settings
+  screen's "Replay synthetic capture" button — not used by the current test
+  (which uses the deep link instead), but added because that screen has two
+  `Text` nodes with the identical string ("Replay synthetic capture" is both
+  the button's label and the line of copy above it), which would make a
+  plain-text UI-navigation variant of this test ambiguous without it. Left
+  in place for exactly that future variant.
+- **`android/app/build.gradle.kts`'s `defaultConfig.ndk.abiFilters`** now
+  includes `x86_64` alongside `arm64-v8a` — see "Iteration 3" above. Not a
+  test-only hook in the same sense as the others (it changes what ships in
+  every debug **and release** build, since AGP has no per-build-type
+  `abiFilters` override — only `defaultConfig`/product-flavor level), but
+  recorded here because the CI pivot is the reason it exists.
+
+### Workflow config knobs (unrelated to the accel history above)
+
+- **AVD caching** (`actions/cache` keyed on API level/target/arch, a
+  create-and-snapshot step gated on cache miss) — `reactivecircus/
+  android-emulator-runner`'s own documented pattern; a cold AVD create + first
+  boot (system-image download + setup wizard) is the single slowest, least
+  interesting part of this job and does not change run to run.
+- **Two disable-animations knobs**: `app/build.gradle.kts`'s
+  `testOptions.animationsDisabled = true` (instrumentation-runner side) and
+  the emulator-runner action's own `disable-animations: true` input
+  (device-settings side) — window-animation flakiness and boot flakiness are
+  the two classic emulator-CI failure modes; each knob covers one.
+  `-no-boot-anim` on the emulator itself covers a third.
+- **Logcat capture**: `adb logcat -v threadtime` piped to a file for the
+  whole `:app:connectedDebugAndroidTest` run, uploaded (with the
+  instrumentation HTML/XML report) only `if: failure()`. This is deliberate,
+  not boilerplate — B4's own crash (§8.1) was found by reading exactly this
+  kind of log, not by a JUnit assertion tripping afterward; a bare
+  test-failure message would not have said *why*.
+- Gradle cache: same key pattern as `engine-ci.yml`'s `android-app` job
+  (hash of `**/*.gradle*` + the wrapper properties + the version catalog),
+  under its own `gradle-emulator-` prefix so the two jobs' caches don't
+  collide on `runner.os` alone.
+
+### Running it locally
+
+```
+cd android
+./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
+# with a booted emulator/device (adb devices shows one) — arm64-v8a or
+# x86_64 both work now that abiFilters covers both:
+./gradlew :app:connectedDebugAndroidTest
+```
+
+On Apple Silicon, an `arm64-v8a` AVD (e.g. this file's own `b4_test`, §8.0
+above) is hardware-accelerated via HVF; that pairing is also what "Local
+validation" above actually ran. An `x86_64` AVD works too (KVM on Linux,
+HAXM/WHPX on Windows/Intel Mac) now that the APK ships both ABIs. Results
+land in `app/build/reports/androidTests/connected/` and
+`app/build/outputs/androidTest-results/connected/` either way.
+
+### Outstanding: what still needs to happen
+
+1. **Restore GitHub Actions quota/billing** on this repository.
+2. **Push any small change to `ci/emulator`** (or re-run the workflow via
+   `workflow_dispatch`) to get the ubuntu-latest+x86_64+KVM configuration
+   through one real run. Expect it to need at least one more small
+   iteration even if the big HVF-class surprise is behind it — emulator CI
+   configs commonly need one round on boot timing/caching details the first
+   time they run somewhere new.
+3. Once green, this becomes the enforced gate the task asked for
+   (`continue-on-error: false` is already set — nothing else to flip).

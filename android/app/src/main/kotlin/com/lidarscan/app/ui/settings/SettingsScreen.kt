@@ -34,6 +34,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -204,6 +205,12 @@ fun SettingsScreen(
                     androidx.compose.material3.OutlinedButton(
                         onClick = onReplaySyntheticCapture,
                         enabled = nativeEngineAvailable,
+                        // testTag: the CI emulator smoke test's UI-navigation
+                        // variant taps this node directly — two Text nodes on
+                        // this screen share the string "Replay synthetic
+                        // capture" (this button's label and the line above
+                        // it), so a plain text match is ambiguous.
+                        modifier = Modifier.testTag("replaySyntheticCaptureButton"),
                     ) {
                         Text("Replay synthetic capture")
                     }
