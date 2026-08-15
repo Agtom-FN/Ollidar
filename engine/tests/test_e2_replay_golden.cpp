@@ -71,6 +71,12 @@ namespace {
 // developer or CI runs `ctest`/`scanengine_tests` from.
 std::string repo_root_from_this_file() {
   std::string here = __FILE__;  // .../engine/tests/test_e2_replay_golden.cpp
+  // MSVC's __FILE__ uses backslashes, which made the separator-sensitive
+  // rfind miss and sent Windows to a CWD-relative path that ctest does not
+  // run from (engine-ci #5) — normalize first.
+  for (char& c : here) {
+    if (c == '\\') c = '/';
+  }
   const std::size_t cut = here.rfind("engine/tests/");
   return cut != std::string::npos ? here.substr(0, cut) : std::string();
 }
