@@ -211,7 +211,11 @@ jobs:
             libx11-dev libx11-xcb-dev libxcb1-dev libxkbcommon-dev \
             libxkbcommon-x11-dev libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
             libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
-            libxcb-xinerama0 libxcb-xkb1 libegl1-mesa-dev
+            libxcb-xinerama0 libxcb-xkb1 libegl1-mesa-dev \
+            libc++-dev libc++abi-dev
+          # libc++: NOT to build with, only so the link probe at the end of this
+          # job can try resolving the Filament prebuilt's libc++ runtime symbols.
+          # See that step.
 
       - name: Install Qt ${{ env.QT_VERSION }}
         uses: jurplel/install-qt-action@v4
@@ -268,16 +272,17 @@ jobs:
         run: ./build/engine/engine_cli --selftest
 
       # ---------------------------------------------------------------
-      # The libc++/libstdc++ claim above, MEASURED rather than asserted.
+      # PROBE A — the libc++/libstdc++ claim above, MEASURED not asserted.
       #
-      # This step configures a second build tree with the compile-only switch
-      # OFF and tries the executable link for real. It is allowed to fail —
-      # that is the point. Whatever it prints (a clean binary, or the exact
-      # `std::__1::` undefined symbols) is the evidence NOTES.md §14 quotes,
-      # and it is re-measured on every push instead of being a prediction that
-      # silently rots. The job's verdict does not depend on it.
+      # Configure a second tree with the compile-only switch OFF and try the
+      # executable link exactly as a naive `cmake --build` would. It is allowed
+      # to fail; that is the point. First run (2026-08-16) failed with
+      # 27 distinct undefined symbols, EVERY ONE of them in the `std::__1::`
+      # (libc++) namespace and every one from libutils.a / libfilament.a.
+      # That measurement is what NOTES.md §14 quotes, and re-running it every
+      # push is what stops it becoming a prediction that quietly rots.
       # ---------------------------------------------------------------
-      - name: "Probe: attempt the real executable link (allowed to fail)"
+      - name: "Probe A: plain executable link (expected to fail)"
         id: linkprobe
         continue-on-error: true
         working-directory: desktop
@@ -286,12 +291,60 @@ jobs:
           cmake -S . -B build-link -G Ninja \
             -DCMAKE_BUILD_TYPE=Release -DENGINE_FETCH_EIGEN=ON \
             -DLIDARSCAN_COMPILE_ONLY=OFF > /dev/null
-          cmake --build build-link 2>&1 | tail -n 120
+          cmake --build build-link 2>&1 | tail -n 40
+
+      - name: "Probe A: classify the undefined symbols"
+        if: always()
+        working-directory: desktop
+        continue-on-error: true
+        run: |
+          cmake --build build-link 2>&1 \
+            | grep -oE "undefined reference to \`[^']*'" \
+            | sed "s/.*\`//;s/'\$//" | sort -u > /tmp/undef.txt || true
+          total=$(wc -l < /tmp/undef.txt)
+          libcxx=$(grep -c 'std::__1::' /tmp/undef.txt || true)
+          echo "distinct undefined symbols: $total   of those in std::__1:: (libc++): $libcxx"
+          echo "not-libc++ (i.e. a REAL app/Filament ABI boundary problem):"
+          grep -v 'std::__1::' /tmp/undef.txt || echo "  (none)"
+
+      # ---------------------------------------------------------------
+      # PROBE B — does adding libc++ alongside libstdc++ complete the link?
+      #
+      # Probe A's symbols are all libc++ *runtime internals* (mutex::lock,
+      # condition_variable::notify_one, __thread_local_data) — not a single
+      # std:: type crossing the app/Filament call boundary. If that stays true,
+      # -lc++ -lc++abi should satisfy them and the binary should link.
+      #
+      # A LINKED BINARY IS NOT A SHIPPABLE ONE. Two C++ runtimes in one process
+      # means two allocators, two typeinfo hierarchies and two exception
+      # tables, and nothing here runs the result. This probe answers exactly
+      # one question — "does it resolve?" — and NOTES.md §14 records it as
+      # exactly that, not as a Linux port.
+      # ---------------------------------------------------------------
+      - name: "Probe B: link with libc++ alongside libstdc++"
+        id: linkprobe2
+        continue-on-error: true
+        working-directory: desktop
+        run: |
+          set -o pipefail
+          cmake -S . -B build-link2 -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DENGINE_FETCH_EIGEN=ON \
+            -DLIDARSCAN_COMPILE_ONLY=OFF \
+            -DCMAKE_EXE_LINKER_FLAGS="-lc++ -lc++abi" > /dev/null
+          cmake --build build-link2 2>&1 | tail -n 40
+          ls -la build-link2/lidarscan
+          file build-link2/lidarscan
 
       - name: "Probe verdict"
         if: always()
         run: |
-          echo "executable-link probe outcome: ${{ steps.linkprobe.outcome }}"
-          echo "### Linux executable-link probe: \`${{ steps.linkprobe.outcome }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "The job's own verdict is the compile-only build above; this probe measures whether the libc++-built Filament prebuilt can be linked against a libstdc++ Qt/g++ app at all." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### Linux link probes"
+            echo ""
+            echo "| probe | outcome |"
+            echo "| --- | --- |"
+            echo "| A: plain link (libstdc++ only) | \`${{ steps.linkprobe.outcome }}\` |"
+            echo "| B: link with \`-lc++ -lc++abi\` | \`${{ steps.linkprobe2.outcome }}\` |"
+            echo ""
+            echo "The job's verdict is the compile-only build above. These probes measure whether the libc++-built Filament prebuilt can be linked against a libstdc++ Qt/g++ app at all — not whether the result runs."
+          } >> "$GITHUB_STEP_SUMMARY"
