@@ -12,6 +12,7 @@
 // rather than sleeping, so they assert the state machine itself instead of
 // racing it.
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <mutex>
 #include <string>

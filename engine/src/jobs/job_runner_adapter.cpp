@@ -73,6 +73,20 @@ struct QueueJobRunner::Impl {
   // submit(); the tail is always chain.back().
   std::map<std::uint64_t, std::vector<std::uint64_t>> chains;
 
+  // INT-34 promised ONE monotone progress per request. Stage hand-offs and
+  // cancellation can otherwise report a lower value for one poll (a cancelled
+  // stage's partial progress is dropped), which CI's slower schedulers
+  // actually observe (first-run failure, engine-ci #1). Clamp per request.
+  mutable std::map<std::uint64_t, float> reported;
+
+  float clamp_monotone(std::uint64_t tail, float p) const {
+    std::lock_guard<std::mutex> lock(m);
+    float& last = reported[tail];
+    if (p < last) return last;
+    last = p;
+    return p;
+  }
+
   std::vector<std::uint64_t> chain_of(std::uint64_t tail) const {
     std::lock_guard<std::mutex> lock(m);
     auto it = chains.find(tail);
@@ -295,7 +309,7 @@ JobStatus QueueJobRunner::status(std::uint64_t job_id) const {
       out.state = seam_state_of(j);
       out.error = j.error;
       out.message = j.message.empty() ? j.stage : j.message;
-      out.progress = static_cast<float>(finished / n);
+      out.progress = impl_->clamp_monotone(job_id, static_cast<float>(finished / n));
       return out;
     }
     if (j.state == JobState::kDone) {
@@ -304,8 +318,9 @@ JobStatus QueueJobRunner::status(std::uint64_t job_id) const {
     }
     // The first stage that is not finished is the one the request is on.
     out.state = seam_state_of(j);
-    out.progress = static_cast<float>(
-        std::min(1.0, (finished + static_cast<double>(j.progress)) / n));
+    out.progress = impl_->clamp_monotone(
+        job_id,
+        static_cast<float>(std::min(1.0, (finished + static_cast<double>(j.progress)) / n)));
     out.message = j.stage;
     return out;
   }

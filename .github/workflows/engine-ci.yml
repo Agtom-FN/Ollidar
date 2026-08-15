@@ -56,14 +56,13 @@ jobs:
 
       - uses: lukka/get-cmake@latest
 
-      - name: Bootstrap vcpkg
-        uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT }}
-
+      # No vcpkg on Windows: its eigen3 port probes for a Fortran compiler that
+      # GitHub windows runners do not ship (CMakeTestFortranCompiler hard-fails;
+      # first-run finding, engine-ci #1). The engine's FetchContent fallback
+      # pins the same Eigen version without any Fortran probe.
       - name: Configure
         working-directory: ${{ env.SOURCE_DIR }}
-        run: cmake --preset windows-msvc-x64
+        run: cmake --preset windows-msvc-x64 -DENGINE_FETCH_EIGEN=ON
 
       - name: Build
         working-directory: ${{ env.SOURCE_DIR }}
@@ -101,14 +100,10 @@ jobs:
 
       - uses: lukka/get-cmake@latest
 
-      - name: Bootstrap vcpkg
-        uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT }}
-
+      # See the windows-msvc job for why there is no vcpkg here.
       - name: Configure
         working-directory: ${{ env.SOURCE_DIR }}
-        run: cmake --preset windows-clangcl-x64
+        run: cmake --preset windows-clangcl-x64 -DENGINE_FETCH_EIGEN=ON
 
       - name: Build
         working-directory: ${{ env.SOURCE_DIR }}
@@ -331,10 +326,13 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: |
-            platform-tools
-            platforms;android-36
-            build-tools;36.1.0
+          # Empty packages: the action's own sdkmanager license pass rejects
+          # 6/7 licenses on the runner image (first-run finding, engine-ci #1);
+          # accept them explicitly below and let Gradle fetch what it declares.
+          packages: ""
+
+      - name: Accept Android SDK licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
 
       - name: Cache Gradle
         uses: actions/cache@v4
