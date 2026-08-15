@@ -61,7 +61,7 @@ class FakeEngineBridge(
         _events.emit(EngineEvent.StatusMessage("Disconnected"))
     }
 
-    override suspend fun startCapture(projectDirectory: String, liveSlam: Boolean): Result<Unit> {
+    override suspend fun startCapture(projectDirectory: String, liveSlam: Boolean, profile: String): Result<Unit> {
         if (_connectionState.value != ConnectionState.CONNECTED) {
             val message = "Cannot start capture: not connected"
             _events.emit(EngineEvent.Fault(code = "NOT_CONNECTED", message = message))

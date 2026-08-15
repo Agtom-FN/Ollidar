@@ -53,4 +53,29 @@ object Routes {
     private const val MOUNT_CALIBRATION_PATTERN = "project/{projectId}/mount_calibration"
     const val MOUNT_CALIBRATION = MOUNT_CALIBRATION_PATTERN
     fun mountCalibration(projectId: String): String = "project/${Uri.encode(projectId)}/mount_calibration"
+
+    // B6: Processing (mode chooser + queue), per project.
+    const val PROCESSING = "project/{projectId}/processing"
+    fun processing(projectId: String): String = "project/${Uri.encode(projectId)}/processing"
+
+    // B10/B11: Review (viewer, display params, measure) and the floor-plan viewer.
+    const val REVIEW = "project/{projectId}/review"
+    fun review(projectId: String): String = "project/${Uri.encode(projectId)}/review"
+
+    const val PLAN = "project/{projectId}/plan"
+    fun plan(projectId: String): String = "project/${Uri.encode(projectId)}/plan"
+
+    /**
+     * B9: RTK is **not** per project, and the route says so.
+     *
+     * The engine owns one GnssSource, one NTRIP client and one georef fusion for
+     * its whole lifetime, because an operator pairs the rover and waits for RTK
+     * Fixed *before* any session exists (§3.4's capture gate is that
+     * pre-session decision). A per-project route would imply a per-project
+     * rover, which is not what the engine does.
+     */
+    const val RTK = "rtk"
+
+    /** B12: georeferenced auto-merge — inherently multi-project, so also global. */
+    const val MERGE = "merge"
 }

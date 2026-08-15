@@ -52,7 +52,16 @@ interface EngineBridge {
      * [liveSlam] is true, running the live SLAM preview (§3.3) alongside.
      * [projectDirectory] is the absolute path to the `.lscan` directory.
      */
-    suspend fun startCapture(projectDirectory: String, liveSlam: Boolean): Result<Unit>
+    /**
+     * @param profile the engine's `scan_session_config.profile` string —
+     *   `survey | floorplan | research | quickscan`. B5 added it: B2 passed the
+     *   literal `"quickscan"` for every project because `EngineBridge` had no
+     *   way to carry the project's own choice, and `scanengine_c.h` names the
+     *   four values only in a header comment with no enum, so
+     *   [com.lidarscan.core.model.CaptureDefaults.engineProfileString] is the
+     *   single place the app spells them.
+     */
+    suspend fun startCapture(projectDirectory: String, liveSlam: Boolean, profile: String = "quickscan"): Result<Unit>
 
     suspend fun pauseCapture(): Result<Unit>
 

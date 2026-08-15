@@ -43,6 +43,24 @@
 },
 {
   "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -Dscanengine_jni_EXPORTS -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -I/Users/admin/lidarscan/engine/third_party/Livox-SDK2/sdk_core/../include -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=gnu++20 -fPIC -Wall -Wextra -pthread -o CMakeFiles/scanengine_jni.dir/processing_engine.cpp.o -c /Users/admin/lidarscan/android/app/src/main/cpp/processing_engine.cpp",
+  "file": "/Users/admin/lidarscan/android/app/src/main/cpp/processing_engine.cpp",
+  "output": "CMakeFiles/scanengine_jni.dir/processing_engine.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -Dscanengine_jni_EXPORTS -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -I/Users/admin/lidarscan/engine/third_party/Livox-SDK2/sdk_core/../include -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=gnu++20 -fPIC -Wall -Wextra -pthread -o CMakeFiles/scanengine_jni.dir/processing_jni.cpp.o -c /Users/admin/lidarscan/android/app/src/main/cpp/processing_jni.cpp",
+  "file": "/Users/admin/lidarscan/android/app/src/main/cpp/processing_jni.cpp",
+  "output": "CMakeFiles/scanengine_jni.dir/processing_jni.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -Dscanengine_jni_EXPORTS -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -I/Users/admin/lidarscan/engine/third_party/Livox-SDK2/sdk_core/../include -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=gnu++20 -fPIC -Wall -Wextra -pthread -o CMakeFiles/scanengine_jni.dir/gnss_jni.cpp.o -c /Users/admin/lidarscan/android/app/src/main/cpp/gnss_jni.cpp",
+  "file": "/Users/admin/lidarscan/android/app/src/main/cpp/gnss_jni.cpp",
+  "output": "CMakeFiles/scanengine_jni.dir/gnss_jni.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
   "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_HAVE_LIVOX_SDK2=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -I/Users/admin/lidarscan/engine/third_party/Livox-SDK2/sdk_core/../include -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/cloud/display_params.cpp.o -c /Users/admin/lidarscan/engine/src/cloud/display_params.cpp",
   "file": "/Users/admin/lidarscan/engine/src/cloud/display_params.cpp",
   "output": "scanengine/CMakeFiles/scanengine.dir/src/cloud/display_params.cpp.o"
@@ -64,6 +82,12 @@
   "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_HAVE_LIVOX_SDK2=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -I/Users/admin/lidarscan/engine/third_party/Livox-SDK2/sdk_core/../include -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/color/colorizer.cpp.o -c /Users/admin/lidarscan/engine/src/color/colorizer.cpp",
   "file": "/Users/admin/lidarscan/engine/src/color/colorizer.cpp",
   "output": "scanengine/CMakeFiles/scanengine.dir/src/color/colorizer.cpp.o"
+},
+{
+  "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",
+  "command": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=aarch64-none-linux-android29 --sysroot=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DSCANENGINE_HAVE_EIGEN=1 -DSCANENGINE_HAVE_LIVOX_SDK2=1 -DSCANENGINE_VERSION=\\\"0.1.0\\\" -I/Users/admin/lidarscan/engine/include -I/Users/admin/lidarscan/engine/capi -I/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src -I/Users/admin/lidarscan/engine/third_party/Livox-SDK2/sdk_core/../include -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC -Wall -Wextra -Wshadow -pthread -o scanengine/CMakeFiles/scanengine.dir/src/color/extrinsics_solver.cpp.o -c /Users/admin/lidarscan/engine/src/color/extrinsics_solver.cpp",
+  "file": "/Users/admin/lidarscan/engine/src/color/extrinsics_solver.cpp",
+  "output": "scanengine/CMakeFiles/scanengine.dir/src/color/extrinsics_solver.cpp.o"
 },
 {
   "directory": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a",

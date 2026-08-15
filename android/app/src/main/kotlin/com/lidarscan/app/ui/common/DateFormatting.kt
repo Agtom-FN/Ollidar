@@ -18,3 +18,11 @@ fun formatPointCount(count: Long?): String {
         else -> "$count pts"
     }
 }
+
+/**
+ * A project's id is its `.lscan` DIRECTORY name (see `FileProjectStore`), so
+ * naming an export after it produces `foo-ab12cd.lscan.lscan.zip`. This is the
+ * one place the suffix is stripped — caught on a device, where the doubled
+ * extension is exactly the kind of thing that looks fine in code review.
+ */
+fun exportBaseName(projectId: String): String = projectId.removeSuffix(".lscan")

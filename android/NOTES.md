@@ -222,21 +222,25 @@ needs to change when that swap happens, since everything is coded against the
   capture stop (B4 didn't touch this either) — still worth wiring from
   `CaptureViewModel`'s final stats so the Projects list card stops showing
   "No capture yet"; flagging again for whichever task picks up B5/B6.
-- **B5 (Profiles + Settings)**: extends `ui/settings/` — the units/theme
-  DataStore plumbing already exists; profile *editing* (vs. just picking one
-  at project-creation time, which B1 covers) is the new part.
-- **B6 (Processing UI + Review)**: replace the two "Arrives with B6" stub
-  cards the same way as B4.
+- **B5 (Profiles + Settings) — done**, see "B5 + B6 + B9 + B10 + B11 + B12 +
+  D3" below. `CaptureDefaults` is the table the profile picker now writes into
+  the manifest at creation; Settings surfaces it read-only, and the reason it
+  is read-only is in §1 of that section.
+- **B6 (Processing UI + Review) — done**. The two "Arrives with B6" stub cards
+  are gone; every Project Detail card now navigates somewhere.
 - **B7 (ARCore/mount calibration) + B8 (camera keyframes) — done**, see the
   "B7 + B8" section below. `mountCalibrationId` is populated and a full
   `mountCalibration` record now sits beside it; `ProjectStore` gained
   `updateManifest`, which is also what B5/B6 need for `pointCountEstimate`.
-- **B9/A10 (RTK/CRS)**: populates `crsEpsg` (field already reserved).
-- **B10/B11 (display params, measure)**: `Units` (m/ft) already lives in
-  `com.lidarscan.app.data.SettingsModels` — worth promoting to `:core` if
-  measure/display logic needs it outside the UI layer.
-- **B12 (merge)**: reads/writes the `merged/` subdirectory `FileProjectStore`
-  already creates per project.
+- **B9/A10 (RTK/CRS) — done**. `crsEpsg` is populated at capture stop, along
+  with a full `georef` record (A10 §9.6's requested snapshot), which is what
+  makes B12 possible at all.
+- **B10/B11 (display params, measure) — done**. `Units` stayed in `:app`;
+  `:core`'s measure code carries its own `MeasureUnit` rather than making
+  `:core` depend on the UI layer's enum, and the two are converted at the
+  ViewModel boundary.
+- **B12 (merge) — done**, and it does write into the `merged/` subdirectory
+  `FileProjectStore` has created since B1.
 
 ## B2 — D6 JNI bridge + connect flow
 
@@ -1890,6 +1894,456 @@ app is exactly "type the two IPs into the wizard and press Run self-test".
   never crosses the C ABI, so the wizard reads its rate only through
   `DeviceHealth.rotation_hz`, which the driver overloads for exactly this
   reason.
+
+## B5 + B6 + B9 + B10 + B11 + B12 + D3 — the rest of §3.13
+
+Tasks B5 (profiles + settings), B6 (processing UI), B9 (RTK UI), B10 (display
+panel), B11 (measure + plan view), B12 (georeferenced auto-merge) and D3's
+Android half (the cloud client), done together because they share one native
+handle and one manifest. Ownership strictly `android/**`; `engine/` and
+`cloud/` stayed read-only.
+
+**Pinned against `SCAN_ABI_VERSION` 4 at task start; the header moved to 5
+mid-task and the final build is against 5.** See §7 below — nothing broke,
+because ABI 5's own note says "every OTHER struct, every function signature and
+every enum value from ABI 4 is unchanged", and every symbol this task binds is
+an ABI-3/4 one.
+
+> **This is the first task in this workstream that ran the app.** An emulator
+> AVD (`b4_test`, android-34 google_apis arm64-v8a, software GPU) was available
+> in this environment, so everything below marked "verified on device" was
+> actually executed: `JNI_OnLoad`, A15's job queue, A7's post pipeline, A9's PLY
+> writer and A12's DXF/PDF writers all ran on Android. That immediately found a
+> **real crash that four previous tasks' worth of compile-and-`nm` verification
+> could not** (§8.1). The "device-deferred" lists in the sections above were not
+> a formality.
+
+### 1. B5 — the profile stops being a label
+
+B1 shipped the four-profile picker and persisted the choice; nothing read it,
+and B2 passed the literal `"quickscan"` into `scan_session_config.profile` for
+every project regardless.
+
+`:core`'s new `model/CaptureDefaults.kt` is the table that makes the choice
+mean something — live-SLAM vs record-only, export format, A14 display profile,
+camera keyframes, colorize-by-default, the §3.4 RTK gate and its threshold, and
+the A12 slice band — plus `engineProfileString()`, the single place the app
+spells the four values `scanengine_c.h` names only in a header comment.
+
+Two decisions worth stating, because §3.9 says "profiles set defaults" without
+enumerating them (exactly the gap A14 §5 found on the display side):
+
+* **The defaults are written into the manifest at project creation and belong
+  to the project from then on** (`ProjectManifest.captureDefaults`), never
+  re-derived from the profile on read. A profile is a *starting point* an
+  operator may then change per project, and re-deriving would silently throw
+  those changes away; it also means a later app version retuning "Survey" does
+  not rewrite an existing capture's settings. Same argument `mid360` (B3) and
+  `mountCalibration` (B7) already make. `effectiveCaptureDefaults()` falls back
+  to the profile's for a pre-B5 project, so no migration is needed.
+* **Research is Record-only.** Its whole point is "keeps every raw stream for
+  detailed offline analysis"; live SLAM would spend thermal budget on a preview
+  that A7 will re-run at full density from the same bytes anyway, and a phone
+  that throttles mid-capture is the failure that avoids. Survey is the only
+  profile that *blocks* below its fix gate, and at **RTK Float, not Fixed** — a
+  Fixed-only gate makes the app unusable under canopy, and A10 §5 measures
+  Float at 29 mm worst-corner error, which is still a usable survey product.
+
+The Settings screen surfaces the table **read-only**, deliberately: a
+device-level editor would change nothing about any existing capture while
+looking like it did, and the per-project settings that matter are already
+editable where they are used (Live-SLAM on Capture, export format on
+Processing, the whole display block in Review).
+
+**Also closed here:** `pointCountEstimate` on capture stop, flagged as unwired
+by B2, B4, B7 *and* B3 in turn. `CaptureViewModel.stopCapture` now writes it —
+along with B9's georef snapshot — through `ProjectStore.updateManifest`, which
+has existed since B7.
+
+### 2. B6 + B11 + B12 — one native handle, and why it links C++
+
+`cpp/processing_engine.{h,cpp}` + `processing_jni.cpp` own **one standalone
+`scanengine::Engine`** driving A15's `JobQueue`, A12's `extract_floor_plan()`
+and A13's `MergeProject`.
+
+**None of those three has a single symbol in the C ABI**, and for the queue
+that is a stated design decision rather than an oversight: `scanengine_c.h`'s
+own comment ends *"an app that wants a queue should drive a Colorize job
+through the C++ `jobs::JobQueue` instead (there is no C surface for the queue at
+ABI 4)"*, and `scanengine_c.cpp`'s test-seam comment repeats it. So this follows
+the pattern B4 established for `lscan::ReplaySource`, B8 for
+`color::KeyframeIndexWriter` and B3 for `Mid360Config`: link `scanengine`
+directly, the same static library the C-ABI path already links.
+
+A **separate** Engine from the capture one is also the right shape, not a
+workaround: processing runs from a `.lscan` on disk (A7: "a second, better run
+from the same bytes"), so it needs no devices, no session and no relationship
+to what the capture engine is doing — an operator can post-process yesterday's
+project while today's is recording. Using a full `Engine` rather than a bare
+`JobQueue` buys three things: its `PageStore` is where every produced cloud
+lands (so B4's renderer draws the processed result through the page-read path it
+already has), its `EventBus` is what `kJobProgress` is published on, and
+`Engine::jobs()` joins the worker thread before the store it appends into is
+destroyed.
+
+The queue is **device-level, not per project** (`AppContainer`), created lazily
+on first submit: a 20-minute post-process must survive navigating away from the
+screen that started it, and an app launch that never processes anything owns no
+worker thread. The engine's `Job` has no project field and does not need one —
+`ProcessingRepository` keeps the id→project map on the Kotlin side.
+
+**Progress uses both channels, on purpose.** `EventType::kJobProgress` (a
+callback-mode `EventBus` subscription — the payload A15 §7.1 asked for and
+INT-34 landed) drives the bar promptly from the worker thread; a 500 ms
+`JobQueue::list()` poll keeps the *stage label and error* honest, because the
+event carries neither.
+
+### 3. B6/D3 — Local and Transfer are engine jobs; Cloud is not
+
+A15 has a `kCloudSubmit` job kind and it works. The app does not use it, and the
+brief asked for this to be documented rather than assumed:
+
+Driving it would need an `HttpTransport` implementation, which on Android has to
+be Kotlin anyway (there is no HTTP stack in the engine), so the C++ path would
+be *Kotlin → JNI → C++ → JNI → Kotlin* for every chunk — and the app would end
+up with **two retry policies and two size caps**. So `:core`'s
+`com.lidarscan.core.cloud` speaks the documented REST contract directly, and the
+Cloud action still runs a real `kTransferExport` job to build the zip so there is
+exactly one implementation of "what goes in a `.lscan.zip`" (A5's).
+
+Because the client is plain Kotlin/JVM in `:core`, its end-to-end test is a
+**`:core:test` case against the real service**, not an instrumentation test —
+see §8.3.
+
+### 4. B9 — RTK, and the one place polling beats events
+
+`gnss_jni.cpp` is the opposite of §2: **every call goes through the C ABI.**
+A10 §9.2 listed exactly what B9 would need and INT-29 landed all of it, so
+there is no reason to link `gnss/` directly — and going through the C ABI keeps
+the rover on the **same `scan_engine*` the capture session owns**, which is what
+makes record-always work (`scan_engine_push_nmea`'s own contract: the bytes hit
+the `.lscan` as `kGnssNmea` chunks *before* they are parsed).
+
+* **Bonded devices only, no discovery.** Pairing an SPP rover means a system PIN
+  dialog; a discovery UI here would add `BLUETOOTH_SCAN` (and, pre-31, a
+  *location* permission — the "why does my survey app want my location" prompt,
+  on a rig that already has a GNSS receiver attached) and still hand the user to
+  the system dialog to finish. The manifest declares `BLUETOOTH_CONNECT` and
+  caps the two legacy permissions at `maxSdkVersion="30"`.
+* **NMEA in** goes to `scan_engine_push_nmea` in whatever chunk the socket
+  produced — the framer handles arbitrary chunking, which is what SPP's 20–990
+  byte MTU fragments need. One reused direct `ByteBuffer`, same zero-copy
+  posture as B2's serial path (the one `arraycopy` is unavoidable:
+  `BluetoothSocket`'s stream is `byte[]`-based).
+* **RTCM3 out** is written from the NTRIP receive thread's callback. It does
+  **not** tear the link down on an `IOException`: that thread belongs to the
+  client and the contract is "quick, must not re-enter", so the reader thread
+  notices the same broken socket on its next read.
+* **Polled at 1 Hz, not evented.** `SCAN_EVENT_GNSS_FIX`/`NTRIP_STATE` exist and
+  carry real payloads, but B2's event pump marshals a fixed `(i0..i4, d0)` tuple
+  to Kotlin, which cannot carry a fix's ten fields — widening that signature
+  would touch every existing event consumer for a 1 Hz stream. Rebind item, not
+  a gap.
+* **The §3.4 gate** is `evaluateCaptureGate()` in `:core`: three verdicts, not a
+  boolean, because "warn" and "block" are different products of the same
+  comparison and the profile decides which applies. `rtkIsTrajectorySource`
+  always blocks at no-fix — that is the D6-outdoor case where the missing pose
+  means *no cloud*, not merely an ungeoreferenced one (every point lands in
+  `dropped_no_pose`).
+* **The georef snapshot** is written into the manifest at capture stop. A10 §9.6
+  asks for exactly this, and B12 is what makes it load-bearing.
+
+### 5. B10 — a port, not a binding, and not the UBO A14 predicted
+
+`:core`'s `render/DisplayParams.kt` ports A14's model by formula, the same
+answer B4 gave for `colormap_lut()` and for the same reason: `scanengine_c.h`
+mirrors **none** of `display_params.h`, at ABI 5, so there is no JNI call to
+make.
+
+Two things are deliberately **not** ported. `DisplayParamsUniforms`/`to_uniforms()`:
+A14 §4 predicted B10 would treat it as a raw std140 UBO, but B4's renderer is
+**Filament**, whose `MaterialInstance` takes named parameters and not a byte
+blob — so this app is in C1's position, not the one A14 expected, and porting a
+208-byte layout that nothing reads would be dead weight that could silently
+drift. And `DisplayParamsController`: Compose `StateFlow` already gives both of
+A14 §7's modes, and a second notification mechanism beside it would be two
+sources of truth.
+
+`PointCloudRenderer.setDisplayParams()` binds everything `points.mat` declares.
+Three fields do not reach the shader, exactly as A14 says they should not:
+`lodPointBudget` is a CPU-side page-admission decision, the two overlay toggles
+are the app's, and `background` is the `Renderer`'s clear colour (only on the
+opaque path — the AR overlay's clear must stay transparent black or it paints
+over the camera). A14 §2's `auto_range` rule is implemented on the side the
+header says owns it: the renderer refreshes `manual_min/max` from the combined
+page bounds each frame.
+
+**Two things are honest about not working**, rather than shipping a control that
+silently does nothing: the LOD budget is a *page-admission ceiling* applied in
+page order (it stops before the budget; it does not decimate within a page), and
+the EDL switch persists but is not rendered — `points.mat` has no post-process
+pass and S3 never measured EDL's cost on a phone GPU. Both say so on screen.
+`colorModeAvailability()` does the same for Time (no per-point timestamp in
+`PointVertex`) and Fix quality (needs a live rover).
+
+### 6. B11/B12 — the two honest refusals
+
+**Measure** picks by projecting a bounded sample to screen and taking the
+nearest within a radius, with **depth as the tie-break** — without it a tap on a
+near wall routinely selects the far wall seen through the gaps between points.
+The sample is 200k points taken with a stride across the whole cloud, and the
+readout says "nearest sampled point" rather than implying the pick is exact.
+
+**Merge refuses politely when not georeferenced** (§3.10: "Android offers
+georeferenced auto-merge only") and says why: manual 3-point alignment needs a
+two-cloud picking workspace, which is C6's merge workbench. The alternative —
+merging at the identity — is what A13 itself calls "the worst possible failure
+mode: it looks like data".
+
+The Android merge also **post-processes each session first**, and the UI states
+that up front because it is the expensive part. It is unavoidable: A13 cannot
+read a cloud out of a `.lscan` (`SessionMerger::add_session(lscan_dir)` is
+unimplemented — nothing writes a processed cloud into one, A7 §8 item 2), so
+"open two finished projects and merge them" necessarily means re-running the
+pipeline for each. A session already post-processed in the same app session is
+reused via its job id.
+
+### 7. Rebind items for ABI 5 (and what did NOT break)
+
+The header moved 4 → 5 while this task ran (INT-FINAL). The final build is
+against 5 and the runtime check logs `engine ABI version 5`. Nothing this task
+binds changed — ABI 5's own note is explicit that only `scan_device_config`
+changed layout and that every other struct, signature and enum value is
+unchanged, and `gnss_jni.cpp` zero-fills that struct and sets only `kind`.
+
+Rebind items, in priority order:
+
+1. **`scan_device_config`'s Mid-360 half is now complete** — backend selector,
+   **two** pre-bound descriptors, all ten ports, `recv_buffer_bytes`, the point
+   filter, the live budget and `sdk_config_path`. This closes B3's §8 findings
+   1, 2 and 4 outright: the capture session can now use a pre-bound socket, the
+   two-socket backend has two fds, and the `TMPDIR` work-around in
+   `AppContainer.init` can be replaced by `sdk_config_path`. B3's standalone
+   `Mid360Probe` could collapse back into the C ABI.
+2. **`scan_engine_set_crs()` is new** — the CRS escape hatch INT29 §7 item 5
+   asked for. B9's Survey profile should grow an EPSG picker with a
+   caller-supplied WKT on top of it (§3.4's "EPSG picker (survey profile)"),
+   which is the one part of §3.4 this task did not build.
+3. **The event pump's `(i0..i4, d0)` tuple cannot carry a GNSS fix**, so B9
+   polls (§4). Widening `EngineEventListener.onEvent` — or giving it a per-type
+   marshalling class — would let `SCAN_EVENT_GNSS_FIX`/`NTRIP_STATE`/
+   `GEOREF_CONVERGED` drive the status strip instead.
+4. **No C-ABI accessor for the GNSS ENU frame.** `scan_gnss_stats` has
+   `has_origin`/`origin_*`, and `scan_georef_solution` carries the transform
+   without the frame it maps into — but A13 needs the frame
+   (`merge/session.h`: "THE ENU FRAME IS NOT OPTIONAL AND IS NOT SHARED"). B9
+   records the first fix at or above the origin gate itself, using the same rule
+   `GnssSourceConfig::min_fix_for_origin` uses. Reading `origin_*` through the
+   existing stats call would be strictly better and is a two-line change.
+5. **No `scan_engine_timesync_quality()`**, so a *recorded* session's A4 verdict
+   cannot be read back. B6 uses the mount calibration's accepted clock sweep as
+   the only evidence the app has that the two clocks were tied together, and
+   reports `UNKNOWN` (which fails closed) otherwise.
+6. **Still no C surface for the job queue, plan or merge** — by design for the
+   queue (§2). Nothing needs to change; this is recorded so the next reader does
+   not go looking.
+
+### 8. Verification — what actually ran
+
+#### 8.0 The emulator, and how to get one
+
+B4 tried this and ran out of time on the system-image download. It has since
+finished: an AVD named **`b4_test`** (`android-34`, `google_apis`,
+`arm64-v8a`, software GPU) exists in `~/.android/avd/`. Booting and driving it:
+
+```
+export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
+$ANDROID_HOME/emulator/emulator -avd b4_test -no-window -no-audio \
+    -no-boot-anim -gpu swiftshader_indirect -no-snapshot &
+$ANDROID_HOME/platform-tools/adb wait-for-device
+adb install -r -t app/build/outputs/apk/debug/app-debug.apk
+adb shell am start -n com.lidarscan.app.debug/com.lidarscan.app.MainActivity
+adb exec-out screencap -p > shot.png     # 1080x2400
+adb shell input tap <x> <y>              # drive the UI
+adb logcat -d -b crash                   # the thing that matters
+```
+
+Note the **`.debug` suffix** on the application id — `am start` against
+`com.lidarscan.app` fails with "Invalid packageName", which is a confusing two
+minutes if you have not hit it before. The GPU is software, so Filament
+initializes and uploads but nothing about how the cloud *looks* is verified
+there (§9).
+
+#### 8.1 The crash only a device could find
+
+`Manipulator.nCreateBuilder()` threw `UnsatisfiedLinkError` the first time a
+Filament view attached, taking the process down. `Filament.init()` loads
+`libfilament-jni.so` and **nothing else**; `Manipulator` lives in the separate
+`filament-utils` artifact whose JNI is in `libfilament-utils-jni.so`, which only
+`Utils.init()` loads. B4 called just the first.
+
+This compiled cleanly, passed every unit test, and was invisible to `javap` and
+`llvm-nm` — the classes and symbols all exist, they were simply in an unloaded
+library. It would have crashed B4's **Capture** screen too, on the first frame,
+on every device. Fixed in `FilamentLoader.ensureInitialized()`.
+
+#### 8.2 Unit tests — 206 total, 0 failures
+
+```
+:core:test            194 tests, 0 failures, 5 skipped
+:app:testDebugUnitTest 12 tests, 0 failures
+```
+
+`:core` was 104 at B3; the new cases are `CaptureDefaultsTest` (11 — the profile
+table, including "colorization is never pre-checked without keyframes to sample
+from"), `DisplayParamsTest` (14 — A14 §5's four presets value-for-value, the
+clamp's boundaries, and `evaluate_point_color`'s fallback table including the
+alpha-is-always-the-vertex's rule in every mode), `GnssModelsTest` (13 — the fix
+ladder's ordering, the §3.4 gate's three verdicts, NTRIP validation),
+`MeasureTest` (12 — projection convention, the depth tie-break, and the
+feet+inches formatter's 11.99″ rounding), `ProcessingPolicyTest` (12 — each
+refusal in its documented order), plus the 28 the cloud client brought.
+The 5 skips are the cloud e2e cases, which skip with an explanation when the
+service env vars are absent (§8.3).
+
+`:app` gained a plain-JVM `NativeMarshallingTest` (12) over the flat-array JNI
+layouts — see §8.5 for why those exist. **Two of these tests failed first and
+found real bugs**: `MergeRepository.encodeGeoref` was padding a wrong-length
+matrix element-wise (producing a singular transform that would collapse a
+session to a point) instead of falling back to the identity wholesale.
+
+#### 8.3 The cloud client, against the real service
+
+`cloud/service` was started locally (its existing venv, uvicorn, a fake worker
+script, `LIDARSCAN_DATA_DIR` in a scratchpad so `cloud/` stayed untouched) and
+the `:core` e2e test drove the Kotlin client against it. Real results:
+
+* **create → chunked upload → poll → download**: a 3,147,499-byte
+  `.lscan.zip` uploaded in 8 chunk acks; states observed
+  `PROCESSING@0.0 → 0.35 → 0.95 → DONE@1.0`; result downloaded and verified
+  byte-identical on a second download.
+* **A genuine resume**: the transport dropped three acks for chunk 1 while the
+  bytes really reached uvicorn; retries were exhausted; the client issued
+  **exactly one** probe (`Content-Range: bytes */3147499`); the service answered
+  `308` with `Upload-Offset: 1048576` — two chunks in, i.e. *past* the chunk the
+  client thought had failed — and the client resumed there rather than
+  re-sending. The service's own log confirms the sequence independently.
+* **401** with a wrong token and **404** for an unknown job, from the real
+  service, not a fake.
+
+The e2e cases skip with a printed explanation when `LIDARSCAN_E2E_BASE_URL` /
+`LIDARSCAN_E2E_TOKEN` are unset, so `./gradlew :core:test` stays green for
+anyone without the service running.
+
+#### 8.4 On the device — the whole B6 → B11 chain
+
+Installed on the `b4_test` AVD and driven through the UI (`adb input` +
+`screencap`; screenshots are in the task's scratchpad, not committed):
+
+* `JNI_OnLoad` succeeded — `scanengine_jni loaded; engine ABI version 5`. That
+  is every `FindClass`/`GetMethodID` resolving, **including the two new
+  marshalling classes**, which closes the "compiles fine, dies at load" risk
+  B2/B4/B7/B3 each flagged and none could retire.
+* **B5**: a Survey project created through the UI wrote `captureDefaults`
+  (LAS 1.4, camera keyframes on, blocks below RTK Float) and A14's Survey
+  `displayParams` into `manifest.json`. Read back off the device.
+* **B6**: a real `kTransferExport` job produced a valid `.lscan.zip`
+  (`manifest.json` + `streams/lidar.bin`, 263,230 bytes), and the queue row
+  showed `Transfer bundle #1 — Done`.
+* **A7 post-process on a real capture**: `desktop/evidence/c4-synth-mid360.lscan`
+  (S2's protocol-faithful simulator output, decoded by the same driver a real
+  device feeds) was seeded as a project and post-processed **on the phone** →
+  **83,228 points** resident, and the Export/Colorize gates advanced to their
+  next reason exactly as the policy says.
+* **A9 export**: a 1,331,908-byte binary PLY written on device.
+* **B11 floor plan**: A12's extraction run on that cloud → **2 walls,
+  5 openings**; **DXF** (4,694 bytes, `AC1009`, 12 `POLYLINE`s, `WALLS`/
+  `OPENINGS`/`DIMENSIONS` layers) and **PDF** (2,512 bytes, `%PDF-1.4`, valid
+  `%%EOF` trailer) both written by A12's own writers through this JNI.
+* **B10**: the display bottom-sheet opened with Height pre-selected from the
+  persisted Survey profile, Time disabled with its explanation, and the
+  renderer's clear colour taken from the profile's background.
+* **B9/B12**: the RTK screen rendered the fix strip, the §3.4 **warning** banner
+  (Survey's gate, no rover), the Bluetooth-permission flow and live NTRIP
+  validation; the Merge screen refused with "No georeference recorded — this
+  capture had no RTK rover attached."
+* **Zero `FATAL EXCEPTION`s** across the whole walkthrough after the §8.1 fix.
+
+#### 8.5 JNI surface — 105 entry points, descriptors checked mechanically
+
+`llvm-nm -D` on the packaged `.so`: **105** exported
+`Java_com_lidarscan_app_engine_ScanEngineNative_native*` symbols (55 from
+B2/B4/B7/B8/B3 plus 50 new), arm64-v8a only. `javap -s` confirms every new
+`native` method's descriptor matches its C++ parameter list, and both new
+constructor descriptors match the strings `JNI_OnLoad` looks up:
+
+```
+NativeJob            (JIIFILjava/lang/String;Ljava/lang/String;)V
+NativeMergeSummary   (ZIIIIIFFJJZLjava/lang/String;Ljava/lang/String;)V
+nativeProcRunPlan    (JFFFZFIZZZ)Z
+nativeProcRunMerge   (J[Ljava/lang/String;[Ljava/lang/String;[J[DLjava/lang/String;L…MergeProgressListener;)L…NativeMergeSummary;
+nativeNtripConnect   (JLjava/lang/String;ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;IZIZ)I
+```
+
+**Only two new marshalling classes, and that is a deliberate trade.** B2, B4 and
+B7 all flagged that a hand-typed constructor descriptor compiles on both sides
+and only fails at `JNI_OnLoad`. So a class is used only where a record genuinely
+mixes numbers and strings (`NativeJob`, `NativeMergeSummary`); the floor-plan
+model and the four GNSS structs cross as **flat primitive arrays with a
+documented index layout** — no descriptor, no `FindClass`. The cost is that a
+shifted layout is a wrong *number* rather than a load-time abort, which is
+exactly what `NativeMarshallingTest` exists to catch. `scan_gnss_fix.utc_unix_ns`
+is the one field that does not fit a double, so it crosses as **milliseconds**
+and is named `utcUnixMillis` on the wire.
+
+`:app:assembleDebug` is green from a wiped `app/.cxx` + `app/build`; the debug
+APK is **79.8 MB** and `lib/arm64-v8a/libscanengine_jni.so` is **6.96 MB**, up
+from B3's 5.84 MB — the growth is `jobs/`, `plan/` and `merge/` being linked in
+for the first time. Still arm64-v8a only, so `abiFilters` holds.
+
+### 9. Explicitly NOT verified
+
+* **Any real hardware.** No RTK rover, no D6, no Mid-360, no ARCore device. The
+  whole B9 stack — Bluetooth SPP `connect()`, the NMEA reader thread,
+  `scan_engine_push_nmea` against real sentences, the NTRIP handshake against a
+  real caster, RTCM3 reaching a rover — is reasoned from the documented
+  contracts and **none of it has run**. The mountpoint picker has never fetched a
+  source table.
+* **The 3D view rendering actual points.** Filament initializes and the page
+  pipeline uploads (83,228 points resident, confirmed on screen), but the
+  emulator is software-rendered with `hw.gpu.enabled=no`, so whether
+  `gl_PointSize` is honoured and whether the cloud looks right is untested. The
+  measure tool's picking was therefore never exercised against a *drawn* frame —
+  its geometry is unit-tested, its ergonomics are not.
+* **Colorize end to end.** No capture in this environment has camera keyframes,
+  so `run_colorize` has never executed; only its gate has.
+* **B12's merge past the refusal.** No two georeferenced sessions exist without a
+  rover, so `align_georeferenced` → `refine` → `build` has not run. The refusal
+  path is verified; the success path is not.
+* **The Cloud path from the phone.** The client is proven against the real
+  service from the JVM (§8.3); the *Android* side of it — DataStore config,
+  `HttpURLConnection` on bionic, a cleartext-traffic exception for a local
+  server — has not been exercised on the device.
+* **The share sheet's receiving end.** `FileProvider` grants were never followed
+  into another app.
+* **Rotation, dark theme, and every screen's behaviour under configuration
+  change.**
+
+### 10. Follow-ups this task deliberately did not take
+
+* **§3.4's EPSG picker** for the Survey profile — now unblocked by ABI 5's
+  `scan_engine_set_crs()` (§7 item 2).
+* **A foreground service** for processing. §3.8 says "Android (foreground
+  service)" and this runs the queue in-process, so a long post-process dies if
+  the app is backgrounded and reaped. The queue and its progress plumbing are
+  service-ready; wiring one is the next thing B6 needs.
+* **The cloud token in the Android Keystore.** It is in app-private DataStore
+  today, which the Settings copy states plainly.
+* **A12's include/exclude regions** (`PlanRegion`) — they need a draw-on-the-plan
+  interaction that belongs to the desktop workspace; the slice-height slider,
+  which §3.6 names as editor v1, is the half that carries the value.
+* **Upload resume across app restarts** and a streaming result download.
+* **Per-page frustum culling** in the renderer (still B4's open item).
 
 ## Things intentionally deferred (not oversights)
 

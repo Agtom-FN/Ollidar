@@ -98,6 +98,12 @@ fun CaptureRoute(
                             sensorSerial = null,
                         )?.takeIf { it.sensor == sensor }
                     },
+                    // B9: A10's solution, snapshotted into the manifest at stop
+                    // (see stopCapture). A replay session has no rover, so it
+                    // reads null and the manifest keeps whatever it had.
+                    georefSnapshotProvider = { handle ->
+                        if (isReplay) null else container.rtkManager.georefRecord(handle)
+                    },
                 )
             }
         },

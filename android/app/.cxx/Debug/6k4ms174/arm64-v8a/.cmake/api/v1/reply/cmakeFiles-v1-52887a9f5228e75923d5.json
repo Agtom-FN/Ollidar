@@ -9,6 +9,7 @@
 				"/Users/admin/lidarscan/engine/src/cloud/page_store.cpp",
 				"/Users/admin/lidarscan/engine/src/color/clock_sweep.cpp",
 				"/Users/admin/lidarscan/engine/src/color/colorizer.cpp",
+				"/Users/admin/lidarscan/engine/src/color/extrinsics_solver.cpp",
 				"/Users/admin/lidarscan/engine/src/color/frames_idx.cpp",
 				"/Users/admin/lidarscan/engine/src/color/image_source.cpp",
 				"/Users/admin/lidarscan/engine/src/core/engine.cpp",

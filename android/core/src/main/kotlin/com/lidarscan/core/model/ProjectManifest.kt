@@ -1,7 +1,9 @@
 package com.lidarscan.core.model
 
 import com.lidarscan.core.calib.MountCalibration
+import com.lidarscan.core.gnss.GeorefRecord
 import com.lidarscan.core.net.Mid360Settings
+import com.lidarscan.core.render.DisplayParams
 import kotlinx.serialization.Serializable
 
 /**
@@ -54,9 +56,56 @@ data class ProjectManifest(
      * the first thing anyone asks when a `.lscan` turns out to be empty.
      */
     val mid360: Mid360Settings? = null,
+    /**
+     * B5: the capture-side defaults this project was **created** with (Tech
+     * Spec §3.9's "profiles set defaults").
+     *
+     * Stored on the project rather than re-derived from [profile] on every read
+     * for one reason that matters: a profile's defaults are a *starting point*
+     * the operator may then change per project, and re-deriving would silently
+     * throw those changes away. It also means that if a later app version
+     * retunes what "Survey" means, an existing capture keeps the settings it was
+     * actually taken with — which is the same argument [mid360] makes for
+     * addresses and [mountCalibration] makes for the extrinsic.
+     *
+     * Null only for a project created before B5; readers should fall back to
+     * `CaptureDefaults.forProfile(profile)`, which
+     * [effectiveCaptureDefaults] does.
+     */
+    val captureDefaults: CaptureDefaults? = null,
+    /**
+     * B10: §3.9's "settings persist per project". Seeded from the profile's
+     * [CaptureDefaults.displayProfile] at creation; every later edit in the
+     * display bottom-sheet writes back here.
+     */
+    val displayParams: DisplayParams? = null,
+    /**
+     * B9/B12: A10's georeferencing solution snapshotted at capture stop.
+     *
+     * A10 §9.6 asks for exactly this ("a periodic GeorefSolution + origin
+     * snapshot in the manifest so a replay does not have to re-derive the
+     * alignment"). B12's auto-merge is the consumer: `merge/session.h` needs
+     * each session's `global_from_local` **and the ENU frame it is expressed
+     * in**, and neither survives the end of a capture any other way.
+     */
+    val georef: GeorefRecord? = null,
 ) {
+    /** The project's own capture defaults, or the profile's if it predates B5. */
+    fun effectiveCaptureDefaults(): CaptureDefaults =
+        captureDefaults ?: CaptureDefaults.forProfile(profile)
+
+    /** The project's own display parameters, or the profile's A14 preset if it predates B10. */
+    fun effectiveDisplayParams(): DisplayParams =
+        displayParams ?: com.lidarscan.core.render.profileDefaults(effectiveCaptureDefaults().displayProfile)
+
     companion object {
-        /** Bump when a field is added/removed/renamed in a way old readers can't tolerate. */
+        /**
+         * Bump when a field is added/removed/renamed in a way old readers can't
+         * tolerate. B5–B12's additions are all **nullable and additive**, and
+         * `ignoreUnknownKeys = true` is set on the decoder, so a manifest
+         * written by either side still reads on the other — which is why this
+         * stays 1.
+         */
         const val CURRENT_SCHEMA_VERSION = 1
     }
 }

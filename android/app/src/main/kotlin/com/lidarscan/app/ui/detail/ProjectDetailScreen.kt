@@ -1,6 +1,8 @@
 package com.lidarscan.app.ui.detail
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,6 +18,8 @@ import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Cable
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Preview
+import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.SatelliteAlt
 import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -32,7 +36,6 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -48,7 +51,6 @@ import com.lidarscan.app.ui.common.formatCreatedDate
 import com.lidarscan.app.ui.common.formatPointCount
 import com.lidarscan.core.model.SensorType
 import com.lidarscan.core.store.Project
-import kotlinx.coroutines.launch
 
 @Composable
 fun ProjectDetailRoute(
@@ -58,6 +60,10 @@ fun ProjectDetailRoute(
     onOpenCapture: (String) -> Unit,
     onOpenMountCalibration: (String) -> Unit,
     onOpenMid360Connect: (String) -> Unit = {},
+    onOpenProcessing: (String) -> Unit = {},
+    onOpenReview: (String) -> Unit = {},
+    onOpenRtk: () -> Unit = {},
+    onOpenMerge: () -> Unit = {},
 ) {
     val viewModel: ProjectDetailViewModel = viewModel(
         factory = viewModelFactory {
@@ -72,6 +78,10 @@ fun ProjectDetailRoute(
         onOpenCapture = onOpenCapture,
         onOpenMountCalibration = onOpenMountCalibration,
         onOpenMid360Connect = onOpenMid360Connect,
+        onOpenProcessing = onOpenProcessing,
+        onOpenReview = onOpenReview,
+        onOpenRtk = onOpenRtk,
+        onOpenMerge = onOpenMerge,
     )
 }
 
@@ -83,9 +93,12 @@ fun ProjectDetailScreen(
     onOpenCapture: (String) -> Unit = {},
     onOpenMountCalibration: (String) -> Unit = {},
     onOpenMid360Connect: (String) -> Unit = {},
+    onOpenProcessing: (String) -> Unit = {},
+    onOpenReview: (String) -> Unit = {},
+    onOpenRtk: () -> Unit = {},
+    onOpenMerge: () -> Unit = {},
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
-    val scope = rememberCoroutineScope()
 
     Scaffold(
         topBar = {
@@ -116,12 +129,13 @@ fun ProjectDetailScreen(
             is ProjectDetailUiState.Loaded -> ProjectDetailContent(
                 project = uiState.project,
                 modifier = Modifier.padding(padding),
-                onArrivesWith = { workstream ->
-                    scope.launch { snackbarHostState.showSnackbar("Arrives with $workstream") }
-                },
                 onOpenCapture = { onOpenCapture(uiState.project.id) },
                 onOpenMountCalibration = { onOpenMountCalibration(uiState.project.id) },
                 onOpenMid360Connect = { onOpenMid360Connect(uiState.project.id) },
+                onOpenProcessing = { onOpenProcessing(uiState.project.id) },
+                onOpenReview = { onOpenReview(uiState.project.id) },
+                onOpenRtk = onOpenRtk,
+                onOpenMerge = onOpenMerge,
             )
         }
     }
@@ -131,14 +145,18 @@ fun ProjectDetailScreen(
 private fun ProjectDetailContent(
     project: Project,
     modifier: Modifier = Modifier,
-    onArrivesWith: (String) -> Unit,
     onOpenCapture: () -> Unit,
     onOpenMountCalibration: () -> Unit,
     onOpenMid360Connect: () -> Unit,
+    onOpenProcessing: () -> Unit,
+    onOpenReview: () -> Unit,
+    onOpenRtk: () -> Unit,
+    onOpenMerge: () -> Unit,
 ) {
     Column(
         modifier = modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(16.dp),
     ) {
         ManifestSummaryCard(project)
@@ -160,20 +178,53 @@ private fun ProjectDetailContent(
                 gateHeadline = project.manifest.mountCalibration?.readout()?.headline,
                 onClick = onOpenMountCalibration,
             )
-            StubNavCard(
+            NavCard(
+                icon = Icons.Filled.SatelliteAlt,
+                title = "RTK rover",
+                subtitle = "Bluetooth rover, NTRIP corrections, fix status. Shared across projects — the rover attaches " +
+                    "to the engine, not to one capture.",
+                onClick = onOpenRtk,
+            )
+            NavCard(
                 icon = Icons.Filled.Build,
                 title = "Processing",
-                subtitle = "Mode chooser (local / cloud / transfer), job queue.",
-                arrivesWith = "B6",
-                onClick = { onArrivesWith("B6") },
+                subtitle = "Post-process, colorize, export, transfer bundle, cloud submit — and the queue running them.",
+                onClick = onOpenProcessing,
             )
-            StubNavCard(
+            NavCard(
                 icon = Icons.Filled.Preview,
                 title = "Review",
-                subtitle = "Point-cloud viewer, display params, measure, plan view, export.",
-                arrivesWith = "B6",
-                onClick = { onArrivesWith("B6") },
+                subtitle = "Point-cloud viewer with display parameters, the measure tool, and the floor-plan viewer.",
+                onClick = onOpenReview,
             )
+            NavCard(
+                icon = Icons.Filled.Layers,
+                title = "Merge",
+                subtitle = "Combine this capture with other georeferenced sessions.",
+                onClick = onOpenMerge,
+            )
+        }
+    }
+}
+
+/** A workspace entry point. The B1-era "Arrives with Bx" variant is gone — every card now goes somewhere. */
+@Composable
+private fun NavCard(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onClick,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(12.dp))
+                Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(6.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(8.dp))
+            Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -226,8 +277,8 @@ private fun CaptureNavCard(onClick: () -> Unit) {
             HorizontalDivider()
             Spacer(Modifier.height(8.dp))
             Text(
-                "Connect the D6, start/stop a real recording session, live pts/s and recording " +
-                    "size. Live 3D / AR overlay preview arrives with B4.",
+                "Connect the sensor, start/stop a recording session, and watch the cloud build in the live 3D or " +
+                    "AR view. Live-SLAM vs Record-only starts from this project's workflow profile.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -310,43 +361,3 @@ private fun MountCalibrationNavCard(
     }
 }
 
-@Composable
-private fun StubNavCard(
-    icon: ImageVector,
-    title: String,
-    subtitle: String,
-    arrivesWith: String,
-    onClick: () -> Unit,
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        onClick = onClick,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
-    ) {
-        Column(Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.width(12.dp))
-                Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                ArrivesWithBadge(arrivesWith)
-            }
-            Spacer(Modifier.height(6.dp))
-            HorizontalDivider()
-            Spacer(Modifier.height(8.dp))
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-@Composable
-private fun ArrivesWithBadge(workstream: String) {
-    Text(
-        text = "Arrives with $workstream",
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.primary,
-    )
-}

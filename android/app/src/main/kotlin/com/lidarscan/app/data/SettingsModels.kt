@@ -24,4 +24,23 @@ data class AppSettings(
      * BuildConfig-driven default (see `BuildConfig.FORCE_FAKE_ENGINE`).
      */
     val useFakeEngine: Boolean = false,
+    /**
+     * D3: where the Cloud processing mode uploads to (§3.8's "Cloud" row) and
+     * the single-tenant bearer token the service requires on every request.
+     *
+     * Empty [cloudBaseUrl] is what gates the Cloud action off; the Processing
+     * screen says "set the server URL and token in Settings" rather than
+     * offering an upload that would 401.
+     */
+    val cloudBaseUrl: String = "",
+    val cloudToken: String = "",
+    /** B9: the NTRIP caster, device-level rather than per project — one account, many sites. */
+    val ntrip: com.lidarscan.core.gnss.NtripSettings = com.lidarscan.core.gnss.NtripSettings(),
+    /**
+     * B6: the operator override behind A11's `SCAN_SYNC_POOR` refusal. Off by
+     * default and it stays a *setting* rather than a per-run checkbox because
+     * turning it on is a statement about what the results may be used for, not
+     * a per-job choice.
+     */
+    val allowPoorSyncColorize: Boolean = false,
 )

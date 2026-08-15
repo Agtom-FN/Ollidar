@@ -93,6 +93,15 @@ add_subdirectory("${LIDARSCAN_ENGINE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/scanengi
 # none of which the C ABI's scan_device_config exposes; see its header) and
 # mid360_jni.cpp (its JNI bindings, plus the C-ABI Mid-360 add_device the
 # capture path uses and the TMPDIR fix-up SDK2 needs on Android).
+# B6/B11/B12 add processing_engine.{h,cpp} (a standalone scanengine::Engine
+# driving A15's JobQueue, A12's floor-plan extractor and A13's MergeProject —
+# none of which has ANY C-ABI surface at SCAN_ABI_VERSION 4, by A15's own
+# explicit design decision; see that header's comment) and processing_jni.cpp.
+# B9 adds gnss_jni.cpp, which — unlike every other helper here — needs no C++
+# linkage at all: INT-29 landed A10's whole surface in the C ABI, so the RTK
+# rover goes through scan_engine_push_nmea/scan_engine_last_fix/scan_ntrip_* on
+# the SAME scan_engine* the capture session owns, which is what keeps
+# record-always intact for the NMEA stream.
 add_library(scanengine_jni SHARED
     scanengine_jni.cpp
     replay_engine.cpp
@@ -101,6 +110,9 @@ add_library(scanengine_jni SHARED
     keyframe_writer.cpp
     mid360_probe.cpp
     mid360_jni.cpp
+    processing_engine.cpp
+    processing_jni.cpp
+    gnss_jni.cpp
 )
 
 target_link_libraries(scanengine_jni PRIVATE

@@ -15,7 +15,10 @@ import com.lidarscan.app.data.SettingsRepository
 import com.lidarscan.app.engine.RealEngineBridge
 import com.lidarscan.app.engine.ReplayEngineBridge
 import com.lidarscan.app.engine.ScanEngineNative
+import com.lidarscan.app.merge.MergeRepository
 import com.lidarscan.app.net.EthernetMonitor
+import com.lidarscan.app.processing.ProcessingRepository
+import com.lidarscan.app.rtk.RtkManager
 import com.lidarscan.app.usb.D6UsbConnectionRegistry
 import com.lidarscan.core.engine.D6ConnectController
 import com.lidarscan.core.engine.EngineBridge
@@ -128,6 +131,27 @@ class AppContainer(context: Context) {
 
     /** Pure-Kotlin D6 connect-wizard state machine (`:core`), driving [engineBridge]. */
     val d6ConnectController = D6ConnectController(engineBridge, containerScope)
+
+    /**
+     * B6/B11/B12: A15's job queue, A12's plan extractor and A13's merger, behind
+     * one native handle. Device-level rather than per project: the queue has one
+     * worker thread, and a 20-minute post-process must survive navigating away
+     * from the screen that started it. The native handle itself is created
+     * lazily on first submit — an app launch that never processes anything owns
+     * no worker thread.
+     */
+    val processingRepository = ProcessingRepository(containerScope)
+
+    /** B12: §3.10's georeferenced auto-merge, over the same native handle. */
+    val mergeRepository = MergeRepository(processingRepository)
+
+    /**
+     * B9: the RTK rover link, the NTRIP client and the polled fix.
+     * Engine-lifetime for exactly the reason `core/engine.h` gives for the
+     * engine's own GNSS stack: the operator pairs the rover and waits for RTK
+     * Fixed *before* pressing record, so this cannot belong to a session.
+     */
+    val rtkManager = RtkManager(appContext, containerScope)
 
     /**
      * B7: one ARCore session for the whole app. Both the Capture screen's AR

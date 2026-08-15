@@ -40,6 +40,16 @@ class SettingsViewModel(
         viewModelScope.launch { settingsRepository.setUseFakeEngine(useFakeEngine) }
     }
 
+    /** D3: the Cloud processing mode's server URL and single-tenant token (§3.8). */
+    fun setCloud(baseUrl: String, token: String) {
+        viewModelScope.launch { settingsRepository.setCloud(baseUrl, token) }
+    }
+
+    /** B6: the operator override behind A11's `SCAN_SYNC_POOR` refusal. */
+    fun setAllowPoorSyncColorize(allow: Boolean) {
+        viewModelScope.launch { settingsRepository.setAllowPoorSyncColorize(allow) }
+    }
+
     /**
      * B4's debug-drawer acceptance path. Reuses an existing "Synthetic
      * Replay Demo" project if the user has already run this before (so

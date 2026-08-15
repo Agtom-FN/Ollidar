@@ -298,6 +298,229 @@ object ScanEngineNative {
      */
     external fun nativeMid360Sdk2Active(): Boolean
 
+    // --- B6/B11/B12: the processing engine (jobs, floor plan, merge) ------------
+    //
+    // A SEPARATE handle space from the live `scan_engine*`, and separate on
+    // purpose: A15's job queue, A12's plan extractor and A13's merger have **no
+    // C-ABI surface at all** at SCAN_ABI_VERSION 4 — `scanengine_c.h` says so
+    // explicitly for the queue ("an app that wants a queue should drive a
+    // Colorize job through the C++ jobs::JobQueue instead; there is no C
+    // surface for the queue at ABI 4") — so `cpp/processing_engine.{h,cpp}`
+    // links the engine's C++ API directly, exactly like B4's replay engine and
+    // B3's Mid-360 probe. It runs from a `.lscan` on disk, so it needs no
+    // devices and no session and is unrelated to whatever the capture engine is
+    // doing.
+    //
+    // There is deliberately NO `nativeProcSubmitCloudSubmit`: A15 has a
+    // kCloudSubmit job kind, but the Android cloud client is Kotlin
+    // (`com.lidarscan.core.cloud`) so that the upload has one retry policy and
+    // one size cap rather than two. See android/NOTES.md.
+    external fun nativeProcCreate(): Long
+    external fun nativeProcDestroy(handle: Long)
+    external fun nativeProcLastError(handle: Long): String
+
+    /** Returns the job id, or 0 on a submit-time refusal ([nativeProcLastError] says why). */
+    external fun nativeProcSubmitPostProcess(handle: Long, lscanDir: String): Long
+
+    /**
+     * @param chainFrom a finished post-process job whose `PageStore` is the
+     *   cloud to paint, or 0 for the engine's own store.
+     * @param cameraFromLidar ROW-MAJOR rigid 4x4. A column-major matrix is
+     *   refused rather than producing a plausible-looking mirrored result.
+     * @param syncQuality `SCAN_SYNC_*`. **Fails closed at 0** — an unconverged
+     *   estimator and a caller who never wired A4 both land there, and the
+     *   colorizer refuses both before decoding an image.
+     */
+    external fun nativeProcSubmitColorize(
+        handle: Long,
+        chainFrom: Long,
+        lscanDir: String,
+        cameraFromLidar: DoubleArray,
+        syncQuality: Int,
+        allowPoorSync: Boolean,
+        clockOffsetNs: Long,
+    ): Long
+
+    external fun nativeProcSubmitExport(
+        handle: Long,
+        chainFrom: Long,
+        format: Int,
+        outputPath: String,
+        crsWkt: String,
+        crsEpsg: String,
+    ): Long
+
+    external fun nativeProcSubmitTransferExport(
+        handle: Long,
+        projectDir: String,
+        zipPath: String,
+        includeResults: Boolean,
+    ): Long
+
+    external fun nativeProcCancelJob(handle: Long, jobId: Long): Boolean
+    external fun nativeProcJobs(handle: Long): Array<NativeJob>?
+
+    /** Delivered on the JobQueue worker thread (via `EventType::kJobProgress`). Do not block. */
+    fun interface JobProgressListener {
+        fun onJobProgress(jobId: Long, progress: Float, state: Int)
+    }
+
+    external fun nativeProcSetJobProgressListener(handle: Long, listener: JobProgressListener?): Boolean
+
+    // The processing engine's own PageStore — where every produced cloud lands,
+    // read with exactly the same NativePointPage marshalling as the live and
+    // replay paths, so PointCloudRenderer needs no new code path.
+    external fun nativeProcPageCount(handle: Long): Int
+    external fun nativeProcPageIdAt(handle: Long, index: Int): Int
+    external fun nativeProcGetPointPage(handle: Long, pageId: Int): NativePointPage?
+    external fun nativeProcTotalPoints(handle: Long): Long
+
+    external fun nativeProcMergedPageCount(handle: Long): Int
+    external fun nativeProcMergedPageIdAt(handle: Long, index: Int): Int
+    external fun nativeProcMergedGetPointPage(handle: Long, pageId: Int): NativePointPage?
+    external fun nativeProcMergedTotalPoints(handle: Long): Long
+
+    // --- B11: A12 floor plan ----------------------------------------------------
+    //
+    // BLOCKING — call from a coroutine on Dispatchers.Default, never the main
+    // thread. The result is held natively and read back through the getters
+    // below, so the arrays are always one consistent extraction.
+    external fun nativeProcRunPlan(
+        handle: Long,
+        zMinM: Float,
+        zMaxM: Float,
+        gridResM: Float,
+        snapOrthogonal: Boolean,
+        snapToleranceDeg: Float,
+        minCellPoints: Int,
+        windowSillCheck: Boolean,
+        detectRooms: Boolean,
+        detectOpenings: Boolean,
+    ): Boolean
+
+    external fun nativeProcCancelPlan(handle: Long)
+    external fun nativeProcPlanProgress(handle: Long): Float
+
+    /** Stride 8: ax, ay, bx, by, thicknessM, rmsResidualM, coverage, confidence. */
+    external fun nativeProcPlanWallsD(handle: Long): DoubleArray
+
+    /** Stride 4: id, evidence, supportCells, snapped. */
+    external fun nativeProcPlanWallsI(handle: Long): IntArray
+
+    /** Stride 6: ax, ay, bx, by, widthM, confidence. */
+    external fun nativeProcPlanOpeningsD(handle: Long): DoubleArray
+
+    /** Stride 4: id, wallId, kind, sill. */
+    external fun nativeProcPlanOpeningsI(handle: Long): IntArray
+
+    /** Stride 5: areaM2, perimeterM, centroidX, centroidY, confidence. */
+    external fun nativeProcPlanRoomsD(handle: Long): DoubleArray
+
+    /** Stride 3: id, fullyMeasured, polygonVertexCount. */
+    external fun nativeProcPlanRoomsI(handle: Long): IntArray
+
+    /** Every room's polygon vertices concatenated as x, y — walked with the vertex counts above. */
+    external fun nativeProcPlanRoomPolygons(handle: Long): DoubleArray
+    external fun nativeProcPlanRoomLabels(handle: Long): Array<String>
+
+    /** 19 doubles — see `NativePlanArrays.SUMMARY_*` for the index names. */
+    external fun nativeProcPlanSummary(handle: Long): DoubleArray
+
+    external fun nativeProcWritePlanDxf(handle: Long, path: String): Boolean
+    external fun nativeProcWritePlanPdf(handle: Long, path: String, title: String, project: String, date: String): Boolean
+
+    // --- B12: A13 georeferenced auto-merge --------------------------------------
+
+    fun interface MergeProgressListener {
+        fun onMergeProgress(fraction: Float, label: String)
+    }
+
+    /**
+     * BLOCKING. `georef` is 23 doubles per session — see
+     * `MergeRepository.encodeGeoref` for the layout, which is asserted by a
+     * `:core` test rather than trusted.
+     */
+    external fun nativeProcRunMerge(
+        handle: Long,
+        lscanDirs: Array<String>,
+        provenanceIds: Array<String>,
+        chainFromJobs: LongArray,
+        georef: DoubleArray,
+        outPlyPath: String,
+        listener: MergeProgressListener?,
+    ): NativeMergeSummary?
+
+    external fun nativeProcCancelMerge(handle: Long)
+
+    // --- B9: GNSS / RTK (gnss_jni.cpp, entirely over the C ABI) -----------------
+    //
+    // A10 §9.2 listed what B9 needs and INT-29 landed all of it, so — unlike
+    // the processing surface above — none of this needs C++ linkage. The rover
+    // goes on the SAME `scan_engine*` the capture session owns, which is what
+    // makes `scan_engine_push_nmea`'s record-always guarantee apply: the bytes
+    // hit the `.lscan` as kGnssNmea chunks BEFORE they are parsed.
+
+    /** Returns the device id (>= 0) or -1. */
+    external fun nativeAddRtkRoverDevice(handle: Long): Int
+
+    /** `buffer` must be direct. Any chunk size is fine — the framer handles SPP's 20–990-byte fragments. */
+    external fun nativePushNmea(handle: Long, deviceId: Int, buffer: java.nio.ByteBuffer, len: Int, tMonoNs: Long): Int
+
+    /** 22 doubles — see [NativeGnssLayout.FIX_*]. Null only if the call itself failed. */
+    external fun nativeLastFix(handle: Long): DoubleArray?
+
+    /** 19 doubles — see [NativeGnssLayout.STATS_*]. */
+    external fun nativeGnssStats(handle: Long): DoubleArray?
+
+    /** 27 doubles — see [NativeGnssLayout.GEOREF_*]. */
+    external fun nativeGeorefSolution(handle: Long): DoubleArray?
+
+    /** A10's stable reason string; empty when the transform has converged. */
+    external fun nativeGeorefBlocker(handle: Long): String
+
+    /** **Empty until the georef transform converges** — A9's documented local-frame-placeholder input. */
+    external fun nativeCrsWkt(handle: Long): String
+    external fun nativeCrsEpsg(handle: Long): String
+
+    external fun nativeNtripCreate(engineHandle: Long): Long
+    external fun nativeNtripDestroy(handle: Long)
+
+    /** Performs the first handshake **synchronously** — call off the main thread. Returns a `SCAN_ERR_*`. */
+    external fun nativeNtripConnect(
+        handle: Long,
+        host: String,
+        port: Int,
+        mountpoint: String,
+        username: String,
+        password: String,
+        ntripVersion: Int,
+        allowV1Fallback: Boolean,
+        ggaIntervalMs: Int,
+        autoReconnect: Boolean,
+    ): Int
+
+    external fun nativeNtripDisconnect(handle: Long): Int
+
+    /** 18 doubles — see [NativeGnssLayout.NTRIP_*]. */
+    external fun nativeNtripStats(handle: Long): DoubleArray?
+
+    /**
+     * Whole, CRC-valid RTCM3 frames only, delivered on the NTRIP receive thread
+     * with no client lock held. Must be quick and must not call back into the
+     * engine — this is where the app writes to the rover's Bluetooth socket.
+     */
+    fun interface RtcmSink {
+        fun write(data: ByteArray)
+    }
+
+    external fun nativeNtripSetRtcmSink(handle: Long, sink: RtcmSink?): Boolean
+
+    /** Stride 4 strings: mountpoint, identifier, format, country. */
+    external fun nativeNtripSourcetableText(host: String, port: Int, username: String, password: String, capacity: Int): Array<String>?
+
+    /** Stride 6 doubles: latDeg, lonDeg, needsGga, fee, carrier, solution. */
+    external fun nativeNtripSourcetableNumbers(host: String, port: Int, username: String, password: String, capacity: Int): DoubleArray?
+
     /**
      * Engine → app write callback for D6's start/stop command bytes
      * (`scan_serial_write_cb` in the C ABI). Implemented in
@@ -440,6 +663,21 @@ object ScanEngineNative {
         const val ROTATION = 31
         const val POSE_UPDATE = 40
         const val GNSS_FIX = 50
+
+        /** B9: the corrections link changed state (A10 §8's kStreaming → kReconnecting → kStreaming). */
+        const val NTRIP_STATE = 51
+
+        /** B9: the moment the session became (or stopped being) exportable in a real CRS. */
+        const val GEOREF_CONVERGED = 52
+
+        /**
+         * A15's queue. **Note this does not fire for the processing engine** —
+         * that one is driven through the C++ `Engine::jobs()` and delivers
+         * progress on its own EventBus subscription
+         * ([JobProgressListener]); this constant is here because the capture
+         * engine's C-ABI pump would carry it if anything ever submitted a job
+         * on that engine. Before ABI 4 it crossed with a zeroed payload.
+         */
         const val JOB_PROGRESS = 60
         const val ERROR = 90
     }

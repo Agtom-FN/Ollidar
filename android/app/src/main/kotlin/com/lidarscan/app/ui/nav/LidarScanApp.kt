@@ -14,8 +14,13 @@ import com.lidarscan.app.ui.capture.CaptureRoute
 import com.lidarscan.app.ui.connect.ConnectWizardRoute
 import com.lidarscan.app.ui.connect.Mid360ConnectRoute
 import com.lidarscan.app.ui.detail.ProjectDetailRoute
+import com.lidarscan.app.ui.merge.MergeRoute
 import com.lidarscan.app.ui.newproject.NewProjectRoute
+import com.lidarscan.app.ui.plan.PlanRoute
+import com.lidarscan.app.ui.processing.ProcessingRoute
 import com.lidarscan.app.ui.projects.ProjectsListRoute
+import com.lidarscan.app.ui.review.ReviewRoute
+import com.lidarscan.app.ui.rtk.RtkRoute
 import com.lidarscan.app.ui.settings.SettingsRoute
 
 @Composable
@@ -57,7 +62,58 @@ fun LidarScanApp(
                 onOpenCapture = { pid -> navController.navigate(Routes.capture(pid)) },
                 onOpenMountCalibration = { pid -> navController.navigate(Routes.mountCalibration(pid)) },
                 onOpenMid360Connect = { pid -> navController.navigate(Routes.mid360Connect(pid)) },
+                onOpenProcessing = { pid -> navController.navigate(Routes.processing(pid)) },
+                onOpenReview = { pid -> navController.navigate(Routes.review(pid)) },
+                onOpenRtk = { navController.navigate(Routes.RTK) },
+                onOpenMerge = { navController.navigate(Routes.MERGE) },
             )
+        }
+
+        // B6: Processing — mode chooser (§3.8) + A15's queue.
+        composable(
+            route = Routes.PROCESSING,
+            arguments = listOf(navArgument(Routes.PROJECT_ID_ARG) { type = NavType.StringType }),
+        ) { backStackEntry ->
+            ProcessingRoute(
+                container = container,
+                projectId = Uri.decode(backStackEntry.arguments?.getString(Routes.PROJECT_ID_ARG).orEmpty()),
+                onBack = { navController.popBackStack() },
+                onOpenSettings = { navController.navigate(Routes.SETTINGS) },
+            )
+        }
+
+        // B10 + B11: Review — viewer, display params, measure; floor plan next door.
+        composable(
+            route = Routes.REVIEW,
+            arguments = listOf(navArgument(Routes.PROJECT_ID_ARG) { type = NavType.StringType }),
+        ) { backStackEntry ->
+            ReviewRoute(
+                container = container,
+                projectId = Uri.decode(backStackEntry.arguments?.getString(Routes.PROJECT_ID_ARG).orEmpty()),
+                onBack = { navController.popBackStack() },
+                onOpenPlan = { pid -> navController.navigate(Routes.plan(pid)) },
+            )
+        }
+
+        composable(
+            route = Routes.PLAN,
+            arguments = listOf(navArgument(Routes.PROJECT_ID_ARG) { type = NavType.StringType }),
+        ) { backStackEntry ->
+            PlanRoute(
+                container = container,
+                projectId = Uri.decode(backStackEntry.arguments?.getString(Routes.PROJECT_ID_ARG).orEmpty()),
+                onBack = { navController.popBackStack() },
+            )
+        }
+
+        // B9: the rover, the caster and the fix — device-level, not per project.
+        composable(Routes.RTK) {
+            RtkRoute(container = container, onBack = { navController.popBackStack() })
+        }
+
+        // B12: georeferenced auto-merge across projects.
+        composable(Routes.MERGE) {
+            MergeRoute(container = container, onBack = { navController.popBackStack() })
         }
 
         // B3: the Mid-360 (Ethernet) connect wizard, per project — this is

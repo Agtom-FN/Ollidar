@@ -1,0 +1,464 @@
+package com.lidarscan.app.ui.review
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Straighten
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.Card
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
+import com.lidarscan.app.di.AppContainer
+import com.lidarscan.app.render.CameraMode
+import com.lidarscan.app.render.PointCloudView
+import com.lidarscan.core.measure.MeasureUnit
+import com.lidarscan.core.render.ColorMode
+import com.lidarscan.core.render.Colormap
+import com.lidarscan.core.render.DisplayProfile
+import com.lidarscan.core.render.PointSizeMode
+import kotlin.math.roundToInt
+
+@Composable
+fun ReviewRoute(
+    container: AppContainer,
+    projectId: String,
+    onBack: () -> Unit,
+    onOpenPlan: (String) -> Unit,
+) {
+    val vm: ReviewViewModel = viewModel(
+        factory = viewModelFactory {
+            initializer {
+                ReviewViewModel(container, container.projectStore, container.settingsRepository, projectId)
+            }
+        },
+    )
+    val state by vm.uiState.collectAsStateWithLifecycle()
+    ReviewScreen(state, vm, onBack) { onOpenPlan(projectId) }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ReviewScreen(
+    state: ReviewUiState,
+    vm: ReviewViewModel,
+    onBack: () -> Unit,
+    onOpenPlan: () -> Unit,
+) {
+    var showPanel by remember { mutableStateOf(false) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(state.project?.manifest?.name ?: "Review") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { vm.toggleMeasure() }) {
+                        Icon(
+                            Icons.Filled.Straighten,
+                            contentDescription = "Measure",
+                            tint = if (state.measureMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                    IconButton(onClick = { showPanel = true }) {
+                        Icon(Icons.Filled.Tune, contentDescription = "Display settings")
+                    }
+                },
+            )
+        },
+    ) { padding ->
+        Box(Modifier.fillMaxSize().padding(padding)) {
+            if (state.hasCloud) {
+                PointCloudView(
+                    source = vm.cloudSource,
+                    colorMode = state.display.colorMode,
+                    colormap = state.display.activeScalar.colormap,
+                    pointSizePx = state.display.pointSize.fixedPx,
+                    cameraMode = CameraMode.ORBIT,
+                    displayParams = state.display,
+                    onRendererReady = vm::onRendererReady,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                if (state.measureMode) {
+                    // A transparent overlay above the SurfaceView takes the tap
+                    // for measuring, so a pick never fights the orbit gesture.
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .pointerInput(Unit) {
+                                detectTapGestures { offset -> vm.onTap(offset.x, offset.y) }
+                            },
+                    )
+                }
+            } else {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        "No cloud in memory.\n\nRun Post-process on this project first — the review viewer shows what " +
+                            "processing produced, and a processed cloud is not written into the .lscan (nothing in the " +
+                            "engine writes one yet), so it lives only for this app session.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(32.dp),
+                    )
+                }
+            }
+
+            Column(
+                Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (state.measureMode) MeasureHud(state, vm)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onOpenPlan) { Text("Floor plan") }
+                    Text(
+                        "${state.totalPoints} pts",
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.align(Alignment.CenterVertically),
+                    )
+                }
+            }
+        }
+    }
+
+    if (showPanel) {
+        ModalBottomSheet(onDismissRequest = { showPanel = false }, sheetState = sheetState) {
+            DisplayPanel(state, vm)
+        }
+    }
+}
+
+@Composable
+private fun MeasureHud(state: ReviewUiState, vm: ReviewViewModel) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            val m = state.measurement
+            if (m != null) {
+                Text(vm.formatted(m.distanceM), style = MaterialTheme.typography.headlineSmall)
+                Text(
+                    "horizontal ${vm.formatted(m.horizontalM)} · Δz ${vm.formatted(m.deltaZM)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    "Between the two nearest sampled points — the tool picks from a bounded sample of the cloud, not " +
+                        "every point, so a pick can sit a few centimetres from the return drawn under your finger.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Text(state.pickMessage ?: "Tap a point to start.", style = MaterialTheme.typography.bodyMedium)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                MeasureUnit.entries.forEach { u ->
+                    FilterChip(
+                        selected = state.measureUnit == u,
+                        onClick = { vm.setMeasureUnit(u) },
+                        label = { Text(u.abbreviation) },
+                    )
+                }
+                TextButton(onClick = vm::clearMeasurement) { Text("Clear") }
+            }
+        }
+    }
+}
+
+/**
+ * B10 — §3.9's render-settings panel, bound to A14's model.
+ *
+ * EDL has a switch and no effect yet, and says so: `points.mat` has no
+ * post-process pass and S3 never measured EDL's cost on this class of GPU, so
+ * shipping a toggle that silently does nothing would be worse than one that
+ * admits it.
+ */
+@Composable
+private fun DisplayPanel(state: ReviewUiState, vm: ReviewViewModel) {
+    val d = state.display
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp)
+            .padding(bottom = 32.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text("Display", style = MaterialTheme.typography.titleLarge)
+        Text(
+            "Saved with this project (§3.9). Profiles set the starting point.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            DisplayProfile.entries.forEach { p ->
+                FilterChip(selected = false, onClick = { vm.applyProfile(p) }, label = { Text(p.displayName) })
+            }
+        }
+
+        HorizontalDivider()
+        Text("Colour", style = MaterialTheme.typography.titleSmall)
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            ColorMode.entries.forEach { mode ->
+                val reason = state.colorModeReasons[mode]
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    FilterChip(
+                        selected = d.colorMode == mode,
+                        onClick = { vm.updateDisplay { it.copy(colorMode = mode) } },
+                        enabled = reason == null,
+                        label = { Text(mode.name.lowercase().replaceFirstChar { it.uppercase() }) },
+                    )
+                }
+                if (reason != null && d.colorMode != mode) {
+                    Text(
+                        reason,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+
+        if (d.colorMode == ColorMode.HEIGHT || d.colorMode == ColorMode.INTENSITY) {
+            Text("Colormap", style = MaterialTheme.typography.titleSmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Colormap.entries.forEach { cm ->
+                    FilterChip(
+                        selected = d.activeScalar.colormap == cm,
+                        onClick = {
+                            vm.updateDisplay { p ->
+                                when (p.colorMode) {
+                                    ColorMode.HEIGHT -> p.copy(height = p.height.copy(colormap = cm))
+                                    ColorMode.INTENSITY -> p.copy(intensity = p.intensity.copy(colormap = cm))
+                                    else -> p
+                                }
+                            }
+                        },
+                        label = { Text(cm.name.lowercase().replaceFirstChar { it.uppercase() }) },
+                    )
+                }
+            }
+            LabeledSlider(
+                "Gamma",
+                d.activeScalar.gamma,
+                0.1f..4f,
+                "%.2f".format(d.activeScalar.gamma),
+            ) { v ->
+                vm.updateDisplay { p ->
+                    when (p.colorMode) {
+                        ColorMode.HEIGHT -> p.copy(height = p.height.copy(gamma = v))
+                        ColorMode.INTENSITY -> p.copy(intensity = p.intensity.copy(gamma = v))
+                        else -> p
+                    }
+                }
+            }
+            LabeledSlider(
+                "Brightness",
+                d.activeScalar.brightness,
+                0.1f..3f,
+                "%.2f".format(d.activeScalar.brightness),
+            ) { v ->
+                vm.updateDisplay { p ->
+                    when (p.colorMode) {
+                        ColorMode.HEIGHT -> p.copy(height = p.height.copy(brightness = v))
+                        ColorMode.INTENSITY -> p.copy(intensity = p.intensity.copy(brightness = v))
+                        else -> p
+                    }
+                }
+            }
+            SwitchRow("Auto range", d.activeScalar.autoRange, "Track the cloud's real range each frame instead of a pinned one.") { on ->
+                vm.updateDisplay { p ->
+                    when (p.colorMode) {
+                        ColorMode.HEIGHT -> p.copy(height = p.height.copy(autoRange = on))
+                        ColorMode.INTENSITY -> p.copy(intensity = p.intensity.copy(autoRange = on))
+                        else -> p
+                    }
+                }
+            }
+        }
+
+        HorizontalDivider()
+        Text("Point size", style = MaterialTheme.typography.titleSmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            PointSizeMode.entries.forEach { m ->
+                FilterChip(
+                    selected = d.pointSize.mode == m,
+                    onClick = { vm.updateDisplay { it.copy(pointSize = it.pointSize.copy(mode = m)) } },
+                    label = {
+                        Text(
+                            when (m) {
+                                PointSizeMode.FIXED_PIXELS -> "Fixed px"
+                                PointSizeMode.ADAPTIVE -> "Adaptive"
+                                PointSizeMode.WORLD_SIZE -> "World size"
+                            },
+                        )
+                    },
+                )
+            }
+        }
+        when (d.pointSize.mode) {
+            PointSizeMode.FIXED_PIXELS -> LabeledSlider(
+                "Size",
+                d.pointSize.fixedPx,
+                0.5f..12f,
+                "%.1f px".format(d.pointSize.fixedPx),
+            ) { v -> vm.updateDisplay { it.copy(pointSize = it.pointSize.copy(fixedPx = v)) } }
+            PointSizeMode.ADAPTIVE -> {
+                LabeledSlider("Min", d.pointSize.adaptiveMinPx, 0.5f..12f, "%.1f px".format(d.pointSize.adaptiveMinPx)) { v ->
+                    vm.updateDisplay { it.copy(pointSize = it.pointSize.copy(adaptiveMinPx = v)) }
+                }
+                LabeledSlider("Max", d.pointSize.adaptiveMaxPx, 0.5f..24f, "%.1f px".format(d.pointSize.adaptiveMaxPx)) { v ->
+                    vm.updateDisplay { it.copy(pointSize = it.pointSize.copy(adaptiveMaxPx = v)) }
+                }
+            }
+            PointSizeMode.WORLD_SIZE -> LabeledSlider(
+                "Diameter",
+                d.pointSize.worldSizeM,
+                0.0005f..0.2f,
+                "%.0f mm".format(d.pointSize.worldSizeM * 1000f),
+            ) { v -> vm.updateDisplay { it.copy(pointSize = it.pointSize.copy(worldSizeM = v)) } }
+        }
+
+        HorizontalDivider()
+        Text("Detail budget", style = MaterialTheme.typography.titleSmall)
+        LabeledSlider(
+            "LOD",
+            (d.lodPointBudget / 1_000_000f),
+            0.5f..50f,
+            "${(d.lodPointBudget / 1_000_000f).roundToInt()} M points",
+        ) { v -> vm.updateDisplay { it.copy(lodPointBudget = (v * 1_000_000f).roundToInt()) } }
+        Text(
+            "A ceiling on how many points are uploaded to the GPU, applied in page order. It stops before the budget " +
+                "rather than decimating within a page — that is what this renderer does, stated plainly.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        HorizontalDivider()
+        Text("Clipping", style = MaterialTheme.typography.titleSmall)
+        SwitchRow("Height clip", d.clipHeightEnabled, "Hide everything outside a height band — the same band a floor plan slices.") { on ->
+            vm.updateDisplay { it.copy(clipHeightEnabled = on) }
+        }
+        if (d.clipHeightEnabled) {
+            LabeledSlider("Floor", d.clipHeightMin, -5f..10f, "%.2f m".format(d.clipHeightMin)) { v ->
+                vm.updateDisplay { it.copy(clipHeightMin = v) }
+            }
+            LabeledSlider("Ceiling", d.clipHeightMax, -5f..10f, "%.2f m".format(d.clipHeightMax)) { v ->
+                vm.updateDisplay { it.copy(clipHeightMax = v) }
+            }
+        }
+        SwitchRow("Box clip", d.clipBoxEnabled, "Restrict to an axis-aligned box in the session's local frame.") { on ->
+            vm.updateDisplay { it.copy(clipBoxEnabled = on) }
+        }
+
+        HorizontalDivider()
+        Text("Background", style = MaterialTheme.typography.titleSmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            BACKGROUNDS.forEach { (label, rgba) ->
+                OutlinedButton(onClick = { vm.updateDisplay { it.copy(background = rgba) } }) {
+                    Box(
+                        Modifier
+                            .height(14.dp)
+                            .width(14.dp)
+                            .background(Color(rgba.r / 255f, rgba.g / 255f, rgba.b / 255f, 1f)),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(label)
+                }
+            }
+        }
+
+        HorizontalDivider()
+        SwitchRow(
+            "EDL shading",
+            d.edlEnabled,
+            "Persisted, but NOT rendered in this build: points.mat has no post-process pass and S3 never measured " +
+                "EDL's cost on a phone GPU. The setting travels with the project so a desktop that can draw it will.",
+        ) { on -> vm.updateDisplay { it.copy(edlEnabled = on) } }
+        SwitchRow("Trajectory overlay", d.showTrajectory, "Persisted; the overlay itself is desktop-only so far.") { on ->
+            vm.updateDisplay { it.copy(showTrajectory = on) }
+        }
+
+        TextButton(onClick = vm::resetToProfileDefault) { Text("Reset to this project's profile defaults") }
+    }
+}
+
+private val BACKGROUNDS = listOf(
+    "Dark" to com.lidarscan.core.render.Rgba(18, 18, 22, 255),
+    "Black" to com.lidarscan.core.render.Rgba(0, 0, 0, 255),
+    "Grey" to com.lidarscan.core.render.Rgba(96, 96, 100, 255),
+    "White" to com.lidarscan.core.render.Rgba(245, 245, 248, 255),
+)
+
+@Composable
+private fun LabeledSlider(
+    label: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    readout: String,
+    onChange: (Float) -> Unit,
+) {
+    Column {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(label, style = MaterialTheme.typography.bodyMedium)
+            Text(readout, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Slider(value = value.coerceIn(range), valueRange = range, onValueChange = onChange)
+    }
+}
+
+@Composable
+private fun SwitchRow(label: String, checked: Boolean, detail: String, onChange: (Boolean) -> Unit) {
+    Column {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text(label, style = MaterialTheme.typography.bodyMedium)
+            Switch(checked = checked, onCheckedChange = onChange)
+        }
+        Text(detail, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}

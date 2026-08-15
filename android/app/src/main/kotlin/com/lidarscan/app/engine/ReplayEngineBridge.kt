@@ -97,7 +97,7 @@ class ReplayEngineBridge(
     }
 
     /** [projectDirectory]/[liveSlam] are ignored — replay reads from the bundled asset and records nothing new. */
-    override suspend fun startCapture(projectDirectory: String, liveSlam: Boolean): Result<Unit> =
+    override suspend fun startCapture(projectDirectory: String, liveSlam: Boolean, profile: String): Result<Unit> =
         withContext(Dispatchers.IO) {
             if (_connectionState.value != ConnectionState.CONNECTED) {
                 val message = "Cannot start replay: engine not ready"

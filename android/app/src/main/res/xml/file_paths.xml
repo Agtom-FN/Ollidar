@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  B6/B11: what the FileProvider may hand out through the share sheet.
+
+  `external-files-path` is `Context.getExternalFilesDir(null)`, which is where
+  AppContainer puts `Projects/` — so a `.lscan.zip` staged in a project's
+  `exports/` directory, and a DXF/PDF written next to it, are shareable without
+  copying them anywhere first. `cache-path` covers the app's internal cache,
+  which is where a transfer bundle goes when the caller does not want it kept.
+
+  Nothing broader is declared: a FileProvider path is a grant of the whole
+  subtree to any app the user picks in the share sheet, and "root-path" (the
+  usual copy-paste) would expose the entire filesystem the app can read.
+-->
+<paths>
+    <external-files-path name="project_files" path="." />
+    <cache-path name="app_cache" path="." />
+    <files-path name="app_files" path="." />
+</paths>

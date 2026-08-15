@@ -1,8 +1,10 @@
 package com.lidarscan.core.store
 
+import com.lidarscan.core.model.CaptureDefaults
 import com.lidarscan.core.model.ProjectManifest
 import com.lidarscan.core.model.SensorType
 import com.lidarscan.core.model.WorkflowProfile
+import com.lidarscan.core.render.profileDefaults
 import java.io.File
 import kotlin.random.Random
 import kotlinx.serialization.json.Json
@@ -49,12 +51,18 @@ class FileProjectStore(
         File(dir, "merged").mkdirs()
         File(dir, "exports").mkdirs()
 
+        // B5: the profile stops being a label here and becomes settings. Both
+        // are written at creation and belong to the project from then on — see
+        // ProjectManifest.captureDefaults for why they are not re-derived.
+        val captureDefaults = CaptureDefaults.forProfile(profile)
         val manifest = ProjectManifest(
             name = name,
             sensor = sensor,
             profile = profile,
             createdAtEpochMillis = clock(),
             appVersion = appVersion,
+            captureDefaults = captureDefaults,
+            displayParams = profileDefaults(captureDefaults.displayProfile),
         )
         writeManifest(dir, manifest)
         return Project(id = dirName, directory = dir, manifest = manifest)

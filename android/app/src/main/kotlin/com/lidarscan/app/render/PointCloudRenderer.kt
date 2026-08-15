@@ -43,7 +43,24 @@ import kotlin.math.max
  */
 enum class CameraMode { ORBIT, FOLLOW, AR }
 
-/** `com.google.android.filament.Filament.init()`, called exactly once per process (loads `libfilament-jni.so`). */
+/**
+ * Loads Filament's native libraries, exactly once per process.
+ *
+ * **Two calls, not one, and the second was a real crash.** `Filament.init()`
+ * loads `libfilament-jni.so` and nothing else; `Manipulator` lives in the
+ * separate `filament-utils` artifact and its JNI lives in
+ * `libfilament-utils-jni.so`, which only `Utils.init()` loads. B4 called just
+ * the first, so the very first `Manipulator.Builder().build()` threw
+ * `UnsatisfiedLinkError: No implementation found for
+ * com.google.android.filament.utils.Manipulator.nCreateBuilder()` and took the
+ * process down.
+ *
+ * This compiled cleanly, passed every unit test and was invisible to `javap`
+ * and `llvm-nm` — the classes and symbols all exist, they were just in an
+ * unloaded library. It was found the first time the 3D view was attached on an
+ * actual (emulated) device, which is why NOTES.md's "device-deferred" lists
+ * were worth taking seriously rather than treating as a formality.
+ */
 private object FilamentLoader {
     @Volatile private var initialized = false
     fun ensureInitialized() {
@@ -51,6 +68,7 @@ private object FilamentLoader {
         synchronized(this) {
             if (initialized) return
             com.google.android.filament.Filament.init()
+            com.google.android.filament.utils.Utils.init()
             initialized = true
         }
     }
@@ -125,6 +143,19 @@ class PointCloudRenderer(
     private var colormap: Colormap = Colormap.SPECTRUM
     private var pointSizePx: Float = 2.5f
     private var cameraMode: CameraMode = CameraMode.ORBIT
+
+    /** B10: null on the Capture screen (which drives the three simple setters); set on Review. */
+    private var displayParams: com.lidarscan.core.render.DisplayParams? = null
+
+    /**
+     * B10 / §3.12's "degrade via LOD, never framerate". A **soft** admission
+     * ceiling: once this many points are resident on the GPU, further pages are
+     * not uploaded this frame. That is coarse-to-fine only in page order, not a
+     * real octree LOD — the honest description is "stop before the budget",
+     * and the Review screen says so next to the slider rather than implying a
+     * decimation that is not happening.
+     */
+    private var lodPointBudget: Long = Long.MAX_VALUE
 
     private class GpuPage(
         val entity: Int,
@@ -257,6 +288,79 @@ class PointCloudRenderer(
     }
 
     /**
+     * B10: bind a whole [DisplayParams] (Tech Spec §3.9's render-settings
+     * panel, A14's model) rather than the three individual setters above.
+     *
+     * Everything `points.mat` declares is bound here by NAME — A14 §4 predicted
+     * B10 would treat `DisplayParamsUniforms` as a raw std140 UBO, but B4's
+     * renderer is Filament, whose `MaterialInstance` takes named parameters and
+     * not a byte blob, so this app is in C1's position rather than the one A14
+     * expected. The struct is still the single source of truth for the field
+     * names, types and values; only the memory layout is irrelevant here.
+     *
+     * Three fields do **not** reach the shader, exactly as A14 says they
+     * should not: `lodPointBudget` is a CPU-side page-admission decision (see
+     * [lodPointBudget]), and the two overlay toggles are drawn by the app.
+     * `background` is the Filament `Renderer`'s clear colour, not a material
+     * parameter — a shader cannot paint what is behind the points.
+     */
+    fun setDisplayParams(p: com.lidarscan.core.render.DisplayParams) {
+        displayParams = p
+        colorMode = p.colorMode
+        colormap = p.activeScalar.colormap
+        lodPointBudget = p.lodPointBudget.toLong()
+        if (!translucent && ::renderer.isInitialized) {
+            // Only in the opaque path: the AR overlay's clear colour MUST stay
+            // fully transparent black, and honouring a background choice there
+            // would paint over the camera feed every frame.
+            renderer.clearOptions = Renderer.ClearOptions().apply {
+                clear = true
+                clearColor = doubleArrayOf(
+                    p.background.r / 255.0,
+                    p.background.g / 255.0,
+                    p.background.b / 255.0,
+                    1.0,
+                )
+            }
+        }
+        applyDynamicMaterialParams()
+    }
+
+    /**
+     * The current world→clip matrix as a **ROW-major** 16-double array, and the
+     * viewport it applies to — what B11's measure tool projects candidate
+     * points with.
+     *
+     * Filament hands both matrices out COLUMN-major (its own convention, the
+     * opposite of the engine's C ABI), so the product is transposed once here
+     * rather than at every call site: `pickNearestPoint()` documents row-major
+     * and the conversion belongs at the boundary that knows which is which.
+     * Null before the first frame has sized the viewport.
+     */
+    fun viewProjectionRowMajor(): DoubleArray? {
+        if (!::camera.isInitialized || viewportWidth <= 1) return null
+        val proj = DoubleArray(16)
+        val viewM = DoubleArray(16)
+        camera.getProjectionMatrix(proj)
+        camera.getViewMatrix(viewM)
+        // Column-major multiply: C = P * V, C[col*4+row].
+        val cm = DoubleArray(16)
+        for (col in 0 until 4) {
+            for (row in 0 until 4) {
+                var s = 0.0
+                for (k in 0 until 4) s += proj[k * 4 + row] * viewM[col * 4 + k]
+                cm[col * 4 + row] = s
+            }
+        }
+        val rm = DoubleArray(16)
+        for (r in 0 until 4) for (c in 0 until 4) rm[r * 4 + c] = cm[c * 4 + r]
+        return rm
+    }
+
+    fun viewportWidthPx(): Int = viewportWidth
+    fun viewportHeightPx(): Int = viewportHeight
+
+    /**
      * B3: which `StreamId`s to draw. See [StreamFilter] for the whole story;
      * the short version is that B4 drew **every** page regardless of stream,
      * which is correct for a D6 record-only session (one point stream) and
@@ -384,22 +488,85 @@ class PointCloudRenderer(
         val mi = materialInstance ?: return
         mi.setParameter("colorMode", colorMode.ordinal)
         mi.setParameter("colormap", colormap.ordinal)
-        // A14 default ranges (profile_defaults(), A14-display.md §5): height
-        // 0..3m (typical indoor ceiling), intensity already-normalized 0..1.
-        when (colorMode) {
-            ColorMode.HEIGHT -> {
-                mi.setParameter("valueMin", 0.0f)
-                mi.setParameter("valueMax", 3.0f)
+
+        val dp = displayParams
+        if (dp == null) {
+            // B4's original path, kept for the Capture screen, which drives the
+            // three simple setters and has no per-project DisplayParams yet at
+            // the moment the surface is created. A14 default ranges
+            // (profile_defaults(), A14-display.md §5): height 0..3 m (a typical
+            // indoor ceiling), intensity already normalised to 0..1.
+            when (colorMode) {
+                ColorMode.HEIGHT -> {
+                    mi.setParameter("valueMin", 0.0f)
+                    mi.setParameter("valueMax", 3.0f)
+                }
+                ColorMode.INTENSITY -> {
+                    mi.setParameter("valueMin", 0.0f)
+                    mi.setParameter("valueMax", 1.0f)
+                }
+                else -> Unit
             }
-            ColorMode.INTENSITY -> {
-                mi.setParameter("valueMin", 0.0f)
-                mi.setParameter("valueMax", 1.0f)
-            }
-            else -> Unit
+            mi.setParameter("gamma", 1.0f)
+            mi.setParameter("invert", 0)
+            mi.setParameter("brightness", 1.0f)
+            mi.setParameter("pointSizeMode", PointSizeMode.FIXED_PIXELS.ordinal)
+            mi.setParameter("pointSizeMinPx", pointSizePx)
+            mi.setParameter("pointSizeMaxPx", pointSizePx)
+            mi.setParameter("adaptiveReferenceM", 5.0f)
+            mi.setParameter("worldSizeM", 0.01f)
+            mi.setParameter("clipEnabledMask", 0)
+            return
         }
-        mi.setParameter("pointSizeMode", PointSizeMode.FIXED_PIXELS.ordinal)
-        mi.setParameter("pointSizeMinPx", pointSizePx)
-        mi.setParameter("pointSizeMaxPx", pointSizePx)
+
+        val s = dp.activeScalar
+        // A14 §2's `auto_range` rule, implemented on the side the header says
+        // owns it: "the CALLER (the renderer) is expected to refresh those two
+        // fields ... from the real data range". For height, the source is the
+        // combined page bounds — the same numbers `PageView::bounds_min/max`
+        // expose and this renderer already tracks for the follow camera.
+        val autoHeight = s.autoRange && dp.colorMode == ColorMode.HEIGHT && haveBounds
+        mi.setParameter("valueMin", if (autoHeight) combinedBoundsMin[2] else s.manualMin)
+        mi.setParameter("valueMax", if (autoHeight) combinedBoundsMax[2] else s.manualMax)
+        mi.setParameter("gamma", s.gamma)
+        mi.setParameter("invert", if (s.invert) 1 else 0)
+        mi.setParameter("brightness", s.brightness)
+
+        val ps = dp.pointSize
+        mi.setParameter("pointSizeMode", ps.mode.ordinal)
+        when (ps.mode) {
+            PointSizeMode.FIXED_PIXELS -> {
+                mi.setParameter("pointSizeMinPx", ps.fixedPx)
+                mi.setParameter("pointSizeMaxPx", ps.fixedPx)
+            }
+            else -> {
+                mi.setParameter("pointSizeMinPx", ps.adaptiveMinPx)
+                mi.setParameter("pointSizeMaxPx", ps.adaptiveMaxPx)
+            }
+        }
+        mi.setParameter("adaptiveReferenceM", ps.adaptiveReferenceM)
+        mi.setParameter("worldSizeM", ps.worldSizeM)
+
+        // bit0 = box clip, bit1 = height clip — A14's own packing, so the
+        // shader branch here and `to_uniforms()`'s `clip_enabled_mask` agree.
+        var mask = 0
+        if (dp.clipBoxEnabled) mask = mask or 1
+        if (dp.clipHeightEnabled) mask = mask or 2
+        mi.setParameter("clipEnabledMask", mask)
+        mi.setParameter("clipHeightMin", dp.clipHeightMin)
+        mi.setParameter("clipHeightMax", dp.clipHeightMax)
+        mi.setParameter(
+            "clipBoxMin",
+            dp.clipBoxMin.getOrElse(0) { -10f },
+            dp.clipBoxMin.getOrElse(1) { -10f },
+            dp.clipBoxMin.getOrElse(2) { -10f },
+        )
+        mi.setParameter(
+            "clipBoxMax",
+            dp.clipBoxMax.getOrElse(0) { 10f },
+            dp.clipBoxMax.getOrElse(1) { 10f },
+            dp.clipBoxMax.getOrElse(2) { 10f },
+        )
     }
 
     private fun ensureSharedIndexBuffer(minCapacity: Int): IndexBuffer {
@@ -449,6 +616,13 @@ class PointCloudRenderer(
                 if (streamFilter == StreamFilter.MAPPED_ONLY) dropPagesNotMatchingFilter()
             }
             if (!streamFilter.accepts(page.stream, mappedPageSeen)) continue
+
+            // B10 / §3.12's LOD budget: stop admitting pages once the budget is
+            // reached, but never drop a page already on the GPU — a budget that
+            // evicted resident pages would make the cloud flicker as page order
+            // shifted between frames. Pages already uploaded keep growing.
+            if (resident >= lodPointBudget && !gpuPages.containsKey(pageId)) continue
+
             pageStreams[pageId] = page.stream
             resident += page.count
 

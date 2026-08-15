@@ -37,12 +37,28 @@ fun PointCloudView(
      * registered map on top of each other. See StreamFilter's own doc.
      */
     streamFilter: StreamFilter = StreamFilter.ALL,
+    /**
+     * B10: the whole §3.9 parameter set. Null keeps B4's original three-setter
+     * behaviour, which is what the Capture screen still uses — a live capture
+     * has no per-project display panel open and its point size is its own
+     * slider.
+     */
+    displayParams: com.lidarscan.core.render.DisplayParams? = null,
+    /**
+     * B11: handed the renderer once it exists, so the measure tool can ask for
+     * the current view-projection and viewport. Deliberately a callback rather
+     * than a hoisted `remember`: the renderer's lifetime is this composable's,
+     * and letting a caller construct one would make it easy to leak a Filament
+     * Engine across navigation.
+     */
+    onRendererReady: ((PointCloudRenderer) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val renderer = remember { PointCloudRenderer(context) }
 
     DisposableEffect(renderer) {
+        onRendererReady?.invoke(renderer)
         onDispose { renderer.detach() }
     }
 
@@ -52,9 +68,15 @@ fun PointCloudView(
     // changes (Compose skips otherwise), so there is no meaningful
     // redundant-call cost to avoid.
     renderer.setSource(source)
-    renderer.setColorMode(colorMode)
-    renderer.setColormap(colormap)
-    renderer.setPointSizePx(pointSizePx)
+    if (displayParams != null) {
+        // setDisplayParams owns colour mode, colormap and point size, so the
+        // three individual setters would fight it.
+        renderer.setDisplayParams(displayParams)
+    } else {
+        renderer.setColorMode(colorMode)
+        renderer.setColormap(colormap)
+        renderer.setPointSizePx(pointSizePx)
+    }
     renderer.setCameraMode(cameraMode)
     renderer.setStreamFilter(streamFilter)
 

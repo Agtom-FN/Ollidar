@@ -220,7 +220,7 @@ class RealEngineBridge(
         _events.emit(EngineEvent.StatusMessage("Disconnected"))
     }
 
-    override suspend fun startCapture(projectDirectory: String, liveSlam: Boolean): Result<Unit> =
+    override suspend fun startCapture(projectDirectory: String, liveSlam: Boolean, profile: String): Result<Unit> =
         withContext(Dispatchers.IO) {
             if (_connectionState.value != ConnectionState.CONNECTED) {
                 val message = "Cannot start capture: not connected"
@@ -232,8 +232,12 @@ class RealEngineBridge(
             // scan_session_config.live_slam (B4, ABI 2 — see
             // android/NOTES.md's B2 section for the ABI-1-era gap this
             // closes; B2 could only record it for status text).
+            //
+            // B5: `profile` is now the PROJECT's, not the hardcoded
+            // "quickscan" B2 had to pass — see EngineBridge.startCapture's
+            // KDoc and CaptureDefaults.engineProfileString().
             val err = ScanEngineNative.nativeStartSession(
-                engineHandle, projectDirectory, DEFAULT_PROFILE, true, liveSlam,
+                engineHandle, projectDirectory, profile, true, liveSlam,
             )
             if (err != ScanEngineNative.ErrorCode.OK) {
                 val message = "scan_engine_start failed: ${ScanEngineNative.nativeErrorStr(err)}"

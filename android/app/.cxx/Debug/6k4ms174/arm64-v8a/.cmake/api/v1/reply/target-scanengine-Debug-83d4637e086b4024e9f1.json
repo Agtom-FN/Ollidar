@@ -228,7 +228,8 @@
 				66,
 				67,
 				68,
-				69
+				69,
+				70
 			],
 			"sysroot" : 
 			{
@@ -326,7 +327,8 @@
 				66,
 				67,
 				68,
-				69
+				69,
+				70
 			]
 		}
 	],
@@ -354,6 +356,12 @@
 			"backtrace" : 1,
 			"compileGroupIndex" : 0,
 			"path" : "/Users/admin/lidarscan/engine/src/color/colorizer.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/admin/lidarscan/engine/src/color/extrinsics_solver.cpp",
 			"sourceGroupIndex" : 0
 		},
 		{

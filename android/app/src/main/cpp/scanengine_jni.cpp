@@ -64,6 +64,10 @@ jclass g_pushbroom_stats_class = nullptr;
 jmethodID g_pushbroom_stats_ctor = nullptr;
 jclass g_mid360_probe_class = nullptr;
 jmethodID g_mid360_probe_ctor = nullptr;
+jclass g_job_class = nullptr;
+jmethodID g_job_ctor = nullptr;
+jclass g_merge_summary_class = nullptr;
+jmethodID g_merge_summary_ctor = nullptr;
 
 JNIEnv* AttachCurrentThreadOrGet(bool* did_attach) {
   JNIEnv* env = nullptr;
@@ -95,6 +99,10 @@ using lidarscan_jni::g_pushbroom_stats_class;
 using lidarscan_jni::g_pushbroom_stats_ctor;
 using lidarscan_jni::g_replay_stats_class;
 using lidarscan_jni::g_replay_stats_ctor;
+using lidarscan_jni::g_job_class;
+using lidarscan_jni::g_job_ctor;
+using lidarscan_jni::g_merge_summary_class;
+using lidarscan_jni::g_merge_summary_ctor;
 
 namespace {
 
@@ -370,6 +378,37 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
       env->GetMethodID(g_mid360_probe_class, "<init>", "(IIJJJJJDDDJJJJJJIJZI)V");
   if (g_mid360_probe_ctor == nullptr) {
     LOGE("JNI_OnLoad: NativeMid360Probe constructor not found");
+    return JNI_ERR;
+  }
+
+  // B6 (processing_jni.cpp): one queue row. This and NativeMergeSummary below
+  // are the ONLY two marshalling classes the processing/plan/merge surface
+  // adds — everything else there crosses as a flat primitive array, on purpose
+  // (see processing_jni.cpp's header comment).
+  jclass job_local = env->FindClass("com/lidarscan/app/engine/NativeJob");
+  if (job_local == nullptr) {
+    LOGE("JNI_OnLoad: NativeJob class not found");
+    return JNI_ERR;
+  }
+  g_job_class = static_cast<jclass>(env->NewGlobalRef(job_local));
+  g_job_ctor = env->GetMethodID(g_job_class, "<init>",
+                                "(JIIFILjava/lang/String;Ljava/lang/String;)V");
+  if (g_job_ctor == nullptr) {
+    LOGE("JNI_OnLoad: NativeJob constructor not found");
+    return JNI_ERR;
+  }
+
+  // B12 (processing_jni.cpp): the georeferenced auto-merge verdict.
+  jclass merge_local = env->FindClass("com/lidarscan/app/engine/NativeMergeSummary");
+  if (merge_local == nullptr) {
+    LOGE("JNI_OnLoad: NativeMergeSummary class not found");
+    return JNI_ERR;
+  }
+  g_merge_summary_class = static_cast<jclass>(env->NewGlobalRef(merge_local));
+  g_merge_summary_ctor = env->GetMethodID(
+      g_merge_summary_class, "<init>", "(ZIIIIIFFJJZLjava/lang/String;Ljava/lang/String;)V");
+  if (g_merge_summary_ctor == nullptr) {
+    LOGE("JNI_OnLoad: NativeMergeSummary constructor not found");
     return JNI_ERR;
   }
 

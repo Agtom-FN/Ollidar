@@ -50,6 +50,24 @@
          unavailable (see ArAvailability.message()). -->
     <uses-feature android:name="android.hardware.camera.ar" android:required="false" />
 
+    <!-- B9 (Tech Spec §2.3, §3.1's "RTK rover: Bluetooth SPP (Android)").
+
+         API 31+ replaced the old install-time BLUETOOTH/BLUETOOTH_ADMIN pair
+         with runtime permissions. This app connects to an ALREADY-PAIRED rover
+         and never scans, so it needs BLUETOOTH_CONNECT and NOT BLUETOOTH_SCAN
+         — which is worth having, because BLUETOOTH_SCAN (and, before 31, any
+         discovery at all) drags in a location permission, and a survey app
+         asking for the phone's location while an RTK receiver is attached is
+         both confusing and unnecessary. Pairing happens once in the system
+         Bluetooth settings, which already handle the PIN dialog properly.
+
+         The two legacy permissions are capped at maxSdkVersion 30 so they are
+         not requested on newer releases where they no longer exist. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
+
     <application
         android:name=".LidarScanApplication"
         android:allowBackup="true"
@@ -67,6 +85,22 @@
              non-AR device, which is the wrong trade for a capture app whose
              Mid-360 path needs no AR at all. -->
         <meta-data android:name="com.google.ar.core" android:value="optional" />
+
+        <!-- B6/B11: §3.8's "Extract for transfer" (share the .lscan.zip) and
+             the DXF/PDF plan exports both hand a file to another app through
+             the share sheet. A FileProvider is the only supported way to do
+             that since API 24 — a bare file:// Uri throws FileUriExposedException
+             — and it grants read access to exactly the one Uri, for the life of
+             the receiving activity, rather than exporting a directory. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
         <activity
             android:name=".MainActivity"

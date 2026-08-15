@@ -37,6 +37,16 @@ extern jmethodID g_pushbroom_stats_ctor;  // (JJJJJJJJJJJJJ)V
 extern jclass g_mid360_probe_class;    // com.lidarscan.app.engine.NativeMid360Probe
 extern jmethodID g_mid360_probe_ctor;  // (IIJJJJJDDDJJJJJJIJZI)V
 
+// B6/B12 (processing_jni.cpp): the two records that mix numbers and strings,
+// and are therefore the only ones there that need a marshalling class at all —
+// everything else in that file crosses as a flat primitive array with a
+// documented layout, precisely to keep the hand-typed-descriptor surface small.
+extern jclass g_job_class;    // com.lidarscan.app.engine.NativeJob
+extern jmethodID g_job_ctor;  // (JIIFILjava/lang/String;Ljava/lang/String;)V
+
+extern jclass g_merge_summary_class;    // com.lidarscan.app.engine.NativeMergeSummary
+extern jmethodID g_merge_summary_ctor;  // (ZIIIIIFFJJZLjava/lang/String;Ljava/lang/String;)V
+
 // Attaches the calling native thread to the JVM if it is not already
 // attached (*did_attach reports which happened, so the caller knows whether
 // it is responsible for DetachCurrentThread once done). Never detach a

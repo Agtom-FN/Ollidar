@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class CaptureStats(
     val pointsCaptured: Long = 0,
@@ -63,6 +64,12 @@ class CaptureViewModel(
     private val arController: com.lidarscan.app.ar.CaptureArController? = null,
     private val engineHandleProvider: () -> Long = { 0L },
     private val mountCalibrationFor: (com.lidarscan.core.model.SensorType) -> com.lidarscan.core.calib.MountCalibration? = { null },
+    /**
+     * B9: A10's georeferencing solution for the engine handle, read at capture
+     * stop and snapshotted into the manifest. Defaults to "no georeference",
+     * which is what a replay session and a build with no RTK have.
+     */
+    private val georefSnapshotProvider: (Long) -> com.lidarscan.core.gnss.GeorefRecord? = { null },
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<CaptureUiState>(CaptureUiState.Loading)
@@ -98,6 +105,10 @@ class CaptureViewModel(
     val cameraMode: StateFlow<CameraMode> = _cameraMode.asStateFlow()
     private val _liveSlam = MutableStateFlow(false)
     val liveSlam: StateFlow<Boolean> = _liveSlam.asStateFlow()
+
+    /** B5: this project's profile-driven capture defaults, read once at load. */
+    private val _captureDefaults = MutableStateFlow<com.lidarscan.core.model.CaptureDefaults?>(null)
+    val captureDefaults: StateFlow<com.lidarscan.core.model.CaptureDefaults?> = _captureDefaults.asStateFlow()
 
     // --- B3: Mid-360 -------------------------------------------------------
     /** This project's sensor; drives which connect wizard opens and whether Pause is offered. */
@@ -166,6 +177,13 @@ class CaptureViewModel(
             _uiState.value = if (project != null) CaptureUiState.Loaded(project) else CaptureUiState.NotFound
             if (project != null) {
                 _sensor.value = project.manifest.sensor
+                // B5: the profile stops being a label here. Live-SLAM's initial
+                // position and the engine's session `profile` string both come
+                // from the project's own CaptureDefaults rather than from a
+                // hardcoded default (see EngineBridge.startCapture's KDoc).
+                val defaults = project.manifest.effectiveCaptureDefaults()
+                _liveSlam.value = defaults.liveSlam
+                _captureDefaults.value = defaults
                 _mid360Endpoint.value = project.manifest.mid360
                     ?.let { "${'$'}{it.lidarIp}|${'$'}{it.hostIp}" }
             }
@@ -223,7 +241,11 @@ class CaptureViewModel(
         _stats.value = CaptureStats()
         _sessionSummary.value = null
         viewModelScope.launch {
-            val started = engineBridge.startCapture(project.directory.absolutePath, _liveSlam.value)
+            val started = engineBridge.startCapture(
+                project.directory.absolutePath,
+                _liveSlam.value,
+                com.lidarscan.core.model.CaptureDefaults.engineProfileString(project.manifest.profile),
+            )
             if (started.isFailure) return@launch
             startArPipelines(project)
         }
@@ -294,6 +316,31 @@ class CaptureViewModel(
 
         engineBridge.stopCapture()
         _sessionSummary.value = finalStats
+
+        // B5/B9: write what the capture actually produced back into the
+        // manifest.
+        //
+        // `pointCountEstimate` has been flagged as unwired by B2, B4, B7 and B3
+        // in turn — `ProjectStore.updateManifest` has existed since B7 and this
+        // is the two lines those notes kept asking for. The georef snapshot is
+        // A10 §9.6's request ("a periodic GeorefSolution + origin snapshot in
+        // the manifest so a replay does not have to re-derive the alignment"),
+        // and it is what makes B12's auto-merge possible at all: `merge/session.h`
+        // needs each session's transform AND the ENU frame it is expressed in,
+        // and neither survives the end of a capture any other way.
+        val georef = georefSnapshotProvider(handle)
+        withContext(Dispatchers.IO) {
+            projectStore.updateManifest(projectId) { manifest ->
+                manifest.copy(
+                    pointCountEstimate = finalStats.pointsCaptured.takeIf { it > 0 } ?: manifest.pointCountEstimate,
+                    georef = georef ?: manifest.georef,
+                    crsEpsg = georef?.epsg?.takeIf { it != 0 } ?: manifest.crsEpsg,
+                )
+            }
+        }
+        // The in-memory project must not go stale, or a later start would
+        // re-read the old manifest.
+        projectStore.open(projectId)?.let { _uiState.value = CaptureUiState.Loaded(it) }
     }
 
     fun dismissSessionSummary() {
