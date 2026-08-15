@@ -1,0 +1,117 @@
+=== 1. C6: merge workbench end to end (georef auto -> 3-point manual -> ICP -> build) ===
+$ /Users/admin/lidarscan/desktop/build/lidarscan --display-profile research --merge-fixture-evidence --shot /Users/admin/lidarscan/desktop/evidence/11-merge-fixture.png --shot-delay 3 --merge-dock-shot /Users/admin/lidarscan/desktop/evidence/12-merge-dock.png --merge-dock-shot-delay 3.5 --quit-after 6
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[lidarscan] merge-fixture-evidence: 3 sessions added (30x12x3 m building, sessions 0-1 / 1-2 overlap 4 m, 0-2 share nothing — see engine/tests/test_merge.cpp)
+[lidarscan] merge-fixture-evidence: georeferenced auto-align OK — aligned=3 skipped=0 max ENU-origin separation=331.57 m
+[lidarscan] merge-fixture-evidence: georef session 0 vs ground truth: 0.0000 mm / 0.000000 deg (align=georeferenced)
+[lidarscan] merge-fixture-evidence: georef session 1 vs ground truth: 0.0000 mm / 0.000000 deg (align=georeferenced)
+[lidarscan] merge-fixture-evidence: georef session 2 vs ground truth: 0.0000 mm / 0.000000 deg (align=georeferenced)
+[lidarscan] merge-fixture-evidence: 3-point manual align (session 1, exact picks) OK — rms=0.0001 mm max_residual=0.0001 mm implied_scale=1.000000
+[lidarscan] merge-fixture-evidence: manual-3pt session 1 vs ground truth: 0.0001 mm / 0.000000 deg (align=manual)
+[lidarscan] merge-fixture-evidence: refine OK
+[lidarscan] merge-fixture-evidence: pair 0<->1: rms 119.21 mm -> 9.91 mm, overlap 0.338/0.351, 3 iterations (2 rolled back), converged=yes, low_overlap=no blocker=residual stopped improving; last step rolled back
+[lidarscan] merge-fixture-evidence: pair 0<->2: rms 0.00 mm -> 0.00 mm, overlap 0.000/0.000, 0 iterations (0 rolled back), converged=no, low_overlap=yes blocker=overlap below threshold
+[lidarscan] merge-fixture-evidence: pair 1<->2: rms 107.43 mm -> 9.95 mm, overlap 0.356/0.363, 6 iterations (1 rolled back), converged=yes, low_overlap=no blocker=residual stopped improving; last step rolled back
+[lidarscan] merge-fixture-evidence: global relaxation chi2 0.00375188 -> 0.000164201 in 3 iterations
+[lidarscan] merge-fixture-evidence: post-refine session 0 vs ground truth: 0.0000 mm / 0.000000 deg (align=georeferenced)
+[lidarscan] merge-fixture-evidence: post-refine session 1 vs ground truth: 0.0923 mm / 0.002279 deg (align=relaxed)
+[lidarscan] merge-fixture-evidence: post-refine session 2 vs ground truth: 0.1172 mm / 0.006926 deg (align=relaxed)
+[lidarscan] merge-fixture-evidence: build OK — 34949 input -> 34706 merged points (63 dedup-dropped, 180 priority-dropped), 1 pages (2 shared)
+[lidarscan] screenshot OK -> /Users/admin/lidarscan/desktop/evidence/11-merge-fixture.png | 34706 pts / 1 pages | 57.7 fps | cpu p95 0.24 ms | gpu p95 1.58 ms | 758x946 px dpr 1.00 | swapchains 0
+[lidarscan] merge-dock-shot: OK -> /Users/admin/lidarscan/desktop/evidence/12-merge-dock.png
+FEngine (64 bits) created at 0x89ac76800 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+=== 1b. C6: MergeSessionLoader against a real .lscan (the 'add from project' path) ===
+$ /Users/admin/lidarscan/desktop/build/lidarscan --merge-add-project /Users/admin/lidarscan/desktop/evidence/synth.lscan:real-project-test --quit-after 3
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop (merge session loader)' (pages: 64 × 1048576 pts)
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] starting -> running
+[scanengine][info][engine] added device 1 (coin-d6)
+[scanengine][info][serial] started 'merge-replay' @ 230400 baud
+[scanengine][info][d6] device 1: idle -> starting
+[scanengine][info][d6] device 1: starting -> streaming
+[lidarscan] merge-add-project: /Users/admin/lidarscan/desktop/evidence/synth.lscan (real-project-test) -> OK
+[lidarscan] merge-add-project: session 0 'real-project-test' — 120300 points decoded via unpaced ReplaySource into a real Engine/PageStore
+[scanengine][info][engine] running -> stopping
+[scanengine][info][d6] device 1: streaming -> stopping
+[scanengine][info][d6] device 1: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+FEngine (64 bits) created at 0x8a4c76800 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+=== 2. C7: zip_export()/zip_import() round trip, headless ===
+$ /Users/admin/lidarscan/desktop/build/lidarscan --transfer-export /Users/admin/lidarscan/desktop/evidence/synth.lscan:/Users/admin/lidarscan/desktop/evidence/transfer-roundtrip.lscan.zip --transfer-import /Users/admin/lidarscan/desktop/evidence/transfer-roundtrip.lscan.zip:/Users/admin/lidarscan/desktop/evidence/transfer-roundtrip-imported.lscan --quit-after 1
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[scanengine][info][record] zip_export: '/Users/admin/lidarscan/desktop/evidence/synth.lscan' -> '/Users/admin/lidarscan/desktop/evidence/transfer-roundtrip.lscan.zip' (2 entries)
+[lidarscan] transfer-export: /Users/admin/lidarscan/desktop/evidence/synth.lscan -> /Users/admin/lidarscan/desktop/evidence/transfer-roundtrip.lscan.zip: OK (398724 bytes)
+[scanengine][info][record] zip_import: '/Users/admin/lidarscan/desktop/evidence/transfer-roundtrip.lscan.zip' -> '/Users/admin/lidarscan/desktop/evidence/transfer-roundtrip-imported.lscan' (2 entries)
+[lidarscan] transfer-import: /Users/admin/lidarscan/desktop/evidence/transfer-roundtrip.lscan.zip -> /Users/admin/lidarscan/desktop/evidence/transfer-roundtrip-imported.lscan: OK
+[lidarscan] transfer-import: manifest ok, profile quickscan, 193 chunks, 394287 bytes, 17.07 s span, 0 truncated-tail, 0 crc-mismatch, 0 unreadable streams
+[lidarscan] transfer-import:   stream lidar (COIN-D6 raw): 193 chunks, 394287 bytes
+FEngine (64 bits) created at 0xbff14a800 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+=== 3. C7: the real TransferImportDialog, including the manifest sanity report ===
+$ /Users/admin/lidarscan/desktop/build/lidarscan --transfer-import-dialog-shot /Users/admin/lidarscan/desktop/evidence/transfer-roundtrip.lscan.zip:/Users/admin/lidarscan/desktop/evidence/transfer-dialog-imported.lscan:/Users/admin/lidarscan/desktop/evidence/13-transfer-import-report.png --quit-after 2.5
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[scanengine][info][record] zip_import: '/Users/admin/lidarscan/desktop/evidence/transfer-roundtrip.lscan.zip' -> '/Users/admin/lidarscan/desktop/evidence/transfer-dialog-imported.lscan' (2 entries)
+[lidarscan] transfer-import-dialog-shot: OK -> /Users/admin/lidarscan/desktop/evidence/13-transfer-import-report.png
+FEngine (64 bits) created at 0x739aa0000 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+=== 4. C7: the real TransferExportDialog ===
+$ /Users/admin/lidarscan/desktop/build/lidarscan --transfer-export-dialog-shot /Users/admin/lidarscan/desktop/evidence/synth.lscan:/Users/admin/lidarscan/desktop/evidence/synth.lscan/exports/synth.lscan.zip:/Users/admin/lidarscan/desktop/evidence/14-transfer-export-dialog.png --quit-after 2.5
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[scanengine][info][record] zip_export: '/Users/admin/lidarscan/desktop/evidence/synth.lscan' -> '/Users/admin/lidarscan/desktop/evidence/synth.lscan/exports/synth.lscan.zip' (2 entries)
+[lidarscan] transfer-export-dialog-shot: OK -> /Users/admin/lidarscan/desktop/evidence/14-transfer-export-dialog.png
+FEngine (64 bits) created at 0xa8114a800 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+verification complete — see /Users/admin/lidarscan/desktop/evidence

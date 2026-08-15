@@ -37,6 +37,20 @@ desktop/
                                kMid360Points/kMid360Imu chunks, no hardware (§9.4)
       SyntheticBuilding.{h,cpp} C5 evidence fixture: A12's own synthetic
                                two-room-plus-corridor test building (§10.5)
+      MergeDock.{h,cpp}       C6 §3.10 merge workbench: session list, coarse
+                               align (georef/3-point/yaw), ICP refine + a
+                               QPainter residual chart, build + colour-by-
+                               session, export (§11)
+      MergeFixture.{h,cpp}    C6 evidence fixture: the 3-session overlapping
+                               building engine/tests/test_merge.cpp measures
+                               A13 against, ported like SyntheticMid360/
+                               SyntheticBuilding were (§11.2)
+      MergeSessionLoader.{h,cpp} C6: a real .lscan directory into a merge
+                               session's cloud via a private Engine + unpaced
+                               ReplaySource (§11.1)
+      TransferDialog.{h,cpp}  C7 §3.8/§3.13 transfer bundle: Export/Import
+                               dialogs over A5's zip_export()/zip_import(),
+                               real progress + cancel (INT-34 hooks) (§12)
     render/
       NativeSurface.h         per-OS swapchain-handle shim (the S3 recommendation)
       NativeSurface_mac.mm    CAMetalLayer path — the proven one
@@ -304,8 +318,8 @@ can be discovered late — flag it now.
 | **C3** review workspace | `ViewportWindow` + `PagedCloudRenderer`. Measure tools attach to the viewport; the EDL post-process pass, real coarse-to-fine LOD and the trajectory/pose-graph overlays are the three renderer features C1 left as documented gaps. Export UI hangs off `export/exporter.h`. |
 | **C4** processing queue | **Done, §9.** `ProcessingDock` — driven by `Engine::jobs()` (INT-34, landed mid-task), polled rather than subscribed to `kJobProgress` (still falls through `describeEvent()`'s default case; not needed since `list()` already has every update). |
 | **C5** floor plan | **Done, §10.** `PlanDock` — the height-clip band in `DisplayParams` is a *display* clip (viewport-only); the plan's own slice band is a completely separate `plan::PlanEditState`, per §10.1. |
-| **C6** merge workbench | New window over A13; `PagedCloudRenderer` is per-`PageId` and `PageStore` pages are single-stream, so per-session provenance and colour-by-session need no renderer redesign. |
-| **C7** transfer import | `lscan::zip_import` + `Project.cpp`'s `readProject`; add the file association and a drag-drop handler on `MainWindow`. |
+| **C6** merge workbench | **Done, §11.** `MergeDock` over A13's `MergeProject`; colour-by-session is done by overwriting `MergeResult::cloud`'s RGBA per run-table range before `publish()` — no renderer redesign needed, exactly as this row predicted. |
+| **C7** transfer import | **Done, §12.** `TransferExportDialog`/`TransferImportDialog` over `lscan::zip_export`/`zip_import` + `Project.cpp`'s `readProject`; file association (`QEvent::FileOpen`) and drag-drop are on `MainWindow`. |
 | **C8** packaging | §3 above. |
 | **B10** Android params panel | Same `DisplayParamsController`; `points.mat`'s fragment shader is the reference implementation of the uniform contract (B10 consumes the same fields as a std140 UBO). |
 | **A3/A10** | The moment `Engine` grows a push entry point for Mid-360/GNSS raw streams, `ReplayController` replays those too — `ReplayConfig::chunk_type` is already the only thing that changes. |
@@ -1209,3 +1223,400 @@ end to end with no viewer-side errors.
   run's cloud would work" is inference from the shared code path, not a separate measurement.
 * **Non-`kZ` up-axis was not exercised.** `UpAxis::kZ` is the only value used anywhere in this
   task; `plan::UpAxis::kY`/`kX` are real engine options `PlanDock` never sets.
+
+---
+
+## 11. C6 (merge workbench)
+
+New files: `src/app/MergeDock.{h,cpp}` (the dock + `MergeIcpChart`, a raw-`QPainter`
+residual chart — no charting library), `src/app/MergeFixture.{h,cpp}` (the evidence
+fixture), `src/app/MergeSessionLoader.{h,cpp}` (real `.lscan` → merge session). `MainWindow`
+gained `mergeDock()`, `setOpenProjectDir()` wiring, and an `exportMergedRequested()` → a fresh
+`ExportDialog` over the merged store (the same "always construct a fresh dialog" rule C3's
+`onExport()` established). `src/main.cpp` gained `--merge-fixture-evidence`, `--merge-dock-shot`
+(+ `-delay`). `src/render/ViewportWindow.{h,cpp}` gained `debugPickWorld()`, a read-only wrapper
+around the existing (private) `pickPoint()` for evidence tooling — see §11.4.
+
+### 11.1 Three session sources, one code path
+
+`MergeDock::addSession()` is the only place that calls `MergeProject::add_session()`; every
+UI action and every CLI hook funnels through it:
+
+* **"Build synthetic fixture (evidence)"** — `MergeFixture` (§11.2) hands back owning
+  `std::vector<PointVertex>` per session; `addSession()` appends each into a freshly
+  allocated `scanengine::PageStore` it now owns (`SessionRow::ownStore`).
+* **"Add from open project"** (prefilled from `MainWindow::setOpenProjectDir()`, the same
+  posture `ProcessingDock`/`PlanDock` already use) and **"Import .lscan project…"** (a
+  `QFileDialog::getExistingDirectory`) are the *same* function, `addFromProject()` — they
+  differ only in which directory arrives already filled in.
+
+`addFromProject()` cannot use `SessionMerger::add_session(lscan_dir)` — engine/docs/A13-merge.md
+§2 is explicit that seam is declared, not implemented, because nothing writes a processed cloud
+into a `.lscan` yet. What *is* real and already proven end to end (C1 §"replay == capture") is
+replaying a project's raw D6 bytes through a live `Engine`. `MergeSessionLoader` is exactly
+`ReplayController`'s shape — a live-preview session (`lscan_dir` empty, so nothing re-records),
+one D6 device, `lscan::ReplaySource` — with two deliberate differences: **its own private
+`Engine`** rather than sharing `EngineHost`'s (a merge project holds several sessions' clouds
+alive *simultaneously*, and `SessionCloud` is a list of non-owning spans into whatever produced
+them — the `Engine`, and the `PageStore` inside it, must outlive the `MergeProject`, so each
+loaded session gets its own), and **`speed = 0` (unpaced) run synchronously to completion**
+rather than a polled worker thread, because alignment cannot start on a half-loaded cloud. A
+project with no D6 raw chunks (Mid-360-only) is refused with a message naming exactly why
+(`record/replay.h` only forwards `ChunkType::kD6Raw` today) — the same gate
+`MainWindow::startReplay()` already enforces, reused via `ProjectInfo::has_d6_raw`.
+
+Whichever source, `addSession()` then does exactly one thing every time:
+`scanengine::merge::collect_pages(*row.store(), stream, &in.cloud)` — `kLidarD6` for a
+replay-loaded session (where the D6 driver actually publishes: `src/drivers/d6/d6_driver.cpp`
+appends at `StreamId::kLidarD6`, confirmed by reading the engine source since nothing in its
+own docs states it), `kSlamMap` for a synthetic-fixture session — followed by
+`project_->add_session(in)`. One function, three doorways.
+
+### 11.2 The evidence fixture, ported the way SyntheticMid360/SyntheticBuilding were
+
+`MergeFixture` is a line-for-line port of `engine/tests/test_merge.cpp`'s own `Rng`
+(xorshift64 + Box-Muller, deliberately not `<random>` — the standard does not fix its
+distributions' output, so this build would disagree with the test binary's own numbers
+otherwise), `sample_plane`/`building_surfaces`/`session_cloud`/`Fixture`, and the `kPickWorld`
+manual-pick fixture. Ported rather than shared for the same reason SyntheticMid360.h/
+SyntheticBuilding.h were (C4 §9.4, C5 §10.5): the generator is file-local to a test binary and
+`engine/` is read-only for this task.
+
+The building: 30×12×3 m, two interior partitions. Three sessions cover x ∈ [0,13], [9,22],
+[18,30] — sessions 0-1 and 1-2 overlap 4 m each, 0-2 share nothing (the workbench's
+"these two do not see the same place" case comes free from the same fixture, exactly as
+`docs/A13-merge.md` describes it). Session 0 is the anchor. Each session is independently
+re-sampled (its own RNG stream, 5 mm range noise) and additionally carries a `SessionGeoref`
+anchored at its own ENU origin — three different days' first-fix locations, 200-400 m apart, one
+shared CRS — reproducing `docs/A13-merge.md` §3's "shared CRS is not shared frame" trap on
+purpose.
+
+### 11.3 3-point manual picking reuses the C3 measure tool, exactly as asked
+
+The task's own hint — "reuse the C3 measure picking machinery" — is implemented literally
+rather than approximated. `MeasureSegment`'s two-click shape (`ViewportWindow::
+setMeasureMode`/`measurementsChanged`/`measurements()`) already IS "click A, click B, get a
+pair"; a `PointCorrespondence` needs nothing more than that pair labelled *which* cloud each
+click landed in. So:
+
+1. **"3-point manual…"** picks the session to align from `align_session_combo_`, calls
+   `beginPickPhase()`: swaps the viewport's point store to the SOURCE session's own store
+   (`viewport_->setPointStore(...)`), turns on measure mode, and labels the status line "click a
+   feature in SOURCE session '…'".
+2. `onViewportMeasurementsChanged()` — connected once in the constructor, a no-op whenever
+   `picking_` is false — watches for the FIRST click (`hasPendingMeasurePoint()` flips true).
+   Crucially, `ViewportWindow`'s pending point is **pure geometry**, no store reference, so
+   swapping the displayed store to the TARGET (anchor) session mid-pair does not disturb it —
+   the pending yellow marker from the source cloud simply hangs there while the anchor's cloud
+   is what's now on screen for the second click.
+3. The second click completes a `MeasureSegment` the normal way; `MergeDock` reads it back
+   (`seg.a` = source-local point, `seg.b` = target-local point) as one `PointCorrespondence`,
+   clears the viewport's measurements, swaps the store back to SOURCE, and repeats — three
+   times, each pair labelled "pick N of 3".
+4. On the third pair, `finalizePicks()` calls `align_from_correspondences()` for real and shows
+   the `CorrespondenceSolution` (rms, max residual, spread — including the collinearity
+   diagnostic) or the refusal (`sol.blocker`) verbatim.
+
+No new picking code exists anywhere in this dock or the viewport; `ViewportWindow` gained
+exactly one thing for C6, and it is a read-only wrapper, not a new interaction (§11.4).
+
+### 11.4 CLI evidence drives the SAME buffer, not a parallel path
+
+`alignManualForCli()` (and `--merge-fixture-evidence`) does not synthesize screen clicks the
+way `--measure-selftest` (C2/C3) grid-walks real `QMouseEvent`s. It calls `recordPick()` — the
+exact private method `onViewportMeasurementsChanged()` calls on a real second click — with
+`MergeFixture::pick()`'s known, exact 3D coordinates, then the identical
+`align_from_correspondences()` finalize path. This mirrors what `engine/tests/test_merge.cpp`
+itself does for its own "exact picks"/"noisy picks" cases: hand-specified 3D points, not
+simulated mouse events, because the thing under test is the solver, not Qt's event queue. The
+interactive path (§11.3) is real, separately implemented code, exercised by hand and by
+`ViewportWindow::debugPickWorld()` being available for anyone who *does* want to script a real
+click later (a thin `const`-safe query wrapper around the existing private `pickPoint()`, added
+but not used by the evidence hook above — grid-searching screen space for the pixel whose pick
+lands nearest a known world point is straightforward with it, just not needed once `recordPick()`
+was available as a lower-friction, equally-real seam).
+
+### 11.5 Colour-by-session needs no renderer redesign — confirmed, not just predicted
+
+NOTES.md's own §4 table predicted this before C6 existed: `PagedCloudRenderer` is per-`PageId`
+and uploads whatever `PointVertex.rgba` it finds, so "distinct colour per session" is a
+**pre-publish edit of `MergeResult::cloud`**, not a shader or uniform change. `buildAndPublishForCli()`
+walks `MergeResult::ranges` (the run table — one contiguous span per session, in priority
+order, exactly what `docs/A13-merge.md` §6 describes) and overwrites r/g/b (keeping a=255) from
+an 8-colour deterministic palette before calling `publish()`. §11.7's screenshot is the proof:
+three sharply bounded colour regions with visibly interleaved dots exactly at the two 4 m
+overlap seams, where dedup left survivors from both sessions' independent samplings side by
+side.
+
+### 11.6 The residual chart reproduces `refine()`'s own trace, not a re-guess
+
+`MergeReport` deliberately does not carry `PairIcpResult::trace` (`docs/A13-merge.md` §7 says
+so explicitly — a workbench that wants it calls `refine_pair()` itself). So
+`MergeDock::refineForCli()` snapshots every pair's relative transform (`se3::mat4_inverse_rigid`
++ `mat4_mul` over `MergeSession::world_from_session`) **immediately before** calling
+`project_->refine()`, keyed by `(session_a, session_b)`. Selecting a pair row afterward calls
+`scanengine::merge::refine_pair(session_a.cloud, session_b.cloud, THAT snapshot, default
+MergeIcpConfig)` — the exact same inputs `refine()` used internally for that pair — and plots
+the returned `trace`. `MergeIcpChart` (raw `QPainter`, no library) draws one polyline of
+`rms_m` per iteration in millimetres, with a dashed vertical marker at every point the
+correspondence gate changes (`docs/A13-merge.md` §5: "the step down at the stage boundary is
+visible in the residual and must not look like a bug" — the chart makes that visible on
+purpose rather than smoothing over it).
+
+### 11.7 Verification (2026-08-15, same host as §6: Apple M4, macOS 26.5.1)
+
+`scripts/verify_c6c7.sh` reproduces this section and §12's; raw output is
+`evidence/verify_c6c7.log`. Driven end to end via `--merge-fixture-evidence` (real
+`MergeProject` calls, not a script that only prints numbers) plus `--shot`/`--merge-dock-shot`
+for screenshots. `--display-profile research` is used for the viewport shot only because A14's
+Quick-scan default renders intensity-grayscale, which would make three RGB-tinted sessions
+indistinguishable in a screenshot — a real, if minor, finding: **the merge workbench's own
+colour-by-session preview is invisible under the app's own default profile**, worth a
+follow-up (either the dock forcing `ColorMode::kRgb` while its own build is on screen, or
+just operator awareness) that this task did not implement, to keep the renderer/display-params
+seam untouched as the task's ownership implies.
+
+**Build:** clean configure + build from scratch (deleted `build/`), exit 0, **zero warnings
+from any file under `desktop/src`** (`-Wall -Wextra`); the 239 warnings the build does emit are
+the same vendored-Livox-SDK2 baseline every prior task in this file reports.
+
+**Georeferenced auto-align** (3 sessions, 3 ENU origins 200-400 m apart, per §11.2):
+
+```
+merge-fixture-evidence: georeferenced auto-align OK — aligned=3 skipped=0 max ENU-origin separation=331.57 m
+merge-fixture-evidence: georef session 0 vs ground truth: 0.0000 mm / 0.000000 deg (align=georeferenced)
+merge-fixture-evidence: georef session 1 vs ground truth: 0.0000 mm / 0.000000 deg (align=georeferenced)
+merge-fixture-evidence: georef session 2 vs ground truth: 0.0000 mm / 0.000000 deg (align=georeferenced)
+```
+
+Sub-micrometre against ground truth at 4 decimal places — matching `docs/A13-merge.md` §3's own
+measured 6.2×10⁻¹⁰ mm to the precision this log prints at. This is A13's own claim ("the
+composition is exact") reproduced from the desktop UI's own code path, not re-derived.
+
+**Manual 3-point** (session 1 vs the anchor, exact picks — the "click 3 point pairs" path,
+§11.3/§11.4, run through the identical `recordPick()`/`align_from_correspondences()` finalize
+sequence the real 3-click UI flow uses):
+
+```
+merge-fixture-evidence: 3-point manual align (session 1, exact picks) OK — rms=0.0001 mm max_residual=0.0001 mm implied_scale=1.000000
+merge-fixture-evidence: manual-3pt session 1 vs ground truth: 0.0001 mm / 0.000000 deg (align=manual)
+```
+
+Matches `docs/A13-merge.md` §4's own "exact picks recover the transform to < 10⁻³ mm" claim.
+
+**Refine (ICP)** — session 1 was left at its exact-manual placement (already sub-mm, so ICP's
+job here is mainly to prove the pipeline, not fix a bad coarse guess); session 2 is still at
+`AlignSource::kNone` going in, only reachable through the global relaxation once session 1's
+pairwise edge to it exists:
+
+```
+pair 0<->1: rms 119.21 mm -> 9.91 mm, overlap 33.8%/35.1%, 3 iterations (2 rolled back), converged=yes
+pair 0<->2: rms 0.00 mm -> 0.00 mm, overlap 0.0%/0.0%, 0 iterations, low_overlap=yes (0-2 share no geometry, by construction — §11.2)
+pair 1<->2: rms 107.43 mm -> 9.95 mm, overlap 35.6%/36.3%, 6 iterations (1 rolled back), converged=yes
+global relaxation: chi2 0.00375188 -> 0.000164201 in 3 iterations
+post-refine session 1 vs ground truth: 0.0923 mm / 0.002279 deg (align=relaxed)
+post-refine session 2 vs ground truth: 0.1172 mm / 0.006926 deg (align=relaxed)
+```
+
+The **9.91 mm and 9.95 mm final residuals match `docs/A13-merge.md` §4's own reported 9.6 mm**
+for the identical 0.5 m correspondence gate (this task's fixture reproduces A13's own building,
+noise level and gate configuration exactly enough that the numbers land in the same place), and
+**the chi² trajectory (3.75×10⁻³ → 1.64×10⁻⁴ in 3 iterations) matches `docs/A13-merge.md` §5's
+own three-session relaxation table to 3 significant figures** — strong, independent confirmation
+that this desktop task's fixture and code path reach the same engine machinery A13's own tests
+did, not a divergent copy. Session 2 — never explicitly aligned by any UI action in this run —
+ends up at 0.12 mm through the pose graph alone, which is the payoff §3.10 promises for "optional
+global relaxation for >2 sessions".
+
+**Build + publish, colour by session:**
+
+```
+merge-fixture-evidence: build OK — 34949 input -> 34706 merged points (63 dedup-dropped, 180 priority-dropped), 1 pages (2 shared)
+```
+
+`evidence/11-merge-fixture.png` (screenshot below, described) shows the merged cloud with three
+sharply distinct colours (green/blue/red) and visible interleaving exactly at the two 4 m
+overlap seams. `evidence/12-merge-dock.png` shows the workbench itself: the session table
+(provenance, point counts, `GEOREF ±0.020 m` badges, align source, anchor flag, kept/dropped —
+12,068/0, 11,428/91, 11,210/89), the pairs table (the exact numbers above), and the residual
+chart for pair 0↔1 (a declining polyline from ~129 mm toward the converged value, §11.6).
+
+### 11.8 Not verified / known gaps
+
+* **Yaw search** (`align_yaw_search()`) is wired end to end (`onYawSearch()`/`yawSearchForCli()`)
+  and surfaces `ambiguous`/`ok`/margin/runner-up honestly per the task's explicit ask, but was
+  not run against a case engineered to trigger the ambiguous-symmetric-room or
+  wrong-but-confident-corridor failure modes `docs/A13-merge.md` §4 documents — this task's
+  fixture building is not symmetric and the yaw-search path was exercised by inspection and a
+  short interactive session, not captured as scripted evidence with those specific failure
+  geometries.
+* **"Remove selected" is a message box, not a real removal.** `merge/merge.h`'s `MergeProject`
+  has no `remove_session()` — sessions can only grow. Told to the operator rather than faked.
+  A future desktop pass that wants this needs an engine-side seam.
+* **Colour-by-session under Quick-scan's default profile is invisible** — §11.7's finding;
+  the workbench does not currently force RGB colour mode while its own build is on screen.
+* **All numbers are from the synthetic fixture.** `docs/A13-merge.md` §11 already states A13
+  itself has no two real captures of one place; this task inherits the same limitation and does
+  not add one.
+* **`MergeSessionLoader`'s real-`.lscan` path is verified against one real capture, not two
+  overlapping ones.** `--merge-add-project evidence/synth.lscan:real-project-test` (real
+  `Engine` + unpaced `ReplaySource`, the exact "Add from open project"/"Import .lscan
+  project…" code path) decoded **120,300 points** — matching §6's own "120,300 points
+  decoded" for that same capture exactly — and added it as a real `MergeProject` session
+  (`session 0 'real-project-test' — 120300 points`). What is NOT verified is aligning/
+  refining/merging two sessions loaded this way against each other, because no two real
+  captures of one overlapping place exist anywhere in this repo (the same gap
+  `docs/A13-merge.md` §11 names for A13 itself). `--merge-fixture-evidence`'s quantitative
+  numbers (§11.7) are all from the in-memory `SessionInput` path instead, which is the one
+  `docs/A13-merge.md` §2 says is actually supported end to end today — the real-`.lscan`
+  loader and the alignment/refine/build pipeline are each independently real and tested, just
+  not together on two overlapping real captures.
+* **No spatial index for the pick-mode picking** — inherits C3's own documented limitation
+  (`ViewportWindow::pickPoint()` is O(N) over resident points); fine at this fixture's scale
+  (~12k points/session), flagged for a multi-million-point session same as C3's own note.
+
+---
+
+## 12. C7 (transfer import/export)
+
+New file: `src/app/TransferDialog.{h,cpp}` (`TransferExportDialog` + `TransferImportDialog`).
+`MainWindow` gained drag-drop (`dragEnterEvent`/`dropEvent`, `setAcceptDrops(true)`), a
+`QEvent::FileOpen` handler (`eventFilter()`, installed on `qApp` in the constructor and removed
+in the destructor for the same "don't touch a half-destroyed `this`" reason §9.6 fixed a real
+crash for), two File-menu actions, and `importTransferBundle()` as the one funnel every entry
+point calls. `src/main.cpp` gained `--transfer-export`, `--transfer-import`,
+`--transfer-export-dialog-shot`, `--transfer-import-dialog-shot`. New directory:
+`packaging/Info.plist.in` (§12.4).
+
+### 12.1 Two dialogs, direct on A5's `zip_export`/`zip_import` — not through `jobs::`
+
+`docs/A15-jobs.md`/`docs/INT34-wiring.md` already give C4's "Transfer bundle…" a job-queue path
+(`jobs::run_transfer_export()`, chained/cancellable through `Engine::jobs()`). C7's asks are
+project-context, modal-ish actions — "Export transfer bundle…" off a specific open project,
+drag-drop/file-association landing a bundle straight into the library — the same relationship
+C3's `ExportDialog` already has to C4's queued export: two real, independent paths to the same
+underlying primitive, not a wrapper around one another. So both new dialogs call
+`scanengine::lscan::zip_export()`/`zip_import()` **directly**, on their own `std::thread`,
+polling an `atomic<float>` from a `QTimer` — the exact shape `ExportDialog` established in C3
+and `ReplayController` before that. This is also the most direct exercise available of the
+progress/cancel hooks INT-34 added to `record/zip.h` (`ZipProgressFn`/`ZipCancelToken`,
+`docs/INT34-wiring.md` §7): a real progress bar over payload bytes, and Cancel wired to
+`ZipCancelToken::request_cancel()`.
+
+**The two cancel semantics are asymmetric on purpose, and both dialogs say so in their own
+status text**, not just in a comment: cancelling an export **removes** the half-written zip
+(`record/zip.h`: "a partial archive on disk is worse than none, because it looks openable and
+its central directory is missing"); cancelling an import **leaves** whatever had already been
+extracted (`dest_dir` is the caller's directory and may have had contents before the call, so
+deleting it is not this function's call to make).
+
+### 12.2 Import: a real manifest sanity report, not a synthetic one
+
+`TransferImportDialog::poll()` on success calls `readProject(dest_dir_)` — the **exact same
+function** `MainWindow::openProject()` uses to populate the Projects panel — and
+`showReport()` renders it into the same shape: a `QTreeWidget` of `StreamInfo` (chunks/payload/
+span per stream) plus a warnings line (`truncated_tail_chunks`/`crc_mismatch_chunks`/
+`unreadable_streams`, "no reader warnings — bundle looks sane" when clean). This is
+deliberately `Project.cpp`'s reader, not a hand-rolled second summary or `jobs::
+ImportValidationReport` (`jobs/transfer.h`) — using the app's own single source of truth for
+"what does this .lscan directory contain" means a bundle that imports here is guaranteed to open
+identically through "Open project…" afterward, because it *is* the same code path. "Open in
+library" (`projectReady` signal) hands the resulting directory straight to
+`MainWindow::openProject()`.
+
+### 12.3 Landing in the library: drag-drop, File menu, and the macOS file-association seam
+
+* **Drag-drop** — `MainWindow::dragEnterEvent`/`dropEvent` accept any dropped URL ending in
+  `.lscan.zip` (or bare `.zip`, since a bundle need not always carry the doubled extension) and
+  call `importTransferBundle(path)`. This works today, with **no packaging change needed** — Qt's
+  drag-and-drop is bundle-independent, unlike file-open events (next bullet).
+* **File menu** — "Export transfer bundle…" (enabled whenever a project is open) and "Import
+  transfer bundle (.lscan.zip)…" open the two dialogs directly.
+* **`QEvent::FileOpen`** — what macOS LaunchServices sends a running (or launching) app when the
+  user double-clicks / "Open With"s a registered document type. Qt delivers it to the
+  **application** object, not any widget, so `MainWindow` installs itself as an event filter on
+  `qApp` (removed in `~MainWindow()`) and checks `event->type() == QEvent::FileOpen` there. This
+  code is real and would fire correctly **if macOS ever routed a `.lscan.zip` open request to
+  this process** — but today's executable is a plain Mach-O binary (§3.3's standing note), and
+  LaunchServices only resolves document-type handlers through a real `.app` bundle's
+  `Info.plist`. So this piece is written and inert until C8 packages a bundle — §12.4 is exactly
+  the config that closes the gap, and this section says so rather than claiming an
+  end-to-end-verified OS integration that does not exist yet on this build.
+
+### 12.4 `packaging/Info.plist.in` — documented now, wired by C8
+
+`desktop/packaging/Info.plist.in` declares `CFBundleDocumentTypes` for `.lscan.zip` (an
+exported UTI, `com.lidarscan.transfer-bundle`, conforming to `public.zip-archive`) and,
+optionally, `.lscan` project directories as an `LSTypeIsPackage` document type (the
+GarageBand/Xcode-project trick for a double-clickable directory) so `.lscan` can feel native in
+Finder too if C8 wants that. Not wired into `CMakeLists.txt` — no `MACOSX_BUNDLE`, no
+`configure_file()`, no `macdeployqt` call exist yet, per §3.3's standing note that the app is
+still a plain binary. The file's own header comment states exactly what it is for and exactly
+what §12.3's `QEvent::FileOpen` handler is waiting on. `${LIDARSCAN_VERSION}` is left as a
+CMake-style placeholder for whichever `project(... VERSION ...)` C8 lands.
+
+### 12.5 Verification (2026-08-15, same host as §11.7)
+
+`scripts/verify_c6c7.sh` reproduces this section too; raw output is `evidence/verify_c6c7.log`.
+
+**Round trip, headless** (`--transfer-export`/`--transfer-import`, A5's functions called
+directly with no dialog/thread — the fastest, most direct exercise of the primitives), against
+the C1 evidence capture (`evidence/synth.lscan`, 193 D6 chunks / 394,287 bytes, §6):
+
+```
+transfer-export: evidence/synth.lscan -> evidence/transfer-roundtrip.lscan.zip: OK (398724 bytes)
+transfer-import: evidence/transfer-roundtrip.lscan.zip -> evidence/transfer-roundtrip-imported.lscan: OK
+transfer-import: manifest ok, profile quickscan, 193 chunks, 394287 bytes, 17.07 s span, 0 truncated-tail, 0 crc-mismatch, 0 unreadable streams
+transfer-import:   stream lidar (COIN-D6 raw): 193 chunks, 394287 bytes
+```
+
+**193 chunks / 394,287 bytes on the way out exactly match 193 chunks / 394,287 bytes read back**
+(the 398,724-byte zip is 394,287 bytes of payload plus stored-ZIP local/central-directory
+overhead — record/zip.h's documented uncompressed format, §6 of `docs/A5-lscan.md`), 0 warnings
+either side — the round trip the task asks for, verified via `FileRecordReader`'s own summary on
+both ends, not a byte-for-byte diff of the directories (which would also have passed, but the
+manifest/stream-summary comparison is what an operator actually sees).
+
+**The real dialogs, screenshotted** (`--transfer-export-dialog-shot`/
+`--transfer-import-dialog-shot`, which construct the actual `QDialog` and call
+`triggerExportForCli()`/`triggerImportForCli()` — the same `onExport()`/`onImport()` the
+buttons call, not a re-implementation): `evidence/14-transfer-export-dialog.png` shows a
+completed export ("Export complete: evidence/synth.lscan/exports/synth.lscan.zip (389.4 KB)"),
+progress bar at 100%, "Open containing folder" enabled. `evidence/13-transfer-import-report.png`
+shows the import report described in §12.2 — manifest ok, 193 chunks, 385.0 KB, 17.07 s, the
+stream table, "no reader warnings — bundle looks sane" — with "Open in library" enabled.
+
+**A real bug found and fixed while building this evidence:** `TransferExportDialog`'s
+constructor originally defaulted the output path to `<project_dir>/<name>.lscan.zip` — straight
+into the project directory being zipped, not its `exports/` subfolder. `zip_export()` walks
+"every regular file under `lscan_dir`" (`docs/A5-lscan.md` §6), so a second export would have
+recursively included the first export's own zip inside itself, growing without bound across
+repeated exports and corrupting the transfer bundle's own contents. Caught by inspecting the
+first `--transfer-export-dialog-shot` screenshot (`evidence/synth.lscan/synth.lscan.zip` in the
+path field, not `evidence/synth.lscan/exports/synth.lscan.zip`) — the same "screenshot ⇒ inspect
+it ⇒ notice something is wrong" step §10.2 credits for catching a real bug in C5. Fixed:
+the default path now always goes through `exports/`.
+
+**Build:** clean configure + build from scratch, exit 0, zero warnings from any file under
+`desktop/src`; same 239-warning vendored-Livox-SDK2 baseline.
+
+### 12.6 Not verified / known gaps
+
+* **`QEvent::FileOpen` / real macOS document-type registration is unverified against a real
+  `.app` bundle** — §12.3 explains exactly why (no bundle exists yet) and §12.4 is the
+  config C8 needs. Drag-drop, which needs no bundle, **is** verified (real `QDropEvent` path,
+  same `importTransferBundle()` funnel).
+* **No cross-machine transfer was tested** — both ends of every round trip in this task ran on
+  the same host. The zip format itself is a real, standards-conformant archive (openable by
+  Finder/`unzip`/Explorer per `docs/A5-lscan.md` §6), so this is an inference from the format's
+  own conformance, not a separate measurement.
+* **Large-bundle cancel timing was not measured** — `evidence/synth.lscan` zips to 389 KB, fast
+  enough that a manually-triggered Cancel click is hard to land mid-transfer reliably in a
+  scripted run. The cancel code path itself (`ZipCancelToken::request_cancel()`, polled "between
+  entries and every 64 KiB inside one" per `record/zip.h`) is real and shared with C4's own
+  Transfer-bundle job, which `docs/A15-jobs.md` already exercises at the unit-test level
+  (`transfer/*` cases, `docs/INT34-wiring.md` §8's zip progress/cancel test).
+* **`.lscan.zip` vs bare `.zip` extension handling** — both are accepted by drag-drop/the
+  import dialog's file filter; only `.lscan.zip` is wired to `QEvent::FileOpen` (macOS
+  file-association is normally one canonical extension per document type, and `docs/A5-lscan.md`
+  itself calls the bundle a `.lscan.zip`).

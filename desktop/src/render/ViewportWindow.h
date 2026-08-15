@@ -141,6 +141,14 @@ class ViewportWindow : public QWindow {
   void removeMeasurement(int index);
   void clearMeasurements();
 
+  // A read-only query wrapper around pickPoint() for evidence/CLI tooling
+  // (C6's --merge-manual3, mirroring --measure-selftest's own "walk a grid
+  // through the real pick path" posture) that needs to find where a KNOWN
+  // world point projects on screen without performing a click. Does not
+  // touch measure_mode_/pending-point state — a real click still has to go
+  // through the normal mousePressEvent path.
+  bool debugPickWorld(const QPointF& widgetPos, float outWorld[3]) const;
+
  Q_SIGNALS:
   void statusChanged(const QString& text);
   void initFailed(const QString& reason);

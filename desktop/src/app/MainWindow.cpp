@@ -7,8 +7,11 @@
 #include <QDir>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
+#include <QDragEnterEvent>
+#include <QDropEvent>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFileOpenEvent>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -16,6 +19,7 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QMimeData>
 #include <QFile>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -23,6 +27,7 @@
 #include <QSplitter>
 #include <QStatusBar>
 #include <QTreeWidget>
+#include <QUrl>
 #include <QVBoxLayout>
 
 #include "app/CaptureWindow.h"
@@ -30,10 +35,12 @@
 #include "app/EngineHost.h"
 #include "app/ExportDialog.h"
 #include "app/MeasureDock.h"
+#include "app/MergeDock.h"
 #include "app/PlanDock.h"
 #include "app/ProcessingDock.h"
 #include "app/ReplayController.h"
 #include "app/SyntheticBuilding.h"
+#include "app/TransferDialog.h"
 #include "render/ViewportWindow.h"
 
 namespace lidarscan {
@@ -60,6 +67,15 @@ MainWindow::MainWindow(EngineHost* host, QWidget* parent) : QMainWindow(parent),
   buildUi();
   buildMenus();
   refreshRecents();
+
+  // C7: drag-drop of a .lscan.zip transfer bundle anywhere on the main
+  // window, plus the macOS file-association/"Open With" path, which Qt
+  // delivers as QEvent::FileOpen to the APPLICATION object, not any widget —
+  // an application-level event filter is the documented way to catch it.
+  // Harmless to install unconditionally: FileOpen never fires on Windows/
+  // Linux without an explicit sender, so this is a no-op there.
+  setAcceptDrops(true);
+  qApp->installEventFilter(this);
 
   connect(host_, &EngineHost::logLine, this, [this](const QString& l) {
     log_->appendPlainText(QDateTime::currentDateTime().toString("hh:mm:ss.zzz ") + l);
@@ -93,6 +109,7 @@ MainWindow::~MainWindow() {
   // Deleting it explicitly, first, sidesteps the ordering question entirely
   // rather than relying on child-list order.
   delete capture_;
+  qApp->removeEventFilter(this);
 }
 
 void MainWindow::buildUi() {
@@ -245,9 +262,18 @@ void MainWindow::buildUi() {
   plan_dock_->setPointStore(host_->points());
   connect(plan_dock_, &PlanDock::logLine, this,
           [this](const QString& l) { log_->appendPlainText(l); });
+
+  // --- right dock (tabbed): merge workbench (C6) ---
+  merge_dock_ = new MergeDock(viewport_, this);
+  addDockWidget(Qt::RightDockWidgetArea, merge_dock_);
+  tabifyDockWidget(params_dock_, merge_dock_);
+  connect(merge_dock_, &MergeDock::logLine, this,
+          [this](const QString& l) { log_->appendPlainText(l); });
+  connect(merge_dock_, &MergeDock::exportMergedRequested, this, &MainWindow::onExportMerged);
+
   // tabifyDockWidget() raises the most-recently-added tab; put Display
-  // parameters back in front as C1/C2/C3 established, now that C4/C5 have
-  // added two more tabs behind it.
+  // parameters back in front as C1/C2/C3 established, now that C4/C5/C6 have
+  // added three more tabs behind it.
   params_dock_->raise();
 
   // --- status bar ---
@@ -280,6 +306,9 @@ void MainWindow::buildMenus() {
   file->addSeparator();
   file->addAction("&Export…", QKeySequence("Ctrl+E"), this, &MainWindow::onExport);
   file->addSeparator();
+  file->addAction("Export transfer &bundle…", this, &MainWindow::onExportTransferBundle);
+  file->addAction("&Import transfer bundle (.lscan.zip)…", this, &MainWindow::onImportTransferBundle);
+  file->addSeparator();
   file->addAction("E&xit", QKeySequence::Quit, qApp, &QApplication::quit);
 
   auto* capture = menuBar()->addMenu("&Capture");
@@ -305,6 +334,7 @@ void MainWindow::buildMenus() {
   view->addAction(measure_dock_->toggleViewAction());
   view->addAction(processing_dock_->toggleViewAction());
   view->addAction(plan_dock_->toggleViewAction());
+  view->addAction(merge_dock_->toggleViewAction());
 
   auto* tools = menuBar()->addMenu("&Tools");
   tools->addAction("Load synthetic building fixture (C5 test fixture)…", this,
@@ -353,6 +383,7 @@ bool MainWindow::openProject(const QString& dir, QString* err) {
   processing_dock_->setCurrentStore(host_->points());
   plan_dock_->setProjectDir(info.dir);
   plan_dock_->setPointStore(host_->points());
+  merge_dock_->setOpenProjectDir(info.dir);
   if (!params_dock_->loadFromProject(info.dir)) {
     // No saved processed/display_params.json for this project yet — fall
     // back to A14's profile_defaults() for whatever workflow profile the
@@ -388,6 +419,7 @@ void MainWindow::closeProject() {
   setWindowTitle("LidarScan — Desktop");
   processing_dock_->setProjectDir(QString());
   plan_dock_->setProjectDir(QString());
+  merge_dock_->setOpenProjectDir(QString());
 }
 
 void MainWindow::loadSyntheticBuildingFixture() {
@@ -581,6 +613,96 @@ void MainWindow::onScreenshot() {
   } else {
     log_->appendPlainText("screenshot written: " + path);
   }
+}
+
+void MainWindow::onExportTransferBundle() {
+  if (!project_.valid) {
+    QMessageBox::information(this, "Export transfer bundle", "No project is open.");
+    return;
+  }
+  auto* dlg = new TransferExportDialog(project_.dir, this);
+  dlg->setAttribute(Qt::WA_DeleteOnClose);
+  dlg->show();
+  dlg->raise();
+  dlg->activateWindow();
+}
+
+void MainWindow::onImportTransferBundle() { importTransferBundle(QString()); }
+
+void MainWindow::importTransferBundle(const QString& zipPath) {
+  // Default destination: alongside the last project's directory when one is
+  // known (so a transfer bundle lands next to the library the user is
+  // already working in), otherwise the home directory.
+  QString destRoot = QDir::homePath();
+  if (!recent_dirs_.isEmpty()) destRoot = QFileInfo(recent_dirs_.first()).absolutePath();
+  auto* dlg = new TransferImportDialog(zipPath, destRoot, this);
+  dlg->setAttribute(Qt::WA_DeleteOnClose);
+  connect(dlg, &TransferImportDialog::projectReady, this, [this](const QString& dir) {
+    QString err;
+    if (!openProject(dir, &err)) {
+      QMessageBox::warning(this, "Open imported project", err);
+      return;
+    }
+    log_->appendPlainText("imported transfer bundle landed in the library: " + dir);
+  });
+  dlg->show();
+  dlg->raise();
+  dlg->activateWindow();
+}
+
+void MainWindow::onExportMerged() {
+  if (!merge_dock_ || !merge_dock_->mergedStore() ||
+      merge_dock_->mergedStore()->total_points() == 0) {
+    QMessageBox::information(this, "Export merged cloud",
+                             "Build the merged cloud first (Merge workbench -> \"Build merged "
+                             "cloud -> viewport\").");
+    return;
+  }
+  if (export_dialog_) export_dialog_->deleteLater();
+  export_dialog_ =
+      new ExportDialog(merge_dock_->mergedStore(), params_->get(), "merged", this);
+  export_dialog_->setAttribute(Qt::WA_DeleteOnClose);
+  connect(export_dialog_, &QObject::destroyed, this, [this] { export_dialog_ = nullptr; });
+  export_dialog_->show();
+  export_dialog_->raise();
+  export_dialog_->activateWindow();
+}
+
+void MainWindow::dragEnterEvent(QDragEnterEvent* event) {
+  if (!event->mimeData()->hasUrls()) return;
+  for (const QUrl& u : event->mimeData()->urls()) {
+    if (!u.isLocalFile()) continue;
+    const QString path = u.toLocalFile();
+    if (path.endsWith(".lscan.zip", Qt::CaseInsensitive) || path.endsWith(".zip", Qt::CaseInsensitive)) {
+      event->acceptProposedAction();
+      return;
+    }
+  }
+}
+
+void MainWindow::dropEvent(QDropEvent* event) {
+  if (!event->mimeData()->hasUrls()) return;
+  for (const QUrl& u : event->mimeData()->urls()) {
+    if (!u.isLocalFile()) continue;
+    const QString path = u.toLocalFile();
+    if (path.endsWith(".lscan.zip", Qt::CaseInsensitive) || path.endsWith(".zip", Qt::CaseInsensitive)) {
+      event->acceptProposedAction();
+      importTransferBundle(path);
+      return;
+    }
+  }
+}
+
+bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+  if (event->type() == QEvent::FileOpen) {
+    auto* fo = static_cast<QFileOpenEvent*>(event);
+    const QString path = fo->file();
+    if (path.endsWith(".lscan.zip", Qt::CaseInsensitive)) {
+      importTransferBundle(path);
+      return true;
+    }
+  }
+  return QMainWindow::eventFilter(watched, event);
 }
 
 void MainWindow::onExport() {

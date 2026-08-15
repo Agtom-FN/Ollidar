@@ -561,6 +561,10 @@ void ViewportWindow::rebuildMeasureGeometry() {
   scene_->addEntity(measure_entity_);
 }
 
+bool ViewportWindow::debugPickWorld(const QPointF& widgetPos, float outWorld[3]) const {
+  return pickPoint(widgetPos, outWorld);
+}
+
 bool ViewportWindow::pickPoint(const QPointF& widgetPos, float outWorld[3]) const {
   if (!store_ || px_w_ <= 0 || px_h_ <= 0) return false;
 

@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Info.plist.in — macOS bundle metadata for the .app C8 packaging must
+  produce. NOT wired into the build yet: NOTES.md §3.3 records that the
+  executable today is "a plain binary, not a .app bundle" — CMakeLists.txt
+  has no MACOSX_BUNDLE target property and no add_custom_command that copies
+  this file anywhere. This is the config C8's bundling step (MACOSX_BUNDLE +
+  macdeployqt + codesign/notarize) must carry forward, written now so the
+  document-type registration this task (C7) needs is not lost or
+  reinvented later.
+
+  WHAT THIS FILE IS FOR (C7's reason to write it here)
+    Tech Spec §3.13 wants double-click / "Open With" / Finder drag-and-drop
+    of a `.lscan.zip` transfer bundle to open it in the app. macOS resolves
+    that through LaunchServices reading CFBundleDocumentTypes out of a REAL
+    app bundle's Info.plist — a plain Mach-O binary is never offered as a
+    handler for anything, no matter what code MainWindow has. So:
+      * MainWindow::eventFilter() already catches QEvent::FileOpen (the
+        event Qt synthesizes from a LaunchServices "open this file" request)
+        and routes it into importTransferBundle() — see MainWindow.cpp. That
+        code is real and tested (drag-and-drop onto the running app's window
+        uses the identical path via dragEnterEvent/dropEvent, which DOES
+        work today with no bundle — Qt's own DnD is bundle-independent).
+      * What's missing without a bundle is macOS ever launching/routing to
+        this app FOR a .lscan.zip in the first place (Finder "Open With",
+        double-click, "Always Open With…"). That needs this file merged into
+        a real Info.plist inside a real .app, which is C8's job.
+    `.lscan` (a project DIRECTORY, not a file) is also declared below with
+    LSTypeIsPackage — the same trick GarageBand/Xcode projects use to make a
+    directory double-clickable in Finder as if it were one file; C8 should
+    keep it if `.lscan` project directories should feel native, and can drop
+    it (they aren't opened as a bundle by any code here) if not wanted.
+
+  PLACEHOLDERS (${...}) are CMake @-substitutions consistent with how
+  cmake_minimum_required(VERSION 3.20)'s configure_file() would fill them in
+  from CMakeLists.txt's own project()/version variables — C8's call to make,
+  not decided here.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>
+  <string>LidarScan</string>
+  <key>CFBundleDisplayName</key>
+  <string>LidarScan Desktop</string>
+  <key>CFBundleIdentifier</key>
+  <string>com.lidarscan.desktop</string>
+  <key>CFBundleVersion</key>
+  <string>${LIDARSCAN_VERSION}</string>
+  <key>CFBundleShortVersionString</key>
+  <string>${LIDARSCAN_VERSION}</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleExecutable</key>
+  <string>lidarscan</string>
+  <key>CFBundleIconFile</key>
+  <string>lidarscan.icns</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>13.0</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>LSApplicationCategoryType</key>
+  <string>public.app-category.developer-tools</string>
+
+  <!-- §3.13 file-association: .lscan.zip transfer bundle -->
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>LidarScan Transfer Bundle</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Owner</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>com.lidarscan.transfer-bundle</string>
+      </array>
+      <key>CFBundleTypeExtensions</key>
+      <array>
+        <string>lscan.zip</string>
+      </array>
+      <key>CFBundleTypeIconFile</key>
+      <string>lidarscan-bundle.icns</string>
+    </dict>
+    <!-- The project DIRECTORY itself (Tech Spec §3.11's .lscan skeleton) —
+         LSTypeIsPackage makes Finder treat a `name.lscan/` directory as one
+         double-clickable document instead of a folder to browse into. See
+         the file header: keep this only if that native-package feel is
+         wanted; MainWindow's own "Open project…" (a plain directory picker)
+         works with or without it. -->
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>LidarScan Project</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Owner</string>
+      <key>LSTypeIsPackage</key>
+      <true/>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>com.lidarscan.project</string>
+      </array>
+      <key>CFBundleTypeExtensions</key>
+      <array>
+        <string>lscan</string>
+      </array>
+      <key>CFBundleTypeIconFile</key>
+      <string>lidarscan-project.icns</string>
+    </dict>
+  </array>
+
+  <!-- The UTIs CFBundleDocumentTypes above references have to be declared
+       somewhere too — either here (UTExportedTypeDeclarations, for a type
+       this app OWNS, which a transfer bundle's custom extension is) or a
+       system UTI reused (irrelevant here: ".lscan.zip"/".lscan" are not
+       registered by anything else). Exported, not imported: nothing else on
+       a fresh machine knows what a .lscan.zip is until this app is
+       installed. -->
+  <key>UTExportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key>
+      <string>com.lidarscan.transfer-bundle</string>
+      <key>UTTypeDescription</key>
+      <string>LidarScan Transfer Bundle</string>
+      <key>UTTypeConformsTo</key>
+      <array>
+        <string>public.zip-archive</string>
+      </array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key>
+        <array>
+          <string>lscan.zip</string>
+        </array>
+      </dict>
+    </dict>
+    <dict>
+      <key>UTTypeIdentifier</key>
+      <string>com.lidarscan.project</string>
+      <key>UTTypeDescription</key>
+      <string>LidarScan Project</string>
+      <key>UTTypeConformsTo</key>
+      <array>
+        <string>public.folder</string>
+      </array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key>
+        <array>
+          <string>lscan</string>
+        </array>
+      </dict>
+    </dict>
+  </array>
+</dict>
+</plist>

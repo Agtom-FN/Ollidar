@@ -41,20 +41,27 @@
 #include <QTimer>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
+#include <vector>
 
 #include "app/CaptureWindow.h"
 #include "app/EngineHost.h"
 #include "app/MainWindow.h"
+#include "app/MergeDock.h"
+#include "app/MergeFixture.h"
 #include "app/PlanDock.h"
 #include "app/ProcessingDock.h"
 #include "app/Project.h"  // ProjectInfo/readProject for --mid360-selftest's post-record report
 #include "app/QtHttpTransport.h"
 #include "app/SyntheticMid360.h"
+#include "app/TransferDialog.h"
 #include "render/ViewportWindow.h"
 #include "scanengine/export/exporter.h"
 #include "scanengine/jobs/job_queue.h"
+#include "scanengine/poses/se3.h"
+#include "scanengine/record/zip.h"
 
 int main(int argc, char** argv) {
   QApplication app(argc, argv);
@@ -138,6 +145,46 @@ int main(int argc, char** argv) {
   QCommandLineOption optPlanDelay("plan-delay", "Seconds before the --plan-* hooks run "
                                                 "(after --plan-fixture/--project has had time to land)",
                                   "s", "1");
+  QCommandLineOption optMergeFixtureEvidence(
+      "merge-fixture-evidence",
+      "C6 evidence hook: build the 3-session synthetic overlapping-building fixture (mirrors "
+      "engine/tests/test_merge.cpp), run the georeferenced auto-align path, then override "
+      "session 1 with the 3-point manual pick path, then Refine (ICP, with the per-pair trace "
+      "reproduced for the chart) and Build+publish (colour-by-session) into the viewport. "
+      "Every step's real MergeReport numbers and the ground-truth comparison are printed. "
+      "Combine with --shot to capture the merged, colour-by-session viewport.");
+  QCommandLineOption optMergeAddProject(
+      "merge-add-project",
+      "C6 evidence hook: LSCAN_DIR:PROVENANCE_ID — real MergeSessionLoader path: a private "
+      "Engine + unpaced ReplaySource decodes LSCAN_DIR's D6 raw chunks and adds the result as "
+      "a merge session, exactly what 'Add from open project'/'Import .lscan project…' do", "spec");
+  QCommandLineOption optMergeDockShot(
+      "merge-dock-shot",
+      "C6 evidence hook: raise the Merge dock, select pair row 0 (so its residual chart "
+      "renders), and save a QWidget::grab() of the whole dock to PATH — run after "
+      "--merge-fixture-evidence", "path");
+  QCommandLineOption optMergeDockShotDelay(
+      "merge-dock-shot-delay", "Seconds before --merge-dock-shot runs (after "
+                               "--merge-fixture-evidence has had time to finish)", "s", "2");
+  QCommandLineOption optTransferExport(
+      "transfer-export", "C7 evidence hook: SRC_LSCAN_DIR:ZIP_PATH — zip_export() directly, "
+                         "headless, and print size/byte stats", "spec");
+  QCommandLineOption optTransferImport(
+      "transfer-import",
+      "C7 evidence hook: ZIP_PATH:DEST_DIR — zip_import() + readProject(), headless, and print "
+      "the manifest sanity report (same one TransferImportDialog shows); run after "
+      "--transfer-export against its own output for round-trip evidence", "spec");
+  QCommandLineOption optTransferExportDialogShot(
+      "transfer-export-dialog-shot",
+      "C7 evidence hook: SRC_LSCAN_DIR:ZIP_PATH:SHOT_PATH — opens the REAL "
+      "TransferExportDialog, clicks Export exactly as the button would (real zip_export() on "
+      "a worker thread, real progress bar), and grabs the dialog to SHOT_PATH", "spec");
+  QCommandLineOption optTransferImportDialogShot(
+      "transfer-import-dialog-shot",
+      "C7 evidence hook: ZIP_PATH:DEST_DIR:SHOT_PATH — opens the REAL TransferImportDialog, "
+      "clicks Import exactly as the button would (real zip_import() + readProject() on a "
+      "worker thread, real progress bar), and grabs the dialog (including the manifest sanity "
+      "report) to SHOT_PATH", "spec");
   QCommandLineOption optCloudSelftest(
       "cloud-submit-selftest",
       "C4 evidence hook: submit a REAL kCloudSubmit job (QtHttpTransport, a genuine socket "
@@ -170,6 +217,14 @@ int main(int argc, char** argv) {
   parser.addOption(optPlanShot);
   parser.addOption(optPlanDelay);
   parser.addOption(optCloudSelftest);
+  parser.addOption(optMergeFixtureEvidence);
+  parser.addOption(optMergeAddProject);
+  parser.addOption(optMergeDockShot);
+  parser.addOption(optMergeDockShotDelay);
+  parser.addOption(optTransferExport);
+  parser.addOption(optTransferImport);
+  parser.addOption(optTransferExportDialogShot);
+  parser.addOption(optTransferImportDialogShot);
   parser.process(app);
 
   lidarscan::EngineHost host;
@@ -231,6 +286,105 @@ int main(int argc, char** argv) {
                  dir.toUtf8().constData(), (unsigned long long)res.point_packets,
                  (unsigned long long)res.points, (unsigned long long)res.imu_packets,
                  res.duration_s);
+  }
+
+  // C7 evidence hooks: A5's zip_export()/zip_import() driven directly and
+  // headlessly (no dialog, no worker thread — this is the CLI evidence path,
+  // not the interactive one TransferExportDialog/TransferImportDialog drive
+  // on their own std::thread). Both run immediately: they touch only disk,
+  // not the engine/viewport, so there is nothing to wait for.
+  if (parser.isSet(optTransferExport)) {
+    const QString spec = parser.value(optTransferExport);
+    const int colon = spec.indexOf(':');
+    if (colon <= 0) {
+      std::fprintf(stderr, "[lidarscan] --transfer-export wants SRC_DIR:ZIP_PATH\n");
+      return 6;
+    }
+    const QString srcDir = spec.left(colon);
+    const QString zipPath = spec.mid(colon + 1);
+    QDir().mkpath(QFileInfo(zipPath).absolutePath());
+    const auto st = scanengine::lscan::zip_export(srcDir.toStdString(), zipPath.toStdString());
+    const quint64 bytes = st.ok() ? quint64(QFileInfo(zipPath).size()) : 0;
+    std::fprintf(stderr, "[lidarscan] transfer-export: %s -> %s: %s (%llu bytes)\n",
+                 srcDir.toUtf8().constData(), zipPath.toUtf8().constData(),
+                 st.ok() ? "OK" : scanengine::error_str(st.error()), (unsigned long long)bytes);
+    if (!st.ok()) return 8;
+  }
+  if (parser.isSet(optTransferImport)) {
+    const QString spec = parser.value(optTransferImport);
+    const int colon = spec.indexOf(':');
+    if (colon <= 0) {
+      std::fprintf(stderr, "[lidarscan] --transfer-import wants ZIP_PATH:DEST_DIR\n");
+      return 6;
+    }
+    const QString zipPath = spec.left(colon);
+    const QString destDir = spec.mid(colon + 1);
+    const auto st = scanengine::lscan::zip_import(zipPath.toStdString(), destDir.toStdString());
+    std::fprintf(stderr, "[lidarscan] transfer-import: %s -> %s: %s\n", zipPath.toUtf8().constData(),
+                 destDir.toUtf8().constData(), st.ok() ? "OK" : scanengine::error_str(st.error()));
+    if (!st.ok()) return 8;
+    const lidarscan::ProjectInfo info = lidarscan::readProject(destDir);
+    if (!info.valid) {
+      std::fprintf(stderr, "[lidarscan] transfer-import: readProject failed: %s\n",
+                   info.error.toUtf8().constData());
+      return 8;
+    }
+    std::fprintf(stderr,
+                 "[lidarscan] transfer-import: manifest %s%s, profile %s, %llu chunks, %llu "
+                 "bytes, %.2f s span, %u truncated-tail, %u crc-mismatch, %u unreadable streams\n",
+                 info.manifest_present ? (info.manifest_ok ? "ok" : "corrupt") : "missing",
+                 info.sealed ? "" : " (NOT SEALED)", info.profile.toUtf8().constData(),
+                 (unsigned long long)info.total_chunks, (unsigned long long)info.total_bytes,
+                 info.duration_s, info.truncated_tail_chunks, info.crc_mismatch_chunks,
+                 info.unreadable_streams);
+    for (const auto& s : info.streams) {
+      std::fprintf(stderr, "[lidarscan] transfer-import:   stream %s: %llu chunks, %llu bytes\n",
+                   s.name.toUtf8().constData(), (unsigned long long)s.chunks,
+                   (unsigned long long)s.bytes);
+    }
+  }
+
+  if (parser.isSet(optTransferExportDialogShot)) {
+    const QString spec = parser.value(optTransferExportDialogShot);
+    const QStringList parts = spec.split(':');
+    if (parts.size() != 3) {
+      std::fprintf(stderr,
+                   "[lidarscan] --transfer-export-dialog-shot wants SRC_DIR:ZIP_PATH:SHOT_PATH\n");
+      return 6;
+    }
+    const QString srcDir = parts[0], zipPath = parts[1], shotPath = parts[2];
+    QDir().mkpath(QFileInfo(shotPath).absolutePath());
+    QDir().mkpath(QFileInfo(zipPath).absolutePath());
+    auto* dlg = new lidarscan::TransferExportDialog(srcDir, &win);
+    dlg->setZipPathForCli(zipPath);
+    dlg->show();
+    QTimer::singleShot(200, dlg, [dlg] { dlg->triggerExportForCli(); });
+    QTimer::singleShot(1200, dlg, [dlg, shotPath] {
+      const bool ok = dlg->grab().save(shotPath);
+      std::fprintf(stderr, "[lidarscan] transfer-export-dialog-shot: %s -> %s\n", ok ? "OK" : "FAILED",
+                   shotPath.toUtf8().constData());
+    });
+  }
+
+  if (parser.isSet(optTransferImportDialogShot)) {
+    const QString spec = parser.value(optTransferImportDialogShot);
+    const QStringList parts = spec.split(':');
+    if (parts.size() != 3) {
+      std::fprintf(stderr,
+                   "[lidarscan] --transfer-import-dialog-shot wants ZIP_PATH:DEST_DIR:SHOT_PATH\n");
+      return 6;
+    }
+    const QString zipPath = parts[0], destDir = parts[1], shotPath = parts[2];
+    QDir().mkpath(QFileInfo(shotPath).absolutePath());
+    auto* dlg = new lidarscan::TransferImportDialog(zipPath, QFileInfo(destDir).absolutePath(), &win);
+    dlg->setDestDirForCli(destDir);
+    dlg->show();
+    QTimer::singleShot(200, dlg, [dlg] { dlg->triggerImportForCli(); });
+    QTimer::singleShot(1200, dlg, [dlg, shotPath] {
+      const bool ok = dlg->grab().save(shotPath);
+      std::fprintf(stderr, "[lidarscan] transfer-import-dialog-shot: %s -> %s\n", ok ? "OK" : "FAILED",
+                   shotPath.toUtf8().constData());
+    });
   }
 
   if (!projectDir.isEmpty()) {
@@ -586,6 +740,167 @@ int main(int argc, char** argv) {
     QTimer::singleShot(planDelayMs + 900, &win, [&win, path] {
       const bool ok = win.planDock()->grab().save(path);
       std::fprintf(stderr, "[lidarscan] plan-shot: %s -> %s\n", ok ? "OK" : "FAILED",
+                   path.toUtf8().constData());
+    });
+  }
+
+  // C6 evidence hook: the whole merge workbench flow against a real
+  // MergeProject, driven through MergeDock's own *ForCli methods (the same
+  // code the buttons call). See engine/docs/A13-merge.md for what each
+  // number below means.
+  if (parser.isSet(optMergeFixtureEvidence)) {
+    QTimer::singleShot(500, &win, [&win] {
+      lidarscan::MergeDock* md = win.mergeDock();
+      lidarscan::MergeFixture fixture;  // deterministic — same geometry addFixtureSessionsForCli() builds
+
+      auto reportTruth = [&](int session, const char* label) {
+        const auto* rep = md->reportOrNull();
+        if (!rep) return;
+        double truth[16];
+        fixture.truthWorldFromSession(session, truth);
+        for (const auto& sm : rep->sessions) {
+          if (int(sm.id) != session) continue;
+          double rotDeg = 0.0, transMm = 0.0;
+          scanengine::se3::transform_error(sm.world_from_session, truth, &rotDeg, &transMm);
+          std::fprintf(stderr,
+                       "[lidarscan] merge-fixture-evidence: %s session %d vs ground truth: "
+                       "%.4f mm / %.6f deg (align=%s)\n",
+                       label, session, transMm, rotDeg, scanengine::merge::to_string(sm.align));
+        }
+      };
+
+      const int n = md->addFixtureSessionsForCli(true);
+      std::fprintf(stderr,
+                   "[lidarscan] merge-fixture-evidence: %d sessions added (30x12x3 m building, "
+                   "sessions 0-1 / 1-2 overlap 4 m, 0-2 share nothing — see "
+                   "engine/tests/test_merge.cpp)\n",
+                   n);
+
+      scanengine::merge::MergeProject::GeorefAlignReport georefRep;
+      QString gerr;
+      const bool gok = md->alignGeoreferencedForCli(&georefRep, &gerr);
+      std::fprintf(stderr,
+                   "[lidarscan] merge-fixture-evidence: georeferenced auto-align %s — aligned=%u "
+                   "skipped=%u max ENU-origin separation=%.2f m%s\n",
+                   gok ? "OK" : "FAILED", georefRep.aligned, georefRep.skipped,
+                   georefRep.max_origin_separation_m,
+                   gok ? "" : (" (" + gerr + ")").toUtf8().constData());
+      reportTruth(0, "georef");
+      reportTruth(1, "georef");
+      reportTruth(2, "georef");
+
+      // Override session 1 with the 3-point MANUAL path, against the anchor
+      // (session 0) — the exact 4 physical features
+      // engine/tests/test_merge.cpp calls kPickWorld, exact (no click noise),
+      // fed through the SAME recordPick()/align_from_correspondences() path
+      // a real 3-click UI sequence would produce.
+      std::vector<std::array<float, 3>> src, tgt;
+      for (std::size_t i = 0; i < 3; ++i) {
+        float s[3], t[3];
+        fixture.pick(1, i, 0.0, 1, s, t);
+        src.push_back({s[0], s[1], s[2]});
+        tgt.push_back({t[0], t[1], t[2]});
+      }
+      scanengine::merge::CorrespondenceSolution sol;
+      QString merr;
+      const bool mok = md->alignManualForCli(1, src, tgt, &sol, &merr);
+      std::fprintf(stderr,
+                   "[lidarscan] merge-fixture-evidence: 3-point manual align (session 1, exact "
+                   "picks) %s — rms=%.4f mm max_residual=%.4f mm implied_scale=%.6f%s\n",
+                   mok ? "OK" : "FAILED", sol.rms_m * 1000.0, sol.max_residual_m * 1000.0,
+                   sol.implied_scale, mok ? "" : (" (" + merr + ")").toUtf8().constData());
+      reportTruth(1, "manual-3pt");
+
+      QString rerr;
+      const bool rok = md->refineForCli(&rerr);
+      std::fprintf(stderr, "[lidarscan] merge-fixture-evidence: refine %s\n",
+                   rok ? "OK" : ("FAILED: " + rerr).toUtf8().constData());
+      if (const auto* rep = md->reportOrNull()) {
+        for (const auto& pr : rep->pairs) {
+          std::fprintf(
+              stderr,
+              "[lidarscan] merge-fixture-evidence: pair %u<->%u: rms %.2f mm -> %.2f mm, "
+              "overlap %.3f/%.3f, %u iterations (%u rolled back), converged=%s, low_overlap=%s%s\n",
+              pr.session_a, pr.session_b, pr.rms_before_m * 1000.0, pr.rms_residual_m * 1000.0,
+              pr.overlap_a_in_b, pr.overlap_b_in_a, pr.iterations, pr.rejected_steps,
+              pr.converged ? "yes" : "no", pr.low_overlap ? "yes" : "no",
+              *pr.blocker ? (QString(" blocker=") + pr.blocker).toUtf8().constData() : "");
+        }
+        if (rep->relaxed) {
+          std::fprintf(stderr,
+                       "[lidarscan] merge-fixture-evidence: global relaxation chi2 %.6g -> %.6g "
+                       "in %u iterations\n",
+                       rep->graph.initial_chi2, rep->graph.final_chi2, rep->graph.iterations);
+        }
+      }
+      reportTruth(0, "post-refine");
+      reportTruth(1, "post-refine");
+      reportTruth(2, "post-refine");
+
+      QString berr;
+      const bool bok = md->buildAndPublishForCli(true, &berr);
+      if (bok) {
+        if (const auto* rep = md->reportOrNull()) {
+          std::fprintf(stderr,
+                       "[lidarscan] merge-fixture-evidence: build OK — %llu input -> %llu merged "
+                       "points (%llu dedup-dropped, %llu priority-dropped), %u pages (%u shared)\n",
+                       (unsigned long long)rep->input_points, (unsigned long long)rep->merged_points,
+                       (unsigned long long)rep->dedup_dropped_points,
+                       (unsigned long long)rep->priority_dropped_points, rep->pages_appended,
+                       rep->pages_shared);
+        }
+      } else {
+        std::fprintf(stderr, "[lidarscan] merge-fixture-evidence: build FAILED: %s\n",
+                     berr.toUtf8().constData());
+      }
+    });
+  }
+
+  if (parser.isSet(optMergeAddProject)) {
+    const QString spec = parser.value(optMergeAddProject);
+    const int colon = spec.indexOf(':');
+    if (colon <= 0) {
+      std::fprintf(stderr, "[lidarscan] --merge-add-project wants LSCAN_DIR:PROVENANCE_ID\n");
+      return 6;
+    }
+    const QString dir = spec.left(colon);
+    const QString provenance = spec.mid(colon + 1);
+    QTimer::singleShot(300, &win, [&win, dir, provenance] {
+      QString err;
+      const bool ok = win.mergeDock()->addProjectSessionForCli(dir, provenance, &err);
+      std::fprintf(stderr, "[lidarscan] merge-add-project: %s (%s) -> %s%s\n",
+                   dir.toUtf8().constData(), provenance.toUtf8().constData(), ok ? "OK" : "FAILED",
+                   ok ? "" : (": " + err).toUtf8().constData());
+      if (ok) {
+        if (const auto* rep = win.mergeDock()->reportOrNull()) {
+          for (const auto& sm : rep->sessions) {
+            if (sm.provenance_id == provenance.toStdString()) {
+              std::fprintf(stderr,
+                           "[lidarscan] merge-add-project: session %u '%s' — %llu points "
+                           "decoded via unpaced ReplaySource into a real Engine/PageStore\n",
+                           sm.id, sm.provenance_id.c_str(),
+                           (unsigned long long)sm.input_points);
+            }
+          }
+        }
+      }
+    });
+  }
+
+  if (parser.isSet(optMergeDockShot)) {
+    const QString path = QFileInfo(parser.value(optMergeDockShot)).absoluteFilePath();
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    const int ms = int(parser.value(optMergeDockShotDelay).toDouble() * 1000.0);
+    win.mergeDock()->show();
+    win.mergeDock()->raise();
+    // Float and resize tall so the grab() below captures the residual chart
+    // too, not just whatever fits in the tabbed dock area's allotted height.
+    win.mergeDock()->setFloating(true);
+    win.mergeDock()->resize(660, 1350);
+    QTimer::singleShot(ms, &win, [&win, path] {
+      win.mergeDock()->selectPairForCli(0);
+      const bool ok = win.mergeDock()->grab().save(path);
+      std::fprintf(stderr, "[lidarscan] merge-dock-shot: %s -> %s\n", ok ? "OK" : "FAILED",
                    path.toUtf8().constData());
     });
   }

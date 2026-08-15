@@ -146,6 +146,10 @@ add_executable(lidarscan
     src/app/QtHttpTransport.cpp
     src/app/SyntheticMid360.cpp
     src/app/SyntheticBuilding.cpp
+    src/app/MergeFixture.cpp
+    src/app/MergeSessionLoader.cpp
+    src/app/MergeDock.cpp
+    src/app/TransferDialog.cpp
     src/app/MainWindow.cpp
     src/render/NativeSurface.cpp
     src/render/DisplayLinkFallback.cpp

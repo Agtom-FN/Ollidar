@@ -21,6 +21,8 @@
 #include "app/Project.h"
 
 class QCloseEvent;
+class QDragEnterEvent;
+class QDropEvent;
 class QLabel;
 class QListWidget;
 class QPlainTextEdit;
@@ -39,6 +41,7 @@ class DisplayParamsDock;
 class EngineHost;
 class ExportDialog;
 class MeasureDock;
+class MergeDock;
 class PlanDock;
 class ProcessingDock;
 class ReplayController;
@@ -59,10 +62,16 @@ class MainWindow : public QMainWindow {
   // already established for C2/C3.
   ProcessingDock* processingDock() { return processing_dock_; }
   PlanDock* planDock() { return plan_dock_; }
+  MergeDock* mergeDock() { return merge_dock_; }
 
   bool openProject(const QString& dir, QString* err = nullptr);
   void closeProject();
   bool startReplay(double speed, QString* err = nullptr);
+
+  // C7: import a `.lscan.zip` transfer bundle (drag-drop, file-association,
+  // File menu). Public so main.cpp's evidence hooks and the drag-drop/
+  // QFileOpenEvent handlers can all funnel through one path.
+  void importTransferBundle(const QString& zipPath);
 
   // C5 evidence/verification fixture: appends the A12 test-fixture building
   // (SyntheticBuilding.h) into the engine's own PageStore and points the
@@ -78,6 +87,9 @@ class MainWindow : public QMainWindow {
 
  protected:
   void closeEvent(QCloseEvent* event) override;
+  void dragEnterEvent(QDragEnterEvent* event) override;
+  void dropEvent(QDropEvent* event) override;
+  bool eventFilter(QObject* watched, QEvent* event) override;
 
  private:
   void buildUi();
@@ -91,6 +103,9 @@ class MainWindow : public QMainWindow {
   void onImportRaw();
   void onScreenshot();
   void onExport();
+  void onExportTransferBundle();
+  void onImportTransferBundle();
+  void onExportMerged();
   void persistDisplayParamsIfProjectOpen();
 
   EngineHost* host_ = nullptr;
@@ -99,6 +114,7 @@ class MainWindow : public QMainWindow {
   MeasureDock* measure_dock_ = nullptr;
   ProcessingDock* processing_dock_ = nullptr;
   PlanDock* plan_dock_ = nullptr;
+  MergeDock* merge_dock_ = nullptr;
   CaptureWindow* capture_ = nullptr;
   ExportDialog* export_dialog_ = nullptr;
   ReplayController* replay_ = nullptr;
