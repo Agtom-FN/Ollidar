@@ -23,6 +23,7 @@
 // is the only place the wire format, the A4 clock mapping and the actual scan
 // pattern are exercised at once — and it has no ground truth, so it asserts
 // self-consistency and reports.
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
