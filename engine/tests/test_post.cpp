@@ -587,7 +587,11 @@ TEST_CASE("pgraph/one_edge_solves_exactly") {
   double R[9], Rz[9];
   se3::quat_to_matrix(n1.q, R);
   se3::quat_to_matrix(qz, Rz);
-  CHECK(se3::rot_angle_deg(R, Rz) < 1e-7);
+  // 1e-7 deg held on Apple clang/arm64 but GCC/x86_64's different FP
+  // reassociation lands at ~1.2e-6 deg (engine-ci #3). A microdegree is
+  // still "exact" for a pose graph; the chi^2 < 1e-12 check above is the
+  // real convergence assertion.
+  CHECK(se3::rot_angle_deg(R, Rz) < 1e-5);
 }
 
 TEST_CASE("pgraph/rcm_ordering_keeps_a_loop_narrow") {

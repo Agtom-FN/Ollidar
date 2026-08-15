@@ -19,6 +19,14 @@
 #include <string>
 
 #if defined(_WIN32)
+// windows.h's min/max macros break every std::min/std::max in this TU with
+// "expected unqualified-id" (engine-ci #3) — suppress before any Win header.
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #pragma comment(lib, "ws2_32.lib")
