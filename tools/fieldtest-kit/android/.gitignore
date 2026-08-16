@@ -1,0 +1,2 @@
+# built artifacts distributed out-of-band, not through git
+*.apk

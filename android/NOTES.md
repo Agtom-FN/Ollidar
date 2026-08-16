@@ -2147,6 +2147,32 @@ Rebind items, in priority order:
 6. **Still no C surface for the job queue, plan or merge** — by design for the
    queue (§2). Nothing needs to change; this is recorded so the next reader does
    not go looking.
+7. **USB-serial GNSS (e.g. a Unicore UM982 eval board) is not wired into the
+   app at all — found during ANDROID TEST PACKAGE field-test-kit prep, same
+   class of gap as B3's pre-bound socket but on the RTK side.** §4's
+   Bluetooth-SPP rover path is the *only* way this app feeds bytes into
+   `scan_engine_push_nmea`. A GNSS receiver presented as USB-serial
+   (CH340/CP210x — the common shape of a UM982 carrier/eval board with no
+   Bluetooth added) has no reader: there is no `UsbSerialProber` device
+   entry routed to `push_nmea`, and `usb_device_filter.xml` only lists D6's
+   CH340 VIDs/PIDs for the D6 flow specifically — nothing distinguishes a
+   second CH340 port as "this one is GNSS, not lidar." **Field verdict**: a
+   UM982 with no Bluetooth SPP carrier cannot be tested against this Android
+   app today; test it against the desktop/Windows kit instead (which has a
+   general serial path), or use a UM982 carrier that adds Bluetooth SPP and
+   pair it per §4. **The fix, sized for next integration**: a small
+   `GnssUsbSerial` reader that reuses `D6SerialConnection`'s
+   `usb-serial-for-android` open/permission/read plumbing (§4 above, "D6
+   connect flow") against a second `UsbSerialPort`, feeding
+   `scan_engine_push_nmea` with the same one-reused-direct-`ByteBuffer`
+   posture the Bluetooth path already uses (§4, "NMEA in"), plus adding
+   GNSS-class VID/PID pairs (CH340 `0x1A86`/`0x7523`, already declared for
+   D6; CP210x `0x10C4`/`0xEA60`, not yet declared anywhere) to a
+   GNSS-specific device picker on the RTK connect screen so a rig running a
+   D6 and a UM982 both over USB-serial can tell them apart. Small — this is
+   a third instantiation of a pattern (serial open + permission + a
+   direct-buffer reader thread) that already exists twice in this codebase
+   (D6, Bluetooth-SPP NMEA), not new plumbing.
 
 ### 8. Verification — what actually ran
 
