@@ -315,12 +315,13 @@
   .sw.big i::after{width:20px;height:20px;left:3px;top:3px}
   .sw.big[aria-pressed=true] i::after{transform:translateX(18px)}
 
-  /* ─────────────── Android · display bottom sheet ───────────────
+  /* ─────────────── Android · capture-settings bottom sheet ───────────────
      Display parameters used to be a cramped strip wedged under the viewport:
      10 px chips and a 3 px slider track, both far under the 44 px touch floor,
      with no room to breathe. They now open as a real Material bottom sheet —
-     scrim, grabber, 20 px top radius, ~60 % height — with rows sized for a
-     thumb. The viewport stays visible above the sheet so every change to the
+     scrim, grabber, 20 px top radius, ~74 % height — with rows sized for a
+     thumb, and it carries view mode + the AR/camera-keyframe controls too.
+     The viewport stays visible above the sheet so every change to the
      colour ramp, point size or LOD is verifiable while you are making it. */
   .dispfab{position:absolute;right:14px;bottom:56px;width:48px;height:48px;border-radius:50%;
            display:flex;align-items:center;justify-content:center;z-index:16;flex:none;
@@ -331,7 +332,7 @@
   .dispfab[aria-expanded=true]{border-color:var(--ember);color:var(--ember)}
   .sheet-scrim{position:absolute;inset:0;z-index:30;background:rgba(6,9,12,.58);
                animation:sheetFade .18s ease-out}
-  .sheet{position:absolute;left:0;right:0;bottom:0;z-index:34;height:73%;max-height:540px;
+  .sheet{position:absolute;left:0;right:0;bottom:0;z-index:34;height:74%;max-height:560px;
          background:var(--panel);border-top:1px solid var(--line);
          border-radius:20px 20px 0 0;box-shadow:0 -14px 40px rgba(0,0,0,.62);
          display:flex;flex-direction:column;
@@ -354,18 +355,41 @@
   .sheet-grab:focus-visible i{background:var(--ember);width:56px}
   .sheet-head{display:flex;align-items:baseline;gap:10px;padding:0 18px 3px;flex:none}
   .sheet-head h2{font-family:var(--display);font-size:19px;font-weight:600;letter-spacing:-.02em}
-  .sheet-body{flex:1;min-height:0;overflow-y:auto;padding:0 18px 6px}
+  /* The View row is pinned between the head and the scrolling body: once the
+     AR & Camera section moved in the sheet's content no longer fits in the 74 %
+     the viewport can spare, so the rest scrolls and view mode stays reachable. */
+  .sheet-pin{flex:none;padding:0 18px 2px;border-bottom:1px solid var(--line)}
+  .sheet-pin .sheet-row{border-top:none;padding-top:2px}
+  .sheet-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:0 18px 8px}
+  .sheet-body::-webkit-scrollbar{width:4px}
+  .sheet-body::-webkit-scrollbar-thumb{background:var(--line);border-radius:2px}
   .sheet-row{padding:12px 0 7px;border-top:1px solid var(--line-soft)}
   .sheet-row:first-child{border-top:none;padding-top:2px}
+  /* section header inside the sheet — groups AR & Camera away from display */
+  .sheet-sect{font-family:var(--mono);font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;
+              color:var(--ember);font-weight:600;padding:10px 0 1px}
+  .sheet-sect:first-child{padding-top:8px}
+  /* 44 px switch row: label + sub-label on the left, the big toggle on the right */
+  .sheet-row.swrow{padding:6px 0 6px}
+  .sw.sheetsw{display:flex;width:100%;min-height:44px;justify-content:space-between;gap:12px;
+              text-align:left;font-family:var(--display);font-size:14px;font-weight:600;color:var(--ink)}
+  .sw.sheetsw .swlab{display:flex;flex-direction:column;gap:2px;min-width:0}
+  .sw.sheetsw .swlab em{font-style:normal;font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;
+                        color:var(--ink-faint);font-weight:400;text-transform:none}
+  /* the rate chips stay labelled but read as unavailable while keyframes are off */
+  .sheet-row.dimmed{opacity:.5}
+  /* AR tracking is a readout, not a control — no target, just the live state */
+  .sheet-row.readout{padding-top:12px;padding-bottom:12px}
+  .sheet-row.readout>label{margin-bottom:0}
+  .kfchip{font-family:var(--mono);letter-spacing:.06em;font-variant-numeric:tabular-nums}
   .sheet-row>label{display:flex;align-items:baseline;gap:8px;margin-bottom:4px;
                    font-family:var(--mono);font-size:10px;letter-spacing:.14em;
                    text-transform:uppercase;color:var(--ink-faint)}
   .sheet-row>label b{margin-left:auto;font-size:12.5px;letter-spacing:0;text-transform:none;
                      color:var(--ink);font-variant-numeric:tabular-nums;font-weight:500}
-  /* the range lives in the label, not in a second row under the track — all four
-     control rows (View, colour, point size, LOD) have to fit above the fold or the
-     fix has not landed; the sheet grew to 73 % when View moved in, and the viewport
-     still shows a live band of cloud above it */
+  /* the range lives in the label, not in a second row under the track. The sheet is
+     capped at 74 % so a live band of cloud (≥60 px of the viewport) always stays on
+     screen above it; View is pinned and AR & Camera + display scroll under it. */
   .sheet-row>label i{font-style:normal;font-size:9.5px;letter-spacing:.06em;
                      text-transform:none;color:var(--ink-faint);opacity:.85}
   .seg.sheetseg{display:flex;width:100%;padding:4px;border-radius:99px;
@@ -732,6 +756,8 @@ const FIXORDER=['NONE','SINGLE','DGPS','RTK_FLOAT','RTK_FIXED'];
 
 const newCap = ()=>({state:'idle', view:'3d', liveSlam:true, prog:0, pts:0, elapsed:0,
                      rate:0, mb:0, kf:0, drops:0, follow:true, seed:7,
+                     /* AR + camera keyframes (colorization capture) — B7/B8 */
+                     keyframes:true, kfRate:3, kfAcc:0, arTrack:null,
                      /* display parameters — surfaced through the capture bottom sheet */
                      color:'height', size:2.0, lod:20, sheet:false});
 
@@ -1535,8 +1561,39 @@ A.calib = ()=>{
        + `<div class="body haspad" style="padding:4px 14px 24px">${bodyHtml}</div>`;
 };
 
+/* AR tracking is one fact rendered in two places — the sheet's readout row and the
+   AR + camera keyframes block behind it. One resolver, one painter, so they can
+   never disagree: LIMITED wins while an AR toggle is settling, otherwise the ARCore
+   session is TRACKING whenever it has a reason to run (AR view, or keyframes on). */
+const ART = {TRACKING:['TRACKING','var(--fix-good)'], LIMITED:['LIMITED','var(--fix-warn)'],
+             off:['off','var(--ink-faint)']};
+const arTrackState = c => c.arTrack==='limited' ? 'LIMITED'
+                        : (c.view==='ar' || c.keyframes!==false) ? 'TRACKING' : 'off';
+function paintArTrack(){
+  const [txt,col]=ART[arTrackState(S.cap)];
+  $$('[data-artrack]').forEach(el=>{ el.textContent=txt; el.style.color=col; });
+}
+/* Re-anchoring the AR session costs a beat of tracking quality on real hardware —
+   show it: LIMITED/amber for ~1.4 s after a view toggle, then back to TRACKING. */
+let arTrkTimer=null;
+function arBlip(){
+  S.cap.arTrack='limited'; paintArTrack();
+  clearTimeout(arTrkTimer);
+  arTrkTimer=setTimeout(()=>{ arTrkTimer=null; S.cap.arTrack=null; paintArTrack(); }, 1400);
+}
+/* The keyframe counter rides the health corner of the viewport: it exists only while
+   a session is actually recording *and* keyframes are on — otherwise nothing ticks. */
+function paintKf(){
+  const c=S.cap, live = c.state==='rec' && c.keyframes!==false;
+  const chip=$('#cap-kfchip');
+  if(chip){ chip.style.display = live?'':'none'; chip.textContent='KF '+c.kf; }
+  const out=$('#cap-kf-out'); if(out) out.textContent=String(c.kf);
+}
+
 A.capture = ()=>{
   const c=S.cap, p=proj(), rec=c.state==='rec', paused=c.state==='paused';
+  const kfOn = c.keyframes!==false, kfLive = rec && kfOn;
+  const [artTxt,artCol] = ART[arTrackState(c)];
   const canRec = FIX[S.rtk.fix] && (!S.set.gate || !PROFILES[p.profile].gate.includes('blocks')
                   || FIXORDER.indexOf(S.rtk.fix)>=FIXORDER.indexOf('RTK_FLOAT'));
   const live = c.state!=='idle';
@@ -1551,12 +1608,16 @@ A.capture = ()=>{
       <div class="ovl" style="bottom:12px;left:14px"><span class="chip onview">
         <span class="dot" style="background:var(--pose)"></span>${c.liveSlam?'LIVE MAP · SLAM':'RAW · '+SENSORS[p.sensor].code}</span></div>
       <div class="ovl" style="bottom:12px;right:14px"><span class="chip onview ${c.health==='deg'?'warn':''}" id="cap-health">${c.health==='deg'?'Degraded':'Healthy'}</span></div>
+      <!-- the keyframe counter rides the TOP band of the viewport: that strip stays on
+           screen with the sheet open, so the switch you just flipped is verifiable -->
+      <div class="ovl" style="top:12px;left:14px"><span class="chip onview kfchip" id="cap-kfchip"
+        title="Camera keyframes written this session" style="${kfLive?'':'display:none'}">KF ${c.kf}</span></div>
       ${c.state==='idle'&&c.prog===0?`<div class="ovl" style="inset:0;display:flex;align-items:center;justify-content:center">
         <span class="hint" style="text-align:center;max-width:70%">Press Record to start the session.<br>
         The engine records every raw byte either way.</span></div>`:''}
       <button class="dispfab ovl act" id="cap-dispfab" data-act="capSheet" data-arg="open"
               aria-haspopup="dialog" aria-expanded="${!!c.sheet}" aria-controls="cap-sheet"
-              title="Display settings" aria-label="Display settings">${I('sliders')}</button>
+              title="Capture settings" aria-label="Capture settings">${I('sliders')}</button>
     </div>
     <div class="statpanel">
       <div class="stat"><em id="cap-pps">0</em><label>pts / s</label></div>
@@ -1582,8 +1643,10 @@ A.capture = ()=>{
     </div>
     <div class="body haspad" style="flex:none;height:126px;padding:0 16px">
       <div class="sect" style="padding-left:0">AR + camera keyframes</div>
-      ${KV('AR tracking', `<span id="cap-artrack" style="color:var(--${c.view==='ar'?'fix-good':'ink-faint'})">${c.view==='ar'?'TRACKING':'off'}</span>`)}
-      ${KV('Keyframes written', String(c.kf))}
+      ${KV('AR tracking', `<span id="cap-artrack-body" data-artrack style="color:${artCol}">${artTxt}</span>`)}
+      ${KV('Keyframes written', kfOn
+        ? `<span id="cap-kf-out">${c.kf}</span><span style="color:var(--ink-faint)"> · ${c.kfRate} fps</span>`
+        : '<span style="color:var(--ink-faint)">off — no colorization</span>')}
       ${KV('Tracking-loss episodes','0')}
       ${KV('Skipped (turning too fast)', String(c.drops))}
       ${KV('Rolling shutter','not reported by this camera')}
@@ -1591,32 +1654,53 @@ A.capture = ()=>{
   + (c.sheet ? capSheet(c) : '');
 };
 
-/* The display bottom sheet — A14's display contract at thumb scale.
-   It covers the lower 60 % of the screen and nothing more: the viewport stays
-   on screen above it, so the colour ramp, point size and LOD budget are all
+/* The capture bottom sheet — A14's view + AR/camera + display contract at thumb scale.
+   It covers the lower 74 % of the screen and nothing more: a live band of the viewport
+   stays on screen above it, so the colour ramp, point size and LOD budget are all
    verified against the live cloud while the sheet is still open. Every control
    writes straight to S.cap.* and repaints the canvas without a re-render, so
-   the sheet never jumps under your thumb. */
+   the sheet never jumps under your thumb. View is pinned above the scroll so it is
+   always one thumb away; AR & Camera and the display controls scroll under it. */
 function capSheet(c){
   const COLOURS=[['height','Height'],['rgb','RGB'],['intensity','Intensity']];
   const VIEWS=[['3d','3D orbit'],['ar','AR overlay']];
+  const RATES=[['2','2 fps'],['3','3 fps'],['5','5 fps']];
+  const kfOn=c.keyframes!==false, kfRate=String(c.kfRate||3);
+  const [artTxt,artCol]=ART[arTrackState(c)];
   return `<div class="sheet-scrim" id="cap-sheet-scrim" data-act="capSheet" data-arg="close"
                aria-hidden="true"></div>
     <section class="sheet" id="cap-sheet" role="dialog" aria-modal="false" tabindex="-1"
-             aria-label="Display settings">
+             aria-label="Capture settings">
       <button class="sheet-grab" data-act="capSheet" data-arg="close"
-              aria-label="Close display settings"><i></i></button>
+              aria-label="Close capture settings"><i></i></button>
       <div class="sheet-head">
-        <h2>Display</h2>
+        <h2>Capture settings</h2>
         <span class="hint" style="margin-left:auto;font-family:var(--mono);font-size:10px;
               letter-spacing:.13em;text-transform:uppercase">A14 · live</span>
       </div>
-      <div class="sheet-body">
+      <div class="sheet-pin">
         <div class="sheet-row" id="cap-view-row">
           <label>View <i>how the cloud is framed</i><b id="cap-view-out">${VIEWS.find(x=>x[0]===(c.view||'3d'))[1]}</b></label>
           <div class="seg sheetseg viewseg">${VIEWS.map(([v,l])=>
             `<button data-act="capView" data-arg="${v}" aria-pressed="${v===(c.view||'3d')}">${l}</button>`).join('')}</div>
         </div>
+      </div>
+      <div class="sheet-body">
+        <div class="sheet-sect">AR &amp; Camera</div>
+        <div class="sheet-row swrow" id="cap-kf-row">
+          <button class="sw big sheetsw" id="cap-kf-sw" role="switch" aria-pressed="${kfOn}" data-act="capKf">
+            <span class="swlab">Camera keyframes<em>for colorization · motion-gated</em></span><i></i></button>
+        </div>
+        <div class="sheet-row${kfOn?'':' dimmed'}" id="cap-kfrate-row">
+          <label>Keyframe rate <i>2 – 5 fps</i><b id="cap-kfrate-out">${kfRate} fps</b></label>
+          <div class="seg sheetseg">${RATES.map(([v,l])=>
+            `<button data-act="capKfRate" data-arg="${v}" aria-pressed="${v===kfRate}"${kfOn?'':' aria-disabled="true"'}>${l}</button>`).join('')}</div>
+        </div>
+        <div class="sheet-row readout" id="cap-artrack-row">
+          <label>AR tracking <i>ARCore · read-only</i>
+            <b id="cap-artrack" data-artrack style="color:${artCol};font-family:var(--mono);font-size:11.5px;letter-spacing:.1em">${artTxt}</b></label>
+        </div>
+        <div class="sheet-sect">Display</div>
         <div class="sheet-row">
           <label>Colour mode <b id="cap-colour-out">${COLOURS.find(x=>x[0]===(c.color||'height'))[1]}</b></label>
           <div class="seg sheetseg">${COLOURS.map(([v,l])=>
@@ -2380,8 +2464,8 @@ const HINTS={
   mid360:'Run the self-test — it animates for 2 s, then unlocks “Save to project”.',
   calib:'Capture 8 poses → Solve → read the split-half gate → verify.',
   capture:'Press Record: the cloud streams in progressively. Toggle Live-SLAM, drag to orbit. '
-         +'On Android the sliders icon on the view opens the Display bottom sheet — view mode (3D orbit / '
-         +'AR overlay), colour, point size and LOD all live there; on the desktops the '
+         +'On Android the sliders icon on the view opens the Capture-settings bottom sheet — view mode (3D orbit / '
+         +'AR overlay), AR & camera keyframes (on/off + 2/3/5 fps) with the AR-tracking readout, then colour, point size and LOD all live there; on the desktops the '
          +'record cluster sits under the viewport.',
   rtk:'Pair a rover → pick a mountpoint → Connect. The fix climbs SINGLE → FLOAT → FIXED.',
   processing:'Queue a job — it advances through the engine’s real stage labels.',
@@ -2657,7 +2741,7 @@ const ACT = {
     if(c.state!=='idle'){ toast('Live-SLAM is editable only while idle'); return; }
     c.liveSlam=!c.liveSlam; toast(c.liveSlam?'Live-SLAM: registered map (kSlamMap)':'Record-only: raw returns, no registration');
     render(); },
-  /* View mode (3D orbit ⇄ AR overlay) now lives at the top of the display sheet.
+  /* View mode (3D orbit ⇄ AR overlay) is pinned at the top of the capture sheet.
      Same in-place treatment as the colour chips: patch the pressed states, patch the
      AR-tracking readout behind the sheet, repaint the canvas — no re-render, so the
      sheet never jumps and the backdrop swap is verifiable while it is still open. */
@@ -2671,11 +2755,32 @@ const ACT = {
         if(on) label=b.textContent.trim();
       });
       const out=$('#cap-view-out'); if(out) out.textContent=label;
-      const trk=$('#cap-artrack');
-      if(trk){ trk.textContent = v==='ar'?'TRACKING':'off';
-               trk.style.color = v==='ar'?'var(--fix-good)':'var(--ink-faint)'; }
+      arBlip();
       redraw();
-    } else render(); },
+    } else { arBlip(); render(); } },
+  /* Camera keyframes (B7/B8): the ARCore colorization capture. Off means no RGB is
+     kept, so the KF counter on the viewport disappears and the rate row goes inert. */
+  capKf:()=>{ const c=S.cap; c.keyframes = c.keyframes===false;
+    const sh=$('#cap-sheet');
+    if(c.sheet && sh){
+      const sw=$('#cap-kf-sw'); if(sw) sw.setAttribute('aria-pressed', String(c.keyframes));
+      const rr=$('#cap-kfrate-row');
+      if(rr){ rr.classList.toggle('dimmed', !c.keyframes);
+        $$('[data-act="capKfRate"]',rr).forEach(b=>{
+          if(c.keyframes) b.removeAttribute('aria-disabled'); else b.setAttribute('aria-disabled','true'); }); }
+      paintArTrack(); paintKf();
+    } else render();
+    toast(c.keyframes ? `Camera keyframes on — ${c.kfRate} fps, motion-gated, written for colorization`
+                      : 'Camera keyframes off — geometry only, no RGB for colorization'); },
+  capKfRate:(v)=>{ const c=S.cap; c.kfRate = +v;
+    const sh=$('#cap-sheet');
+    if(c.sheet && sh){
+      $$('[data-act="capKfRate"]',sh).forEach(b=>b.setAttribute('aria-pressed', String(b.dataset.arg===String(v))));
+      const out=$('#cap-kfrate-out'); if(out) out.textContent=`${c.kfRate} fps`;
+      paintKf();
+    } else render();
+    toast(c.keyframes===false ? `Keyframe rate set to ${c.kfRate} fps — takes effect when camera keyframes are on`
+                              : `Keyframe rate ${c.kfRate} fps — ${c.kfRate>3?'denser colour, larger .lscan':'lighter on the camera pipeline'}`); },
   capFollow:(v)=>{ S.cap.follow = v==='follow'; render(); },
   /* Colour mode lives in the bottom sheet: patch the pressed states in place and
      repaint the canvas rather than re-rendering, so the sheet stays put. */
@@ -2705,7 +2810,7 @@ const ACT = {
     }
     S.cap.sheet=true; render();
     const sh=$('#cap-sheet'); if(sh) sh.focus();   // focus lands in the dialog, not on the grabber
-    toast('Display sheet — view mode, colour, point size and LOD apply to the live cloud behind it'); },
+    toast('Capture settings — view, AR & camera keyframes, colour, point size and LOD, all live behind the sheet'); },
 
   /* RTK */
   rtkRover:(i)=>{ i=+i;
@@ -2909,11 +3014,18 @@ function tick(now){
   for(const [o,key] of [[S.cap,'cap'],[S.dcap,'dcap']]){
     if(o.state==='rec'){
       const step = RM?0.11:dt/CAP_DUR;
+      const es = RM?CAP_DUR*0.11:dt;
       o.prog=Math.min(1,o.prog+step);
-      o.elapsed+=RM?CAP_DUR*0.11:dt;
+      o.elapsed+=es;
       o.pts=o.prog*CAP_PTS; o.mb=o.prog*CAP_MB;
       o.rate=199987+Math.round(Math.sin(now/300)*1400);
-      o.kf=Math.floor(o.elapsed/2.6); o.drops=Math.floor(o.elapsed/9);
+      /* camera keyframes: kfRate fps, accumulated only while the toggle is on — turning
+         it off stops the counter where it stood instead of rewriting history. Under
+         reduced motion the session clock advances in ~2.9 s steps, so the counter
+         steps with it rather than animating. */
+      if(o.keyframes!==false) o.kfAcc=(o.kfAcc||0)+es*(o.kfRate||3);
+      o.kf=Math.floor(o.kfAcc||0);
+      o.drops=Math.floor(o.elapsed/9);
       o.pulse=Math.sin(now/220)*2.5;
       if(o.prog>=1){ o.state='idle'; rerender=true; toast('Recording stopped — the walk is complete'); }
       dirty=true;
@@ -2926,6 +3038,7 @@ function tick(now){
       set('cap-pts',(S.cap.pts/1e6).toFixed(2)+' M');
       set('cap-dur',mmss(S.cap.elapsed));
       set('cap-mb',Math.round(S.cap.mb)+' MB');
+      paintKf();                                   // KF counter + "keyframes written"
     } else {
       const el=document.getElementById('dcap-stats');
       if(el) el.textContent=`${fmt(Math.round(S.dcap.pts))} pts · ${f1(S.dcap.elapsed)} s · ${fmt(S.dcap.rate)} pts/s`;
@@ -3094,12 +3207,13 @@ const CHECK=[
   ['a-cap-traj','The ember trajectory draws itself with the walk'],
   ['a-cap-stats','pts/s, points, duration and .lscan size tick live'],
   ['a-cap-rec','Record / Pause / Stop actually change state'],
-  ['a-cap-ar','View mode lives at the top of the Display sheet: AR overlay ⇄ 3D orbit swaps the viewport to the camera-anchored variant behind the open sheet — there is no floating 3D/AR control on the viewport any more'],
+  ['a-cap-ar','View mode is pinned at the top of the Capture-settings sheet: AR overlay ⇄ 3D orbit swaps the viewport to the camera-anchored variant behind the open sheet — there is no floating 3D/AR control on the viewport any more'],
   ['a-cap-slam','Live-SLAM ⇄ Record-only visibly changes registered vs raw'],
   ['a-cap-gate','RTK gate blocks Record for a Survey project below RTK Float'],
   ['a-cap-orbit','Orbit / Follow, and drag-to-rotate in the viewport'],
-  ['a-cap-sheet','The Display button on the viewport is the single entry point for view + display settings: it opens a bottom sheet — grabber, scrim, ~70 % height — and the grabber, the scrim, Esc and Done all close it'],
-  ['a-cap-disp','In the sheet: the 48 px View row (3D orbit / AR overlay) on top, then colour-mode chips (40 px), point-size and LOD sliders (28 px knobs) — all apply to the live cloud while the sheet is open'],
+  ['a-cap-kf','AR & Camera section in the capture sheet: the 44 px Camera-keyframes switch and the 2 / 3 / 5 fps rate chips — the KF counter on the viewport ticks while recording with keyframes on, disappears when they are off, and the rate row dims to 50 % while it is off'],
+  ['a-cap-sheet','The Capture-settings button on the viewport is the single entry point for view + AR/camera + display: it opens a bottom sheet — grabber, scrim, ~74 % height, View pinned above the scroll — and the grabber, the scrim, Esc and Done all close it'],
+  ['a-cap-disp','In the sheet: the pinned 48 px View row (3D orbit / AR overlay), then AR & Camera (keyframes switch, rate chips, AR-tracking readout), then colour-mode chips (40 px), point-size and LOD sliders (28 px knobs) — all apply to the live cloud while the sheet is open'],
   ['a-cap-view','The viewport stays visible above the sheet, so every display change — view mode included — is verifiable as you make it'],
   ['a-cap-sum','Stop writes the session summary back onto the project'],
  ]],
