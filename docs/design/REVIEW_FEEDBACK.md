@@ -19,3 +19,6 @@
 
 Verified headless via CDP: 60/60 assertions, zero console errors, no dead controls
 (87 actions audited across every screen). Screenshots: `redesign-exports/fix-*.png`.
+
+## 2026-08-16 — round 2
+3. **Android · Capture**: move the AR setting into the Display bottom sheet — view mode (3D/AR) belongs with the display settings, not as a separate floating control.
