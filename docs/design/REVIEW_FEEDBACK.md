@@ -47,3 +47,6 @@ Verified headless via CDP: 44/44 round-2 assertions plus the full round-1 suite 
 (60/60) — 104 total, zero console errors, zero uncaught exceptions, 87 actions audited across
 every screen with the sheet both open and closed, and a record → AR-toggle → stop cycle driven
 end to end. Screenshots: `redesign-exports/fix-r2-*.png`.
+
+## 2026-08-16 — round 2 clarification
+3b. **Clarified**: "AR setting" = the **ARCore + camera keyframes** controls (colorization capture), not the view-mode toggle. The Display sheet must include an "AR & Camera" section: camera-keyframes on/off (+ rate), AR tracking status. View row from 3a stays unless owner objects.
