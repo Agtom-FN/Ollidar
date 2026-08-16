@@ -1,0 +1,69 @@
+{
+	"backtraceGraph" : 
+	{
+		"commands" : 
+		[
+			"install"
+		],
+		"files" : 
+		[
+			"/Users/admin/lidarscan/engine/third_party/Livox-SDK2/sdk_core/CMakeLists.txt"
+		],
+		"nodes" : 
+		[
+			{
+				"file" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 142,
+				"parent" : 0
+			}
+		]
+	},
+	"installers" : 
+	[
+		{
+			"backtrace" : 1,
+			"component" : "Unspecified",
+			"destination" : "lib",
+			"paths" : 
+			[
+				"scanengine/livox_sdk2/sdk_core/liblivox_lidar_sdk_static.a"
+			],
+			"targetId" : "livox_lidar_sdk_static::@5ce95165cb88f8b1333c",
+			"targetIndex" : 7,
+			"type" : "target"
+		},
+		{
+			"backtrace" : 1,
+			"component" : "Unspecified",
+			"destination" : "include",
+			"paths" : 
+			[
+				"/Users/admin/lidarscan/engine/third_party/Livox-SDK2/sdk_core/../include/livox_lidar_def.h",
+				"/Users/admin/lidarscan/engine/third_party/Livox-SDK2/sdk_core/../include/livox_lidar_api.h",
+				"/Users/admin/lidarscan/engine/third_party/Livox-SDK2/sdk_core/../include/livox_lidar_cfg.h"
+			],
+			"type" : "file"
+		},
+		{
+			"backtrace" : 1,
+			"component" : "Unspecified",
+			"destination" : "lib",
+			"paths" : 
+			[
+				"/Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/x86_64/liblivox_lidar_sdk_shared.so"
+			],
+			"targetId" : "livox_lidar_sdk_shared::@5ce95165cb88f8b1333c",
+			"targetIndex" : 6,
+			"type" : "target"
+		}
+	],
+	"paths" : 
+	{
+		"build" : "scanengine/livox_sdk2/sdk_core",
+		"source" : "/Users/admin/lidarscan/engine/third_party/Livox-SDK2/sdk_core"
+	}
+}

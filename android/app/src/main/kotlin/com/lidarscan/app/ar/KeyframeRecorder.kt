@@ -100,6 +100,22 @@ class KeyframeRecorder(
     private val running = AtomicBoolean(false)
     private val nextIndex = AtomicInteger(0)
 
+    /**
+     * Redesign: the Capture-settings sheet's camera-keyframes switch. Read on
+     * the ARCore/GL thread in [onFrame] and written from the UI thread, hence
+     * atomic.
+     */
+    private val keyframesEnabled = AtomicBoolean(true)
+
+    /** Turns the keyframe pipeline on/off mid-session without stopping the recorder. */
+    fun setEnabled(enabled: Boolean) {
+        val was = keyframesEnabled.getAndSet(enabled)
+        if (!was && enabled) selector.reset()
+    }
+
+    /** §3.5's 2–5 fps cadence, changeable from the sheet while recording. */
+    fun setTargetFps(fps: Double) = selector.setTargetFps(fps)
+
     @Volatile private var writerHandle: Long = 0L
     @Volatile private var framesDir: File? = null
 
@@ -162,6 +178,14 @@ class KeyframeRecorder(
      */
     fun onFrame(frame: Frame) {
         if (!running.get()) return
+        // Redesign: the Capture-settings sheet's "Camera keyframes" switch.
+        // Gating here rather than detaching the listener is deliberate — the
+        // ARCore frame callback is shared with the pose pump, and the count
+        // must FREEZE where it stood rather than be rewritten or reset when
+        // the switch goes off (round 3's resolution, verbatim). Coming back on
+        // resets the selector's slot so the first frame after is not judged
+        // against a deadline from before the gap.
+        if (!keyframesEnabled.get()) return
         val handle = writerHandle
         if (handle == 0L) return
 

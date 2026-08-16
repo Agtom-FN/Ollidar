@@ -1,50 +1,73 @@
 package com.lidarscan.app.ui.processing
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.ViewInAr
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.lidarscan.app.di.AppContainer
+import com.lidarscan.app.ui.components.HeroHeader
+import com.lidarscan.app.ui.components.Hint
+import com.lidarscan.app.ui.components.PrimaryPill
+import com.lidarscan.app.ui.components.ScanCard
+import com.lidarscan.app.ui.components.ScanChip
+import com.lidarscan.app.ui.components.ScanDims
+import com.lidarscan.app.ui.components.SecondaryPill
+import com.lidarscan.app.ui.components.SegmentedPill
+import com.lidarscan.app.ui.theme.DisplayFontFamily
+import com.lidarscan.app.ui.theme.Ember
+import com.lidarscan.app.ui.theme.InkFaint
+import com.lidarscan.app.ui.theme.MonoMeta
+import com.lidarscan.app.ui.theme.SemBad
+import com.lidarscan.app.ui.theme.SemGood
+import com.lidarscan.app.ui.theme.SemWarn
 import com.lidarscan.core.jobs.ActionGate
+import com.lidarscan.core.jobs.JobKind
 import com.lidarscan.core.jobs.JobState
 import com.lidarscan.core.jobs.ProcessingJob
 import com.lidarscan.core.jobs.ProcessingMode
@@ -68,7 +91,17 @@ fun ProcessingRoute(
     ProcessingScreen(state, vm, onBack, onOpenSettings)
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * The redesign's Jobs tab: a **"Processing"** hero, the This-phone / Cloud /
+ * Bundle segmented pill, and icon-tile job cards with ember progress.
+ *
+ * Everything B6 could do here it can still do — the same three modes, the same
+ * gates with the same refusal reasons, the same queue with cancel — but the
+ * mode chooser stopped being three `FilterChip`s in a row and the queue
+ * stopped being a stack of text. A job now reads as a tile: what kind it is
+ * (icon), what it is working on (mono sub-line), and how far along (a state
+ * chip, plus an ember bar while it is actually running).
+ */
 @Composable
 fun ProcessingScreen(
     state: ProcessingUiState,
@@ -86,158 +119,188 @@ fun ProcessingScreen(
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Processing") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-            )
-        },
-        snackbarHost = { SnackbarHost(snackbar) },
-    ) { padding ->
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Column(
-            modifier = Modifier
+            Modifier
                 .fillMaxSize()
-                .padding(padding)
-                .padding(16.dp)
+                .statusBarsPadding()
+                .navigationBarsPadding()
                 .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            if (!state.engineAvailable) {
-                InfoCard(
-                    "The native engine is not loaded in this build, so nothing can be processed. " +
-                        "Check Settings → Engine (developer): the simulated engine has no processing pipeline behind it.",
-                )
-            }
-
-            Text("Mode", style = MaterialTheme.typography.titleSmall)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ProcessingMode.entries.forEach { m ->
-                    FilterChip(
-                        selected = state.mode == m,
-                        onClick = { vm.setMode(m) },
-                        label = { Text(m.displayName) },
-                    )
-                }
-            }
-            Text(
-                state.mode.summary,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            HeroHeader(
+                title = "Processing",
+                subtitle = state.project?.manifest?.name ?: "no project",
             )
 
-            when (state.mode) {
-                ProcessingMode.LOCAL -> LocalActions(state, vm)
-                ProcessingMode.CLOUD -> CloudActions(state, vm, onOpenSettings)
-                ProcessingMode.EXTRACT_FOR_TRANSFER -> TransferActions(state) { share ->
-                    vm.transferBundle(context, share)
-                }
-            }
-
-            Spacer(Modifier.height(4.dp))
-            HorizontalDivider()
-            Text("Queue", style = MaterialTheme.typography.titleSmall)
-            if (state.jobs.isEmpty()) {
-                Text(
-                    "Nothing queued. The queue runs one job at a time — that is A15's design, not a limit of this screen.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+            Column(Modifier.padding(horizontal = 16.dp)) {
+                SegmentedPill(
+                    options = listOf(
+                        ProcessingMode.LOCAL to "This phone",
+                        ProcessingMode.CLOUD to "Cloud",
+                        ProcessingMode.EXTRACT_FOR_TRANSFER to "Bundle",
+                    ),
+                    selected = state.mode,
+                    onSelect = vm::setMode,
+                    height = 46.dp,
+                    modifier = Modifier.testTag("processingModeRow"),
                 )
-            } else {
-                state.jobs.reversed().forEach { job -> JobRow(job) { vm.cancelJob(job.id) } }
+                Spacer(Modifier.height(11.dp))
+                Hint(state.mode.summary, color = InkFaint)
+                Spacer(Modifier.height(14.dp))
+
+                if (!state.engineAvailable) {
+                    ScanCard {
+                        Text(
+                            "The native engine is not loaded in this build, so nothing can be processed. " +
+                                "Check Settings → Engine (developer): the simulated engine has no processing " +
+                                "pipeline behind it.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = SemWarn,
+                        )
+                    }
+                    Spacer(Modifier.height(14.dp))
+                }
+
+                when (state.mode) {
+                    ProcessingMode.LOCAL -> LocalActions(state, vm)
+                    ProcessingMode.CLOUD -> CloudActions(state, vm, onOpenSettings)
+                    ProcessingMode.EXTRACT_FOR_TRANSFER -> TransferActions(state) { share ->
+                        vm.transferBundle(context, share)
+                    }
+                }
+
+                Spacer(Modifier.height(20.dp))
+                SectionTitle("Queue")
+                Spacer(Modifier.height(8.dp))
+
+                if (state.jobs.isEmpty()) {
+                    Hint(
+                        "Nothing queued. The queue runs one job at a time — that is A15's design, not a limit " +
+                            "of this screen.",
+                        color = InkFaint,
+                    )
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        state.jobs.reversed().forEach { job ->
+                            JobTile(job) { vm.cancelJob(job.id) }
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(14.dp))
+                Hint(
+                    "Jobs continue in the background. Cloud needs the server configured in Settings.",
+                    color = InkFaint,
+                )
+                Spacer(Modifier.height(ScanDims.TabBarClearance))
             }
         }
+
+        SnackbarHost(
+            snackbar,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = ScanDims.TabBarClearance),
+        ) { data -> Snackbar(snackbarData = data, containerColor = MaterialTheme.colorScheme.surfaceContainerHigh) }
     }
 }
+
+@Composable
+private fun SectionTitle(text: String) {
+    Text(
+        text,
+        fontFamily = DisplayFontFamily,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 17.sp,
+        color = MaterialTheme.colorScheme.onSurface,
+    )
+}
+
+// ── the three modes' actions ────────────────────────────────────────────────
 
 @Composable
 private fun LocalActions(state: ProcessingUiState, vm: ProcessingViewModel) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         GatedAction(
+            icon = Icons.Filled.ViewInAr,
             title = "Post-process",
-            detail = "Full-density LIO re-run, loop closure and pose-graph optimization from the recorded streams. " +
-                "This is the expensive one — expect minutes, and the phone to get warm.",
+            detail = "Full-density LIO re-run, loop closure and pose-graph optimization from the recorded " +
+                "streams. This is the expensive one — expect minutes, and the phone to get warm.",
             gate = state.postProcessGate,
             onRun = vm::postProcess,
         )
         GatedAction(
+            icon = Icons.Filled.Palette,
             title = "Colorize",
             detail = "Samples camera keyframes onto the processed cloud. " +
                 "${state.keyframeCount} keyframe(s) recorded · clock sync: ${state.syncQuality.label}.",
             gate = state.colorizeGate,
             onRun = vm::colorize,
         )
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Export", style = MaterialTheme.typography.titleMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ExportFormat.pointCloudFormats.forEach { f ->
-                        FilterChip(
-                            selected = state.exportFormat == f,
-                            onClick = { vm.setExportFormat(f) },
-                            label = { Text(f.displayName) },
-                        )
-                    }
-                }
-                Text(
-                    state.exportFormat.description,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                state.exportNote?.let {
-                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
-                }
-                GateFooter(state.exportGate) { vm.export() }
+        ScanCard {
+            TileHead(Icons.Filled.Download, "Export")
+            Spacer(Modifier.height(10.dp))
+            SegmentedPill(
+                options = ExportFormat.pointCloudFormats.map { it to it.displayName },
+                selected = state.exportFormat,
+                onSelect = vm::setExportFormat,
+            )
+            Spacer(Modifier.height(8.dp))
+            Hint(state.exportFormat.description, color = InkFaint)
+            state.exportNote?.let {
+                Spacer(Modifier.height(6.dp))
+                Hint(it, color = SemWarn)
             }
+            Spacer(Modifier.height(10.dp))
+            GateFooter(state.exportGate) { vm.export() }
         }
     }
 }
 
 @Composable
 private fun CloudActions(state: ProcessingUiState, vm: ProcessingViewModel, onOpenSettings: () -> Unit) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Cloud submit", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "The capture is packaged as a .lscan.zip (the same bundle Extract-for-transfer produces, minus the " +
-                    "processed results), uploaded in resumable chunks, and the worker's results land in this project's " +
-                    "processed/ directory.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+    val c = state.cloud
+    ScanCard {
+        TileHead(Icons.Filled.CloudUpload, "Cloud submit")
+        Spacer(Modifier.height(8.dp))
+        Hint(
+            "The capture is packaged as a .lscan.zip (the same bundle Extract-for-transfer produces, minus " +
+                "the processed results), uploaded in resumable chunks, and the worker's results land in this " +
+                "project's processed/ directory.",
+            color = InkFaint,
+        )
+        if (c.running || c.jobId != null) {
+            Spacer(Modifier.height(12.dp))
+            Text(c.phase, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
+            Spacer(Modifier.height(6.dp))
+            EmberProgress(
+                if (c.uploadFraction < 1f) c.uploadFraction * 0.5f else 0.5f + c.serverProgress * 0.5f,
             )
-            val c = state.cloud
-            if (c.running || c.jobId != null) {
-                Text(c.phase, style = MaterialTheme.typography.bodyMedium)
-                LinearProgressIndicator(
-                    progress = {
-                        if (c.uploadFraction < 1f) c.uploadFraction * 0.5f else 0.5f + c.serverProgress * 0.5f
-                    },
-                    modifier = Modifier.fillMaxWidth(),
+            c.jobId?.let {
+                Spacer(Modifier.height(6.dp))
+                Text("Server job $it · ${c.serverState ?: "…"}", style = MonoMeta, color = InkFaint)
+            }
+        }
+        c.error?.let {
+            Spacer(Modifier.height(8.dp))
+            Hint(it, color = SemBad)
+        }
+        c.resultFile?.let {
+            Spacer(Modifier.height(6.dp))
+            Text("Result: ${it.name}", style = MonoMeta, color = InkFaint)
+        }
+        Spacer(Modifier.height(12.dp))
+        if (!state.cloudGate.enabled) {
+            Hint(state.cloudGate.reason.orEmpty(), color = SemBad)
+            Spacer(Modifier.height(8.dp))
+            SecondaryPill(text = "Open Settings", height = 46.dp, onClick = onOpenSettings)
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PrimaryPill(
+                    text = "Upload and process",
+                    height = 46.dp,
+                    enabled = !c.running,
+                    onClick = vm::cloudSubmit,
                 )
-                c.jobId?.let { Text("Server job $it · ${c.serverState ?: "…"}", style = MaterialTheme.typography.bodySmall) }
-            }
-            c.error?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-            }
-            c.resultFile?.let {
-                Text("Result: ${it.name}", style = MaterialTheme.typography.bodySmall)
-            }
-            if (!state.cloudGate.enabled) {
-                Text(
-                    state.cloudGate.reason.orEmpty(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                )
-                TextButton(onClick = onOpenSettings) { Text("Open Settings") }
-            } else {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = vm::cloudSubmit, enabled = !c.running) { Text("Upload and process") }
-                    if (c.running) OutlinedButton(onClick = vm::cancelCloud) { Text("Cancel") }
-                }
+                if (c.running) SecondaryPill(text = "Cancel", height = 46.dp, onClick = vm::cancelCloud)
             }
         }
     }
@@ -245,93 +308,156 @@ private fun CloudActions(state: ProcessingUiState, vm: ProcessingViewModel, onOp
 
 @Composable
 private fun TransferActions(state: ProcessingUiState, onRun: (Boolean) -> Unit) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Transfer bundle", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "Packages the whole project directory — manifest, raw streams, camera frames and any processed " +
-                    "results — as a single .lscan.zip and hands it to the share sheet. The desktop app imports it, " +
-                    "processes it, and exports a results bundle back. No server is involved.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (!state.transferGate.enabled) {
-                Text(
-                    state.transferGate.reason.orEmpty(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                )
-            } else {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { onRun(true) }) { Text("Package and share") }
-                    OutlinedButton(onClick = { onRun(false) }) { Text("Package only") }
-                }
+    ScanCard {
+        TileHead(Icons.Filled.Inventory2, "Transfer bundle")
+        Spacer(Modifier.height(8.dp))
+        Hint(
+            "Packages the whole project directory — manifest, raw streams, camera frames and any processed " +
+                "results — as a single .lscan.zip and hands it to the share sheet. The desktop app imports it, " +
+                "processes it, and exports a results bundle back. No server is involved.",
+            color = InkFaint,
+        )
+        Spacer(Modifier.height(12.dp))
+        if (!state.transferGate.enabled) {
+            Hint(state.transferGate.reason.orEmpty(), color = SemBad)
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PrimaryPill(text = "Package and share", height = 46.dp, onClick = { onRun(true) })
+                SecondaryPill(text = "Package only", height = 46.dp, onClick = { onRun(false) })
             }
         }
     }
 }
 
 @Composable
-private fun GatedAction(title: String, detail: String, gate: ActionGate, onRun: () -> Unit) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            GateFooter(gate, onRun)
-        }
+private fun GatedAction(
+    icon: ImageVector,
+    title: String,
+    detail: String,
+    gate: ActionGate,
+    onRun: () -> Unit,
+) {
+    ScanCard {
+        TileHead(icon, title)
+        Spacer(Modifier.height(8.dp))
+        Hint(detail, color = InkFaint)
+        Spacer(Modifier.height(10.dp))
+        GateFooter(gate, onRun)
     }
 }
 
+/**
+ * A refused action prints its reason instead of a button. That is B6's own
+ * rule, kept verbatim: the reason *is* the affordance, and an always-present
+ * disabled button with the reason hidden in a tooltip would be worse.
+ */
 @Composable
 private fun GateFooter(gate: ActionGate, onRun: () -> Unit) {
     if (gate.enabled) {
-        Button(onClick = onRun) { Text("Run") }
+        PrimaryPill(text = "Run", height = 46.dp, onClick = onRun)
     } else {
+        Hint(gate.reason.orEmpty(), color = SemBad)
+    }
+}
+
+/** The icon tile + title that heads every action card and every job row. */
+@Composable
+private fun TileHead(icon: ImageVector, title: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        JobIconTile(icon)
+        Spacer(Modifier.width(12.dp))
         Text(
-            gate.reason.orEmpty(),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.error,
+            title,
+            fontFamily = DisplayFontFamily,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 17.sp,
+            color = MaterialTheme.colorScheme.onSurface,
         )
     }
 }
 
 @Composable
-private fun JobRow(job: ProcessingJob, onCancel: () -> Unit) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(job.kind.displayName, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                AssistChip(onClick = {}, label = { Text("#${job.id}") })
-                if (job.state.isActive) {
-                    Spacer(Modifier.width(8.dp))
-                    TextButton(onClick = onCancel) { Text("Cancel") }
-                }
+private fun JobIconTile(icon: ImageVector) {
+    Box(
+        Modifier
+            .size(46.dp)
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(ScanDims.TileRadius))
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(ScanDims.TileRadius)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+// ── the queue ───────────────────────────────────────────────────────────────
+
+@Composable
+private fun JobTile(job: ProcessingJob, onCancel: () -> Unit) {
+    ScanCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            JobIconTile(jobIcon(job.kind))
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    job.kind.displayName,
+                    fontFamily = DisplayFontFamily,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 16.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    "#${job.id} · ${job.statusText}",
+                    style = MonoMeta,
+                    color = if (job.state == JobState.FAILED && !job.wasCancelled) SemBad else InkFaint,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
-            Text(
-                job.statusText,
-                style = MaterialTheme.typography.bodySmall,
-                color = if (job.state == JobState.FAILED && !job.wasCancelled) {
-                    MaterialTheme.colorScheme.error
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
-            )
-            if (job.state.isActive) {
-                Spacer(Modifier.height(6.dp))
-                LinearProgressIndicator(progress = { job.progress }, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.width(8.dp))
+            val (label, color) = jobStateChip(job)
+            ScanChip(text = label, color = color, showDot = true)
+        }
+        if (job.state.isActive) {
+            Spacer(Modifier.height(10.dp))
+            EmberProgress(job.progress)
+            Spacer(Modifier.height(4.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onCancel) { Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
         }
     }
 }
 
+/** The ember progress bar — the one place a job's motion is visible. */
 @Composable
-private fun InfoCard(text: String) {
-    Card(Modifier.fillMaxWidth()) {
-        Text(
-            text,
-            modifier = Modifier.padding(14.dp).fillMaxWidth(),
-            style = MaterialTheme.typography.bodySmall,
-            textAlign = TextAlign.Start,
-        )
-    }
+private fun EmberProgress(progress: Float) {
+    LinearProgressIndicator(
+        progress = { progress.coerceIn(0f, 1f) },
+        modifier = Modifier.fillMaxWidth().height(6.dp),
+        color = Ember,
+        trackColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        strokeCap = androidx.compose.ui.graphics.StrokeCap.Round,
+        gapSize = 0.dp,
+        drawStopIndicator = {},
+    )
+}
+
+private fun jobIcon(kind: JobKind): ImageVector = when (kind) {
+    JobKind.POST_PROCESS -> Icons.Filled.ViewInAr
+    JobKind.COLORIZE -> Icons.Filled.Palette
+    JobKind.EXPORT_POINTS -> Icons.Filled.Download
+    JobKind.TRANSFER_EXPORT -> Icons.Filled.Inventory2
+    JobKind.CLOUD_SUBMIT -> Icons.Filled.CloudUpload
+}
+
+private fun jobStateChip(job: ProcessingJob): Pair<String, Color?> = when {
+    job.wasCancelled -> "CANCELLED" to null
+    job.state == JobState.FAILED -> "FAILED" to SemBad
+    job.state == JobState.DONE -> "DONE" to SemGood
+    job.state == JobState.RUNNING -> "${(job.progress * 100).toInt()}%" to SemWarn
+    job.state == JobState.CANCELLING -> "CANCELLING" to SemWarn
+    else -> "QUEUED" to null
 }

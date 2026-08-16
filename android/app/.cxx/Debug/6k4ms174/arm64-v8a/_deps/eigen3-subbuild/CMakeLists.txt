@@ -19,7 +19,7 @@ project(eigen3-populate NONE)
 
 include(ExternalProject)
 ExternalProject_Add(eigen3-populate
-                     "UPDATE_DISCONNECTED" "False" "DOWNLOAD_EXTRACT_TIMESTAMP" "FALSE" "EXTERNALPROJECT_INTERNAL_ARGUMENT_SEPARATOR" "URL" "https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz" "URL_HASH" "SHA256=8586084f71f9bde545ee7fa6d00288b264a2b7ac3607b974e54d13e7162c1c72"
+                     "UPDATE_DISCONNECTED" "False" "DOWNLOAD_EXTRACT_TIMESTAMP" "FALSE" "EXTERNALPROJECT_INTERNAL_ARGUMENT_SEPARATOR" "URL" "https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz" "URL_HASH" "SHA256=8586084f71f9bde545ee7fa6d00288b264a2b7ac3607b974e54d13e7162c1c72" "SOURCE_SUBDIR" "cmake_subdir_that_does_not_exist"
                     SOURCE_DIR          "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src"
                     BINARY_DIR          "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-build"
                     CONFIGURE_COMMAND   ""

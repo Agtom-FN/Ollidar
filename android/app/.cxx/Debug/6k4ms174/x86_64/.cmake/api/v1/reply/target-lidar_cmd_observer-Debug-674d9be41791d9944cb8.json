@@ -1,0 +1,148 @@
+{
+	"artifacts" : 
+	[
+		{
+			"path" : "/Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/x86_64/lidar_cmd_observer"
+		}
+	],
+	"backtrace" : 1,
+	"backtraceGraph" : 
+	{
+		"commands" : 
+		[
+			"add_executable",
+			"target_link_libraries",
+			"target_include_directories"
+		],
+		"files" : 
+		[
+			"/Users/admin/lidarscan/engine/third_party/Livox-SDK2/samples/lidar_cmd_observer/CMakeLists.txt"
+		],
+		"nodes" : 
+		[
+			{
+				"file" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 4,
+				"parent" : 0
+			},
+			{
+				"command" : 1,
+				"file" : 0,
+				"line" : 12,
+				"parent" : 0
+			},
+			{
+				"command" : 2,
+				"file" : 0,
+				"line" : 6,
+				"parent" : 0
+			}
+		]
+	},
+	"compileGroups" : 
+	[
+		{
+			"compileCommandFragments" : 
+			[
+				{
+					"fragment" : "-g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -pthread -pthread -fno-limit-debug-info  -std=c++11 -fPIE"
+				}
+			],
+			"includes" : 
+			[
+				{
+					"backtrace" : 3,
+					"path" : "/Users/admin/lidarscan/engine/third_party/Livox-SDK2/samples/lidar_cmd_observer/../../3rdparty"
+				},
+				{
+					"backtrace" : 2,
+					"path" : "/Users/admin/lidarscan/engine/third_party/Livox-SDK2/sdk_core/../include"
+				}
+			],
+			"language" : "CXX",
+			"languageStandard" : 
+			{
+				"backtraces" : 
+				[
+					1
+				],
+				"standard" : "11"
+			},
+			"sourceIndexes" : 
+			[
+				0
+			],
+			"sysroot" : 
+			{
+				"path" : "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot"
+			}
+		}
+	],
+	"dependencies" : 
+	[
+		{
+			"backtrace" : 2,
+			"id" : "livox_lidar_sdk_static::@5ce95165cb88f8b1333c"
+		}
+	],
+	"id" : "lidar_cmd_observer::@4e92d51beaddcb33c096",
+	"link" : 
+	{
+		"commandFragments" : 
+		[
+			{
+				"fragment" : "-g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -pthread -pthread -fno-limit-debug-info",
+				"role" : "flags"
+			},
+			{
+				"fragment" : "-Wl,--build-id=sha1 -Wl,--no-rosegment -Wl,--no-undefined-version -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments",
+				"role" : "flags"
+			},
+			{
+				"backtrace" : 2,
+				"fragment" : "scanengine/livox_sdk2/sdk_core/liblivox_lidar_sdk_static.a",
+				"role" : "libraries"
+			},
+			{
+				"fragment" : "-latomic -lm",
+				"role" : "libraries"
+			}
+		],
+		"language" : "CXX",
+		"sysroot" : 
+		{
+			"path" : "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/sysroot"
+		}
+	},
+	"name" : "lidar_cmd_observer",
+	"nameOnDisk" : "lidar_cmd_observer",
+	"paths" : 
+	{
+		"build" : "scanengine/livox_sdk2/samples/lidar_cmd_observer",
+		"source" : "/Users/admin/lidarscan/engine/third_party/Livox-SDK2/samples/lidar_cmd_observer"
+	},
+	"sourceGroups" : 
+	[
+		{
+			"name" : "Source Files",
+			"sourceIndexes" : 
+			[
+				0
+			]
+		}
+	],
+	"sources" : 
+	[
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/admin/lidarscan/engine/third_party/Livox-SDK2/samples/lidar_cmd_observer/main.cpp",
+			"sourceGroupIndex" : 0
+		}
+	],
+	"type" : "EXECUTABLE"
+}

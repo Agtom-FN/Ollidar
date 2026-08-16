@@ -119,15 +119,35 @@ class RigMotionTracker(
  * frames S6 identifies as the budget's biggest term into the index.
  */
 class KeyframeSelector(
-    private val targetFps: Double = 3.0,
+    targetFps: Double = 3.0,
     private val maxAngularRateRadPerS: Double = Math.toRadians(15.0),
     private val maxLinearSpeedMPerS: Double = 1.5,
     /** How long to keep looking for a slower frame once one already qualifies, as a fraction of the slot. */
     private val slotHoldFraction: Double = 0.5,
 ) {
-    private val slotNs: Long = (1e9 / targetFps).toLong()
+    private var slotNs: Long = (1e9 / targetFps).toLong()
     private var nextDueNs: Long = Long.MIN_VALUE
     private var bestInSlot: Candidate? = null
+
+    /**
+     * The cadence the redesign's Capture-settings sheet exposes as a 2 / 3 / 5
+     * fps row — settable **mid-session**, which is why `targetFps` stopped
+     * being a `val` captured at construction.
+     *
+     * Changing the cadence resets the slot rather than rescaling the one in
+     * flight: the deadline that is already pending was computed under the old
+     * rate, and carrying it forward would emit one keyframe at neither rate.
+     * The already-written count is untouched — the counter the sheet and the
+     * Diagnostics row read is accumulated, not derived from elapsed × rate, so
+     * a rate change mid-recording stays honest about what is on disk.
+     */
+    fun setTargetFps(fps: Double) {
+        val clamped = fps.coerceIn(0.5, 30.0)
+        val next = (1e9 / clamped).toLong()
+        if (next == slotNs) return
+        slotNs = next
+        reset()
+    }
 
     data class Candidate(val tMonoNs: Long, val angularRateRadPerS: Double, val linearSpeedMPerS: Double)
 

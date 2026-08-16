@@ -20,6 +20,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -105,6 +107,66 @@ class CaptureViewModel(
     val cameraMode: StateFlow<CameraMode> = _cameraMode.asStateFlow()
     private val _liveSlam = MutableStateFlow(false)
     val liveSlam: StateFlow<Boolean> = _liveSlam.asStateFlow()
+
+    // --- redesign: the Capture-settings sheet's own state ---------------------
+    //
+    // All three live here rather than in Compose `remember` for the same reason
+    // the display controls above do: the sheet can be dismissed and reopened,
+    // and the device can rotate, without any of them snapping back.
+
+    /**
+     * §3.5's camera keyframes, on by default (the mockup's `S.cap.keyframes`).
+     * Gates [com.lidarscan.app.ar.KeyframeRecorder] mid-session; the written
+     * count freezes rather than resetting when this goes off.
+     */
+    private val _keyframesEnabled = MutableStateFlow(true)
+    val keyframesEnabled: StateFlow<Boolean> = _keyframesEnabled.asStateFlow()
+
+    /** §3.5's 2–5 fps cadence, as the sheet's 2 / 3 / 5 row. */
+    private val _keyframeRateFps = MutableStateFlow(3)
+    val keyframeRateFps: StateFlow<Int> = _keyframeRateFps.asStateFlow()
+
+    /**
+     * §3.12's LOD budget, in millions of points.
+     *
+     * The mockup labels this slider `2 – 20` and reads it out as a percentage.
+     * What this renderer actually implements is `DisplayParams.lodPointBudget`
+     * — a page-admission ceiling in points, not a per-page decimation — so the
+     * control keeps the mockup's range and its "sparse → every return" caption
+     * but reads out in **M points**, which is the number the renderer obeys.
+     * A percentage would have been a nicer-looking lie.
+     */
+    private val _lodBudgetMPoints = MutableStateFlow(20)
+    val lodBudgetMPoints: StateFlow<Int> = _lodBudgetMPoints.asStateFlow()
+
+    /**
+     * The whole A14 parameter block the live viewport renders with, assembled
+     * from the four controls above. One object rather than four setters so the
+     * LOD budget can live-apply the same way colour and point size already do
+     * — `PointCloudRenderer.setDisplayParams` owns all of them together.
+     */
+    val displayParams: StateFlow<com.lidarscan.core.render.DisplayParams> =
+        kotlinx.coroutines.flow.combine(
+            _colorMode,
+            _colormap,
+            _pointSizePx,
+            _lodBudgetMPoints,
+        ) { mode, cm, size, lodM ->
+            com.lidarscan.core.render.DisplayParams(
+                colorMode = mode,
+                height = com.lidarscan.core.render.ScalarColorParams(colormap = cm, manualMin = 0f, manualMax = 3f),
+                intensity = com.lidarscan.core.render.ScalarColorParams(colormap = cm),
+                pointSize = com.lidarscan.core.render.PointSizeParams(fixedPx = size),
+                lodPointBudget = (lodM.coerceIn(1, 200) * 1_000_000),
+                // The redesign's viewport ground, so the live view and the
+                // project thumbnails sit on the same black.
+                background = com.lidarscan.core.render.Rgba(11, 14, 18, 255),
+            )
+        }.stateIn(
+            viewModelScope,
+            kotlinx.coroutines.flow.SharingStarted.Companion.WhileSubscribed(5_000),
+            com.lidarscan.core.render.DisplayParams(),
+        )
 
     /** B5: this project's profile-driven capture defaults, read once at load. */
     private val _captureDefaults = MutableStateFlow<com.lidarscan.core.model.CaptureDefaults?>(null)
@@ -282,9 +344,23 @@ class CaptureViewModel(
             }
         }
 
-        keyframeRecorder = com.lidarscan.app.ar.KeyframeRecorder(controller.motion).also { recorder ->
-            keyframeFrameListener = recorder::onFrame
-            controller.addFrameListener(recorder::onFrame)
+        keyframeRecorder = com.lidarscan.app.ar.KeyframeRecorder(
+            motion = controller.motion,
+            // The sheet's cadence, applied at construction so the very first
+            // slot of the session already runs at the selected rate; changing
+            // it later goes through setKeyframeRateFps on the live recorder.
+            selector = com.lidarscan.core.capture.KeyframeSelector(
+                targetFps = _keyframeRateFps.value.toDouble(),
+            ),
+        ).also { recorder ->
+            recorder.setEnabled(_keyframesEnabled.value)
+            // One reference, stored and registered — `recorder::onFrame`
+            // written twice would create two distinct objects, and
+            // detachKeyframeListener would then remove neither (its own KDoc
+            // says exactly this; the code did it anyway).
+            val listener: (com.google.ar.core.Frame) -> Unit = recorder::onFrame
+            keyframeFrameListener = listener
+            controller.addFrameListener(listener)
             recorder.start(project.directory)
             viewModelScope.launch {
                 recorder.stats.collect { _keyframeStats.value = it }
@@ -329,6 +405,21 @@ class CaptureViewModel(
         // needs each session's transform AND the ENU frame it is expressed in,
         // and neither survives the end of a capture any other way.
         val georef = georefSnapshotProvider(handle)
+
+        // Redesign: the Projects card thumbnail draws this project's OWN cloud,
+        // and this is where that becomes possible — the pages are still
+        // resident here, one strided sample later they are a 48 KB file next to
+        // the processed results. Doing it anywhere else would mean re-decoding
+        // the raw streams just to draw a 108 dp tile. Best-effort by design: a
+        // failed write costs a thumbnail, never a capture.
+        val previewSource = _pointCloudSource.value
+        val projectDir = (_uiState.value as? CaptureUiState.Loaded)?.project?.directory
+        withContext(Dispatchers.IO) {
+            if (projectDir != null && com.lidarscan.app.ui.projects.writeProjectPreview(projectDir, previewSource)) {
+                com.lidarscan.app.ui.projects.ProjectPreviewCache.invalidate(projectId)
+            }
+        }
+
         withContext(Dispatchers.IO) {
             projectStore.updateManifest(projectId) { manifest ->
                 manifest.copy(
@@ -365,6 +456,23 @@ class CaptureViewModel(
 
     fun setCameraMode(mode: CameraMode) {
         _cameraMode.value = mode
+    }
+
+    /** Sheet: camera keyframes on/off. Applies to a live recorder immediately. */
+    fun setKeyframesEnabled(enabled: Boolean) {
+        _keyframesEnabled.value = enabled
+        keyframeRecorder?.setEnabled(enabled)
+    }
+
+    /** Sheet: 2 / 3 / 5 fps. Applies to a live recorder immediately. */
+    fun setKeyframeRateFps(fps: Int) {
+        _keyframeRateFps.value = fps
+        keyframeRecorder?.setTargetFps(fps.toDouble())
+    }
+
+    /** Sheet: §3.12's LOD budget, in millions of points. */
+    fun setLodBudgetMPoints(mPoints: Int) {
+        _lodBudgetMPoints.value = mPoints.coerceIn(1, 200)
     }
 
     override fun onCleared() {

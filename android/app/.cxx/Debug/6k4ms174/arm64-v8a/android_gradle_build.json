@@ -1,14 +1,5 @@
 {
   "buildFiles": [
-    "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/CMakeLists.txt",
-    "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/bench/spbench/CMakeLists.txt",
-    "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/blas/CMakeLists.txt",
-    "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/demos/CMakeLists.txt",
-    "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/lapack/CMakeLists.txt",
-    "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/scripts/CMakeLists.txt",
-    "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/unsupported/CMakeLists.txt",
-    "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/unsupported/Eigen/CMakeLists.txt",
-    "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-src/unsupported/Eigen/CXX11/CMakeLists.txt",
     "/Users/admin/lidarscan/android/app/src/main/cpp/CMakeLists.txt",
     "/Users/admin/lidarscan/engine/CMakeLists.txt",
     "/Users/admin/lidarscan/engine/third_party/Livox-SDK2/CMakeLists.txt",
@@ -38,55 +29,12 @@
     "{LIST_OF_TARGETS_TO_BUILD}"
   ],
   "libraries": {
-    "blas::@3eb8bc4bb112db542e2f": {
-      "toolchain": "toolchain",
-      "abi": "arm64-v8a",
-      "artifactName": "blas"
-    },
     "debug_point_cloud::@85b72b9f717f9ad3f24d": {
       "toolchain": "toolchain",
       "abi": "arm64-v8a",
       "artifactName": "debug_point_cloud",
       "output": "/Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/debug_point_cloud",
       "runtimeFiles": []
-    },
-    "demos::@8f8b5571d8fc18e53e8f": {
-      "toolchain": "toolchain",
-      "abi": "arm64-v8a",
-      "artifactName": "demos"
-    },
-    "eigen_blas::@3eb8bc4bb112db542e2f": {
-      "toolchain": "toolchain",
-      "abi": "arm64-v8a",
-      "artifactName": "eigen_blas",
-      "output": "/Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_blas.so",
-      "runtimeFiles": []
-    },
-    "eigen_blas_static::@3eb8bc4bb112db542e2f": {
-      "toolchain": "toolchain",
-      "abi": "arm64-v8a",
-      "artifactName": "eigen_blas_static",
-      "output": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-build/blas/libeigen_blas_static.a"
-    },
-    "eigen_lapack::@82c4f821022399cdeaa9": {
-      "toolchain": "toolchain",
-      "abi": "arm64-v8a",
-      "artifactName": "eigen_lapack",
-      "output": "/Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_lapack.so",
-      "runtimeFiles": [
-        "/Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libeigen_blas.so"
-      ]
-    },
-    "eigen_lapack_static::@82c4f821022399cdeaa9": {
-      "toolchain": "toolchain",
-      "abi": "arm64-v8a",
-      "artifactName": "eigen_lapack_static",
-      "output": "/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-build/lapack/libeigen_lapack_static.a"
-    },
-    "lapack::@82c4f821022399cdeaa9": {
-      "toolchain": "toolchain",
-      "abi": "arm64-v8a",
-      "artifactName": "lapack"
     },
     "lidar_cmd_observer::@4e92d51beaddcb33c096": {
       "toolchain": "toolchain",
@@ -162,32 +110,6 @@
       "artifactName": "scanengine_jni",
       "output": "/Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/libscanengine_jni.so",
       "runtimeFiles": []
-    },
-    "spbenchsolver::@d92b9274087880e865c4": {
-      "toolchain": "toolchain",
-      "abi": "arm64-v8a",
-      "artifactName": "spbenchsolver",
-      "output": "/Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/spbenchsolver",
-      "runtimeFiles": []
-    },
-    "spsolver::@d92b9274087880e865c4": {
-      "toolchain": "toolchain",
-      "abi": "arm64-v8a",
-      "artifactName": "spsolver",
-      "output": "/Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/spsolver",
-      "runtimeFiles": []
-    },
-    "test_sparseLU::@d92b9274087880e865c4": {
-      "toolchain": "toolchain",
-      "abi": "arm64-v8a",
-      "artifactName": "test_sparseLU",
-      "output": "/Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/arm64-v8a/test_sparseLU",
-      "runtimeFiles": []
-    },
-    "uninstall::@a7f6cda76e36d828b47e": {
-      "toolchain": "toolchain",
-      "abi": "arm64-v8a",
-      "artifactName": "uninstall"
     }
   },
   "toolchains": {
@@ -196,9 +118,7 @@
       "cppCompilerExecutable": "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++.lld"
     }
   },
-  "cFileExtensions": [
-    "c"
-  ],
+  "cFileExtensions": [],
   "cppFileExtensions": [
     "cpp"
   ]

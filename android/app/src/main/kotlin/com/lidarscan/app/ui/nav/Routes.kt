@@ -13,6 +13,21 @@ object Routes {
     const val NEW_PROJECT = "new_project"
     const val SETTINGS = "settings"
 
+    /**
+     * Redesign: Capture and Jobs are **top-level tabs**, but both are
+     * inherently per-project — the engine records into one `.lscan`, and a job
+     * queue is a queue *for* a project. These two routes are what the tab
+     * lands on when there is no active project yet: a picker that lists the
+     * projects and offers "New scan", rather than a tab that opens onto
+     * nothing or silently invents a project.
+     *
+     * Once a project is active the tab navigates straight to
+     * [capture]/[processing] for it, and `tabForRoute` lights the same tab
+     * either way.
+     */
+    const val CAPTURE_PICK = "capture"
+    const val JOBS_PICK = "jobs"
+
     private const val PROJECT_DETAIL_PATTERN = "project/{projectId}"
     const val PROJECT_DETAIL = PROJECT_DETAIL_PATTERN
     const val PROJECT_ID_ARG = "projectId"

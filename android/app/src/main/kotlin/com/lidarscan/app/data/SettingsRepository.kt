@@ -50,7 +50,10 @@ class SettingsRepository(private val context: Context) {
     val settings: Flow<AppSettings> = context.settingsDataStore.data.map { prefs ->
         AppSettings(
             units = prefs[Keys.UNITS]?.toEnumOrNull<Units>() ?: Units.METERS,
-            themeMode = prefs[Keys.THEME_MODE]?.toEnumOrNull<ThemeMode>() ?: ThemeMode.SYSTEM,
+            // Dark, not System — see AppSettings.themeMode for why. This is the
+            // default that actually decides a fresh install, since the flow's
+            // value replaces AppSettings()'s the moment DataStore emits.
+            themeMode = prefs[Keys.THEME_MODE]?.toEnumOrNull<ThemeMode>() ?: ThemeMode.DARK,
             useFakeEngine = prefs[Keys.USE_FAKE_ENGINE] ?: false,
             cloudBaseUrl = prefs[Keys.CLOUD_BASE_URL].orEmpty(),
             cloudToken = prefs[Keys.CLOUD_TOKEN].orEmpty(),

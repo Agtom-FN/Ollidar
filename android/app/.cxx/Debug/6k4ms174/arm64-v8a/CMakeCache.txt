@@ -26,7 +26,6 @@ ANDROID_PLATFORM:UNINITIALIZED=android-29
 //No help, variable specified on the command line.
 ANDROID_STL:UNINITIALIZED=c++_shared
 
-//Enable creation of Eigen tests.
 BUILD_TESTING:BOOL=OFF
 
 //Path to a file.
@@ -327,8 +326,8 @@ CMAKE_SYSTEM_VERSION:UNINITIALIZED=29
 //Path to a program.
 CMAKE_TAPI:FILEPATH=CMAKE_TAPI-NOTFOUND
 
-//The CMake toolchain file
-CMAKE_TOOLCHAIN_FILE:FILEPATH=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/android.toolchain.cmake
+//No help, variable specified on the command line.
+CMAKE_TOOLCHAIN_FILE:UNINITIALIZED=/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724/build/cmake/android.toolchain.cmake
 
 //If this value is on, makefiles will be generated without the
 // .SILENT directive, and all commands will be echoed to the console
@@ -336,10 +335,12 @@ CMAKE_TOOLCHAIN_FILE:FILEPATH=/opt/homebrew/share/android-commandlinetools/ndk/2
 // Studio IDE projects all commands are done without /nologo.
 CMAKE_VERBOSE_MAKEFILE:BOOL=FALSE
 
+//Test COMPILER_SUPPORT_std=cpp03
+COMPILER_SUPPORT_std:UNINITIALIZED=cpp03:INTERNAL=1
+
 //Build benchmark suite
 EIGEN_BUILD_BTL:BOOL=OFF
 
-//Enable creation of Eigen documentation
 EIGEN_BUILD_DOC:BOOL=OFF
 
 //Build pkg-config .pc file for Eigen
@@ -765,7 +766,7 @@ CMAKE_MODULE_LINKER_FLAGS_RELWITHDEBINFO-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_NM
 CMAKE_NM-ADVANCED:INTERNAL=1
 //number of local generators
-CMAKE_NUMBER_OF_MAKEFILES:INTERNAL=22
+CMAKE_NUMBER_OF_MAKEFILES:INTERNAL=13
 //ADVANCED property for variable: CMAKE_OBJCOPY
 CMAKE_OBJCOPY-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_OBJDUMP
@@ -870,8 +871,6 @@ COMPILER_SUPPORT_fstrictaliasing:INTERNAL=1
 COMPILER_SUPPORT_pedantic:INTERNAL=1
 //Test COMPILER_SUPPORT_pie
 COMPILER_SUPPORT_pie:INTERNAL=1
-//Test COMPILER_SUPPORT_std=cpp03
-COMPILER_SUPPORT_std=cpp03:INTERNAL=1
 //Test COMPILER_SUPPORT_wd2304
 COMPILER_SUPPORT_wd2304:INTERNAL=
 //Test COMPILER_SUPPORT_wd981

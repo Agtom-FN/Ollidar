@@ -1,6 +1,22 @@
 package com.lidarscan.app.ui.review
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.IosShare
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.testTag
+import com.lidarscan.app.ui.components.BackBar
+import com.lidarscan.app.ui.components.Hint
+import com.lidarscan.app.ui.components.PrimaryPill
+import com.lidarscan.app.ui.components.ScanChip
+import com.lidarscan.app.ui.components.ScanDims
+import com.lidarscan.app.ui.components.SecondaryPill
+import com.lidarscan.app.ui.theme.Ember
+import com.lidarscan.app.ui.theme.SemWarn
+import com.lidarscan.app.ui.theme.ViewportGround
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10,12 +26,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Card
@@ -27,12 +44,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -64,6 +79,8 @@ fun ReviewRoute(
     projectId: String,
     onBack: () -> Unit,
     onOpenPlan: (String) -> Unit,
+    /** Redesign: Export is now a first-class button here; it lands on this project's Jobs queue. */
+    onOpenExport: (String) -> Unit = {},
 ) {
     val vm: ReviewViewModel = viewModel(
         factory = viewModelFactory {
@@ -73,9 +90,29 @@ fun ReviewRoute(
         },
     )
     val state by vm.uiState.collectAsStateWithLifecycle()
-    ReviewScreen(state, vm, onBack) { onOpenPlan(projectId) }
+    ReviewScreen(
+        state = state,
+        vm = vm,
+        onBack = onBack,
+        onOpenPlan = { onOpenPlan(projectId) },
+        onOpenExport = { onOpenExport(projectId) },
+    )
 }
 
+/**
+ * The redesign's Review screen: a hero viewport with the colour chips, the
+ * Floor plan / Export split, and the measure UX untouched.
+ *
+ * **What did not change.** The measure tool is the same: the same transparent
+ * tap-catcher over the `SurfaceView` (so a pick never fights the orbit
+ * gesture), the same "nearest sampled point" caveat in the read-out, the same
+ * unit chips and Clear. B11's behaviour was not in scope for the redesign and
+ * is not touched here — only the chrome around it moved.
+ *
+ * The full §3.9 display panel is still one tap away behind the Tune action;
+ * the four colour chips on the body are the shortcut for the one setting
+ * people change constantly, not a replacement for the panel.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReviewScreen(
@@ -83,35 +120,57 @@ fun ReviewScreen(
     vm: ReviewViewModel,
     onBack: () -> Unit,
     onOpenPlan: () -> Unit,
+    onOpenExport: () -> Unit = {},
 ) {
     var showPanel by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+    val manifest = state.project?.manifest
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(state.project?.manifest?.name ?: "Review") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { vm.toggleMeasure() }) {
-                        Icon(
-                            Icons.Filled.Straighten,
-                            contentDescription = "Measure",
-                            tint = if (state.measureMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                        )
-                    }
-                    IconButton(onClick = { showPanel = true }) {
-                        Icon(Icons.Filled.Tune, contentDescription = "Display settings")
-                    }
-                },
-            )
-        },
-    ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .statusBarsPadding()
+            .navigationBarsPadding(),
+    ) {
+        BackBar(
+            title = manifest?.name ?: "Review",
+            subtitle = listOfNotNull(
+                "Review",
+                manifest?.pointCountEstimate?.let { "%.1f M pts".format(it / 1_000_000.0) },
+                manifest?.crsEpsg?.takeIf { it != 0 }?.let { "georef EPSG $it" } ?: "local frame",
+            ).joinToString(" · "),
+            onBack = onBack,
+            actions = {
+                IconButton(onClick = { vm.toggleMeasure() }) {
+                    Icon(
+                        Icons.Filled.Straighten,
+                        contentDescription = "Measure",
+                        tint = if (state.measureMode) Ember else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                IconButton(onClick = { showPanel = true }) {
+                    Icon(
+                        Icons.Filled.Tune,
+                        contentDescription = "Display settings",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+        )
+
+        // ── hero viewport ───────────────────────────────────────────────
+        val shape = RoundedCornerShape(20.dp)
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .padding(horizontal = 14.dp)
+                .background(ViewportGround, shape)
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
+                .clip(shape)
+                .testTag("reviewViewport"),
+        ) {
             if (state.hasCloud) {
                 PointCloudView(
                     source = vm.cloudSource,
@@ -133,7 +192,16 @@ fun ReviewScreen(
                                 detectTapGestures { offset -> vm.onTap(offset.x, offset.y) }
                             },
                     )
+                    ScanChip(
+                        text = if (state.measurement == null) "MEASURE ON · TAP A POINT" else "MEASURE ON",
+                        color = Ember,
+                        modifier = Modifier.align(Alignment.TopStart).padding(12.dp),
+                    )
                 }
+                ScanChip(
+                    text = "%,d pts".format(state.totalPoints),
+                    modifier = Modifier.align(Alignment.BottomStart).padding(12.dp),
+                )
             } else {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
@@ -142,33 +210,80 @@ fun ReviewScreen(
                             "engine writes one yet), so it lives only for this app session.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(32.dp),
-                    )
-                }
-            }
-
-            Column(
-                Modifier
-                    .align(Alignment.BottomStart)
-                    .fillMaxWidth()
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                if (state.measureMode) MeasureHud(state, vm)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = onOpenPlan) { Text("Floor plan") }
-                    Text(
-                        "${state.totalPoints} pts",
-                        style = MaterialTheme.typography.labelMedium,
-                        modifier = Modifier.align(Alignment.CenterVertically),
+                        modifier = Modifier.padding(28.dp),
                     )
                 }
             }
         }
+
+        // ── colour chips ────────────────────────────────────────────────
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            listOf(
+                ColorMode.HEIGHT to "HEIGHT",
+                ColorMode.RGB to "RGB",
+                ColorMode.INTENSITY to "INTENSITY",
+                ColorMode.TIME to "TIME",
+            ).forEach { (mode, label) ->
+                val selected = state.display.colorMode == mode
+                ScanChip(
+                    text = label,
+                    color = if (selected) Ember else null,
+                    onClick = { vm.updateDisplay { it.copy(colorMode = mode) } },
+                    modifier = Modifier.height(38.dp).padding(top = 6.dp),
+                )
+            }
+        }
+
+        // A14's own rule, surfaced rather than silently applied: PointVertex
+        // carries no per-point time, so TIME falls back to the RGB pass.
+        if (state.display.colorMode == ColorMode.TIME) {
+            Hint(
+                "No per-point time in PointVertex — this falls back to RGB.",
+                color = SemWarn,
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+            Spacer(Modifier.height(6.dp))
+        }
+
+        if (state.measureMode) {
+            Box(Modifier.padding(horizontal = 14.dp)) { MeasureHud(state, vm) }
+            Spacer(Modifier.height(10.dp))
+        }
+
+        // ── Floor plan / Export split ───────────────────────────────────
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 14.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            SecondaryPill(
+                text = "Floor plan",
+                icon = Icons.Filled.GridView,
+                onClick = onOpenPlan,
+                modifier = Modifier.weight(1f),
+            )
+            PrimaryPill(
+                text = "Export",
+                icon = Icons.Filled.IosShare,
+                onClick = onOpenExport,
+                modifier = Modifier.weight(1f),
+            )
+        }
+
+        Spacer(Modifier.height(ScanDims.TabBarClearance))
     }
 
     if (showPanel) {
-        ModalBottomSheet(onDismissRequest = { showPanel = false }, sheetState = sheetState) {
+        ModalBottomSheet(
+            onDismissRequest = { showPanel = false },
+            sheetState = sheetState,
+            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        ) {
             DisplayPanel(state, vm)
         }
     }

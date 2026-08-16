@@ -15,7 +15,20 @@ enum class ThemeMode(val displayName: String) {
 
 data class AppSettings(
     val units: Units = Units.METERS,
-    val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    /**
+     * **Dark by default, not System.**
+     *
+     * The redesign is a dark cockpit — an instrument UI shown in its own
+     * world, with one ember accent that only reads against a near-black
+     * ground (docs/design/lidarscan-interfaces.html says so in its first
+     * comment, and every approved screenshot is dark). Defaulting to SYSTEM
+     * meant a phone in light mode opened the app into the *derived* light
+     * palette, which is the fallback, not the design.
+     *
+     * All three options still work and Light is still a faithful inversion of
+     * the same tokens — this changes which one a fresh install starts on.
+     */
+    val themeMode: ThemeMode = ThemeMode.DARK,
     /**
      * B2 dev-settings flag: force [com.lidarscan.core.engine.FakeEngineBridge]
      * even when the real JNI bridge's native lib loaded successfully — lets a

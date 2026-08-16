@@ -7,9 +7,8 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
-import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
-import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
@@ -59,10 +58,21 @@ class ReplayCaptureSmokeTest {
     @Test
     fun launchReachesProjectsListWithoutCrashing() {
         ActivityScenario.launch(MainActivity::class.java).use {
+            // The redesign's Projects hero carries the avatar/Settings button
+            // with this exact content description, and it is deliberately the
+            // ONLY node that does: the capsule tab bar's Settings tab labels
+            // itself with visible text and gives its icon `contentDescription =
+            // null` (see ScanTabBar), precisely so this assertion stays
+            // unambiguous. The tag below pins the same node structurally in
+            // case the description is ever re-worded.
             composeRule.waitUntil(timeoutMillis = 15_000) {
-                composeRule.onAllNodesWithContentDescription("Settings").fetchSemanticsNodes().isNotEmpty()
+                composeRule.onAllNodesWithTag("projectsAvatar").fetchSemanticsNodes().isNotEmpty()
             }
             composeRule.onNodeWithContentDescription("Settings").assertIsDisplayed()
+
+            // The tab bar itself is new and is on every screen — if it failed
+            // to compose, every route below is unreachable by touch.
+            composeRule.onNodeWithTag("scanTabBar").assertIsDisplayed()
         }
     }
 
@@ -83,19 +93,20 @@ class ReplayCaptureSmokeTest {
 
         ActivityScenario.launch<MainActivity>(intent).use {
             // ReplayEngineBridge auto-connects on ViewModel init (no USB
-            // wizard for a replay session); once CONNECTED + IDLE the
-            // "Start replay" button renders (CaptureScreen.kt's
-            // RecordingControls). substring = true: the button's actual
-            // text is "  Start replay" (two leading spaces, for icon
-            // spacing — RecordingControls' Icon+Text row) and
-            // onNodeWithText defaults to an EXACT match, which silently
-            // never matches and spins the full waitUntil timeout — found by
-            // running this test for real and adding temporary diagnostic
-            // logs (see NOTES.md's "Android emulator smoke test" section).
+            // wizard for a replay session); once CONNECTED + IDLE the record
+            // button becomes live.
+            //
+            // The redesign made this a 64 dp ember circle with **no text** —
+            // it is drawn, not labelled — so the hook moved from the old
+            // "  Start replay" text match to the button's `contentDescription`,
+            // which is what names the action for TalkBack too. The description
+            // is state-dependent ("Start replay" / "Stop recording"), so
+            // waiting for it is also waiting for CONNECTED + IDLE, exactly as
+            // the text match used to be.
             composeRule.waitUntil(timeoutMillis = 20_000) {
-                composeRule.onAllNodesWithText("Start replay", substring = true).fetchSemanticsNodes().isNotEmpty()
+                composeRule.onAllNodesWithContentDescription("Start replay").fetchSemanticsNodes().isNotEmpty()
             }
-            composeRule.onNodeWithText("Start replay", substring = true).performClick()
+            composeRule.onNodeWithContentDescription("Start replay").performClick()
 
             composeRule.waitUntil(timeoutMillis = 20_000) { currentPointsCaptured() > 0 }
             val firstSample = currentPointsCaptured()
@@ -128,11 +139,25 @@ class ReplayCaptureSmokeTest {
         }
     }
 
-    /** Reads CaptureScreen.kt's `pointsCapturedValue`-tagged StatRow value ("%,d" formatted) as a Long, or -1 if not currently composed. */
+    /**
+     * Reads the `pointsCapturedValue`-tagged POINTS cell of CaptureScreen's
+     * mono stat panel as a Long, or -1 if not currently composed.
+     *
+     * The redesign's stat panel prints `1.24 M` above a million and a plain
+     * grouped integer below it (see `CaptureScreen.formatPoints`, which says
+     * why); this parses both so the assertions keep working whichever side of
+     * the threshold a replay lands on. The bundled synthetic capture is tens
+     * of thousands of points, i.e. the integer branch — which is the whole
+     * reason that branch exists.
+     */
     private fun currentPointsCaptured(): Long {
         val node = composeRule.onAllNodesWithTag("pointsCapturedValue").fetchSemanticsNodes().firstOrNull()
             ?: return -1
         val text = node.config.getOrNull(SemanticsProperties.Text)?.joinToString("") { it.text } ?: return -1
-        return text.replace(",", "").trim().toLongOrNull() ?: -1
+        val cleaned = text.replace(",", "").trim()
+        cleaned.removeSuffix(" M").toDoubleOrNull()?.let { millions ->
+            if (cleaned.endsWith(" M")) return (millions * 1_000_000).toLong()
+        }
+        return cleaned.toLongOrNull() ?: -1
     }
 }

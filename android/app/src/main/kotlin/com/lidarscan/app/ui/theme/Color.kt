@@ -3,21 +3,100 @@ package com.lidarscan.app.ui.theme
 import androidx.compose.ui.graphics.Color
 
 /**
- * Brand tokens — a neutral placeholder palette (the Tech Spec doesn't define
- * product colors yet). Kept in this one file deliberately so swapping in the
- * real brand palette later is a small, obvious diff. Everything else in the
- * app should reference [MaterialTheme.colorScheme] roles, not these values
- * directly, except for the couple of fixed semantic uses below.
+ * The redesign's palette (docs/design/REVIEW_FEEDBACK.md + the
+ * `lidarscan-interfaces.html` mockup's `:root` block, with the owner-approved
+ * token values from the redesign brief).
+ *
+ * These are **the** product colours now — the "neutral placeholder palette"
+ * comment this file used to carry is gone, and so is dynamic colour by
+ * default (see [LidarScanTheme]): a wallpaper-derived scheme would repaint
+ * the one brand accent the whole cockpit is built around.
+ *
+ * Everything in `ui/` should reach for `MaterialTheme.colorScheme` where a
+ * Material role exists ([ScanColors] maps them below), and for the values in
+ * this file only for the fixed semantics — sensor identity, fix quality,
+ * point-cloud ramp — which are deliberately theme-invariant so a "Float" badge
+ * looks the same on every screen and in every theme.
  */
-val BrandPrimary = Color(0xFF3C6E71) // deep teal
-val BrandSecondary = Color(0xFF95C0C2) // pale teal
-val BrandTertiary = Color(0xFFF4A261) // warm amber accent
-val BrandError = Color(0xFFBA1A1A)
+
+// ── surfaces ────────────────────────────────────────────────────────────────
+/** Blue-biased near-black — the app's ground plane. */
+val Ground = Color(0xFF12161B)
+
+/** Raised panel (cards, tab bar, stat strip). */
+val Panel = Color(0xFF1A2027)
+
+/** Second panel step (segmented-control troughs, tiles inside a card). */
+val PanelAlt = Color(0xFF222A33)
+
+/** Hairline between panels. */
+val LineColor = Color(0xFF2B3540)
+
+/** A softer hairline for card borders that should read as edge, not divider. */
+val LineSoft = Color(0xFF222A33)
+
+/** The 3D viewport's own ground — darker than [Ground] so the cloud carries. */
+val ViewportGround = Color(0xFF0B0E12)
+
+// ── ink ─────────────────────────────────────────────────────────────────────
+val Ink = Color(0xFFECF1F5)
+val InkMute = Color(0xFF94A1AD)
+
+/** Third ink step: units, sub-labels, "off" readouts. Derived from [InkMute]. */
+val InkFaint = Color(0xFF63707C)
+
+// ── accent ──────────────────────────────────────────────────────────────────
+/** Laser ember — the one brand accent. Record, primary action, active tab. */
+val Ember = Color(0xFFFF7A52)
+
+/** Ember pressed/disabled companion. */
+val EmberDim = Color(0xFFC25334)
+
+/** The active-tab capsule wash and other ember-tinted grounds. */
+val EmberSoft = Color(0x26FF7A52)
+
+/** Ink that sits **on** ember (record button core, primary-button label). */
+val OnEmber = Color(0xFF1A0D08)
+
+// ── point-cloud ramp ────────────────────────────────────────────────────────
+/** Height ramp, low end. Doubles as the COIN-D6 sensor identity. */
+val ScanTeal = Color(0xFF3EC4B0)
+
+/** Height ramp, high end. */
+val ScanSand = Color(0xFFE5C468)
+
+/** Trajectory / pose stream. Doubles as the Mid-360 sensor identity. */
+val PoseBlue = Color(0xFF6AA7E8)
+
+// ── semantics ───────────────────────────────────────────────────────────────
+/** RTK fixed / healthy / done. */
+val SemGood = Color(0xFF49D17F)
+
+/** Float / degraded / warning. */
+val SemWarn = Color(0xFFE5B93C)
+
+/** Single / fault / failed. */
+val SemBad = Color(0xFFE05252)
 
 /**
- * Sensor badge colors (Projects list, and later the capture status strip):
- * fixed regardless of theme/dynamic-color so the D6-vs-Mid-360 badge stays
- * recognizable at a glance across projects.
+ * Sensor badge colours. Fixed regardless of theme so the D6-vs-Mid-360 badge
+ * stays recognisable at a glance across projects — the same reasoning this
+ * file carried before the redesign, now expressed in the redesign's own ramp
+ * colours (the mockup's `.chip.sensor-d6` / `.chip.sensor-mid`).
  */
-val SensorD6Badge = Color(0xFF5C6BC0)
-val SensorMid360Badge = Color(0xFF00897B)
+val SensorD6Badge = ScanTeal
+val SensorMid360Badge = PoseBlue
+
+// ── light-theme companions ──────────────────────────────────────────────────
+//
+// The mockup is deliberately single-theme ("dark-cockpit instrument UIs, shown
+// in their own world"). The Settings screen's Light/Dark/System control
+// predates the redesign and stays functional, so the tokens get a light
+// counterpart rather than the switch quietly doing nothing: same ember, same
+// semantics, inverted ground.
+val GroundLight = Color(0xFFF4F6F8)
+val PanelLight = Color(0xFFFFFFFF)
+val PanelAltLight = Color(0xFFE8ECF0)
+val LineLight = Color(0xFFD3DAE1)
+val InkLight = Color(0xFF12161B)
+val InkMuteLight = Color(0xFF5C6873)

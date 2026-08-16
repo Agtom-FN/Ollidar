@@ -2659,3 +2659,356 @@ land in `app/build/reports/androidTests/connected/` and
    time they run somewhere new.
 3. Once green, this becomes the enforced gate the task asked for
    (`continue-on-error: false` is already set — nothing else to flip).
+
+## UI redesign — the owner-approved cockpit (Projects / Capture / Jobs / Review / Settings)
+
+The design spec, in the priority order the task set it:
+
+1. `docs/design/REVIEW_FEEDBACK.md` — five owner review rounds **with their
+   resolutions**. These are requirements, not suggestions, and the four
+   numbered items are all implemented below (§4 in particular: the AR/camera
+   telemetry block is gone from the capture body).
+2. `docs/design/redesign-exports/*.png` — the visual ground truth
+   (`01`–`04` for the Android screens, `fix-r*` for the sheet and diagnostics
+   iterations).
+3. `docs/design/lidarscan-interfaces.html` — the interactive mockup, read as
+   the *behavioural* spec: `A.capture`, `capSheet()`, `diagSheet()`,
+   `paintDiag()`, `closeCapSheets()`, `arTrackState()`, `TABOF`.
+
+**This was a UI-layer rework.** No `EngineBridge` implementation, JNI shim,
+CMake target, renderer or repository changed shape. The three behavioural
+changes outside `ui/` are all in service of a control the redesign introduces,
+and each is called out where it happens (§4 below).
+
+### 1. Theme: tokens, three bundled families, rounder shapes
+
+`ui/theme/Color.kt` is no longer "a neutral placeholder palette" — it is the
+product palette: ground `#12161B`, panel `#1A2027` / `#222A33`, line
+`#2B3540`, ink `#ECF1F5`, mute `#94A1AD`, ember `#FF7A52`, teal `#3EC4B0`,
+sand `#E5C468`, pose `#6AA7E8`, and the semantic trio good `#49D17F` / warn
+`#E5B93C` / bad `#E05252`.
+
+`ui/theme/Theme.kt` maps them onto Material roles (the table is in its KDoc)
+so a component nobody restyled — a dialog, a snackbar, a text field — still
+lands in the right world. The semantic trio and the sensor identities stay as
+fixed values rather than roles, because a "Float" badge must not change
+meaning with the theme.
+
+Two deliberate changes fall out of having a real palette:
+
+- **Dynamic colour is off by default.** It was on while the palette admitted
+  to being a placeholder; wallpaper-derived colour would replace exactly the
+  one accent the cockpit is built around. The parameter still exists.
+- **`ThemeMode` defaults to `DARK`, not `SYSTEM`** (`data/SettingsModels.kt`
+  *and* `data/SettingsRepository.kt` — both defaults had to move, since the
+  DataStore flow's value replaces `AppSettings()`'s the moment it emits).
+  Every approved screenshot is dark and the mockup says so in its first
+  comment. Light is still a faithful inversion of the same tokens and still
+  selectable; it is the fallback, not the design. This was caught by looking
+  at the first emulator screenshot, which came up light.
+
+**Fonts are bundled, not fetched** — Space Grotesk (display), Inter (UI),
+JetBrains Mono (telemetry), all SIL OFL 1.1, licences shipped inside the APK
+at `assets/fonts/OFL-*.txt` so the attribution travels with the binary.
+
+What is in `res/font/` is not the upstream file. Each family is downloaded as
+its **variable master** from google/fonts, then instanced to the weights this
+app asks for and subset to Latin plus the marks the UI actually draws (`·`,
+`→`, `✓`, `Δ`, `±`, `—`, the arrow/math blocks). Instancing at prep time
+rather than shipping the master keeps the runtime free of `FontVariation`
+questions on the minSdk-29 floor; subsetting is the difference between
+~1.2 MB and **703 KB** of APK for glyphs no screen can reach. The recipe is a
+committed, re-runnable script — `android/scripts/prepare_fonts.py` (needs
+`pip3 install --user fonttools brotli`) — so a later weight is one edit away
+rather than an archaeology exercise.
+
+Shapes moved to the redesign's radii: cards 20 dp, tiles 14 dp, and
+`Shapes.extraLarge` is a **pill**, which is what makes an un-restyled
+`Button`/`FilterChip`/`SegmentedButton` round the same way a hand-built one
+does.
+
+`ui/components/ScanUi.kt` is the shared kit — hero header, back bar, card,
+chip, pills, the segmented pill, the mono stat panel, the sheet rows. The
+measurements the owner rounds actually argued about (48 dp View halves, 44 dp
+switch rows, 40 dp chips, 28 dp slider thumbs, the 44 dp target on a
+chip-sized health readout) are named constants in `ScanDims`, not literals
+re-typed per screen.
+
+### 2. Navigation: a floating capsule tab bar, and two newly top-level tabs
+
+`ui/nav/ScanTabBar.kt` + a reworked `ui/nav/LidarScanApp.kt`.
+
+The bar is a floating pill over the content — 16 dp side inset, 12 dp bottom,
+58 dp tall, radius half its height, translucent panel ground with a hairline
+border and a shadow — with an ember-washed capsule on the active tab.
+`tabForRoute()` is the mockup's `TABOF` table: Review, Plan, Merge, RTK, the
+calibration and connect wizards and the new-project flow all light
+**Projects** while keeping their own back arrow, which is exactly what lets a
+secondary screen stay a secondary screen.
+
+**Capture and Jobs became top-level.** They used to be reachable only through
+a project's detail screen. Promoting them needs one piece of state the old
+graph did not have: *which* project a bare "Capture" tap means. That is
+`activeProjectId`, set whenever the user opens a project, picks one, creates
+one, or starts a capture, and `rememberSaveable` so it survives rotation and
+back-stack churn but **not** process death — after a cold start the first
+Capture tap lands on the picker rather than resuming a project the user may
+not have meant.
+
+When there is no active project, `Routes.CAPTURE_PICK` / `Routes.JOBS_PICK`
+render `ui/pick/ProjectPickerScreen.kt`: the project list plus "New scan".
+Both tabs are per-project underneath (the engine records into one `.lscan`;
+A15's queue is scoped to a project directory), so a tab that silently picked
+the newest project would eventually record into the wrong one, and one that
+opened onto nothing would be a dead tab. It asks once, then the tab
+remembers.
+
+Because the bar **floats** rather than docks, every screen has to leave room
+for it. The redesigned screens each reserve `ScanDims.TabBarClearance` in
+their own content padding (the mockup does the same with its `.haspad` rule).
+The screens this task did not restyle — the wizards, project detail,
+plan/RTK/merge, new project — get it from one `UnderTabBar { }` wrapper in
+the NavHost instead of a restyle each, which is the honest scope line here.
+
+### 3. Projects: hero, cloud thumbnails, chips, mono meta
+
+`ui/projects/ProjectsListScreen.kt`. Hero title in Space Grotesk 28 with the
+mockup's aggregate line (project count · georeferenced · total points,
+computed from manifests already in memory), an avatar/Settings button, cards
+carrying a cloud thumbnail, the sensor/profile/`GEOREF ✓` chip row and a mono
+meta line, then the ember **New scan** pill.
+
+Delete moved from a permanently-visible trash `IconButton` in the title row
+to a **long-press** — the icon was a destructive control one thumb-width from
+the card's own tap target and the redesigned card has no room for it beside
+the title. The confirmation dialog is unchanged, so the safety of the action
+did not move; only its discoverability, which the hint under the list states
+outright.
+
+#### The thumbnail approach, and why it is not Filament
+
+`ui/projects/CloudThumbnail.kt` draws a **Compose `Canvas` scatter**, not an
+offscreen Filament render.
+
+Filament is wired into this app through `SurfaceView` + `UiHelper` + a
+`Choreographer` frame loop (B4, above). There is no offscreen/readback path,
+and adding one means a second `Engine`, a render target, a pixel readback and
+a bitmap cache **per visible row of a `LazyColumn`** — a large amount of GPU
+machinery for a 108 dp tile that needs none of Filament's actual
+capabilities (no camera control, no material, no depth), and a good way to
+leak a GL context out of a scrolling list. A `Canvas` draws the same
+information for a fraction of the cost.
+
+**It still draws the project's own data.** `CaptureViewModel.stopCapture`
+writes a bounded, strided XYZ sample of what the session actually recorded to
+`<project>/processed/preview.f32` (`writeProjectPreview`, ≤4 000 points,
+~48 KB) while the pages are still resident — anywhere else would mean
+re-decoding the raw streams to draw a tile. `ProjectPreviewCache` reads it
+back on an IO dispatcher into a bounded synchronized LRU (24 entries, misses
+memoised so a project with no capture does not stat the filesystem on every
+recomposition) and the tile projects it with a light isometric tilt, coloured
+on the teal→sand height ramp `points.mat` uses, so a thumbnail and the live
+viewport agree on what "high" looks like.
+
+A project with no preview yet gets a **seeded** placeholder derived from its
+id — the same project always looks like itself — drawn dimmer, and it is the
+only case that draws the ember trajectory sweep. That asymmetry is
+deliberate: a real preview stores points, not poses, and painting an invented
+path over real data would be the one dishonest pixel on the screen.
+
+**Not verified end to end**: the real-data branch has been exercised only in
+so far as the write path compiles and runs; the emulator sessions available
+here ended by the replay source running out rather than by a user-driven
+stop, so every tile in the screenshots below is the placeholder. The read
+path (`normalise`, the projection) is unit-shaped but has no test.
+
+### 4. Capture: the v7 screen, and the two sheets
+
+`ui/capture/CaptureScreen.kt` + `ui/capture/CaptureSheets.kt`.
+
+Top to bottom: back bar → RTK chip strip → **hero viewport (~50 % of the
+screen)** → four-stat mono panel → transport. Nothing else. The five-row
+"AR + camera keyframes" telemetry block is **gone from the body** (review
+round 3, item 4); the height it freed went to the live cloud and to the
+record cluster's clearance over the tab bar.
+
+- **Transport**: Live-SLAM switch (editable while idle, locked during a
+  session, and the caption says which), a 52 dp pause circle, and the 64 dp
+  ember record button. The record button is drawn, not iconified — a filled
+  circle while idle, a rounded square while live — and its
+  `contentDescription` ("Start recording" / "Start replay" / "Stop
+  recording") is what names it for TalkBack **and** for the smoke test.
+- **Capture settings sheet**, from the 48 dp Display button on the viewport:
+  74 % tall so a live band of cloud stays visible above it, **View row
+  pinned** between the head and the scrolling body (round 3's documented
+  fallback — pin View rather than shrink targets), then AR & Camera (44 dp
+  keyframes switch, 2/3/5 fps row, AR-tracking readout) and Display (colour
+  mode, colormap, point size, LOD) scrolling under it. Everything live-applies
+  to the view behind the sheet.
+- **Diagnostics sheet**, from the health chip: 60 % tall because nothing in
+  it is a target, Device and AR + camera sections, read-only, live off the
+  same state the screen behind it reads. The chip's own ink is chip-sized;
+  the 44 dp target comes from the `Box` it sits in, so the target grows
+  without the chip inflating.
+- **One sheet at a time** is structural here, not enforced: `CaptureSheet` is
+  a three-valued enum, so opening one *is* closing the other and there is no
+  state in which both are true. The mockup needed two flags and a
+  `closeCapSheets()` to get the same guarantee.
+
+Three changes outside `ui/` were needed to make the sheet's controls real
+rather than decorative, and each is one control's worth:
+
+1. **`core`'s `KeyframeSelector.setTargetFps`** — the 2/3/5 fps row is
+   changeable *mid-session*, so `targetFps` stopped being a `val` captured at
+   construction. Changing it resets the slot rather than rescaling the
+   pending deadline (which was computed under the old rate and would emit one
+   keyframe at neither). The already-written count is untouched.
+2. **`KeyframeRecorder.setEnabled`** — gates `onFrame` rather than detaching
+   the listener, because the ARCore callback is shared with the pose pump and
+   because round 3 is explicit that the count must **freeze** where it stood,
+   not reset or be rewritten. Turning it back on resets the selector's slot.
+3. **`CaptureViewModel.displayParams`** — the LOD slider needs a live path
+   into the renderer and `lodPointBudget` only travels inside
+   `DisplayParams`, so the four display controls are now combined into one
+   block and the viewport uses `PointCloudView(displayParams = …)`. That path
+   already existed for Review; Capture just started using it.
+
+One honest departure from the mockup: it labels the LOD slider `2 – 20` and
+reads it out as a **percentage**. What this renderer implements is
+`DisplayParams.lodPointBudget`, a page-admission ceiling in points, not
+per-page decimation — so the control keeps the mockup's range and its
+"sparse → every return" caption but reads out in **M points**, which is the
+number the renderer obeys. A percentage would have been a nicer-looking lie.
+
+A pre-existing bug was fixed on the way, in the code whose own KDoc described
+it: `startArPipelines` wrote `recorder::onFrame` twice — once into
+`keyframeFrameListener`, once into `addFrameListener` — producing two
+distinct objects, so `detachKeyframeListener` removed neither. It is one
+reference now.
+
+### 5. Jobs, Review, Settings
+
+- **Jobs** (`ui/processing/ProcessingScreen.kt`): "Processing" hero, the
+  This phone / Cloud / Bundle segmented pill, and icon-tile job cards with an
+  ember progress bar. Same three modes, same gates with the same refusal
+  reasons (a refused action still prints *why* instead of showing a dead
+  button — B6's rule, kept), same queue with cancel.
+- **Review** (`ui/review/ReviewScreen.kt`): hero viewport,
+  HEIGHT/RGB/INTENSITY/TIME chips, Floor plan / Export split, Export now
+  landing on this project's Jobs queue. **The measure UX is untouched** — the
+  same transparent tap-catcher over the `SurfaceView` so a pick never fights
+  the orbit gesture, the same "nearest sampled point" caveat, the same unit
+  chips and Clear. The full §3.9 display panel is still one tap away behind
+  the Tune action; the four chips are a shortcut for the one setting people
+  change constantly, not a replacement for it.
+- **Settings** (`ui/settings/SettingsScreen.kt`): restyled, nothing removed.
+  Units, theme, cloud server + token, the poor-clock-sync colorize policy,
+  the simulated-engine developer switch, the "Replay synthetic capture"
+  acceptance path (still tagged `replaySyntheticCaptureButton`), the
+  read-only workflow-profile reference and the storage location are all
+  still there and still do the same thing.
+
+### 6. What the emulator caught that review did not
+
+Both were found by looking at a screenshot, not by reading the code:
+
+- **A `fillMaxSize()` child of a `Column` takes the full incoming height, not
+  the height left over.** Capture's and Projects' content columns did exactly
+  that, so the transport row and the last card sat under the floating tab
+  bar. Both are `Box(Modifier.weight(1f))` now, and the redesigned roots also
+  carry `navigationBarsPadding()` so the clearance is measured from above the
+  gesture bar rather than from the screen edge.
+- **M3's default `Slider` track is sized for M3's own 4 dp thumb.** Under the
+  redesign's 28 dp thumb its thumb-track gap read as a stub of active track
+  to the left of the knob and its stop indicator as a stray dot on the right.
+  `SheetSlider` now passes an explicit track with `thumbTrackGapSize = 0.dp`
+  and `drawStopIndicator = null`. A disabled-but-checked `Switch` had the
+  related problem — M3 greys both states to nearly the same thing, so a row
+  that is *on and merely unavailable* read as off; explicit
+  `disabledChecked*` colours fix it.
+
+### 7. Test hooks the redesign moved (and why)
+
+`app/src/androidTest/.../ReplayCaptureSmokeTest.kt` still tests the same two
+things; two hooks had to move because the UI they pointed at genuinely
+changed shape.
+
+- `onNodeWithContentDescription("Settings")` still works and is still
+  unambiguous — but only because the tab bar's Settings tab deliberately
+  gives its icon `contentDescription = null` and lets its visible label be
+  the accessible name. Two nodes with that description would have made the
+  existing assertion throw on multiplicity. The test also now waits on
+  `testTag("projectsAvatar")` so a re-wording cannot silently break it, and
+  asserts `testTag("scanTabBar")` — if the bar failed to compose, every route
+  is unreachable by touch.
+- The old `onNodeWithText("Start replay", substring = true)` cannot match a
+  64 dp circle with no text. The hook is the record button's
+  `contentDescription`, which is state-dependent, so waiting for it is still
+  waiting for CONNECTED + IDLE exactly as the text match was.
+- `pointsCapturedValue` still tags the POINTS cell. The stat panel prints
+  `1.24 M` above a million and a plain grouped integer below it
+  (`CaptureScreen.formatPoints`), specifically so the growth assertion keeps
+  seeing motion at the bundled synthetic capture's tens-of-thousands scale —
+  `0.03 M` would be flat for the whole 10 s window and the test would be
+  measuring the formatter. The test's parser handles both forms anyway.
+
+### 8. Verification (what actually ran, on what)
+
+Toolchain as elsewhere in this file: JDK 17 (`openjdk@17`), Android SDK at
+`/opt/homebrew/share/android-commandlinetools`, NDK r27d, Gradle 8.14.5 via
+the wrapper.
+
+```
+$ ./gradlew :core:test :app:assembleDebug :app:connectedDebugAndroidTest
+...
+> Task :app:connectedDebugAndroidTest
+Starting 2 tests on b4_test(AVD) - 14
+Finished 2 tests on b4_test(AVD) - 14
+BUILD SUCCESSFUL
+```
+
+- **`:core:test` — 194 tests, 0 failures** (5 skipped, as before). The
+  `KeyframeSelector` change is covered by the existing `RigMotionTest` suite,
+  which still passes; no new JVM test was added for it, which is a gap worth
+  naming rather than a claim of coverage.
+- **`:app:assembleDebug` — succeeds**, native build included (unchanged).
+- **`:app:connectedDebugAndroidTest` — 2/2 green on a booted `b4_test` AVD**
+  (API 34, `google_apis`, arm64-v8a, HVF-accelerated), i.e. the tab-bar
+  navigation rework does not break the smoke test's routes.
+- **APK size**: 95,597,986 → **97,243,458 bytes** debug, **+1.57 MB
+  (+1.7 %)**. 703 KB of that is the eight subset font files; the rest is the
+  new Compose code plus the extra `material-icons-extended` vectors the tab
+  bar and the job tiles reference.
+- **Fonts confirmed in the APK** with `unzip -l`: `res/font/*.ttf` (8 files)
+  and `assets/fonts/OFL-*.txt` (3 files).
+
+**Screenshots** — `android/evidence/redesign/`, captured with
+`adb exec-out screencap` on the same booted AVD and downscaled to 640 px
+wide: Projects, Capture recording, the Capture-settings sheet, Diagnostics,
+the Capture tab's project picker, Jobs, Settings, Review.
+
+### 9. Deferred / not verified
+
+- **The thumbnail's real-data branch has never been seen rendering real
+  points.** The write happens in `stopCapture`; the emulator's replay
+  sessions ended by the source running out rather than by a user stop, so
+  every tile in the evidence is the seeded placeholder. Needs one
+  hardware (or user-stopped replay) session to confirm.
+- **The AR paths are all unexercised** — this AVD is `google_apis`, not
+  Play, so ARCore is unavailable and `arAvailable` is false throughout. The
+  sheet's AR & Camera section, the AR-overlay view mode, the KF chip's tick
+  rate, the TRACKING/LIMITED readout and `KeyframeRecorder.setEnabled` /
+  `setTargetFps` are all compiled and reasoned through, none of them run
+  against a real ARCore session.
+- **Landscape** is implemented (the viewport takes the left, the stats and
+  transport a 340 dp right column) but was only compiled, not seen.
+- **The RTK chip strip** shows the honest no-rover state on this emulator;
+  the fixed/float colouring has not been seen with a live rover.
+- **The screens the redesign did not restyle** — project detail, new
+  project, plan, RTK, merge, connect wizard, mount calibration — pick up the
+  new palette, type and shapes through `MaterialTheme` and get tab-bar
+  clearance from `UnderTabBar`, but keep their B1–B12 `Scaffold`/`TopAppBar`
+  chrome. That was the scope line; restyling them is the obvious follow-up.
+- **No screenshot test / Paparazzi-style golden** was added. The mockup's own
+  110-item checklist has no counterpart here, and the two-test emulator smoke
+  suite is the only automated UI gate.
