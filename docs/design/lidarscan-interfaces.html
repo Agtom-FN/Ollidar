@@ -1,0 +1,413 @@
+<title>LidarScan Interfaces</title>
+<style>
+  /* LidarScan interface showcase — deliberately single-theme: these are
+     dark-cockpit instrument UIs, shown in their own world. Every color is
+     explicit; the page never borrows the host's ground. */
+  :root{
+    --ground:#11151a;      /* blue-biased near-black */
+    --panel:#181e25;
+    --panel-2:#1e252e;
+    --line:#2a333d;
+    --line-soft:#222a33;
+    --ink:#e9edf1;
+    --ink-mute:#8b97a3;
+    --ink-faint:#5c6873;
+    --ember:#ff7a52;       /* laser ember — the one brand accent */
+    --ember-dim:#c25334;
+    --scan-lo:#3ec4b0;     /* point-cloud height ramp, low  */
+    --scan-hi:#e5c468;     /* point-cloud height ramp, high */
+    --fix-good:#49d17f;    /* semantic: RTK fixed / healthy  */
+    --fix-warn:#e5b93c;    /* semantic: float / degraded     */
+    --fix-bad:#e05252;     /* semantic: single / fault       */
+    --pose:#6aa7e8;        /* trajectory / pose stream       */
+    --mono:ui-monospace,"SF Mono","Cascadia Mono",Consolas,monospace;
+    --sans:"Avenir Next","Segoe UI",system-ui,-apple-system,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--ground);color:var(--ink);font-family:var(--sans);
+       line-height:1.55;padding:0 20px 80px}
+  .wrap{max-width:1060px;margin:0 auto}
+  header{padding:64px 0 30px;border-bottom:1px solid var(--line)}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.22em;
+           color:var(--ember);text-transform:uppercase}
+  h1{font-size:clamp(30px,5vw,44px);font-weight:600;letter-spacing:-.015em;
+     margin:10px 0 12px;text-wrap:balance}
+  .lede{color:var(--ink-mute);max-width:62ch;font-size:16px}
+  section{margin-top:64px}
+  h2{font-size:13px;font-family:var(--mono);letter-spacing:.2em;
+     text-transform:uppercase;color:var(--ink-mute);margin-bottom:6px}
+  h3{font-size:22px;font-weight:600;margin-bottom:18px;letter-spacing:-.01em}
+  .split{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:36px;align-items:start}
+  @media (max-width:840px){.split{grid-template-columns:1fr}}
+  .notes{display:flex;flex-direction:column;gap:14px}
+  .note{border-left:2px solid var(--ember-dim);padding:2px 0 2px 14px}
+  .note b{display:block;font-size:13.5px;font-weight:600}
+  .note span{font-size:13px;color:var(--ink-mute)}
+  /* ---- device chrome ---- */
+  .phone{width:300px;margin:0 auto;background:#000;border:1px solid #333;
+         border-radius:34px;padding:10px;box-shadow:0 24px 60px rgba(0,0,0,.5)}
+  .phone-screen{border-radius:24px;overflow:hidden;background:#0b0e12;
+                display:flex;flex-direction:column;height:600px}
+  .win{border:1px solid var(--line);border-radius:10px;overflow:hidden;
+       background:var(--panel);box-shadow:0 24px 60px rgba(0,0,0,.5)}
+  .titlebar{display:flex;align-items:center;height:36px;padding:0 12px;
+            background:var(--panel-2);border-bottom:1px solid var(--line);
+            font-size:12.5px;color:var(--ink-mute)}
+  .lights{display:flex;gap:7px;margin-right:12px}
+  .lights i{width:11px;height:11px;border-radius:50%;display:block}
+  .winctl{margin-left:auto;display:flex;gap:2px;font-family:var(--mono);
+          color:var(--ink-faint);font-size:11px}
+  .winctl s{display:inline-flex;width:34px;height:24px;align-items:center;
+            justify-content:center;text-decoration:none}
+  /* ---- shared app pieces ---- */
+  canvas{display:block;width:100%;height:100%}
+  .chip{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);
+        font-size:10.5px;letter-spacing:.06em;padding:3px 9px;border-radius:99px;
+        border:1px solid var(--line)}
+  .dot{width:7px;height:7px;border-radius:50%}
+  .statgrid{display:grid;grid-template-columns:repeat(4,1fr);
+            border-top:1px solid var(--line-soft)}
+  .stat{padding:8px 4px;text-align:center}
+  .stat em{display:block;font-style:normal;font-family:var(--mono);
+           font-size:14px;font-variant-numeric:tabular-nums}
+  .stat label{font-size:8.5px;letter-spacing:.14em;color:var(--ink-faint);
+              text-transform:uppercase}
+  .toggle{display:inline-flex;border:1px solid var(--line);border-radius:8px;
+          overflow:hidden;font-size:11px;font-family:var(--mono)}
+  .toggle b{padding:4px 12px;font-weight:500;background:var(--ember);color:#1a0d08}
+  .toggle span{padding:4px 12px;color:var(--ink-mute)}
+  .dockcard{border-top:1px solid var(--line-soft);padding:10px 12px}
+  .dockcard h4{font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;
+               color:var(--ink-faint);margin-bottom:8px;font-weight:600}
+  .slider{display:flex;align-items:center;gap:8px;font-size:11px;
+          color:var(--ink-mute);margin:6px 0}
+  .slider i{flex:1;height:3px;background:var(--line);border-radius:2px;position:relative}
+  .slider i::before{content:"";position:absolute;left:0;top:0;bottom:0;
+                    width:var(--v,50%);background:var(--ember);border-radius:2px}
+  .slider i::after{content:"";position:absolute;top:50%;left:var(--v,50%);
+                   width:11px;height:11px;border-radius:50%;background:var(--ink);
+                   transform:translate(-50%,-50%)}
+  .row{display:flex;align-items:center;gap:8px}
+  .pill-tabs{display:flex;gap:2px;padding:6px 10px;border-bottom:1px solid var(--line);
+             background:var(--panel-2);font-size:12px}
+  .pill-tabs span{padding:4px 12px;border-radius:6px;color:var(--ink-mute)}
+  .pill-tabs .on{background:var(--panel);color:var(--ink);border:1px solid var(--line)}
+  table{border-collapse:collapse;width:100%;font-size:13.5px}
+  th{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;
+     text-transform:uppercase;color:var(--ink-faint);text-align:left;
+     padding:8px 12px;border-bottom:1px solid var(--line)}
+  td{padding:8px 12px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+  td:first-child{white-space:nowrap;font-weight:600}
+  .tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px}
+  .sw{display:flex;flex-wrap:wrap;gap:10px}
+  .swatch{width:132px;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .swatch i{display:block;height:44px}
+  .swatch b{display:block;font-size:11.5px;padding:6px 9px 1px;font-weight:600}
+  .swatch span{display:block;font-family:var(--mono);font-size:10.5px;
+               color:var(--ink-faint);padding:0 9px 7px}
+  .foot{margin-top:70px;padding-top:18px;border-top:1px solid var(--line);
+        color:var(--ink-faint);font-size:12.5px;max-width:70ch}
+</style>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">LidarScan · Interface Design</div>
+  <h1>One engine, three cockpits</h1>
+  <p class="lede">The phone is the handheld capture instrument; the desktop is the
+  workstation. Same C++ engine, same point pipeline, same design tokens — the chrome
+  changes per platform, the layout logic doesn't. Everything below mirrors the
+  screens as implemented; the point clouds are rendered live by this page.</p>
+</header>
+
+<!-- ═══════════════ ANDROID ═══════════════ -->
+<section>
+  <h2>Android · Kotlin + Compose</h2>
+  <h3>Capture — the instrument in your hand</h3>
+  <div class="split">
+    <div class="phone"><div class="phone-screen">
+      <!-- app bar -->
+      <div style="display:flex;align-items:center;gap:8px;padding:12px 14px 8px">
+        <span style="font-size:13.5px;font-weight:600">warehouse-scan-03</span>
+        <span class="chip" style="margin-left:auto;border-color:rgba(73,209,127,.4)">
+          <span class="dot" style="background:var(--fix-good)"></span>MID-360</span>
+      </div>
+      <!-- fix strip -->
+      <div style="display:flex;gap:6px;padding:0 14px 8px">
+        <span class="chip" style="background:rgba(73,209,127,.12);border-color:rgba(73,209,127,.45);color:var(--fix-good)">
+          <span class="dot" style="background:var(--fix-good)"></span>RTK FIXED · 1.9 cm</span>
+        <span class="chip">NTRIP 0.8 s</span>
+      </div>
+      <!-- 3D viewport -->
+      <div style="position:relative;flex:1;background:#0b0e12">
+        <canvas id="cv-phone"></canvas>
+        <div style="position:absolute;top:10px;left:12px" class="toggle"><b>3D</b><span>AR</span></div>
+        <div style="position:absolute;bottom:10px;right:12px" class="chip"
+             style2="">MAP · kSlamMap</div>
+      </div>
+      <!-- stats -->
+      <div class="statgrid">
+        <div class="stat"><em>199 987</em><label>pts / s</label></div>
+        <div class="stat"><em>8.4 M</em><label>points</label></div>
+        <div class="stat"><em>04:12</em><label>rec</label></div>
+        <div class="stat"><em>212 MB</em><label>.lscan</label></div>
+      </div>
+      <!-- controls -->
+      <div style="display:flex;align-items:center;gap:14px;padding:12px 16px 16px">
+        <div style="display:flex;flex-direction:column;gap:2px;font-size:10.5px;color:var(--ink-mute)">
+          <span class="row"><span style="width:26px;height:15px;border-radius:9px;background:var(--ember);position:relative"><i style="position:absolute;right:2px;top:2px;width:11px;height:11px;border-radius:50%;background:#fff"></i></span> Live SLAM</span>
+          <span style="color:var(--ink-faint)">record-only if hot</span>
+        </div>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:12px">
+          <span style="width:34px;height:34px;border-radius:50%;border:1.5px solid var(--line);display:flex;align-items:center;justify-content:center;color:var(--ink-mute);font-size:11px">❙❙</span>
+          <span style="width:54px;height:54px;border-radius:50%;background:var(--ember);display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 4px rgba(255,122,82,.18)">
+            <i style="width:18px;height:18px;border-radius:4px;background:#1a0d08;display:block"></i></span>
+        </div>
+      </div>
+    </div></div>
+    <div class="notes">
+      <div class="note"><b>The map is the hero</b><span>Live SLAM output
+        (kSlamMap stream) fills the screen; UI floats over it. Height ramp
+        teal→sand; the ember trajectory is you.</span></div>
+      <div class="note"><b>AR ⇄ 3D, one thumb</b><span>AR mode anchors the same
+        cloud in the camera view — coverage gaps are visible on the spot
+        (ARCore session shared with pose + keyframes).</span></div>
+      <div class="note"><b>Fix quality is a traffic light</b><span>FIXED green /
+        FLOAT amber / SINGLE red, with live accuracy. D6-outdoor profiles gate
+        Record on it.</span></div>
+      <div class="note"><b>Thermals have an exit</b><span>Live SLAM toggle drops
+        to record-only mid-session without losing a byte — record-always is the
+        engine's rule, not the UI's choice.</span></div>
+      <div class="note"><b>Mono numerals, tabular</b><span>Stats never jitter as
+        digits change; pts/s at full rate proves the link health at a
+        glance.</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════ MACOS ═══════════════ -->
+<section>
+  <h2>macOS · Qt 6 (universal: Apple Silicon + Intel)</h2>
+  <h3>Workstation — review, merge, floor plans</h3>
+  <div class="win">
+    <div class="titlebar">
+      <span class="lights"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></span>
+      LidarScan — warehouse-scan-03.lscan
+    </div>
+    <div class="pill-tabs">
+      <span>Capture</span><span class="on">Review</span><span>Floor plan</span>
+      <span>Merge</span><span>Processing</span>
+    </div>
+    <div style="display:grid;grid-template-columns:168px 1fr 190px;min-height:380px">
+      <!-- sidebar -->
+      <div style="border-right:1px solid var(--line);padding:10px 0;font-size:12px">
+        <div style="padding:0 12px 6px;font-size:9.5px;letter-spacing:.16em;color:var(--ink-faint)">PROJECTS</div>
+        <div style="padding:7px 12px;background:var(--panel-2);border-left:2px solid var(--ember)">
+          warehouse-scan-03<br><span style="color:var(--ink-faint);font-size:10.5px">8.4 M pts · georef ✓</span></div>
+        <div style="padding:7px 12px;color:var(--ink-mute)">site-north-01<br>
+          <span style="color:var(--ink-faint);font-size:10.5px">12.1 M pts · georef ✓</span></div>
+        <div style="padding:7px 12px;color:var(--ink-mute)">corridor-d6-test<br>
+          <span style="color:var(--ink-faint);font-size:10.5px">1.2 M pts · pushbroom</span></div>
+      </div>
+      <!-- viewport -->
+      <div style="position:relative;background:#0b0e12">
+        <canvas id="cv-mac"></canvas>
+        <span class="chip" style="position:absolute;top:10px;left:12px">MEASURE · 2.454 m</span>
+        <span class="chip" style="position:absolute;bottom:10px;left:12px;color:var(--ink-faint)">59 fps · 8.4 M pts · Metal</span>
+      </div>
+      <!-- display params dock -->
+      <div style="border-left:1px solid var(--line)">
+        <div class="dockcard"><h4>Display</h4>
+          <div class="slider">size<i style="--v:38%"></i></div>
+          <div class="slider">LOD<i style="--v:72%"></i></div>
+          <div class="slider">gamma<i style="--v:50%"></i></div>
+          <div class="row" style="font-size:11px;color:var(--ink-mute);margin-top:6px">
+            color <span class="toggle" style="margin-left:auto"><b>height</b><span>RGB</span></span></div>
+        </div>
+        <div class="dockcard"><h4>Clipping</h4>
+          <div class="slider">z-max<i style="--v:81%"></i></div>
+        </div>
+        <div class="dockcard"><h4>Export</h4>
+          <div style="font-size:11px;color:var(--ink-mute)">LAS 1.4 · EPSG 32650<br>
+          <span style="color:var(--fix-good);font-family:var(--mono);font-size:10.5px">georef converged ✓</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="notes" style="margin-top:18px;display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px">
+    <div class="note"><b>Docks, not dialogs</b><span>Display params, clipping and
+      export live beside the viewport and apply live — the A14 parameter model
+      both apps bind to.</span></div>
+    <div class="note"><b>Merge workbench</b><span>The Merge tab colors the cloud
+      per session (run-table provenance), plots the ICP residual trace, and
+      refuses low-overlap pairs out loud.</span></div>
+    <div class="note"><b>CRS shown only when earned</b><span>The EPSG label
+      appears when georeferencing has converged — a cloud is never labeled UTM
+      on hope.</span></div>
+  </div>
+</section>
+
+<!-- ═══════════════ WINDOWS ═══════════════ -->
+<section>
+  <h2>Windows · same Qt codebase</h2>
+  <h3>Identical layout, native chrome</h3>
+  <div class="win" style="border-radius:6px">
+    <div class="titlebar" style="height:32px">
+      <span style="color:var(--ember);font-family:var(--mono);font-size:11px;margin-right:10px">◆</span>
+      LidarScan — Processing
+      <span class="winctl"><s>—</s><s>▢</s><s style="color:#e05252">✕</s></span>
+    </div>
+    <div class="pill-tabs">
+      <span>Capture</span><span>Review</span><span>Floor plan</span>
+      <span>Merge</span><span class="on">Processing</span>
+    </div>
+    <div style="padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-height:210px">
+      <div style="border:1px solid var(--line);border-radius:8px;padding:10px 14px">
+        <div class="row" style="font-size:13px"><b>Post-process — warehouse-scan-03</b>
+          <span class="chip" style="margin-left:auto;color:var(--fix-warn);border-color:rgba(229,185,60,.4)">RUNNING</span></div>
+        <div style="height:6px;background:var(--line-soft);border-radius:3px;margin:10px 0 6px">
+          <div style="width:64%;height:100%;background:var(--ember);border-radius:3px"></div></div>
+        <div style="font-family:var(--mono);font-size:11px;color:var(--ink-mute)">64% · re-integration · 391 069 pts kept</div>
+      </div>
+      <div style="border:1px solid var(--line);border-radius:8px;padding:10px 14px">
+        <div class="row" style="font-size:13px"><b>Colorize — site-north-01</b>
+          <span class="chip" style="margin-left:auto;color:var(--ink-faint)">QUEUED · after post</span></div>
+        <div style="font-size:11.5px;color:var(--ink-faint);margin-top:4px">6 keyframes · sync quality: good · motion-gated</div>
+      </div>
+      <div class="row" style="font-size:12px;color:var(--ink-mute)">
+        Run on: <span class="toggle"><b>This PC</b><span>Cloud</span><span>Export bundle</span></span>
+        <span style="margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--ink-faint)">worker: engine_cli --post</span>
+      </div>
+    </div>
+  </div>
+  <div class="notes" style="margin-top:18px;display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px">
+    <div class="note"><b>One codebase, honest chrome</b><span>Traffic lights on
+      macOS, caption buttons on Windows, the app itself is pixel-for-pixel the
+      same Qt layout. Linux gets the same treatment (X11).</span></div>
+    <div class="note"><b>Jobs speak plainly</b><span>Every job shows stage +
+      progress from the engine's own labels; a refusal names its cause
+      ("no keyframes — capture with camera on").</span></div>
+    <div class="note"><b>Local / Cloud / Bundle</b><span>The three processing
+      modes are one segmented control — same pipeline, three places to run
+      it.</span></div>
+  </div>
+</section>
+
+<!-- ═══════════════ TOKENS ═══════════════ -->
+<section>
+  <h2>Shared design tokens</h2>
+  <h3>The system underneath all three</h3>
+  <div class="sw">
+    <div class="swatch"><i style="background:#11151a"></i><b>Ground</b><span>#11151A</span></div>
+    <div class="swatch"><i style="background:#181e25"></i><b>Panel</b><span>#181E25</span></div>
+    <div class="swatch"><i style="background:#ff7a52"></i><b>Ember · accent</b><span>#FF7A52</span></div>
+    <div class="swatch"><i style="background:linear-gradient(90deg,#3ec4b0,#e5c468)"></i><b>Height ramp</b><span>#3EC4B0→#E5C468</span></div>
+    <div class="swatch"><i style="background:#6aa7e8"></i><b>Pose / trajectory</b><span>#6AA7E8</span></div>
+    <div class="swatch"><i style="background:#49d17f"></i><b>Fixed / healthy</b><span>#49D17F</span></div>
+    <div class="swatch"><i style="background:#e5b93c"></i><b>Float / degraded</b><span>#E5B93C</span></div>
+    <div class="swatch"><i style="background:#e05252"></i><b>Single / fault</b><span>#E05252</span></div>
+  </div>
+  <p style="color:var(--ink-mute);font-size:13.5px;margin-top:16px;max-width:66ch">
+    Semantic colors (fix quality, health) are never the brand accent — ember is for
+    <em>your</em> actions and <em>your</em> path; green/amber/red always mean state.
+    Numbers are always tabular mono. Dark ground is a deliberate commitment: these
+    are instruments read over a glowing point cloud, indoors and at dusk.</p>
+</section>
+
+<!-- ═══════════════ SCREEN MAP ═══════════════ -->
+<section>
+  <h2>Screen map</h2>
+  <h3>What exists, per platform</h3>
+  <div class="tablewrap"><table>
+    <tr><th>Screen</th><th>Android</th><th>macOS / Windows / Linux desktop</th></tr>
+    <tr><td>Projects</td><td>Cards: sensor badge, profile chip, point count</td><td>Sidebar library; drag-drop / file-association import of .lscan.zip</td></tr>
+    <tr><td>Device setup</td><td>D6 USB wizard · Mid-360 static-IP wizard + self-test</td><td>Serial picker (CH340 hint) · Mid-360 IP config + self-test</td></tr>
+    <tr><td>Capture</td><td>Live 3D / AR overlay, stats strip, Live-SLAM toggle, RTK gate</td><td>Capture window: guided self-test → record, health panel</td></tr>
+    <tr><td>Calibration</td><td>S6 checkerboard wizard (roll prompts, split-half gate)</td><td>—  (imports the phone's calibration)</td></tr>
+    <tr><td>RTK</td><td>BT rover pairing, NTRIP config, fix strip</td><td>NTRIP config; GNSS trajectory mode for D6 pushbroom</td></tr>
+    <tr><td>Processing</td><td>Job list; Local / Cloud / Transfer</td><td>Processing dock; result loads into viewport</td></tr>
+    <tr><td>Review</td><td>Viewer, display panel, measure</td><td>Viewport + display dock + measure with segment list</td></tr>
+    <tr><td>Floor plan</td><td>View + DXF/PDF share</td><td>Full workspace: slice slider, regions, live re-extract</td></tr>
+    <tr><td>Merge</td><td>Georef auto-merge only</td><td>Workbench: 3-point align, ICP trace chart, per-session color</td></tr>
+  </table></div>
+</section>
+
+<p class="foot">Every screen above corresponds to implemented code (Compose on
+Android; Qt 6 Widgets on desktop — Filament renders the clouds on all three).
+The mockups use the apps' real telemetry values from test runs. Static page;
+no external resources.</p>
+</div>
+
+<script>
+/* Deterministic point-cloud renders — a warehouse room scan, height-colored,
+   with the operator's ember trajectory. Same generator for both viewports,
+   different camera + density. */
+(function(){
+  function lcg(seed){return function(){seed=(seed*1664525+1013904223)>>>0;return seed/4294967296}}
+  function ramp(t){ // teal -> sand
+    const a=[0x3e,0xc4,0xb0], b=[0xe5,0xc4,0x68];
+    const c=a.map((v,i)=>Math.round(v+(b[i]-v)*t));
+    return c;
+  }
+  function render(id, opts){
+    const cv=document.getElementById(id); if(!cv) return;
+    const dpr=Math.min(2,window.devicePixelRatio||1);
+    const w=cv.clientWidth, h=cv.clientHeight;
+    cv.width=w*dpr; cv.height=h*dpr;
+    const ctx=cv.getContext('2d'); ctx.scale(dpr,dpr);
+    ctx.fillStyle='#0b0e12'; ctx.fillRect(0,0,w,h);
+    const rnd=lcg(opts.seed);
+    const yaw=opts.yaw, pitch=opts.pitch, zoom=opts.zoom;
+    const cy=Math.cos(yaw), sy=Math.sin(yaw), cp=Math.cos(pitch), sp=Math.sin(pitch);
+    function proj(x,y,z){
+      let X=x*cy - y*sy, Y=x*sy + y*cy, Z=z;
+      let Y2=Y*cp - Z*sp, Z2=Y*sp + Z*cp;
+      const d=1/(1+Y2*0.06);
+      return [w/2 + X*zoom*d, h*0.58 - Z2*zoom*d + Y2*zoom*0.28*d, d];
+    }
+    const pts=[];
+    const R=opts.room; // [sx, sy, sz]
+    function add(x,y,z,jit){ pts.push([x+ (rnd()-0.5)*jit, y+(rnd()-0.5)*jit, z+(rnd()-0.5)*jit*0.4]); }
+    // floor
+    for(let i=0;i<opts.n*0.34;i++) add((rnd()-0.5)*R[0],(rnd()-0.5)*R[1],0,0.06);
+    // two walls
+    for(let i=0;i<opts.n*0.2;i++)  add(-R[0]/2,(rnd()-0.5)*R[1],rnd()*R[2],0.05);
+    for(let i=0;i<opts.n*0.2;i++)  add((rnd()-0.5)*R[0],R[1]/2,rnd()*R[2],0.05);
+    // shelving blocks
+    for(let b=0;b<4;b++){
+      const bx=(rnd()-0.6)*R[0]*0.7, by=(rnd()-0.5)*R[1]*0.6, bw=0.5+rnd()*0.6, bh=0.8+rnd()*1.4;
+      for(let i=0;i<opts.n*0.06;i++)
+        add(bx+(rnd()-0.5)*bw, by+(rnd()-0.5)*bw, rnd()*bh, 0.03);
+    }
+    // ceiling hints
+    for(let i=0;i<opts.n*0.08;i++) add((rnd()-0.5)*R[0]*0.9,(rnd()-0.5)*R[1]*0.9,R[2],0.05);
+    // depth sort cheap: draw floor->up already fine; draw
+    for(const p of pts){
+      const t=Math.max(0,Math.min(1,p[2]/R[2]));
+      const [pr,pg,pb]=ramp(t);
+      const [x,y,d]=proj(p[0],p[1],p[2]);
+      if(x<-4||x>w+4||y<-4||y>h+4) continue;
+      ctx.fillStyle='rgba('+pr+','+pg+','+pb+','+(0.35+0.5*d)+')';
+      const s=Math.max(0.7,1.7*d*opts.px);
+      ctx.fillRect(x,y,s,s);
+    }
+    // trajectory
+    ctx.strokeStyle='#ff7a52'; ctx.lineWidth=1.6; ctx.beginPath();
+    let first=true;
+    for(let i=0;i<=60;i++){
+      const u=i/60, ang=u*Math.PI*1.5;
+      const x=Math.cos(ang)*R[0]*0.22*(1-u*0.3), y=Math.sin(ang)*R[1]*0.25, z=0.4;
+      const [px_,py_]=proj(x,y,z);
+      if(first){ctx.moveTo(px_,py_);first=false}else ctx.lineTo(px_,py_);
+    }
+    ctx.stroke();
+    const [hx,hy]=proj(Math.cos(Math.PI*1.5)*R[0]*0.154,Math.sin(Math.PI*1.5)*R[1]*0.25,0.4);
+    ctx.fillStyle='#ff7a52'; ctx.beginPath(); ctx.arc(hx,hy,3.4,0,7); ctx.fill();
+    ctx.strokeStyle='rgba(255,122,82,.35)'; ctx.beginPath(); ctx.arc(hx,hy,7,0,7); ctx.stroke();
+  }
+  function all(){
+    render('cv-phone',{seed:7,n:5200,yaw:0.7,pitch:0.9,zoom:26,px:1.0,room:[10,8,3]});
+    render('cv-mac',  {seed:11,n:9000,yaw:2.2,pitch:0.95,zoom:34,px:1.1,room:[12,9,3]});
+  }
+  all(); addEventListener('resize',all);
+})();
+</script>
