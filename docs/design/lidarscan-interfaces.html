@@ -315,6 +315,77 @@
   .sw.big i::after{width:20px;height:20px;left:3px;top:3px}
   .sw.big[aria-pressed=true] i::after{transform:translateX(18px)}
 
+  /* ─────────────── Android · display bottom sheet ───────────────
+     Display parameters used to be a cramped strip wedged under the viewport:
+     10 px chips and a 3 px slider track, both far under the 44 px touch floor,
+     with no room to breathe. They now open as a real Material bottom sheet —
+     scrim, grabber, 20 px top radius, ~60 % height — with rows sized for a
+     thumb. The viewport stays visible above the sheet so every change to the
+     colour ramp, point size or LOD is verifiable while you are making it. */
+  .dispfab{position:absolute;right:14px;bottom:56px;width:48px;height:48px;border-radius:50%;
+           display:flex;align-items:center;justify-content:center;z-index:16;flex:none;
+           background:rgba(24,30,37,.86);backdrop-filter:blur(8px);color:var(--ink);
+           border:1px solid rgba(80,94,110,.55);box-shadow:0 6px 18px rgba(0,0,0,.45)}
+  .dispfab svg{width:22px;height:22px}
+  .dispfab:hover{background:rgba(38,46,56,.94);color:var(--ember)}
+  .dispfab[aria-expanded=true]{border-color:var(--ember);color:var(--ember)}
+  .sheet-scrim{position:absolute;inset:0;z-index:30;background:rgba(6,9,12,.58);
+               animation:sheetFade .18s ease-out}
+  .sheet{position:absolute;left:0;right:0;bottom:0;z-index:34;height:65%;max-height:470px;
+         background:var(--panel);border-top:1px solid var(--line);
+         border-radius:20px 20px 0 0;box-shadow:0 -14px 40px rgba(0,0,0,.62);
+         display:flex;flex-direction:column;
+         animation:sheetUp .22s cubic-bezier(.2,.8,.25,1)}
+  .sheet.out{animation:sheetDown .16s ease-in forwards}
+  .sheet-scrim.out{animation:sheetFadeOut .16s ease-in forwards}
+  @keyframes sheetUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
+  @keyframes sheetDown{from{transform:translateY(0)}to{transform:translateY(100%)}}
+  @keyframes sheetFade{from{opacity:0}to{opacity:1}}
+  @keyframes sheetFadeOut{from{opacity:1}to{opacity:0}}
+  /* the grabber is a real 44 px-tall dismiss target, not decoration */
+  .sheet-grab{width:100%;height:34px;display:flex;align-items:center;justify-content:center;
+              flex:none;padding-top:10px}
+  .sheet-grab i{display:block;width:44px;height:5px;border-radius:3px;background:var(--line);
+                transition:background .14s}
+  .sheet-grab:hover i{background:var(--ink-faint)}
+  /* the sheet takes focus when it opens — say so in ember, not in a browser-blue ring */
+  .sheet:focus{outline:none}
+  .sheet-grab:focus{outline:none}
+  .sheet-grab:focus-visible i{background:var(--ember);width:56px}
+  .sheet-head{display:flex;align-items:baseline;gap:10px;padding:0 18px 4px;flex:none}
+  .sheet-head h2{font-family:var(--display);font-size:19px;font-weight:600;letter-spacing:-.02em}
+  .sheet-body{flex:1;min-height:0;overflow-y:auto;padding:2px 18px 10px}
+  .sheet-row{padding:16px 0 10px;border-top:1px solid var(--line-soft)}
+  .sheet-row:first-child{border-top:none;padding-top:4px}
+  .sheet-row>label{display:flex;align-items:baseline;gap:8px;margin-bottom:6px;
+                   font-family:var(--mono);font-size:10px;letter-spacing:.14em;
+                   text-transform:uppercase;color:var(--ink-faint)}
+  .sheet-row>label b{margin-left:auto;font-size:12.5px;letter-spacing:0;text-transform:none;
+                     color:var(--ink);font-variant-numeric:tabular-nums;font-weight:500}
+  /* the range lives in the label, not in a second row under the track — the
+     three control rows have to fit above the fold or the fix has not landed */
+  .sheet-row>label i{font-style:normal;font-size:9.5px;letter-spacing:.06em;
+                     text-transform:none;color:var(--ink-faint);opacity:.85}
+  .seg.sheetseg{display:flex;width:100%;padding:4px;border-radius:99px;
+                font-family:var(--sans);font-size:13.5px;background:var(--panel-2)}
+  .seg.sheetseg button{flex:1;height:40px;justify-content:center;text-align:center;
+                       border-radius:99px;font-weight:500;padding:0 6px}
+  /* 28 px knob on an 8 px track — the whole 44 px row is draggable */
+  .sheet-slider{-webkit-appearance:none;appearance:none;display:block;width:100%;height:44px;
+                background:none;cursor:pointer;outline:none}
+  .sheet-slider::-webkit-slider-runnable-track{height:8px;border-radius:5px;
+    background:var(--panel-3);border:1px solid var(--line)}
+  .sheet-slider::-webkit-slider-thumb{-webkit-appearance:none;width:28px;height:28px;
+    border-radius:50%;background:var(--ember);border:3px solid var(--panel);margin-top:-11px;
+    box-shadow:0 2px 8px rgba(0,0,0,.55),0 0 0 4px rgba(255,122,82,.16)}
+  .sheet-slider::-moz-range-track{height:8px;border-radius:5px;background:var(--panel-3);
+    border:1px solid var(--line)}
+  .sheet-slider::-moz-range-thumb{width:28px;height:28px;border-radius:50%;background:var(--ember);
+    border:3px solid var(--panel);box-shadow:0 2px 8px rgba(0,0,0,.55)}
+  .sheet-slider:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 4px rgba(255,122,82,.4)}
+  .sheet-foot{flex:none;padding:10px 18px 14px;border-top:1px solid var(--line-soft);
+              background:var(--panel)}
+
   /* ─────────────── Android · job tiles ─────────────── */
   .jobtile{display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line-soft);
            border-radius:var(--r-card);padding:12px;margin-bottom:11px}
@@ -358,6 +429,46 @@
               background:var(--panel-3);border:1px solid var(--line);color:var(--ink-faint);font-size:11.5px}
   .searchpill:hover{color:var(--ink)}
   .searchpill svg{width:13px;height:13px}
+
+  /* ─────────────── Desktop · record cluster ───────────────
+     C2's state machine — Test device → Record → Pause/Resume → Stop — used to
+     live as four 12 px pills buried at the bottom of the right-hand dock, where
+     nobody found Record. It is now a fixed control row across the foot of the
+     capture viewport: one large ember Start-recording pill that turns red and
+     grows an elapsed clock while a session is open, Pause/Resume beside it, and
+     the self-test gate stated in words rather than implied by a dim button. */
+  .reccluster{display:flex;align-items:center;gap:12px;flex:none;flex-wrap:wrap;
+              padding:12px 16px;border-top:1px solid var(--line);background:var(--panel-2)}
+  .recmain{display:inline-flex;align-items:center;justify-content:center;gap:10px;flex:none;
+           height:48px;padding:0 26px;border-radius:99px;white-space:nowrap;
+           background:var(--ember);border:1px solid var(--ember);color:#1a0d08;
+           font-family:var(--display);font-size:15px;font-weight:600;letter-spacing:-.01em;
+           box-shadow:0 6px 20px rgba(255,122,82,.3);transition:background .14s,box-shadow .14s}
+  .recmain:hover{background:#ff8f6c;border-color:#ff8f6c}
+  .recmain i{display:block;width:15px;height:15px;border-radius:50%;background:#1a0d08;flex:none}
+  .recmain.stop{background:rgba(224,82,82,.18);border-color:rgba(224,82,82,.8);color:#ff9a9a;
+                box-shadow:0 6px 20px rgba(224,82,82,.22)}
+  .recmain.stop:hover{background:rgba(224,82,82,.3);border-color:#e05252}
+  .recmain.stop i{border-radius:4px;background:#ff6b6b}
+  .recmain[disabled]{opacity:.42;cursor:not-allowed;box-shadow:none}
+  .recmain[disabled]:hover{background:var(--ember);border-color:var(--ember)}
+  .recclock{display:flex;align-items:center;gap:9px;flex:none;padding:0 4px}
+  .recclock em{font-style:normal;font-family:var(--mono);font-size:21px;font-weight:600;
+               letter-spacing:-.02em;color:var(--ink);font-variant-numeric:tabular-nums}
+  .recclock span{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+                 color:var(--ink-faint);display:block}
+  .recdot{width:10px;height:10px;border-radius:50%;background:var(--fix-bad);flex:none;
+          animation:recpulse 1.15s ease-in-out infinite}
+  .recdot.paused{background:var(--fix-warn);animation:none}
+  @keyframes recpulse{0%,100%{opacity:1}50%{opacity:.22}}
+  .recwhy{margin-left:auto;display:flex;align-items:center;gap:10px;text-align:right;
+          font-size:11.5px;color:var(--ink-faint);max-width:430px;line-height:1.45}
+  .recbadge{display:inline-flex;align-items:center;gap:6px;flex:none;padding:4px 10px;border-radius:99px;
+            font-family:var(--mono);font-size:9.5px;letter-spacing:.13em;text-transform:uppercase;
+            border:1px solid var(--line);color:var(--ink-faint);background:var(--panel)}
+  .recbadge.warn{border-color:rgba(229,185,60,.45);color:var(--fix-warn);background:rgba(229,185,60,.1)}
+  .recbadge.good{border-color:rgba(73,209,127,.45);color:var(--fix-good);background:rgba(73,209,127,.1)}
+  .recbadge.live{border-color:rgba(224,82,82,.5);color:#ff8f8f;background:rgba(224,82,82,.12)}
 
   .toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,14px);background:var(--panel-3);
          border:1px solid var(--line);border-radius:9px;padding:9px 16px;font-size:12.5px;z-index:80;
@@ -458,6 +569,9 @@
   }
   @media (prefers-reduced-motion:reduce){
     *{transition-duration:.01ms !important}
+    /* the sheet still appears and dismisses — it just does not travel */
+    .sheet,.sheet-scrim,.sheet.out,.sheet-scrim.out{animation:none !important}
+    .recdot{animation:none !important}
   }
 </style>
 
@@ -612,7 +726,9 @@ const FIX = {
 const FIXORDER=['NONE','SINGLE','DGPS','RTK_FLOAT','RTK_FIXED'];
 
 const newCap = ()=>({state:'idle', view:'3d', liveSlam:true, prog:0, pts:0, elapsed:0,
-                     rate:0, mb:0, kf:0, drops:0, follow:true, seed:7});
+                     rate:0, mb:0, kf:0, drops:0, follow:true, seed:7,
+                     /* display parameters — surfaced through the capture bottom sheet */
+                     color:'height', size:2.0, lod:20, sheet:false});
 
 const S = {
   dev:'android',
@@ -1434,6 +1550,9 @@ A.capture = ()=>{
       ${c.state==='idle'&&c.prog===0?`<div class="ovl" style="inset:0;display:flex;align-items:center;justify-content:center">
         <span class="hint" style="text-align:center;max-width:70%">Press Record to start the session.<br>
         The engine records every raw byte either way.</span></div>`:''}
+      <button class="dispfab ovl act" id="cap-dispfab" data-act="capSheet" data-arg="open"
+              aria-haspopup="dialog" aria-expanded="${!!c.sheet}" aria-controls="cap-sheet"
+              title="Display settings" aria-label="Display settings">${I('sliders')}</button>
     </div>
     <div class="statpanel">
       <div class="stat"><em id="cap-pps">0</em><label>pts / s</label></div>
@@ -1458,17 +1577,57 @@ A.capture = ()=>{
       </div>
     </div>
     <div class="body haspad" style="flex:none;height:126px;padding:0 16px">
-      <div class="sect" style="padding-left:0">Display (A14 contract)</div>
-      ${SEG([['height','Height'],['rgb','RGB'],['intensity','Intensity']],c.color||'height','capColor','sm')}
-      ${SL('size','cap.size',0.5,12,0.5,c.size||2.0,'px')}
       <div class="sect" style="padding-left:0">AR + camera keyframes</div>
       ${KV('AR tracking', c.view==='ar'?'<span style="color:var(--fix-good)">TRACKING</span>':'<span style="color:var(--ink-faint)">off</span>')}
       ${KV('Keyframes written', String(c.kf))}
       ${KV('Tracking-loss episodes','0')}
       ${KV('Skipped (turning too fast)', String(c.drops))}
       ${KV('Rolling shutter','not reported by this camera')}
-    </div>`;
+    </div>`
+  + (c.sheet ? capSheet(c) : '');
 };
+
+/* The display bottom sheet — A14's display contract at thumb scale.
+   It covers the lower 60 % of the screen and nothing more: the viewport stays
+   on screen above it, so the colour ramp, point size and LOD budget are all
+   verified against the live cloud while the sheet is still open. Every control
+   writes straight to S.cap.* and repaints the canvas without a re-render, so
+   the sheet never jumps under your thumb. */
+function capSheet(c){
+  const COLOURS=[['height','Height'],['rgb','RGB'],['intensity','Intensity']];
+  return `<div class="sheet-scrim" id="cap-sheet-scrim" data-act="capSheet" data-arg="close"
+               aria-hidden="true"></div>
+    <section class="sheet" id="cap-sheet" role="dialog" aria-modal="false" tabindex="-1"
+             aria-label="Display settings">
+      <button class="sheet-grab" data-act="capSheet" data-arg="close"
+              aria-label="Close display settings"><i></i></button>
+      <div class="sheet-head">
+        <h2>Display</h2>
+        <span class="hint" style="margin-left:auto;font-family:var(--mono);font-size:10px;
+              letter-spacing:.13em;text-transform:uppercase">A14 · live</span>
+      </div>
+      <div class="sheet-body">
+        <div class="sheet-row">
+          <label>Colour mode <b id="cap-colour-out">${COLOURS.find(x=>x[0]===(c.color||'height'))[1]}</b></label>
+          <div class="seg sheetseg">${COLOURS.map(([v,l])=>
+            `<button data-act="capColor" data-arg="${v}" aria-pressed="${v===(c.color||'height')}">${l}</button>`).join('')}</div>
+        </div>
+        <div class="sheet-row">
+          <label>Point size <i>0.5 – 12 px</i><b data-out="cap.size" data-unit=" px">${fmtVal(c.size,'1')} px</b></label>
+          <input class="sheet-slider" type="range" min="0.5" max="12" step="0.5" value="${c.size}"
+                 data-inp="cap.size" data-live="draw" data-fmt="1" aria-label="Point size">
+        </div>
+        <div class="sheet-row">
+          <label>LOD budget <i>sparse → every return</i><b data-out="cap.lod" data-unit="%">${fmtVal(c.lod,'i')}%</b></label>
+          <input class="sheet-slider" type="range" min="2" max="20" step="1" value="${c.lod}"
+                 data-inp="cap.lod" data-live="draw" data-fmt="i" aria-label="LOD budget">
+        </div>
+      </div>
+      <div class="sheet-foot">
+        <button class="btn lg pri wide" data-act="capSheet" data-arg="close">Done</button>
+      </div>
+    </section>`;
+}
 
 A.rtk = ()=>{
   const r=S.rtk, f=FIX[r.fix]||FIX.NONE;
@@ -1748,12 +1907,60 @@ D.projects = ()=>`
     </div>
   </div>`;
 
+/* The record cluster: C2's state machine made visible.
+   Test device → Record → Pause/Resume → Stop, in that reading order, pinned to
+   the foot of the capture viewport on both desktop shells (they share this
+   content). Start stays disabled until the self-test passes and says so in
+   words next to the button, because a dim pill on its own explains nothing. */
+function recCluster(){
+  const c=S.dcap, rec=c.state==='rec', paused=c.state==='paused', live=c.state!=='idle';
+  const gated = c.selftest!=='pass';
+  const why = gated
+    ? (c.selftest==='run' ? 'Self-test running — Start unlocks when it passes.'
+      : c.selftest==='fail' ? 'Self-test failed. Fix the link, then test the device again.'
+      : `Run <b>Test device</b> first — ${c.transport==='d6'
+          ? '≥ 3 000 pts/s over a 3 s window' : 'first packet within 8 s'} unlocks Start.`)
+    : live ? 'Recording is open — the engine keeps every raw byte, paused or not.'
+           : 'Self-test passed — the engine is armed and ready to record.';
+  const gateTip = 'Start recording is locked until the pre-capture self-test passes'
+    + (c.transport==='d6' ? ' (≥ 3 000 pts/s over 3 s).' : ' (first packet within 8 s).');
+  return `<div class="reccluster" role="group" aria-label="Recording controls">
+    ${B('Test device','dcapTest',{cls:'',dis:c.selftest==='run'||live,
+        t:'Pre-capture self-test — step 1 of the capture sequence'})}
+    ${live
+      ? `<button class="recmain stop" data-act="dcapStop" title="Stop recording and write the session summary">
+           <i></i>Stop recording</button>`
+      : `<button class="recmain" data-act="dcapRec" id="dcap-start"${gated?' disabled':''}
+                 title="${esc(gated?gateTip:'Start recording into the .lscan project')}">
+           <i></i>Start recording</button>`}
+    ${live
+      ? `<div class="recclock"><span class="recdot${paused?' paused':''}"></span>
+           <div><em id="dcap-elapsed">${mmss(c.elapsed)}</em>
+           <span>${paused?'paused':'elapsed'}</span></div></div>`
+      : `<div class="recclock"><div><em id="dcap-elapsed" style="color:var(--ink-faint)">00:00</em>
+           <span>elapsed</span></div></div>`}
+    ${B(paused?'Resume':'Pause','dcapPause',{cls:'',dis:!live,
+        t:live?(paused?'Resume the open session':'Pause — the recording stays open'):'Nothing is recording'})}
+    <div class="recwhy">
+      <span>${why}</span>
+      <span class="recbadge ${live?'live':gated?'warn':'good'}">${
+        live?(paused?'PAUSED':'REC'):gated?'SELF-TEST REQUIRED':'ARMED'}</span>
+    </div>
+  </div>`;
+}
+
 D.capture = ()=>{
-  const c=S.dcap, rec=c.state==='rec';
+  const c=S.dcap;
   return `<div class="dgrid" style="display:grid;grid-template-columns:1fr 330px;min-height:440px">
-    <div class="vp" data-orbit="dcap" style="min-height:300px"><canvas data-cloud="dcap"></canvas>
+    <div style="display:flex;flex-direction:column;min-width:0">
+    <div class="vp" data-orbit="dcap" style="flex:1;min-height:300px"><canvas data-cloud="dcap"></canvas>
       <div class="ovl" style="bottom:10px;left:12px"><span class="chip faint" id="dcap-stats">idle</span></div>
       <div class="ovl act" style="top:10px;left:12px">${SEG([['3d','3D'],['ar','AR']],c.view,'dcapView','sm')}</div>
+      ${c.state!=='idle'?`<div class="ovl" style="top:10px;right:12px"><span class="chip"
+        style="border-color:rgba(224,82,82,.55);color:#ff9a9a;background:rgba(224,82,82,.14)">
+        <span class="dot" style="background:var(--fix-bad)"></span>${c.state==='paused'?'PAUSED':'RECORDING'}</span></div>`:''}
+    </div>
+    ${recCluster()}
     </div>
     <div style="border-left:1px solid var(--line);overflow-y:auto;max-height:520px">
       <div class="pill-tabs" style="border-top:none">
@@ -1787,12 +1994,8 @@ D.capture = ()=>{
             ${['quickscan','survey','floorplan','research'].map(p=>
               `<option${(c.profile||'floorplan')===p?' selected':''}>${p}</option>`).join('')}</select></div>
         <div style="margin:8px 0">${SW('Live (render while capturing)',c.live,'dcapLive')}</div>
-        <div class="wrap8">
-          ${B('Test device','dcapTest',{cls:'sm',dis:c.selftest==='run'})}
-          ${B('Record','dcapRec',{cls:'sm pri',dis:c.selftest!=='pass'||rec})}
-          ${B(c.state==='paused'?'Resume':'Pause','dcapPause',{cls:'sm',dis:c.state==='idle'})}
-          ${B('Stop','dcapStop',{cls:'sm',dis:c.state==='idle'})}
-        </div>
+        <div class="hint" style="margin-top:9px">Transport, session and self-test are configured here;
+          <b>Test device · Start · Pause · Stop</b> live in the record cluster under the viewport.</div>
         ${c.selftest!=='idle'?`<div class="bar ${c.selftest==='pass'?'good':''}"><i style="width:${c.stpct}%"></i></div>
           <div class="hint" style="font-family:var(--mono);color:${c.selftest==='pass'?'var(--fix-good)':c.selftest==='fail'?'var(--fix-bad)':'var(--ink-mute)'}">
           ${esc(c.stmsg||'')}</div>`:
@@ -2138,7 +2341,7 @@ function winShell(dev, inner){
       <div class="deskbody">${inner}</div>
     </div>
     <div class="deskstatus">
-      <span id="deskstatus">engine ready · ${S.dcap.state==='rec'?'recording':'idle'}</span>
+      <span id="deskstatus">engine ready · ${S.dcap.state==='rec'?'recording':S.dcap.state==='paused'?'paused':'idle'}</span>
       <span>MEASURE ${esc(lastSeg)}</span>
       <span style="color:${p.georef?'var(--fix-good)':'var(--ink-faint)'}">${p.georef
         ? 'georef converged · '+p.epsg.replace(':',' ') : 'local frame · no CRS'}</span>
@@ -2166,7 +2369,9 @@ const HINTS={
   connect_wizard:'Rescan → Connect. The health panel fills once the link is up.',
   mid360:'Run the self-test — it animates for 2 s, then unlocks “Save to project”.',
   calib:'Capture 8 poses → Solve → read the split-half gate → verify.',
-  capture:'Press Record: the cloud streams in progressively. Toggle AR, Live-SLAM, drag to orbit.',
+  capture:'Press Record: the cloud streams in progressively. Toggle AR, Live-SLAM, drag to orbit. '
+         +'On Android the sliders icon on the view opens the Display bottom sheet; on the desktops the '
+         +'record cluster sits under the viewport.',
   rtk:'Pair a rover → pick a mountpoint → Connect. The fix climbs SINGLE → FLOAT → FIXED.',
   processing:'Queue a job — it advances through the engine’s real stage labels.',
   review:'Drag the viewport to orbit, scroll to zoom. Turn Measure on and tap two points.',
@@ -2216,7 +2421,9 @@ function capOpts(o, key){
   return {scan: key==='dcap'?SCAN_D:SCAN, upto:o.prog,
     yaw: cam.yaw + (follow?o.prog*1.1:0), pitch:cam.pitch, zoom:cam.zoom,
     color:o.color, size:o.size, raw:!o.liveSlam, ar:o.view==='ar',
-    density: o.state==='rec'?0.75:1, traj:true, pulse:o.pulse||0, edl:true};
+    /* LOD budget from the display sheet, then the live-capture decimation on top */
+    density: clamp((o.lod==null?20:o.lod)/20, 0.06, 1) * (o.state==='rec'?0.75:1),
+    traj:true, pulse:o.pulse||0, edl:true};
 }
 function revOpts(){
   const r=S.rev;
@@ -2350,11 +2557,12 @@ function setPath(path,val){
 }
 const ACT = {
   /* navigation */
-  go:(a)=>{ S.scr.android=a; if(a==='new_project') S.np={name:'',sensor:null,profile:null}; render(); },
+  go:(a)=>{ S.scr.android=a; S.cap.sheet=false;
+    if(a==='new_project') S.np={name:'',sensor:null,profile:null}; render(); },
   back:()=>{ const m={new_project:'projects', detail:'projects', capture:'detail', connect_wizard:'detail',
       mid360:'detail', calib:'detail', rtk:'detail', processing:'detail', review:'detail',
       plan:'review', merge:'detail', settings:'projects'};
-    S.scr.android = m[S.scr.android]||'projects'; render(); },
+    S.scr.android = m[S.scr.android]||'projects'; S.cap.sheet=false; render(); },
   open:(id)=>{ S.pid=id; if(S.dev==='android'){S.scr.android='detail';} else {S.scr[S.dev]='review';} render(); },
   tab:(t)=>{ S.scr[S.dev]=t; S.menu=null; render(); },
   menu:(m)=>{ S.menu = S.menu===m?null:m; render(); },
@@ -2440,7 +2648,35 @@ const ACT = {
     render(); },
   capView:(v)=>{ S.cap.view=v; render(); },
   capFollow:(v)=>{ S.cap.follow = v==='follow'; render(); },
-  capColor:(v)=>{ S.cap.color=v; render(); },
+  /* Colour mode lives in the bottom sheet: patch the pressed states in place and
+     repaint the canvas rather than re-rendering, so the sheet stays put. */
+  capColor:(v)=>{ S.cap.color=v;
+    const sh=$('#cap-sheet');
+    if(S.cap.sheet && sh){
+      let label=v;
+      $$('[data-act="capColor"]',sh).forEach(b=>{
+        const on = b.dataset.arg===v;
+        b.setAttribute('aria-pressed', String(on));
+        if(on) label=b.textContent.trim();
+      });
+      const out=$('#cap-colour-out'); if(out) out.textContent=label;
+      redraw();
+    } else render(); },
+  /* Bottom sheet: the grabber, the scrim and Done all dismiss it. Closing plays
+     the exit animation first, then re-renders the screen without the sheet. */
+  capSheet:(mode)=>{
+    if(mode==='close' || S.cap.sheet){
+      if(!S.cap.sheet) return;
+      S.cap.sheet=false;
+      const sh=$('#cap-sheet'), sc=$('#cap-sheet-scrim');
+      if(sh && !RM){ sh.classList.add('out'); if(sc) sc.classList.add('out');
+        setTimeout(()=>{ if(S.dev==='android' && S.scr.android==='capture' && !S.cap.sheet) render(); },170);
+      } else render();
+      return;
+    }
+    S.cap.sheet=true; render();
+    const sh=$('#cap-sheet'); if(sh) sh.focus();   // focus lands in the dialog, not on the grabber
+    toast('Display sheet — colour, point size and LOD apply to the live cloud behind it'); },
 
   /* RTK */
   rtkRover:(i)=>{ i=+i;
@@ -2529,9 +2765,21 @@ const ACT = {
     c.stmsg = c.transport==='d6' ? 'Testing device: expect ~4,000 pts/s within 3 s…'
       : 'Testing device: waiting for the first Mid-360 packet…';
     render(); },
-  dcapRec:()=>{ S.dcap.state='rec'; render(); },
-  dcapPause:()=>{ S.dcap.state = S.dcap.state==='paused'?'rec':'paused'; render(); },
-  dcapStop:()=>{ const c=S.dcap; c.state='idle';
+  /* C2: Record is gated on the self-test, and the gate says why out loud —
+     the button is disabled, but a keyboard or scripted activation still lands here. */
+  dcapRec:()=>{ const c=S.dcap;
+    if(c.selftest!=='pass'){
+      toast(`Blocked: run Test device first — ${c.transport==='d6'
+        ? '≥ 3 000 pts/s over a 3 s window' : 'the first packet within 8 s'} unlocks recording.`);
+      return; }
+    if(c.state!=='idle') return;
+    if(c.prog>=1){ c.prog=0; c.pts=0; c.mb=0; c.elapsed=0; }   // a new session, not a resume
+    c.state='rec'; toast('Recording — record-always is the engine’s rule'); render(); },
+  dcapPause:()=>{ const c=S.dcap; if(c.state==='idle') return;
+    c.state = c.state==='paused'?'rec':'paused';
+    toast(c.state==='paused'?'Paused — the recording stays open':'Resumed'); render(); },
+  dcapStop:()=>{ const c=S.dcap; if(c.state==='idle') return;
+    c.state='idle';
     toast(`Session summary — ${f1(c.elapsed)} s recording · ${fmt(Math.round(c.pts))} points decoded · 0 drops`);
     render(); },
 
@@ -2652,6 +2900,9 @@ function tick(now){
     } else {
       const el=document.getElementById('dcap-stats');
       if(el) el.textContent=`${fmt(Math.round(S.dcap.pts))} pts · ${f1(S.dcap.elapsed)} s · ${fmt(S.dcap.rate)} pts/s`;
+      set('dcap-elapsed', mmss(S.dcap.elapsed));   // the record cluster's clock
+      const ds=document.getElementById('deskstatus');
+      if(ds) ds.textContent=`engine ready · ${S.dcap.state==='rec'?'recording':S.dcap.state==='paused'?'paused':'idle'}`;
       const h=document.getElementById('dcap-health');
       if(h) h.textContent=`streaming · ${fmt(S.dcap.rate)} pts/s · 10.00 Hz IMU · 99.98% ok rate · `+
         `${fmt(Math.round(S.dcap.pts))} pts total · 0 drops`;
@@ -2818,7 +3069,9 @@ const CHECK=[
   ['a-cap-slam','Live-SLAM ⇄ Record-only visibly changes registered vs raw'],
   ['a-cap-gate','RTK gate blocks Record for a Survey project below RTK Float'],
   ['a-cap-orbit','Orbit / Follow, and drag-to-rotate in the viewport'],
-  ['a-cap-disp','Colour mode + point size apply to the live cloud'],
+  ['a-cap-sheet','The Display button on the viewport opens a bottom sheet — grabber, scrim, ~60 % height — and the grabber, the scrim, Esc and Done all close it'],
+  ['a-cap-disp','In the sheet: colour-mode chips (40 px), point-size and LOD sliders (28 px knobs) apply to the live cloud while the sheet is open'],
+  ['a-cap-view','The viewport stays visible above the sheet, so every display change is verifiable as you make it'],
   ['a-cap-sum','Stop writes the session summary back onto the project'],
  ]],
  ['Android · RTK','android','rtk',[
@@ -2868,6 +3121,9 @@ const CHECK=[
   ['d-cap-serial','Serial port picker, CH340 hint, baud, command frames'],
   ['d-cap-ip','Mid-360 host/lidar IP and the three ports'],
   ['d-cap-test','Guided self-test with its real pass thresholds, then Record unlocks'],
+  ['d-cap-rec','Record cluster under the viewport — Test device → Start recording → Pause/Resume → Stop, in C2 order'],
+  ['d-cap-start','Start recording is a large ember pill that becomes a red Stop recording, with the elapsed clock ticking beside it'],
+  ['d-cap-gate','Start stays disabled until the self-test passes, and the badge + line beside it say why'],
   ['d-cap-live','Live preview streams in the desktop viewport too'],
   ['d-cap-health','Health line polled at 300 ms'],
  ]],
@@ -2907,6 +3163,7 @@ const CHECK=[
  ['Cross-platform','win','review',[
   ['x-devsw','Switching Android / macOS / Windows keeps each device on its own screen'],
   ['x-chrome','macOS traffic lights vs Windows caption buttons over the same layout'],
+  ['x-reccluster','Capture’s record cluster is identical on macOS and Windows — both shells render the same content'],
   ['x-tokens','The token system reads correctly — ember for your actions, semantic colours for state'],
   ['x-type','Type system — Space Grotesk titles, Inter UI, JetBrains Mono telemetry (embedded, not fallbacks)'],
   ['x-mono','Numbers are tabular mono and never jitter'],
@@ -3027,6 +3284,7 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Escape'){
     if($('#report').classList.contains('on')) $('#report').classList.remove('on');
     else if($('#drawer').classList.contains('on')) closeDrawer();
+    else if(S.cap.sheet && $('#cap-sheet')) ACT.capSheet('close');
     else if(S.menu){ S.menu=null; render(); }
   }
 });
