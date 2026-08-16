@@ -42,9 +42,22 @@
 #include "app/SyntheticBuilding.h"
 #include "app/TransferDialog.h"
 #include "render/ViewportWindow.h"
+#include "ui/IconRail.h"
+#include "ui/InspectorCard.h"
+#include "ui/Theme.h"
+#include "ui/ViewportHost.h"
+#include "ui/Widgets.h"
 
 namespace lidarscan {
 namespace {
+
+// Space-grouped thousands — the mockup's fmt(). Every point count in the
+// redesign reads this way, so it lives here rather than at four call sites.
+QString groupedCount(quint64 n) {
+  QString s = QString::number(n);
+  for (int i = s.size() - 3; i > 0; i -= 3) s.insert(i, QChar(0x2009));  // thin space
+  return s;
+}
 
 QString humanBytes(quint64 b) {
   static const char* u[] = {"B", "KB", "MB", "GB"};
@@ -120,18 +133,42 @@ void MainWindow::buildUi() {
   QWidget* container = QWidget::createWindowContainer(viewport_, this);
   container->setMinimumSize(480, 320);
   container->setFocusPolicy(Qt::StrongFocus);
-  setCentralWidget(container);
 
-  connect(viewport_, &ViewportWindow::statusChanged, this,
-          [this](const QString& s) { status_render_->setText(s); });
+  // The viewport now lives inside a host that can float chrome over it — the
+  // redesign's project chip, render-stats chip, RECORDING badge and the
+  // display inspector. ViewportHost.h documents why that needs native
+  // sibling surfaces rather than ordinary child widgets.
+  viewport_host_ = new ViewportHost(this);
+  viewport_host_->setViewportWidget(container);
+  setCentralWidget(viewport_host_);
+
+  connect(viewport_, &ViewportWindow::statusChanged, this, [this](const QString& s) {
+    // The verbose renderer line stays available as the tooltip and on the
+    // viewport's bottom-left chip; the status bar's right-hand segment is the
+    // mockup's compact "<backend> · dpr <n> · engine <v> · ABI v<n>".
+    const auto& st = viewport_->stats();
+    status_render_->setText(QString("%1 · dpr %2 · %3 · ABI v%4")
+                                .arg(viewport_->surfaceDescription().section(" · ", 0, 0))
+                                .arg(st.dpr, 0, 'f', 2)
+                                .arg(host_->versionString().section(" (", 0, 0))
+                                // The C++ constant, NOT capi/scanengine_c.h's
+                                // SCAN_ABI_VERSION: NOTES.md §1.2 keeps the C
+                                // ABI header out of the desktop entirely.
+                                .arg(scanengine::kEngineAbiVersion));
+    status_render_->setToolTip(s);
+    updateViewportChips();
+  });
   connect(viewport_, &ViewportWindow::initFailed, this, [this](const QString& why) {
     log_->appendPlainText("VIEWPORT INIT FAILED: " + why);
     status_render_->setText("renderer unavailable: " + why);
   });
 
+  buildRail();
+
   // --- left dock: projects + replay + log ---
   {
-    auto* dock = new QDockWidget("Projects", this);
+    auto* dock = new QDockWidget("PROJECTS", this);
+    projects_dock_ = dock;
     auto* w = new QWidget();
     auto* v = new QVBoxLayout(w);
 
@@ -139,9 +176,14 @@ void MainWindow::buildUi() {
     auto* lv = new QVBoxLayout(libBox);
     recents_ = new QListWidget();
     recents_->setToolTip("Recently opened .lscan projects");
-    connect(recents_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* it) {
+    recents_->setSpacing(2);
+    // Single click opens, matching the mockup's `.lrow`; double click still
+    // works because it fires a click first.
+    connect(recents_, &QListWidget::itemClicked, this, [this](QListWidgetItem* it) {
+      const QString dir = it->data(Qt::UserRole).toString();
+      if (dir == project_.dir) return;
       QString err;
-      if (!openProject(it->data(Qt::UserRole).toString(), &err)) {
+      if (!openProject(dir, &err)) {
         QMessageBox::warning(this, "Open project", err);
       }
     });
@@ -221,26 +263,32 @@ void MainWindow::buildUi() {
 
     dock->setWidget(w);
     dock->setMinimumWidth(360);
-    addDockWidget(Qt::LeftDockWidgetArea, dock);
+    // Beside the rail, not above/below it: two docks added to the same area
+    // stack vertically by default, which would put the 56 px rail on top of
+    // a 360 px panel instead of alongside it.
+    splitDockWidget(rail_dock_, dock, Qt::Horizontal);
   }
 
-  // --- right dock: display parameters (A14) ---
+  // --- right docks -------------------------------------------------------
+  //
+  // These used to be five tabs in one tabified group — the "wide navigation"
+  // the redesign replaces. They are now five INDEPENDENT docks in the right
+  // area, of which showWorkspace() shows exactly one; with a single visible
+  // dock per area Qt draws no tab bar at all, so the rail is the only
+  // navigation on screen. Every dock keeps every capability it had (float,
+  // resize, close, View-menu toggle).
   params_dock_ = new DisplayParamsDock(params_.get(), this);
   connect(params_dock_, &DisplayParamsDock::changed, this, [this] {
     viewport_->setDisplayParams(params_->get());
+    if (inspector_) inspector_->refreshFromModel();
   });
   addDockWidget(Qt::RightDockWidgetArea, params_dock_);
 
-  // --- right dock (tabbed): measure tool (C3) ---
   measure_dock_ = new MeasureDock(viewport_, this);
   addDockWidget(Qt::RightDockWidgetArea, measure_dock_);
-  tabifyDockWidget(params_dock_, measure_dock_);
-  params_dock_->raise();
 
-  // --- right dock (tabbed): processing queue (C4) ---
   processing_dock_ = new ProcessingDock(host_, this);
   addDockWidget(Qt::RightDockWidgetArea, processing_dock_);
-  tabifyDockWidget(params_dock_, processing_dock_);
   connect(processing_dock_, &ProcessingDock::logLine, this,
           [this](const QString& l) { log_->appendPlainText(l); });
   connect(processing_dock_, &ProcessingDock::loadResultRequested, this,
@@ -255,34 +303,299 @@ void MainWindow::buildUi() {
                     .arg(loaded_result_store_->total_points()));
           });
 
-  // --- right dock (tabbed): floor plan workspace (C5) ---
+  // --- floor plan workspace (C5) ---
   plan_dock_ = new PlanDock(this);
   addDockWidget(Qt::RightDockWidgetArea, plan_dock_);
-  tabifyDockWidget(params_dock_, plan_dock_);
   plan_dock_->setPointStore(host_->points());
   connect(plan_dock_, &PlanDock::logLine, this,
           [this](const QString& l) { log_->appendPlainText(l); });
 
-  // --- right dock (tabbed): merge workbench (C6) ---
+  // --- merge workbench (C6) ---
   merge_dock_ = new MergeDock(viewport_, this);
   addDockWidget(Qt::RightDockWidgetArea, merge_dock_);
-  tabifyDockWidget(params_dock_, merge_dock_);
   connect(merge_dock_, &MergeDock::logLine, this,
           [this](const QString& l) { log_->appendPlainText(l); });
   connect(merge_dock_, &MergeDock::exportMergedRequested, this, &MainWindow::onExportMerged);
 
-  // tabifyDockWidget() raises the most-recently-added tab; put Display
-  // parameters back in front as C1/C2/C3 established, now that C4/C5/C6 have
-  // added three more tabs behind it.
-  params_dock_->raise();
+  // --- the floating inspector + the viewport's own chrome -----------------
+  inspector_ = new InspectorCard(params_.get());
+  connect(inspector_, &InspectorCard::changed, this, [this] {
+    viewport_->setDisplayParams(params_->get());
+    params_dock_->refreshFromModel();
+  });
+  connect(inspector_, &InspectorCard::exportRequested, this, &MainWindow::onExport);
+  connect(inspector_, &InspectorCard::moreRequested, this, [this] {
+    params_dock_->show();
+    params_dock_->raise();
+  });
 
-  // --- status bar ---
-  status_engine_ = new QLabel("engine: starting");
+  project_chip_ = new Chip();
+  project_chip_->setTone(Chip::Tone::kNone);
+  project_chip_->setDotVisible(true);
+  project_chip_->setText("no project open");
+
+  stats_chip_ = new Chip();
+  stats_chip_->setText("renderer starting");
+
+  rec_badge_ = new Chip();
+  rec_badge_->setTone(Chip::Tone::kBad);
+  rec_badge_->setDotVisible(true);
+  rec_badge_->setEmphasis(true);
+  rec_badge_->setText("RECORDING");
+  rec_badge_->hide();
+
+  viewport_host_->addOverlay(project_chip_, ViewportHost::Anchor::kTopLeft, 14);
+  viewport_host_->addOverlay(stats_chip_, ViewportHost::Anchor::kBottomLeft, 14);
+  viewport_host_->addOverlay(rec_badge_, ViewportHost::Anchor::kTopRight, 12);
+  viewport_host_->addOverlay(inspector_, ViewportHost::Anchor::kTopRight, 14);
+
+  // --- status bar: state · measure · georef σ · engine ---------------------
+  status_engine_ = new QLabel("engine ready · idle");
+  status_measure_ = new QLabel("MEASURE —");
+  status_georef_ = new QLabel("local frame · no CRS");
   status_render_ = new QLabel("renderer: starting");
-  statusBar()->addWidget(status_engine_, 1);
-  statusBar()->addPermanentWidget(status_render_, 2);
+  status_render_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+  statusBar()->addWidget(status_engine_);
+  statusBar()->addWidget(status_measure_);
+  statusBar()->addWidget(status_georef_);
+  statusBar()->addWidget(new QLabel(), 1);  // the mockup's `margin-left:auto`
+  statusBar()->addPermanentWidget(status_render_);
+  statusBar()->setSizeGripEnabled(false);
 
-  resize(1760, 980);  // C4/C5 added two more tabs to the right dock group
+  resize(1760, 980);
+  showWorkspace(IconRail::Item::kProjects);
+}
+
+void MainWindow::buildRail() {
+  rail_ = new IconRail(this);
+  connect(rail_, &IconRail::activated, this, &MainWindow::onRailActivated);
+
+  // The rail is a dock only so that it can live to the left of the projects
+  // panel without a QSplitter fighting the central native window for space.
+  // Everything that makes a dock a dock is turned off: no title bar, no
+  // float, no close, no move.
+  rail_dock_ = new QDockWidget(this);
+  rail_dock_->setObjectName("railDock");
+  rail_dock_->setTitleBarWidget(new QWidget(rail_dock_));
+  rail_dock_->setFeatures(QDockWidget::NoDockWidgetFeatures);
+  rail_dock_->setAllowedAreas(Qt::LeftDockWidgetArea);
+  rail_dock_->setWidget(rail_);
+  rail_dock_->setFixedWidth(theme::kRailWidth);
+  addDockWidget(Qt::LeftDockWidgetArea, rail_dock_);
+}
+
+// Every rail button, including the two that open a dialog rather than a
+// workspace and the one that is a toggle. Nothing here can fail silently: an
+// action that cannot proceed says why and leaves the rail on the workspace
+// that is actually showing (IconRail.cpp's comment on why the rail does not
+// self-light).
+void MainWindow::onRailActivated(IconRail::Item item) {
+  switch (item) {
+    case IconRail::Item::kCapture:
+      captureWindow()->setProjectDir(project_.dir);
+      captureWindow()->show();
+      captureWindow()->raise();
+      captureWindow()->activateWindow();
+      showWorkspace(IconRail::Item::kCapture);
+      return;
+    case IconRail::Item::kTransfer:
+      // The transfer bundle has no dock — it is two dialogs (C7). Export
+      // needs an open project; import does not, so offer import in that case
+      // rather than refusing outright.
+      if (project_.valid) {
+        onExportTransferBundle();
+      } else {
+        onImportTransferBundle();
+      }
+      return;
+    case IconRail::Item::kExport:
+      onExport();
+      return;
+    case IconRail::Item::kInspector:
+      // From anywhere else this takes you to Review first, exactly as the
+      // mockup's rail does; on Review it toggles.
+      if (workspace_ != IconRail::Item::kReview) {
+        inspector_visible_ = true;
+        showWorkspace(IconRail::Item::kReview);
+      } else {
+        inspector_visible_ = !inspector_visible_;
+        applyInspectorPlacement();
+        rail_->setInspectorOn(inspector_visible_);
+      }
+      return;
+    default:
+      showWorkspace(item);
+      return;
+  }
+}
+
+void MainWindow::showWorkspace(IconRail::Item item) {
+  workspace_ = item;
+
+  // Review is the only full-bleed workspace: nothing but the viewport, its
+  // chips and the floating inspector.
+  const bool review = item == IconRail::Item::kReview;
+  projects_dock_->setVisible(item == IconRail::Item::kProjects ||
+                             item == IconRail::Item::kCapture);
+
+  // Exactly one right-hand dock, so Qt draws no tab bar.
+  params_dock_->setVisible(false);
+  measure_dock_->setVisible(false);
+  processing_dock_->setVisible(item == IconRail::Item::kJobs);
+  plan_dock_->setVisible(item == IconRail::Item::kPlan);
+  merge_dock_->setVisible(item == IconRail::Item::kMerge);
+
+  // Each workspace gets the width its dock actually needs. Under the old
+  // tabbed group all five shared ONE width — whatever the user had dragged
+  // the group to — so the merge workbench's seven-column session table and
+  // the display dock's narrow form fought each other permanently. Now that a
+  // workspace owns the area alone, it can ask for the right size. (These are
+  // starting widths, not constraints: the splitter still drags.)
+  QDockWidget* shown = nullptr;
+  int wantWidth = 0;
+  switch (item) {
+    case IconRail::Item::kPlan: shown = plan_dock_; wantWidth = 620; break;
+    case IconRail::Item::kMerge: shown = merge_dock_; wantWidth = 720; break;
+    case IconRail::Item::kJobs: shown = processing_dock_; wantWidth = 560; break;
+    default: break;
+  }
+  if (shown) resizeDocks({shown}, {qMin(wantWidth, width() / 2)}, Qt::Horizontal);
+
+  applyInspectorPlacement();
+  rail_->setCurrent(item);
+  rail_->setInspectorOn(review && inspector_visible_);
+  updateViewportChips();
+}
+
+bool MainWindow::showWorkspaceNamed(const QString& name) {
+  static const struct {
+    const char* n;
+    IconRail::Item i;
+  } kMap[] = {
+      {"projects", IconRail::Item::kProjects}, {"capture", IconRail::Item::kCapture},
+      {"review", IconRail::Item::kReview},     {"plan", IconRail::Item::kPlan},
+      {"merge", IconRail::Item::kMerge},       {"jobs", IconRail::Item::kJobs},
+  };
+  for (const auto& m : kMap) {
+    if (name.compare(m.n, Qt::CaseInsensitive) == 0) {
+      onRailActivated(m.i);
+      return true;
+    }
+  }
+  return false;
+}
+
+// The 880 px reflow (redesign brief item 3: "Below ~880px width it reflows
+// into a normal dock — don't break small windows"). The SAME InspectorCard
+// instance moves between the two homes, so no state is duplicated and none is
+// lost across a resize.
+void MainWindow::applyInspectorPlacement() {
+  if (!inspector_ || !viewport_host_) return;
+  const bool wanted = workspace_ == IconRail::Item::kReview && inspector_visible_;
+  const bool narrow = width() < theme::kInspectorReflowWidth;
+
+  if (wanted && narrow) {
+    if (!inspector_dock_) {
+      inspector_dock_ = new QDockWidget("DISPLAY INSPECTOR", this);
+      inspector_dock_->setObjectName("inspectorDock");
+      inspector_dock_->setAllowedAreas(Qt::RightDockWidgetArea | Qt::LeftDockWidgetArea);
+      addDockWidget(Qt::RightDockWidgetArea, inspector_dock_);
+    }
+    if (inspector_->parentWidget() != inspector_dock_) {
+      viewport_host_->removeOverlay(inspector_);
+      inspector_->setFloatingLook(false);
+      inspector_dock_->setWidget(inspector_);
+    }
+    inspector_dock_->show();
+    inspector_->show();
+    return;
+  }
+
+  if (inspector_dock_ && inspector_->parentWidget() != viewport_host_) {
+    inspector_dock_->setWidget(nullptr);
+    inspector_dock_->hide();
+    inspector_->setFloatingLook(true);
+    viewport_host_->addOverlay(inspector_, ViewportHost::Anchor::kTopRight, 14);
+  }
+  if (inspector_dock_) inspector_dock_->setVisible(false);
+  inspector_->setVisible(wanted);
+  viewport_host_->layoutOverlays();
+}
+
+void MainWindow::updateViewportChips() {
+  if (!project_chip_) return;
+
+  const quint64 pts = host_ && host_->points() ? host_->points()->total_points() : 0;
+  if (project_.valid) {
+    project_chip_->setText(QString("%1 · %2 pts · %3")
+                               .arg(project_.name)
+                               .arg(groupedCount(pts))
+                               .arg(project_.crs.isEmpty() ? QString("local frame")
+                                                           : QString(project_.crs).replace(':', ' ')));
+    project_chip_->setTone(project_.crs.isEmpty() ? Chip::Tone::kNone : Chip::Tone::kGood);
+  } else {
+    project_chip_->setText(QString("no project · %1 pts in store").arg(groupedCount(pts)));
+    project_chip_->setTone(Chip::Tone::kNone);
+  }
+
+  const auto& st = viewport_->stats();
+  stats_chip_->setText(QString("%1 pts · %2 fps · cpu p95 %3 ms · gpu p95 %4 ms · %5")
+                           .arg(groupedCount(st.cloud.resident_points))
+                           .arg(st.fps, 0, 'f', 1)
+                           .arg(st.cpu_ms_p95, 0, 'f', 2)
+                           .arg(st.gpu_ms_p95, 0, 'f', 2)
+                           .arg(viewport_->surfaceDescription()));
+  viewport_host_->layoutOverlays();
+}
+
+void MainWindow::setCaptureBadge(bool recording, bool paused) {
+  if (!rec_badge_) return;
+  if (!recording && !paused) {
+    rec_badge_->hide();
+  } else {
+    rec_badge_->setText(paused ? "PAUSED" : "RECORDING");
+    rec_badge_->setTone(paused ? Chip::Tone::kWarn : Chip::Tone::kBad);
+    rec_badge_->setDotPulsing(recording && !paused);
+    rec_badge_->show();
+  }
+  viewport_host_->layoutOverlays();
+}
+
+// The export button's "georef ✓" and the status bar's georef segment are the
+// same fact, read from the same place — Engine::crs_epsg(), which the engine
+// documents as empty until the transform converges — so they cannot disagree.
+void MainWindow::refreshInspectorGeoref() {
+  if (!host_ || !host_->ok()) return;
+  const std::string epsg = host_->engine()->crs_epsg();
+  const auto sol = host_->engine()->georef_solution();
+  const bool converged = !epsg.empty();
+  const QString epsgQ = QString::fromStdString(epsg);
+
+  if (inspector_) inspector_->setGeorefState(converged, epsgQ, sol.horizontal_sigma_m);
+
+  if (status_georef_) {
+    if (converged) {
+      status_georef_->setText(QString("georef converged · %1 · σh %2 m")
+                                  .arg(QString(epsgQ).replace(':', ' '))
+                                  .arg(sol.horizontal_sigma_m, 0, 'f', 3));
+      status_georef_->setStyleSheet(QString("color:%1;").arg(theme::css(theme::good())));
+    } else if (!project_.crs.isEmpty()) {
+      // The open project WAS georeferenced when it was recorded, even though
+      // this process's engine has no live fix. Say which of the two it is
+      // rather than flattening both to "local frame".
+      status_georef_->setText(
+          QString("project georef %1 · live σ n/a").arg(QString(project_.crs).replace(':', ' ')));
+      status_georef_->setStyleSheet(QString("color:%1;").arg(theme::css(theme::pose())));
+    } else {
+      status_georef_->setText("local frame · no CRS");
+      status_georef_->setStyleSheet(QString("color:%1;").arg(theme::css(theme::faint())));
+    }
+  }
+}
+
+void MainWindow::resizeEvent(QResizeEvent* event) {
+  QMainWindow::resizeEvent(event);
+  applyInspectorPlacement();
 }
 
 void MainWindow::buildMenus() {
@@ -312,11 +625,8 @@ void MainWindow::buildMenus() {
   file->addAction("E&xit", QKeySequence::Quit, qApp, &QApplication::quit);
 
   auto* capture = menuBar()->addMenu("&Capture");
-  capture->addAction("Open capture window…", this, [this] {
-    captureWindow()->setProjectDir(project_.dir);
-    captureWindow()->show();
-    captureWindow()->raise();
-  });
+  capture->addAction("Open capture window…", this,
+                     [this] { onRailActivated(IconRail::Item::kCapture); });
 
   auto* view = menuBar()->addMenu("&View");
   view->addAction("&Fit to cloud", QKeySequence("F"), this, [this] { viewport_->fitView(); });
@@ -330,11 +640,36 @@ void MainWindow::buildMenus() {
   view->addSeparator();
   view->addAction("&Screenshot…", this, &MainWindow::onScreenshot);
   view->addSeparator();
+  // The rail is the primary navigation now, but every workspace keeps a
+  // keyboard/menu route: Cmd-1..6 mirror the rail's six workspace buttons.
+  auto* ws = view->addMenu("&Workspace");
+  const struct {
+    const char* label;
+    IconRail::Item item;
+    const char* key;
+  } kWs[] = {
+      {"&Projects", IconRail::Item::kProjects, "Ctrl+1"},
+      {"&Capture", IconRail::Item::kCapture, "Ctrl+2"},
+      {"&Review", IconRail::Item::kReview, "Ctrl+3"},
+      {"&Floor plan", IconRail::Item::kPlan, "Ctrl+4"},
+      {"&Merge", IconRail::Item::kMerge, "Ctrl+5"},
+      {"Pr&ocessing", IconRail::Item::kJobs, "Ctrl+6"},
+  };
+  for (const auto& w : kWs) {
+    const IconRail::Item it = w.item;
+    ws->addAction(w.label, QKeySequence(w.key), this, [this, it] { onRailActivated(it); });
+  }
+  view->addAction("Display &inspector", QKeySequence("Ctrl+I"), this,
+                  [this] { onRailActivated(IconRail::Item::kInspector); });
+  view->addSeparator();
+  // The docks themselves stay individually toggleable — the rail replaced the
+  // tab strip, not the docks' own capabilities.
   view->addAction(params_dock_->toggleViewAction());
   view->addAction(measure_dock_->toggleViewAction());
   view->addAction(processing_dock_->toggleViewAction());
   view->addAction(plan_dock_->toggleViewAction());
   view->addAction(merge_dock_->toggleViewAction());
+  view->addAction(projects_dock_->toggleViewAction());
 
   auto* tools = menuBar()->addMenu("&Tools");
   tools->addAction("Load synthetic building fixture (C5 test fixture)…", this,
@@ -342,11 +677,18 @@ void MainWindow::buildMenus() {
 
   auto* help = menuBar()->addMenu("&Help");
   help->addAction("About", this, [this] {
-    QMessageBox::information(
-        this, "LidarScan Desktop",
-        QString("%1\n\nRenderer: %2\nRender clock: %3\n\nQt %4")
-            .arg(host_->versionString(), viewport_->surfaceDescription(),
-                 viewport_->displayLinkName(), qVersion()));
+    QMessageBox box(this);
+    box.setWindowTitle("LidarScan Desktop");
+    box.setText(QString("%1\n\nRenderer: %2\nRender clock: %3\n\nQt %4\n\nTypefaces\n  %5")
+                    .arg(host_->versionString(), viewport_->surfaceDescription(),
+                         viewport_->displayLinkName(), qVersion(),
+                         theme::fontReport().join("\n  ")));
+    // OFL 1.1 §2 requires the licence to travel with the font, so the bundled
+    // texts are readable from inside the app, not only from the repo.
+    box.setDetailedText(theme::licenceText("Inter") + "\n\n" +
+                        theme::licenceText("Space Grotesk") + "\n\n" +
+                        theme::licenceText("JetBrains Mono"));
+    box.exec();
   });
 }
 
@@ -359,6 +701,11 @@ CaptureWindow* MainWindow::captureWindow() {
     });
     connect(capture_, &CaptureWindow::captureStopped, this,
             [this] { log_->appendPlainText("capture stopped"); });
+    // The RECORDING / PAUSED badge rides the MAIN window's viewport (redesign
+    // brief item 4) even though capture is its own window, because the main
+    // viewport is what is actually showing the cloud being recorded.
+    connect(capture_, &CaptureWindow::recordingStateChanged, this,
+            &MainWindow::setCaptureBadge);
   }
   return capture_;
 }
@@ -537,8 +884,13 @@ void MainWindow::refreshProjectPanel() {
     warn << QString("%1 unreadable stream files").arg(project_.unreadable_streams);
   }
   warnings_label_->setText(warn.isEmpty() ? "no reader warnings" : warn.join("\n"));
+  warnings_label_->setStyleSheet(
+      QString("font-family:'%1';font-size:10.5px;color:%2;")
+          .arg(theme::monoFamily(), theme::css(warn.isEmpty() ? theme::good() : theme::warn())));
 
   replay_button_->setEnabled(project_.has_d6_raw && !replay_->running());
+  updateViewportChips();
+  refreshInspectorGeoref();
 }
 
 void MainWindow::refreshRecents() {
@@ -546,9 +898,69 @@ void MainWindow::refreshRecents() {
   recent_dirs_ = s.value("recentProjects").toStringList();
   recents_->clear();
   for (const QString& d : recent_dirs_) {
-    auto* it = new QListWidgetItem(QFileInfo(d).fileName() + "   —   " + d);
+    auto* it = new QListWidgetItem();
     it->setData(Qt::UserRole, d);
+    it->setSizeHint(QSize(0, 46));
     recents_->addItem(it);
+
+    // The redesign's project card: name in the display face, then one mono
+    // sub-line carrying the size/point figure and the georef badge.
+    //
+    // WHAT THE COUNT IS. A5's manifest records chunks and payload bytes, not
+    // a point total — there is no per-project point count to read without
+    // decoding the whole capture, which is not something a sidebar may do on
+    // every repaint. So a recent shows its real payload figure, and the OPEN
+    // project additionally shows the live PageStore total, which IS a point
+    // count and is honest about being the live one.
+    auto* card = new QWidget();
+    auto* v = new QVBoxLayout(card);
+    v->setContentsMargins(9, 5, 9, 5);
+    v->setSpacing(1);
+
+    auto* name = new QLabel(QFileInfo(d).fileName());
+    QFont nf(theme::displayFamily(), 13);
+    nf.setWeight(QFont::DemiBold);
+    name->setFont(nf);
+    name->setStyleSheet(QString("color:%1;").arg(theme::css(theme::ink())));
+
+    const ProjectInfo info = (d == project_.dir) ? project_ : readProject(d);
+    QString sub;
+    if (!info.valid) {
+      sub = "unreadable — " + info.error;
+    } else if (d == project_.dir && host_ && host_->points()) {
+      sub = QString("%1 pts · %2 · %3")
+                .arg(groupedCount(host_->points()->total_points()))
+                .arg(humanBytes(info.total_bytes))
+                .arg(info.crs.isEmpty() ? "local frame" : "georef ✓");
+    } else {
+      // Deliberately short: a QLabel does not elide, and the sidebar is 360 px
+      // wide, so a longer line is simply cut off mid-word (the first evidence
+      // run of this card read "... · local fram"). The span and the full path
+      // are in the tooltip and in the Project card below.
+      sub = QString("%1 chunks · %2 · %3")
+                .arg(info.total_chunks)
+                .arg(humanBytes(info.total_bytes))
+                .arg(info.crs.isEmpty() ? "local frame" : "georef ✓");
+    }
+    auto* meta = new QLabel(sub);
+    meta->setMinimumWidth(0);
+    meta->setStyleSheet(QString("font-family:'%1';font-size:10px;color:%2;")
+                            .arg(theme::monoFamily(),
+                                 theme::css(info.crs.isEmpty() ? theme::faint() : theme::good())));
+    meta->setToolTip(
+        info.valid ? QString("%1\n%2 chunks · %3 · %4 s · profile %5\nCRS: %6")
+                         .arg(d)
+                         .arg(info.total_chunks)
+                         .arg(humanBytes(info.total_bytes))
+                         .arg(info.duration_s, 0, 'f', 2)
+                         .arg(info.profile.isEmpty() ? "-" : info.profile)
+                         .arg(info.crs.isEmpty() ? "none (local frame)" : info.crs)
+                   : d);
+
+    v->addWidget(name);
+    v->addWidget(meta);
+    recents_->setItemWidget(it, card);
+    if (d == project_.dir) it->setSelected(true);
   }
 }
 
@@ -561,7 +973,35 @@ void MainWindow::addRecent(const QString& dir) {
 }
 
 void MainWindow::updateStatus() {
-  status_engine_->setText(host_->healthLine());
+  // Segment 1 is deliberately SHORT — "engine ready · idle", the mockup's
+  // wording — because a status bar segment that grows with the device list
+  // pushes the other three off the end of the bar. The full health line (every
+  // device, its state, points and checksum rate) is the tooltip, and the
+  // render detail lives on the viewport's own bottom-left chip.
+  const QString health = host_->healthLine();
+  QString shortState = health.section(" · ", 0, 1);
+  if (capture_ ) {
+    // A recording says so in the state segment, exactly as the mockup does.
+    if (rec_badge_ && rec_badge_->isVisible()) {
+      shortState = health.section(" · ", 0, 0) +
+                   (rec_badge_->text() == "PAUSED" ? " · paused" : " · recording");
+    }
+  }
+  status_engine_->setText(shortState);
+  status_engine_->setToolTip(health);
+
+  // MEASURE — the last completed segment, or an em dash. Same source the
+  // measure dock lists from, so the two cannot drift.
+  const auto& segs = viewport_->measurements();
+  if (segs.empty()) {
+    status_measure_->setText("MEASURE —");
+  } else {
+    status_measure_->setText(
+        QString("MEASURE %1 m").arg(segs.back().distance_m, 0, 'f', 3));
+  }
+
+  refreshInspectorGeoref();
+  updateViewportChips();
 }
 
 void MainWindow::onNewProject() {

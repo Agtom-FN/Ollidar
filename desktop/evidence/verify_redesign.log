@@ -1,0 +1,339 @@
+=== redesign verification — 2026-08-16T14:33:39Z ===
+host: Darwin 25.5.0 arm64
+
+--- 0. clean build (zero warnings from desktop/src is the bar) ---
+-- Could NOT find WrapVulkanHeaders (missing: Vulkan_INCLUDE_DIR) 
+-- scanengine: Eigen3 from find_package (/Users/admin/lidarscan/android/app/.cxx/Debug/6k4ms174/arm64-v8a/_deps/eigen3-build)
+-- main project dir: /Users/admin/lidarscan/engine/third_party/Livox-SDK2
+-- main project dir: /Users/admin/lidarscan/engine/third_party/Livox-SDK2/samples
+-- scanengine: Livox-SDK2 (patched) from /Users/admin/lidarscan/engine/third_party/Livox-SDK2
+-- lidarscan: Filament libs from /Users/admin/lidarscan/desktop/third_party/filament/filament/lib/arm64
+-- lidarscan: 12/12 Filament libs resolved from /Users/admin/lidarscan/desktop/third_party/filament/filament/lib/arm64
+-- Configuring done (0.4s)
+-- Generating done (0.1s)
+-- Build files have been written to: /Users/admin/lidarscan/desktop/build
+build exit: 0
+warnings from desktop/src: 0 (vendored Livox SDK2 warnings excluded, as in NOTES.md §6)
+
+--- 1. bundled typefaces (QFontDatabase::addApplicationFont from :/fonts) ---
+$ /Users/admin/lidarscan/desktop/build/lidarscan --font-report --quit-after 2
+[lidarscan] bundled typefaces (QFontDatabase):
+[lidarscan]   display: Space Grotesk (3 faces)
+[lidarscan]   sans:    Inter (4 faces)
+[lidarscan]   mono:    JetBrains Mono (3 faces)
+[lidarscan]   all three bundled: yes
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+FEngine (64 bits) created at 0x938823800 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+
+--- 2. every rail workspace renders ---
+$ /Users/admin/lidarscan/desktop/build/lidarscan --plan-fixture --workspace projects --shot /Users/admin/lidarscan/desktop/evidence/redesign-ws-projects.png --shot-delay 3 --quit-after 6 --size 1760x980
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[lidarscan] plan-fixture: loaded
+[lidarscan] screenshot OK -> /Users/admin/lidarscan/desktop/evidence/redesign-ws-projects.png | 146436 pts / 1 pages | 56.0 fps | cpu p95 0.06 ms | gpu p95 2.18 ms | 1332x953 px dpr 1.00 | swapchains 0
+FEngine (64 bits) created at 0xac87e0000 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+$ /Users/admin/lidarscan/desktop/build/lidarscan --plan-fixture --workspace capture --shot /Users/admin/lidarscan/desktop/evidence/redesign-ws-capture.png --shot-delay 3 --quit-after 6 --size 1760x980
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[lidarscan] plan-fixture: loaded
+[lidarscan] screenshot OK -> /Users/admin/lidarscan/desktop/evidence/redesign-ws-capture.png | 146436 pts / 1 pages | 57.5 fps | cpu p95 0.07 ms | gpu p95 2.28 ms | 1332x953 px dpr 1.00 | swapchains 0
+FEngine (64 bits) created at 0x76ed81800 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+$ /Users/admin/lidarscan/desktop/build/lidarscan --plan-fixture --workspace review --shot /Users/admin/lidarscan/desktop/evidence/redesign-ws-review.png --shot-delay 3 --quit-after 6 --size 1760x980
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[lidarscan] plan-fixture: loaded
+[lidarscan] screenshot OK -> /Users/admin/lidarscan/desktop/evidence/redesign-ws-review.png | 146436 pts / 1 pages | 54.1 fps | cpu p95 0.13 ms | gpu p95 2.01 ms | 1698x953 px dpr 1.00 | swapchains 1
+FEngine (64 bits) created at 0xc2a390000 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+$ /Users/admin/lidarscan/desktop/build/lidarscan --plan-fixture --workspace plan --shot /Users/admin/lidarscan/desktop/evidence/redesign-ws-plan.png --shot-delay 3 --quit-after 6 --size 1760x980
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[lidarscan] plan-fixture: loaded
+[lidarscan] screenshot OK -> /Users/admin/lidarscan/desktop/evidence/redesign-ws-plan.png | 146436 pts / 1 pages | 56.6 fps | cpu p95 0.13 ms | gpu p95 1.95 ms | 1072x953 px dpr 1.00 | swapchains 0
+FEngine (64 bits) created at 0x7bc857800 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+$ /Users/admin/lidarscan/desktop/build/lidarscan --plan-fixture --workspace merge --shot /Users/admin/lidarscan/desktop/evidence/redesign-ws-merge.png --shot-delay 3 --quit-after 6 --size 1760x980
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[lidarscan] plan-fixture: loaded
+[lidarscan] screenshot OK -> /Users/admin/lidarscan/desktop/evidence/redesign-ws-merge.png | 146436 pts / 1 pages | 55.7 fps | cpu p95 0.14 ms | gpu p95 1.86 ms | 972x953 px dpr 1.00 | swapchains 1
+FEngine (64 bits) created at 0x70c818000 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+$ /Users/admin/lidarscan/desktop/build/lidarscan --plan-fixture --workspace jobs --shot /Users/admin/lidarscan/desktop/evidence/redesign-ws-jobs.png --shot-delay 3 --quit-after 6 --size 1760x980
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[lidarscan] plan-fixture: loaded
+[lidarscan] screenshot OK -> /Users/admin/lidarscan/desktop/evidence/redesign-ws-jobs.png | 146436 pts / 1 pages | 56.2 fps | cpu p95 0.12 ms | gpu p95 1.89 ms | 1059x953 px dpr 1.00 | swapchains 0
+FEngine (64 bits) created at 0xa56dfd800 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+
+--- 3. review workspace over a REPLAYED capture (not a fixture) ---
+$ /Users/admin/lidarscan/desktop/build/lidarscan --project /Users/admin/lidarscan/desktop/evidence/synth.lscan --replay=0 --workspace review --shot /Users/admin/lidarscan/desktop/evidence/redesign-review-replay.png --shot-delay 6 --quit-after 9 --size 1760x980
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] starting -> running
+[scanengine][info][engine] added device 1 (coin-d6)
+[scanengine][info][serial] started 'replay' @ 230400 baud
+[scanengine][info][d6] device 1: idle -> starting
+[lidarscan] replay started at 0x
+[scanengine][info][d6] device 1: starting -> streaming
+[scanengine][info][d6] device 1: streaming -> stalleddevice not responding
+[lidarscan] screenshot OK -> /Users/admin/lidarscan/desktop/evidence/redesign-review-replay.png | 120300 pts / 1 pages | 54.7 fps | cpu p95 0.11 ms | gpu p95 1.82 ms | 1698x953 px dpr 1.00 | swapchains 0
+[scanengine][info][engine] running -> stopping
+[scanengine][info][d6] device 1: stalled -> stopping
+[scanengine][info][d6] device 1: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+FEngine (64 bits) created at 0xc44c6f800 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+
+--- 4. inspector slider -> viewport ---
+$ /Users/admin/lidarscan/desktop/build/lidarscan --plan-fixture --workspace review --inspector-demo /Users/admin/lidarscan/desktop/evidence/redesign-slider --shot-delay 5 --quit-after 12 --size 1760x980
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[lidarscan] plan-fixture: loaded
+[lidarscan] inspector-demo: point-size slider -> 12.0 px, A14 model now 12.00 px (viewport params 12.00 px)
+[lidarscan] inspector-demo: mean |delta| 26.9530 over 14.0% of the frame — VIEWPORT CHANGED
+FEngine (64 bits) created at 0x76edf9800 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+
+--- 5. the 880 px reflow (floating card -> ordinary dock) ---
+$ /Users/admin/lidarscan/desktop/build/lidarscan --plan-fixture --workspace review --shot /Users/admin/lidarscan/desktop/evidence/redesign-reflow-narrow.png --shot-delay 3 --quit-after 6 --size 820x760
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[lidarscan] plan-fixture: loaded
+[lidarscan] screenshot OK -> /Users/admin/lidarscan/desktop/evidence/redesign-reflow-narrow.png | 146436 pts / 1 pages | 57.1 fps | cpu p95 0.14 ms | gpu p95 1.88 ms | 494x740 px dpr 1.00 | swapchains 1
+FEngine (64 bits) created at 0x808e05800 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+$ /Users/admin/lidarscan/desktop/build/lidarscan --plan-fixture --workspace review --shot /Users/admin/lidarscan/desktop/evidence/redesign-reflow-wide.png --shot-delay 3 --quit-after 6 --size 1400x760
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[lidarscan] plan-fixture: loaded
+[lidarscan] screenshot OK -> /Users/admin/lidarscan/desktop/evidence/redesign-reflow-wide.png | 146436 pts / 1 pages | 55.1 fps | cpu p95 0.11 ms | gpu p95 2.08 ms | 1338x740 px dpr 1.00 | swapchains 1
+FEngine (64 bits) created at 0x9f2c4b800 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+
+--- 6. the record cluster, every state (REVIEW_FEEDBACK round-1 item 2) ---
+$ /Users/admin/lidarscan/desktop/build/lidarscan --mid360-selftest 127.000.000.001:127.0.0.1 --mid360-record-into /Users/admin/lidarscan/desktop/evidence/redesign-capture.lscan --capture-cluster-demo /Users/admin/lidarscan/desktop/evidence/redesign-capture --quit-after 18 --size 1760x980
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] starting -> running
+[scanengine][info][engine] added device 1 (livox-mid360)
+[scanengine][info][mid360] device 1: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_1_0.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 1: idle -> starting
+[scanengine][info][mid360] device 1: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[lidarscan] capture-cluster-demo: gated OK -> /Users/admin/lidarscan/desktop/evidence/redesign-capture-01-gated.png
+[scanengine][info][mid360] device 1: connected (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] handle 16777343: configured (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] device 1: starting -> streaming
+[lidarscan] capture-cluster-demo: armed OK -> /Users/admin/lidarscan/desktop/evidence/redesign-capture-02-armed.png
+[lidarscan] mid360-selftest PASSED — first packet after 1.88 s
+[scanengine][info][engine] running -> stopping
+[scanengine][info][mid360] device 1: streaming -> stopping
+[scanengine][info][mid360] device 1: SDK2 torn down
+[scanengine][info][mid360] device 1: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+[scanengine][info][engine] idle -> starting
+[scanengine][info][record] file writer open at '/Users/admin/lidarscan/desktop/evidence/redesign-capture.lscan'
+[scanengine][info][mid360] device 1: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_1_1.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 1: idle -> starting
+[scanengine][info][mid360] device 1: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[scanengine][info][engine] starting -> running
+[scanengine][info][record] opened stream file '/Users/admin/lidarscan/desktop/evidence/redesign-capture.lscan/streams/lidar.bin' (stream=lidar-mid360)
+[scanengine][info][mid360] device 1: starting -> streaming
+[lidarscan] mid360-selftest: recording into /Users/admin/lidarscan/desktop/evidence/redesign-capture.lscan for 3 s
+[scanengine][info][record] opened stream file '/Users/admin/lidarscan/desktop/evidence/redesign-capture.lscan/streams/imu.bin' (stream=imu)
+[lidarscan] capture-cluster-demo: recording OK -> /Users/admin/lidarscan/desktop/evidence/redesign-capture-03-recording.png
+[scanengine][info][engine] running -> stopping
+[scanengine][info][mid360] device 1: streaming -> stopping
+[scanengine][info][mid360] device 1: SDK2 torn down
+[scanengine][info][mid360] device 1: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+[scanengine][info][engine] idle -> starting
+[scanengine][info][mid360] device 1: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_1_2.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 1: idle -> starting
+[scanengine][info][mid360] device 1: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[scanengine][info][engine] starting -> running
+[scanengine][info][mid360] device 1: starting -> streaming
+[lidarscan] capture-cluster-demo: paused OK -> /Users/admin/lidarscan/desktop/evidence/redesign-capture-04-paused.png
+[scanengine][info][engine] running -> stopping
+[scanengine][info][mid360] device 1: streaming -> stopping
+[scanengine][info][mid360] device 1: SDK2 torn down
+[scanengine][info][mid360] device 1: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+[scanengine][info][engine] idle -> starting
+[scanengine][info][record] file writer open at '/Users/admin/lidarscan/desktop/evidence/redesign-capture.lscan'
+[scanengine][info][mid360] device 1: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_1_3.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 1: idle -> starting
+[scanengine][info][mid360] device 1: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[scanengine][info][engine] starting -> running
+[scanengine][info][record] opened stream file '/Users/admin/lidarscan/desktop/evidence/redesign-capture.lscan/streams/lidar.bin' (stream=lidar-mid360)
+[scanengine][info][mid360] device 1: starting -> streaming
+[scanengine][info][record] opened stream file '/Users/admin/lidarscan/desktop/evidence/redesign-capture.lscan/streams/imu.bin' (stream=imu)
+[scanengine][info][engine] running -> stopping
+[scanengine][info][mid360] device 1: streaming -> stopping
+[scanengine][info][mid360] device 1: SDK2 torn down
+[scanengine][info][mid360] device 1: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+[lidarscan] mid360-selftest: recorded project — 26 chunks, 33240 bytes, 0.01 s span, sealed=true
+[lidarscan]   stream lidar (Mid-360 packets): 24 chunks, 33120 bytes
+[lidarscan]   stream imu: 2 chunks, 120 bytes
+FEngine (64 bits) created at 0x840e01800 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+
+=== screenshots written ===
+-rw-r--r--  1 admin  staff   56428 17 Aug 00:22 /Users/admin/lidarscan/desktop/evidence/redesign-01-review-qtchrome.png
+-rw-r--r--  1 admin  staff   21129 17 Aug 00:22 /Users/admin/lidarscan/desktop/evidence/redesign-01-review-window.png
+-rw-r--r--  1 admin  staff    8555 17 Aug 00:22 /Users/admin/lidarscan/desktop/evidence/redesign-01-review.png
+-rw-r--r--  1 admin  staff   96272 17 Aug 00:35 /Users/admin/lidarscan/desktop/evidence/redesign-capture-01-gated.png
+-rw-r--r--  1 admin  staff  100196 17 Aug 00:35 /Users/admin/lidarscan/desktop/evidence/redesign-capture-02-armed.png
+-rw-r--r--  1 admin  staff  116056 17 Aug 00:35 /Users/admin/lidarscan/desktop/evidence/redesign-capture-03-recording.png
+-rw-r--r--  1 admin  staff  122407 17 Aug 00:35 /Users/admin/lidarscan/desktop/evidence/redesign-capture-04-paused.png
+-rw-r--r--  1 admin  staff   46966 17 Aug 00:34 /Users/admin/lidarscan/desktop/evidence/redesign-reflow-narrow-qtchrome.png
+-rw-r--r--  1 admin  staff   61006 17 Aug 00:34 /Users/admin/lidarscan/desktop/evidence/redesign-reflow-narrow-window.png
+-rw-r--r--  1 admin  staff   26139 17 Aug 00:34 /Users/admin/lidarscan/desktop/evidence/redesign-reflow-narrow.png
+-rw-r--r--  1 admin  staff   53976 17 Aug 00:34 /Users/admin/lidarscan/desktop/evidence/redesign-reflow-wide-qtchrome.png
+-rw-r--r--  1 admin  staff   46079 17 Aug 00:34 /Users/admin/lidarscan/desktop/evidence/redesign-reflow-wide-window.png
+-rw-r--r--  1 admin  staff   34331 17 Aug 00:34 /Users/admin/lidarscan/desktop/evidence/redesign-reflow-wide.png
+-rw-r--r--  1 admin  staff   56558 17 Aug 00:34 /Users/admin/lidarscan/desktop/evidence/redesign-review-replay-qtchrome.png
+-rw-r--r--  1 admin  staff   21129 17 Aug 00:34 /Users/admin/lidarscan/desktop/evidence/redesign-review-replay-window.png
+-rw-r--r--  1 admin  staff    8555 17 Aug 00:34 /Users/admin/lidarscan/desktop/evidence/redesign-review-replay.png
+-rw-r--r--  1 admin  staff   56151 17 Aug 00:34 /Users/admin/lidarscan/desktop/evidence/redesign-slider-after-qtchrome.png
+-rw-r--r--  1 admin  staff   26658 17 Aug 00:34 /Users/admin/lidarscan/desktop/evidence/redesign-slider-after-window.png
+-rw-r--r--  1 admin  staff   14751 17 Aug 00:34 /Users/admin/lidarscan/desktop/evidence/redesign-slider-after.png
+-rw-r--r--  1 admin  staff   56484 17 Aug 00:34 /Users/admin/lidarscan/desktop/evidence/redesign-slider-before-qtchrome.png
+-rw-r--r--  1 admin  staff   70814 17 Aug 00:34 /Users/admin/lidarscan/desktop/evidence/redesign-slider-before-window.png
+-rw-r--r--  1 admin  staff   62043 17 Aug 00:34 /Users/admin/lidarscan/desktop/evidence/redesign-slider-before.png
+-rw-r--r--  1 admin  staff   75597 17 Aug 00:34 /Users/admin/lidarscan/desktop/evidence/redesign-ws-capture-qtchrome.png
+-rw-r--r--  1 admin  staff  113127 17 Aug 00:34 /Users/admin/lidarscan/desktop/evidence/redesign-ws-capture-window.png
+-rw-r--r--  1 admin  staff   59050 17 Aug 00:34 /Users/admin/lidarscan/desktop/evidence/redesign-ws-capture.png
+-rw-r--r--  1 admin  staff   44365 17 Aug 00:34 /Users/admin/lidarscan/desktop/evidence/redesign-ws-jobs-qtchrome.png
+-rw-r--r--  1 admin  staff   81439 17 Aug 00:34 /Users/admin/lidarscan/desktop/evidence/redesign-ws-jobs-window.png
+-rw-r--r--  1 admin  staff   57739 17 Aug 00:34 /Users/admin/lidarscan/desktop/evidence/redesign-ws-jobs.png
+-rw-r--r--  1 admin  staff   88732 17 Aug 00:34 /Users/admin/lidarscan/desktop/evidence/redesign-ws-merge-qtchrome.png
+-rw-r--r--  1 admin  staff  127079 17 Aug 00:34 /Users/admin/lidarscan/desktop/evidence/redesign-ws-merge-window.png
+-rw-r--r--  1 admin  staff   56209 17 Aug 00:34 /Users/admin/lidarscan/desktop/evidence/redesign-ws-merge.png
+-rw-r--r--  1 admin  staff   71806 17 Aug 00:34 /Users/admin/lidarscan/desktop/evidence/redesign-ws-plan-qtchrome.png
+-rw-r--r--  1 admin  staff  109626 17 Aug 00:34 /Users/admin/lidarscan/desktop/evidence/redesign-ws-plan-window.png
+-rw-r--r--  1 admin  staff   57702 17 Aug 00:34 /Users/admin/lidarscan/desktop/evidence/redesign-ws-plan.png
+-rw-r--r--  1 admin  staff   75148 17 Aug 00:33 /Users/admin/lidarscan/desktop/evidence/redesign-ws-projects-qtchrome.png
+-rw-r--r--  1 admin  staff  113131 17 Aug 00:33 /Users/admin/lidarscan/desktop/evidence/redesign-ws-projects-window.png
+-rw-r--r--  1 admin  staff   59050 17 Aug 00:33 /Users/admin/lidarscan/desktop/evidence/redesign-ws-projects.png
+-rw-r--r--  1 admin  staff   55396 17 Aug 00:34 /Users/admin/lidarscan/desktop/evidence/redesign-ws-review-qtchrome.png
+-rw-r--r--  1 admin  staff   70814 17 Aug 00:34 /Users/admin/lidarscan/desktop/evidence/redesign-ws-review-window.png
+-rw-r--r--  1 admin  staff   62043 17 Aug 00:34 /Users/admin/lidarscan/desktop/evidence/redesign-ws-review.png
+
+verification complete — see /Users/admin/lidarscan/desktop/evidence and /Users/admin/lidarscan/desktop/evidence/verify_redesign.log

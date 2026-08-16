@@ -6,7 +6,7 @@ $ /Users/admin/lidarscan/desktop/build/lidarscan --build-synth-mid360 /Users/adm
 [scanengine][info][record] opened stream file '/Users/admin/lidarscan/desktop/evidence/c4-synth-mid360.lscan/streams/imu.bin' (stream=imu)
 [scanengine][info][record] opened stream file '/Users/admin/lidarscan/desktop/evidence/c4-synth-mid360.lscan/streams/lidar.bin' (stream=lidar-mid360)
 [lidarscan] build-synth-mid360: /Users/admin/lidarscan/desktop/evidence/c4-synth-mid360.lscan — 1667 point packets (127425 points), 1601 IMU packets, 8.0 s
-FEngine (64 bits) created at 0x911131800 (threading is enabled)
+FEngine (64 bits) created at 0x7f2c62800 (threading is enabled)
 FEngine resolved backend: Metal
 Selected physical device 'Apple M4'
 Supported GPU families: 
@@ -23,16 +23,16 @@ $ /Users/admin/lidarscan/desktop/build/lidarscan --post-e2e /Users/admin/lidarsc
 [lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
 [lidarscan] post-e2e: job #1 submitted for /Users/admin/lidarscan/desktop/evidence/c4-synth-mid360.lscan
 [scanengine][info][lio] initialized: |a|=9.8589 m/s^2, bg=(0.00356 0.00388 0.00421) rad/s
+QObject::disconnect: wildcard call disconnects from destroyed signal of QPushButton::cancel
+QObject::disconnect: wildcard call disconnects from destroyed signal of QPushButton::load
 [lidarscan] post-e2e: job #1 running — 0% (opening recording) 
-[lidarscan] post-e2e: job #1 running — 0% (opening recording) 
-[lidarscan] post-e2e: job #1 running — 35% (full-density odometry) 
 [lidarscan] post-e2e: job #1 running — 35% (full-density odometry) 
 [lidarscan] post-e2e: job #1 running — 93% (filtering) 
 [lidarscan] post-e2e: job #1 done — 100% (done) 
 [lidarscan] post-e2e: DONE — 83228 points in the result cloud
 [lidarscan] post-e2e: result loaded into the viewport
-[lidarscan] screenshot OK -> /Users/admin/lidarscan/desktop/evidence/09-post-process.png | 83228 pts / 1 pages | 59.6 fps | cpu p95 0.07 ms | gpu p95 1.16 ms | 758x946 px dpr 1.00 | swapchains 0
-FEngine (64 bits) created at 0xc3b8f8000 (threading is enabled)
+[lidarscan] screenshot OK -> /Users/admin/lidarscan/desktop/evidence/09-post-process.png | 83228 pts / 1 pages | 55.7 fps | cpu p95 0.12 ms | gpu p95 1.71 ms | 1332x953 px dpr 1.00 | swapchains 0
+FEngine (64 bits) created at 0xa3e77c000 (threading is enabled)
 FEngine resolved backend: Metal
 Selected physical device 'Apple M4'
 Supported GPU families: 
@@ -48,8 +48,10 @@ $ /Users/admin/lidarscan/desktop/build/lidarscan --cloud-submit-selftest https:/
 [scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
 [lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
 [lidarscan] cloud-submit-selftest: job #1 submitted against https://127.0.0.1:1/v1
+QObject::disconnect: wildcard call disconnects from destroyed signal of QPushButton::cancel
+QObject::disconnect: wildcard call disconnects from destroyed signal of QPushButton::load
 [lidarscan] cloud-submit-selftest: job #1 settled as failed (error=network error, message=network error) — the app is still running, which is the point
-FEngine (64 bits) created at 0x8b1063800 (threading is enabled)
+FEngine (64 bits) created at 0xc8ec3e800 (threading is enabled)
 FEngine resolved backend: Metal
 Selected physical device 'Apple M4'
 Supported GPU families: 
@@ -72,7 +74,7 @@ $ /Users/admin/lidarscan/desktop/build/lidarscan --plan-fixture --plan-extract -
 [lidarscan] plan-export-dxf: OK -> /Users/admin/lidarscan/desktop/evidence/floorplan.dxf
 [lidarscan] plan-export-pdf: OK -> /Users/admin/lidarscan/desktop/evidence/floorplan.pdf
 [lidarscan] plan-shot: OK -> /Users/admin/lidarscan/desktop/evidence/10-plan.png
-FEngine (64 bits) created at 0xbb7ab8000 (threading is enabled)
+FEngine (64 bits) created at 0x9d63d4000 (threading is enabled)
 FEngine resolved backend: Metal
 Selected physical device 'Apple M4'
 Supported GPU families: 
@@ -93,7 +95,7 @@ Testing Quick Look thumbnails with files:
 * /Users/admin/lidarscan/desktop/evidence/floorplan.pdf produced one thumbnail
 Done producing thumbnails
 $ ls -la /Users/admin/lidarscan/desktop/evidence/floorplan.dxf /Users/admin/lidarscan/desktop/evidence/floorplan.pdf /Users/admin/lidarscan/desktop/evidence/floorplan.pdf.png
--rw-r--r--  1 admin  staff   6164 15 Aug 13:56 /Users/admin/lidarscan/desktop/evidence/floorplan.dxf
--rw-r--r--  1 admin  staff   2762 15 Aug 13:56 /Users/admin/lidarscan/desktop/evidence/floorplan.pdf
--rw-r--r--  1 admin  staff  28779 15 Aug 13:57 /Users/admin/lidarscan/desktop/evidence/floorplan.pdf.png
+-rw-r--r--  1 admin  staff   6164 17 Aug 00:39 /Users/admin/lidarscan/desktop/evidence/floorplan.dxf
+-rw-r--r--  1 admin  staff   2762 17 Aug 00:39 /Users/admin/lidarscan/desktop/evidence/floorplan.pdf
+-rw-r--r--  1 admin  staff  28779 17 Aug 00:39 /Users/admin/lidarscan/desktop/evidence/floorplan.pdf.png
 verification complete — see /Users/admin/lidarscan/desktop/evidence

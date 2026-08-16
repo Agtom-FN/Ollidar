@@ -18,9 +18,9 @@ $ /Users/admin/lidarscan/desktop/build/lidarscan --display-profile research --me
 [lidarscan] merge-fixture-evidence: post-refine session 1 vs ground truth: 0.0923 mm / 0.002279 deg (align=relaxed)
 [lidarscan] merge-fixture-evidence: post-refine session 2 vs ground truth: 0.1172 mm / 0.006926 deg (align=relaxed)
 [lidarscan] merge-fixture-evidence: build OK — 34949 input -> 34706 merged points (63 dedup-dropped, 180 priority-dropped), 1 pages (2 shared)
-[lidarscan] screenshot OK -> /Users/admin/lidarscan/desktop/evidence/11-merge-fixture.png | 34706 pts / 1 pages | 57.7 fps | cpu p95 0.24 ms | gpu p95 1.58 ms | 758x946 px dpr 1.00 | swapchains 0
+[lidarscan] screenshot OK -> /Users/admin/lidarscan/desktop/evidence/11-merge-fixture.png | 34706 pts / 1 pages | 55.2 fps | cpu p95 0.12 ms | gpu p95 1.41 ms | 1332x953 px dpr 1.00 | swapchains 0
 [lidarscan] merge-dock-shot: OK -> /Users/admin/lidarscan/desktop/evidence/12-merge-dock.png
-FEngine (64 bits) created at 0x89ac76800 (threading is enabled)
+FEngine (64 bits) created at 0xc22c62800 (threading is enabled)
 FEngine resolved backend: Metal
 Selected physical device 'Apple M4'
 Supported GPU families: 
@@ -48,7 +48,7 @@ $ /Users/admin/lidarscan/desktop/build/lidarscan --merge-add-project /Users/admi
 [scanengine][info][d6] device 1: streaming -> stopping
 [scanengine][info][d6] device 1: stopping -> idle
 [scanengine][info][engine] stopping -> idle
-FEngine (64 bits) created at 0x8a4c76800 (threading is enabled)
+FEngine (64 bits) created at 0xb8c82a800 (threading is enabled)
 FEngine resolved backend: Metal
 Selected physical device 'Apple M4'
 Supported GPU families: 
@@ -63,13 +63,13 @@ FEngine feature level: 1
 $ /Users/admin/lidarscan/desktop/build/lidarscan --transfer-export /Users/admin/lidarscan/desktop/evidence/synth.lscan:/Users/admin/lidarscan/desktop/evidence/transfer-roundtrip.lscan.zip --transfer-import /Users/admin/lidarscan/desktop/evidence/transfer-roundtrip.lscan.zip:/Users/admin/lidarscan/desktop/evidence/transfer-roundtrip-imported.lscan --quit-after 1
 [scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
 [lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
-[scanengine][info][record] zip_export: '/Users/admin/lidarscan/desktop/evidence/synth.lscan' -> '/Users/admin/lidarscan/desktop/evidence/transfer-roundtrip.lscan.zip' (2 entries)
-[lidarscan] transfer-export: /Users/admin/lidarscan/desktop/evidence/synth.lscan -> /Users/admin/lidarscan/desktop/evidence/transfer-roundtrip.lscan.zip: OK (398724 bytes)
-[scanengine][info][record] zip_import: '/Users/admin/lidarscan/desktop/evidence/transfer-roundtrip.lscan.zip' -> '/Users/admin/lidarscan/desktop/evidence/transfer-roundtrip-imported.lscan' (2 entries)
+[scanengine][info][record] zip_export: '/Users/admin/lidarscan/desktop/evidence/synth.lscan' -> '/Users/admin/lidarscan/desktop/evidence/transfer-roundtrip.lscan.zip' (3 entries)
+[lidarscan] transfer-export: /Users/admin/lidarscan/desktop/evidence/synth.lscan -> /Users/admin/lidarscan/desktop/evidence/transfer-roundtrip.lscan.zip: OK (400051 bytes)
+[scanengine][info][record] zip_import: '/Users/admin/lidarscan/desktop/evidence/transfer-roundtrip.lscan.zip' -> '/Users/admin/lidarscan/desktop/evidence/transfer-roundtrip-imported.lscan' (3 entries)
 [lidarscan] transfer-import: /Users/admin/lidarscan/desktop/evidence/transfer-roundtrip.lscan.zip -> /Users/admin/lidarscan/desktop/evidence/transfer-roundtrip-imported.lscan: OK
 [lidarscan] transfer-import: manifest ok, profile quickscan, 193 chunks, 394287 bytes, 17.07 s span, 0 truncated-tail, 0 crc-mismatch, 0 unreadable streams
 [lidarscan] transfer-import:   stream lidar (COIN-D6 raw): 193 chunks, 394287 bytes
-FEngine (64 bits) created at 0xbff14a800 (threading is enabled)
+FEngine (64 bits) created at 0x8d919e800 (threading is enabled)
 FEngine resolved backend: Metal
 Selected physical device 'Apple M4'
 Supported GPU families: 
@@ -84,9 +84,9 @@ FEngine feature level: 1
 $ /Users/admin/lidarscan/desktop/build/lidarscan --transfer-import-dialog-shot /Users/admin/lidarscan/desktop/evidence/transfer-roundtrip.lscan.zip:/Users/admin/lidarscan/desktop/evidence/transfer-dialog-imported.lscan:/Users/admin/lidarscan/desktop/evidence/13-transfer-import-report.png --quit-after 2.5
 [scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
 [lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
-[scanengine][info][record] zip_import: '/Users/admin/lidarscan/desktop/evidence/transfer-roundtrip.lscan.zip' -> '/Users/admin/lidarscan/desktop/evidence/transfer-dialog-imported.lscan' (2 entries)
+[scanengine][info][record] zip_import: '/Users/admin/lidarscan/desktop/evidence/transfer-roundtrip.lscan.zip' -> '/Users/admin/lidarscan/desktop/evidence/transfer-dialog-imported.lscan' (3 entries)
 [lidarscan] transfer-import-dialog-shot: OK -> /Users/admin/lidarscan/desktop/evidence/13-transfer-import-report.png
-FEngine (64 bits) created at 0x739aa0000 (threading is enabled)
+FEngine (64 bits) created at 0x942464000 (threading is enabled)
 FEngine resolved backend: Metal
 Selected physical device 'Apple M4'
 Supported GPU families: 
@@ -101,9 +101,9 @@ FEngine feature level: 1
 $ /Users/admin/lidarscan/desktop/build/lidarscan --transfer-export-dialog-shot /Users/admin/lidarscan/desktop/evidence/synth.lscan:/Users/admin/lidarscan/desktop/evidence/synth.lscan/exports/synth.lscan.zip:/Users/admin/lidarscan/desktop/evidence/14-transfer-export-dialog.png --quit-after 2.5
 [scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
 [lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
-[scanengine][info][record] zip_export: '/Users/admin/lidarscan/desktop/evidence/synth.lscan' -> '/Users/admin/lidarscan/desktop/evidence/synth.lscan/exports/synth.lscan.zip' (2 entries)
+[scanengine][info][record] zip_export: '/Users/admin/lidarscan/desktop/evidence/synth.lscan' -> '/Users/admin/lidarscan/desktop/evidence/synth.lscan/exports/synth.lscan.zip' (3 entries)
 [lidarscan] transfer-export-dialog-shot: OK -> /Users/admin/lidarscan/desktop/evidence/14-transfer-export-dialog.png
-FEngine (64 bits) created at 0xa8114a800 (threading is enabled)
+FEngine (64 bits) created at 0x856950000 (threading is enabled)
 FEngine resolved backend: Metal
 Selected physical device 'Apple M4'
 Supported GPU families: 

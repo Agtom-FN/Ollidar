@@ -31,11 +31,18 @@ QString jsonStringValue(const QString& json, const QString& key) {
   if (p < 0) return QString();
   p = json.indexOf(':', p + needle.size());
   if (p < 0) return QString();
-  int q = json.indexOf('"', p);
-  if (q < 0) return QString();
-  const int end = json.indexOf('"', q + 1);
+  // Only accept a string that starts IMMEDIATELY after the colon (modulo
+  // whitespace). Scanning forward for the next quote instead makes a
+  // `"crs": null` read as the NEXT key's name — which is exactly what it did:
+  // the A5 manifest writes `"crs": null,` followed by `"streams"`, so the
+  // projects sidebar reported every local-frame project as georeferenced to a
+  // CRS called "streams". Found by the redesign's project chip printing it.
+  ++p;
+  while (p < json.size() && json.at(p).isSpace()) ++p;
+  if (p >= json.size() || json.at(p) != '"') return QString();  // null / number / object
+  const int end = json.indexOf('"', p + 1);
   if (end < 0) return QString();
-  return json.mid(q + 1, end - q - 1);
+  return json.mid(p + 1, end - p - 1);
 }
 
 bool jsonBoolValue(const QString& json, const QString& key) {
@@ -68,6 +75,13 @@ ProjectInfo readProject(const QString& dir) {
   info.manifest_raw = QString::fromStdString(reader.manifest_raw());
   info.sealed = jsonBoolValue(info.manifest_raw, "sealed");
   info.profile = jsonStringValue(info.manifest_raw, "profile");
+  // A5's manifest carries a "crs" key, null until a georeferenced session
+  // writes one. It is the ONLY per-project record of "was this georeferenced",
+  // so it — not the live engine's current fix state — is what the projects
+  // sidebar's georef badge reads. jsonStringValue returns "" for `null`
+  // (there is no opening quote after the colon), which is exactly the
+  // "local frame" answer.
+  info.crs = jsonStringValue(info.manifest_raw, "crs");
 
   qint64 t_first = 0, t_last = 0;
   bool have_t = false;

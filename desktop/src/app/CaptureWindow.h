@@ -110,6 +110,7 @@ class QTimer;
 namespace lidarscan {
 
 class EngineHost;
+class RecordCluster;
 
 class CaptureWindow : public QDialog {
   Q_OBJECT
@@ -123,6 +124,11 @@ class CaptureWindow : public QDialog {
   // Emitted once recording actually begins (not on self-test).
   void captureStarted(const QString& project_dir);
   void captureStopped();
+  // Every Phase transition into or out of kRecording/kPaused. MainWindow
+  // renders it as the RECORDING / PAUSED badge on the viewport (redesign
+  // brief item 4) — the badge is a VIEW of this phase, never a second copy
+  // of it.
+  void recordingStateChanged(bool recording, bool paused);
   // Emitted once per self-test, pass or fail — this is what --mid360-selftest
   // (main.cpp) waits on for a headless CLI run against the S2 simulator.
   void selfTestFinished(bool passed, const QString& detail);
@@ -137,6 +143,10 @@ class CaptureWindow : public QDialog {
   void runMid360SelfTestForCli(const QString& hostIp, const QString& lidarIp);
   // Only meaningful once selfTestFinished(true, ...) has fired (phase kReady).
   void triggerRecordForCli(const QString& projectDir);
+  // Pause <-> Resume, whichever the current phase makes legal. Added for the
+  // redesign's record-cluster evidence run, which has to photograph the
+  // PAUSED state.
+  void triggerPauseResumeForCli();
   void triggerStopForCli();
 
  private:
@@ -155,6 +165,12 @@ class CaptureWindow : public QDialog {
   void evaluateSelfTest();
   void log(const QString& s);
   void setPhase(Phase p);
+  // Renders the current Phase (+ last_self_test_failed_) into the cluster.
+  void updateRecordCluster();
+  // Seconds spent in the Recording state so far, including the segment in
+  // flight — the same accumulator + live segment the session summary sums, so
+  // the ticking clock and the final summary agree by construction.
+  double recordedSecondsNow() const;
 
   bool openDeviceForTab(QString* err);   // opens serial (D6) / configures cfg (Mid-360)
   void closeDevice();                    // tears down serial + removes the device
@@ -214,10 +230,18 @@ class CaptureWindow : public QDialog {
   QLineEdit* project_edit_ = nullptr;
   QComboBox* profile_ = nullptr;
   QCheckBox* live_mode_ = nullptr;
-  QPushButton* test_button_ = nullptr;
-  QPushButton* record_button_ = nullptr;
-  QPushButton* pause_button_ = nullptr;
-  QPushButton* stop_button_ = nullptr;
+
+  // THE record cluster (redesign brief item 4 / REVIEW_FEEDBACK round-1 item
+  // 2). It replaces the four equal-sized Test/Record/Pause/Stop buttons that
+  // used to sit inside the Session form — there is now exactly one place in
+  // this window where a capture is started or stopped.
+  RecordCluster* record_cluster_ = nullptr;
+  QTimer* elapsed_timer_ = nullptr;
+
+  // Distinguishes "never tested" from "tested and failed" — both are
+  // Phase::kIdle, and the record cluster's gate sentence differs between
+  // them.
+  bool last_self_test_failed_ = false;
 
   QLabel* self_test_label_ = nullptr;
   QProgressBar* self_test_progress_ = nullptr;

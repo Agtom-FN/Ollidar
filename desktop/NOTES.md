@@ -2178,3 +2178,361 @@ Everything runtime, on both new platforms:
 * **Linux packaging** (AppImage/`.deb`) and **Windows packaging** (NSIS) are
   still where §13.6 left them: syntax-validated, never built. This workflow
   builds the *app*, not the installers.
+
+---
+
+## 15. The owner-approved UI redesign
+
+**Status: landed on macOS, compiling on Windows/Linux.** This pass is chrome,
+layout and theme only. No engine call, no capture transition, no renderer
+behaviour and no dock capability changed — every §8–§13 flow still runs, and
+`scripts/verify_c2c3.sh`, `verify_c4c5.sh` and `verify_c6c7.sh` still pass
+against it.
+
+Sources, in the priority order the task set them:
+`docs/design/REVIEW_FEEDBACK.md` (owner review rounds and their resolutions) →
+`docs/design/redesign-exports/05-desktop-macos.png` and `fix-r*.png` (visual
+ground truth) → `docs/design/lidarscan-interfaces.html` (behaviour reference).
+
+New files:
+
+```
+resources/lidarscan.qrc            the three bundled typefaces + their OFL texts
+resources/fonts/*.ttf              10 static faces (see §15.1)
+resources/fonts/licenses/*.txt     SIL OFL 1.1, one per family
+src/ui/Theme.{h,cpp}               tokens, QPalette, one QSS, font loading
+src/ui/Icons.{h,cpp}               the rail's line icons, drawn with QPainter
+src/ui/Widgets.{h,cpp}             Chip (pill/badge) + SliderRow
+src/ui/IconRail.{h,cpp}            the 56 px navigation rail
+src/ui/ViewportHost.{h,cpp}        the viewport + its floating chrome
+src/ui/InspectorCard.{h,cpp}       the review workspace's floating inspector
+src/ui/RecordCluster.{h,cpp}       REVIEW_FEEDBACK round-1 item 2, in Qt
+scripts/verify_redesign.sh         the evidence run in §15.8
+```
+
+### 15.1 Typefaces
+
+Space Grotesk (display), Inter (UI) and JetBrains Mono (**every** telemetry and
+stat readout) are compiled into the binary through `resources/lidarscan.qrc` and
+registered with `QFontDatabase::addApplicationFont(":/fonts/…")` in
+`theme::install()`, before any widget exists.
+
+Two decisions worth recording:
+
+* **Static instances, not variable fonts.** Google Fonts now publishes all three
+  only as variable builds (`Inter[opsz,wght].ttf`, `SpaceGrotesk[wght].ttf`,
+  `JetBrainsMono[wght].ttf`). `addApplicationFont()` registers a variable font's
+  **default instance only**, so a stylesheet asking for `font-weight: 600`
+  silently renders Regular. The four Inter / three Space Grotesk / three
+  JetBrains Mono static faces come from the upstream projects
+  (`rsms/inter` v4.1, `floriankarsten/space-grotesk`, `JetBrains/JetBrainsMono`)
+  and are the smallest set that covers every weight the sheet asks for. ~3.0 MB
+  of binary.
+* **The licences ship inside the binary too** (`:/licenses/*.txt`), not only in
+  the repo. SIL OFL 1.1 §2 requires the notice to travel with the font, and a
+  `.app`/`.exe` that embeds the `.ttf` while leaving the licence behind in a
+  source tree does not satisfy that. `Help → About` shows them
+  (`theme::licenceText()`), and `--font-report` prints what actually registered.
+
+If the `.qrc` is ever stripped, `theme::install()` falls back to the platform UI
+font and `QFontDatabase::systemFont(FixedFont)` rather than to nothing, and
+`--font-report` says `[BUNDLE MISSING — platform fallback]` instead of lying.
+
+### 15.2 Tokens, and where they disagree with the mockup
+
+The brief's palette is what shipped: ground `#12161B`, panel `#1A2027` /
+`#222A33`, line `#2B3540`, ink `#ECF1F5`, mute `#94A1AD`, ember `#FF7A52`, pose
+`#6AA7E8`. The mockup's own `:root` sits a hair darker and cooler on the
+neutrals (`#11151a` / `#181e25` / `#2a333d` / `#e9edf1` / `#8b97a3`) and is
+identical on the accents; the brief wins on neutrals. The semantic triad the
+brief names but does not value comes from the mockup verbatim: good `#49D17F`,
+warn `#E5B93C`, bad `#E05252`. Ink on an ember fill is `#1A0D08`, not white —
+white on `#FF7A52` fails contrast and the mockup never uses it.
+
+Radii are the mockup's scale: 18 px cards, 20 px panels, 14 px tiles, pill
+buttons (QSS clamps a `border-radius` to half the height, so one rule works at
+every button size).
+
+`app.setStyle("Fusion")` is required, not cosmetic: it is the only built-in
+style that honours a QPalette **and** a stylesheet consistently on all three
+platforms, and the macOS style paints several controls natively and would ignore
+half the sheet. It changes only the **widgets** — the window frame, the title
+bar and the traffic lights are drawn by the OS and Qt never touches them, so
+macOS native chrome is untouched as the brief requires.
+
+**Two things QSS cannot do, and what was done instead.**
+
+* *Arrow glyphs.* The CSS "transparent side borders + one solid border"
+  triangle does not render in Qt's stylesheet engine — it comes out as a 3 px
+  dash. Worse, styling `QSpinBox::up-button` at all makes Qt stop drawing the
+  default arrow with it, so an early build shipped spinners with **no visible
+  arrows**. The spin buttons and the combo arrow are therefore left to Fusion,
+  which draws real arrows tinted from the palette this theme sets. The fields
+  themselves are still styled.
+* *Inset rings.* The rail's active capsule is a 16 %-ember fill with a 30 %-ember
+  **inset** ring; QSS has no inset box-shadow. `RailButton::paintEvent` draws
+  the capsule and the icon together, which also makes the pill and the icon tint
+  impossible to get out of sync.
+
+### 15.3 The icon rail
+
+`IconRail` is a fixed 56 px widget in the left dock area, behind an empty
+title-bar widget with `NoDockWidgetFeatures`, so it cannot be dragged out,
+floated or closed. Nine 38×38 buttons, 20 px Lucide-geometry icons at
+stroke-width 1.8: **projects · capture · review · plan · merge · jobs**, a
+stretch, then **transfer · export · display-inspector** pinned to the bottom.
+Ember capsule on the active one, tooltips everywhere, `Ctrl+1…6` mirrors on the
+View → Workspace menu, `Ctrl+I` for the inspector.
+
+**What it replaced, and what it did not.** Before this pass, five docks were
+`tabifyDockWidget()`'d into one group on the right — a five-deep tab strip that
+was the app's real navigation. They are now five **independent** docks of which
+`showWorkspace()` shows exactly one; with a single visible dock in an area Qt
+draws no tab bar at all, so the rail is the only navigation on screen. Every
+dock keeps every capability it had: float, resize, close, and its own
+`toggleViewAction()` in the View menu. Transfer and Export have no dock (they
+are C7's dialogs and C3's export centre), so their rail buttons open those.
+
+Two things this unlocked rather than cost: each workspace now sets its own
+starting dock width (`resizeDocks()` — the merge workbench's seven-column
+session table wanted 720 px while the display form wanted 340, and under one
+shared tab group they had permanently fought over it), and the rail does **not**
+light itself on click — `MainWindow` calls `setCurrent()` back once it has
+actually switched, so a refused navigation cannot leave the rail lit on a
+workspace that is not showing.
+
+`MeasureDock` deliberately has no rail button: it is a tool, not a workspace.
+It stays on the View menu and can be shown over any workspace.
+
+### 15.4 The review workspace and its floating inspector
+
+**The hard part was not the card, it was getting anything to float over the
+viewport at all.** The viewport is a native child window (§1.1 —
+`createWindowContainer()` over a `QWindow` carrying a `CAMetalLayer`). A native
+child window is composited by the window system, **above every non-native
+sibling widget**, so an ordinary `QWidget` laid out over it is simply invisible:
+Qt paints it into a backing store the native surface then covers. This is not a
+macOS quirk — a child `HWND` and an X11 child window behave the same.
+
+`ViewportHost` fixes it by making each overlay native too
+(`WA_NativeWindow` + `WA_DontCreateNativeAncestors`) and then ordering the
+siblings with `raise()`. Sibling native surfaces honour Z-order on all three
+platforms, and it is one attribute and one call with no platform code, so the
+Windows/Linux CI legs compile it unchanged.
+
+The cost is real and is absorbed rather than hidden: a native overlay cannot be
+alpha-composited against the live 3D content, so the "translucent panel" is
+**baked** — `InspectorCard::paintEvent` fills at 94 % panel over the viewport's
+`#0B0E12` ground, which lands within a couple of RGB units of the mockup's
+`rgba(24,30,37,.9)`. The alternative (a frameless tool window chasing the main
+window around the screen) is far more to go wrong for a difference nobody can
+see. **This is verified on macOS only** — on Windows/Linux the ordering is
+believed correct from the same documentation the rest of §3.1 rests on, and is
+as unverified as everything else in those columns.
+
+The card itself is 236 px, radius 20, a 1 px rim-lit border, capped at 520 px
+tall and scrolling: point size / LOD budget / gamma / brightness sliders (ember
+track fill, round knobs), the five A14 colour modes as chips on two rows, the
+ember export button, and one link into the full parameter dock. It binds to the
+**same `DisplayParamsController`** as `DisplayParamsDock` — there is no second
+display model, per §1.7 — so moving a slider here and opening the dock show the
+same numbers by construction.
+
+Three honest limitations the card states rather than papers over:
+
+* the point-size slider is **disabled** in adaptive / world-size mode, with a
+  tooltip naming the mode, because a fixed-pixel slider cannot express those;
+* gamma and brightness bind to the **active scalar channel** (height /
+  intensity / time each carry their own; RGB carries none) exactly as
+  `DisplayParamsDock::activeScalar()` resolves them, and grey out under RGB;
+* `fixQuality` is truncated to `FIX` on its chip because the full name elides to
+  a meaningless `XQUALI` at 71 px. The full name is the tooltip.
+
+**Export and georef are not decoration.** `setGeorefState()` is fed from
+`Engine::crs_epsg()`, which `core/engine.h` documents as **empty until the
+georeference transform converges** ("what CRS may I *label* this cloud with").
+So `LAS 1.4 · georef ✓` appears exactly when a LAS written right now would carry
+a real CRS, and `LAS 1.4 · local frame` when A9 would embed its documented
+local-frame placeholder instead. The σ under it is
+`GeorefSolution::horizontal_sigma_m`.
+
+**Reflow.** Below 880 px (`theme::kInspectorReflowWidth`) the *same* card
+instance is taken out of the host and given to an ordinary right-hand dock —
+`setFloatingLook(false)` drops the radius, the shadow-ish rim and the height cap
+— and comes back when the window widens. No state is duplicated and none is lost
+across the transition. Verified at 820 px and 1400 px (§15.8).
+
+### 15.5 The record cluster — the owner's explicit fix
+
+`REVIEW_FEEDBACK.md` round 1 item 2: *"Desktop (macOS + Windows) · Capture:
+start-record / end-record buttons missing — must be prominent."*
+
+C2 had put Test / Record / Pause / Stop in one `QHBoxLayout` of four
+identically-sized default `QPushButton`s, inside a `QFormLayout` row, inside a
+"Session" `QGroupBox`, below two device tabs and above a health line, a summary
+line and a log pane. Four small pills in the middle of a form is exactly the
+"buried" being objected to. **Those four buttons no longer exist.**
+`RecordCluster` is pinned across the foot of the capture window and is the only
+place a capture can be started or stopped; the Session card carries a line
+saying where they went.
+
+Left to right: **Test device** → a 48 px ember **Start recording** pill (Space
+Grotesk 15/600, leading dot) → the elapsed clock (20 px JetBrains Mono, `MM:SS`,
+floored and zero-padded, with a pulsing 1.15 s dot while live and a static amber
+one while paused) → **Pause/Resume** → the gate sentence, right-aligned → a
+state badge. Recording swaps the pill to a red-tinted **Stop recording** with a
+square glyph.
+
+**It adds no state.** Every transition is still `CaptureWindow::Phase`'s; this
+widget renders a phase and emits an intent onto the *same* `onTestDevice()` /
+`onRecord()` / `onPauseResume()` / `onStop()` slots the old buttons called. The
+gate is still `evaluateSelfTest()`'s — ≥ 3,000 pts/s over a 3 s window (D6),
+first packet within 8 s (Mid-360) — and the cluster only says so out loud:
+
+| Phase | Pill | Clock | Sentence | Badge |
+| --- | --- | --- | --- | --- |
+| `kIdle`, never tested | Start, **disabled** | `00:00` faint | "Run **Test device** first — ≥ 3,000 pts/s over a 3 s window unlocks Start." (Mid-360: "the first packet within 8 s") | `SELF-TEST REQUIRED` amber |
+| `kTesting` | disabled | `00:00` | "Self-test running — Start unlocks when it passes." | `SELF-TEST REQUIRED` |
+| `kIdle`, after a failure | disabled | `00:00` | "Self-test failed. Fix the link, then test the device again." | `SELF-TEST REQUIRED` |
+| `kReady` | Start, **enabled** | `00:00` | "Self-test passed — the engine is armed and ready to record." | `ARMED` green |
+| `kRecording` | Stop, red | ticking, pulsing red dot | "Recording is open — the engine keeps every raw byte, paused or not." | `REC` red |
+| `kPaused` | Stop, red | `MM:SS`, static amber dot, caption `PAUSED` | same | `PAUSED` red |
+
+`Phase::kIdle` covers both "never tested" and "tested and failed", which need
+different sentences, so `CaptureWindow` carries one extra bool
+(`last_self_test_failed_`) for the wording. Switching transport tab re-gates
+Start: a D6 result says nothing about a Mid-360 link.
+
+The clock reads from `recordedSecondsNow()` — the same accumulator plus
+in-flight segment that `onStop()`'s session summary sums — so the ticking clock
+and the final summary cannot disagree.
+
+**The viewport badge.** `RECORDING` / `PAUSED` rides the **main window's**
+viewport (top-right, `Chip` with a `bad`/`warn` tone), because that is what is
+actually showing the cloud being recorded, while capture is its own dialog.
+`CaptureWindow::recordingStateChanged(bool, bool)` is emitted on every
+transition into, out of and *between* the live phases; `MainWindow` renders it.
+The badge is a view of the phase, never a second copy of it.
+
+### 15.6 Projects sidebar and the status bar
+
+Recents are cards now: the project name in Space Grotesk 13/600 over one mono
+sub-line. Single click opens (the mockup's `.lrow`).
+
+**On the point count, honestly.** A5's manifest records chunks and payload
+bytes; there is **no per-project point total** to read without decoding the whole
+capture, which a sidebar may not do on every repaint. So a recent shows its real
+chunk/byte figure, and the **open** project additionally shows the live
+`PageStore` total, which *is* a point count and is labelled as the live one. The
+full span, profile and path are in the tooltip.
+
+**The georef badge found a real bug.** `ProjectInfo` gained a `crs` field parsed
+from the manifest's `"crs"` key. `Project.cpp`'s `jsonStringValue()` scanned
+forward from the colon for the next `"` — and A5 writes `"crs": null,` followed
+by `"streams"`, so every local-frame project reported itself georeferenced to a
+CRS called **`streams`**. The parser now requires the string to start
+immediately after the colon (modulo whitespace) and returns empty for
+`null`/numbers/objects. This was latent before the redesign; nothing read `crs`,
+so nothing showed it. `sealed` and `profile` were never affected (a bool key and
+a genuinely-string key).
+
+The status bar is the mockup's four segments — `state · measure · georef σ ·
+engine` — all JetBrains Mono 10.5, with the georef segment green when
+`Engine::crs_epsg()` is non-empty, blue-ish (`pose`) when the *project on disk*
+was georeferenced but this process has no live fix, and faint otherwise. Segment
+1 is deliberately short (`engine ready · idle`): the old full health line grew
+with the device list and would push the other three off the end of the bar. It
+is the tooltip instead, and the verbose renderer line is both the right-hand
+segment's tooltip and the viewport's own bottom-left chip.
+
+### 15.7 CLI hooks added
+
+```
+--font-report            what QFontDatabase actually registered
+--workspace NAME         projects|capture|review|plan|merge|jobs — the same
+                         onRailActivated() path a rail click takes
+--inspector-demo PREFIX  shoot, drag the point-size slider through its own
+                         QSlider, shoot again, report the frame delta
+--capture-cluster-demo PREFIX
+                         photograph the record cluster in every state the C2
+                         machine reaches, plus the viewport badge
+```
+
+### 15.8 Verification (2026-08-17, same host as §6: Apple M4, macOS 26.5.1)
+
+`scripts/verify_redesign.sh` reproduces all of it; raw output is
+`evidence/verify_redesign.log`, screenshots are `evidence/redesign-*.png`.
+Screenshots follow §6's convention: `NAME.png` is Filament's own framebuffer,
+`NAME-qtchrome.png` is `QWidget::grab()` of the Qt chrome, `NAME-window.png` is
+the two composited.
+
+**Build:** clean configure + build from scratch, **exit 0, zero warnings from
+any file under `desktop/src`** (`-Wall -Wextra`) — the same bar §6 and §8.7 set.
+The 239 warnings the build does emit are all vendored Livox SDK2. The
+`LIDARSCAN_COMPILE_ONLY=ON` object-library path (what the Windows/Linux CI legs
+build) was also configured and built clean: 32 warnings, all from the vendored
+SDK2 headers, none from `desktop/src`.
+
+**Fonts:** `Space Grotesk (3 faces)`, `Inter (4 faces)`,
+`JetBrains Mono (3 faces)`, `all three bundled: yes`.
+
+**Workspaces:** all six render and are reachable through the rail
+(`redesign-ws-*.png`).
+
+**Review over a real replay:** the C1 synthetic D6 capture (120,300 points)
+replayed unpaced into the full-bleed viewport with the floating inspector over
+it, at 53–55 fps (`redesign-review-replay*.png`).
+
+**Inspector slider → viewport:** the point-size slider driven from 3.0 px to
+12.0 px through `QSlider::setValue()` — the same signal a drag emits — moved
+the A14 model to 12.00 px and the viewport's own copy with it, and changed
+**26.95 mean absolute grey levels over 14.0 % of the frame**
+(`redesign-slider-{before,after}.png`).
+
+> The first version of this check asserted the frame got *brighter* and failed.
+> It was the assertion that was wrong: at 12 px the near surfaces occlude the
+> far ones, so this fixture gets measurably **darker** (mean luma 53.5 → 35.9).
+> The check now measures mean |per-pixel delta|, which is what "the viewport
+> changed" actually means.
+
+**Reflow:** at 820 px the card is an ordinary `DISPLAY INSPECTOR` dock; at
+1400 px it floats over the viewport. Both lay out and render
+(`redesign-reflow-{narrow,wide}*.png`).
+
+**Record cluster, against the S2 Mid-360 simulator on loopback** (the same
+`127.000.000.001` self-IP-filter quirk `verify_c2c3.sh` documents):
+`gated` → `armed` (self-test passed, first packet after 1.88 s) → `recording`
+→ `paused` → resumed → stopped, with a real recorded project at the end
+(26 chunks / 33,240 bytes across `lidar` and `imu`).
+`redesign-capture-0{1,2,3,4}-*.png` are the four cluster states;
+`redesign-capture-0{3,4}-badge-*.png` are the viewport's `RECORDING` and
+`PAUSED` badges.
+
+**No regression:** `verify_c4c5.sh` and `verify_c6c7.sh` re-run green against
+the restyled app (the docks they drive are now shown one at a time instead of
+tabbed, which their `show()`/`raise()` calls handle unchanged).
+
+### 15.9 Not verified / deferred
+
+* **The native-overlay Z-order is proven on macOS only.** Windows and Linux
+  compile it; nobody has run it there (§14.5's blanket caveat applies). If it
+  turns out a child `HWND` or an X11 child window does not order above the
+  Vulkan surface, the fallback is the frameless-tool-window overlay described in
+  `ViewportHost.h`, and it touches only that one file.
+* **`QWidget::grab()` composites the Qt chrome only.** The `-window.png`
+  composites paste Filament's framebuffer *over* the central area, which covers
+  the native overlays; the overlays are therefore evidenced from the
+  `-qtchrome.png` grabs, and on-screen. An OS screen capture would show both at
+  once but needs a Screen Recording permission this shell does not have (§6).
+* **HiDPI.** Every redesign screenshot here is dpr 1.00. The icons and chips are
+  drawn at `devicePixelRatioF()` and §6 run 05 already exercises the dpr-2.0
+  path for the renderer, but no redesign screenshot was taken at 2×.
+* **The Android side of the redesign is untouched** — this task was
+  `desktop/**` only. `REVIEW_FEEDBACK.md`'s rounds 2–3 (the Android capture
+  sheet, AR & camera, the diagnostics sheet) are mockup-only and remain so.
+* **Colour-blind review.** The semantic triad is green/amber/red; every state
+  that uses it also carries a word (`ARMED`/`REC`/`PAUSED`,
+  `georef converged`/`local frame`), so nothing is colour-only — but this was
+  reasoned, not tested with a simulator.
+* **No unit tests, still** (§7). The redesign is verified end to end like the
+  rest of `desktop/`.

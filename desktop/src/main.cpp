@@ -58,6 +58,8 @@
 #include "app/SyntheticMid360.h"
 #include "app/TransferDialog.h"
 #include "render/ViewportWindow.h"
+#include "ui/InspectorCard.h"
+#include "ui/Theme.h"
 #include "scanengine/export/exporter.h"
 #include "scanengine/jobs/job_queue.h"
 #include "scanengine/poses/se3.h"
@@ -68,6 +70,13 @@ int main(int argc, char** argv) {
   QCoreApplication::setOrganizationName("LidarScan");
   QCoreApplication::setApplicationName("LidarScan Desktop");
   QCoreApplication::setApplicationVersion("0.1.0");
+
+  // The redesign's fonts, palette and stylesheet. BEFORE any widget exists:
+  // a stylesheet applied later still restyles, but a widget that cached a
+  // font metric while it was being constructed does not re-layout, which
+  // shows up as clipped labels in exactly the places that were laid out
+  // first. (ui/Theme.h; this call is the whole of the theme's public API.)
+  lidarscan::theme::install(app);
 
   QCommandLineParser parser;
   parser.setApplicationDescription("LidarScan desktop — capture + workstation");
@@ -225,7 +234,44 @@ int main(int argc, char** argv) {
   parser.addOption(optTransferImport);
   parser.addOption(optTransferExportDialogShot);
   parser.addOption(optTransferImportDialogShot);
+  QCommandLineOption optFontReport(
+      "font-report",
+      "Redesign evidence hook: print which bundled typefaces QFontDatabase "
+      "actually registered (and whether it fell back to the platform UI font), "
+      "then continue. Proves the .qrc reached the binary.");
+  parser.addOption(optFontReport);
+  QCommandLineOption optInspectorDemo(
+      "inspector-demo",
+      "Redesign evidence hook: PREFIX — shoot the review viewport, drag the "
+      "floating inspector's point-size slider to its top, shoot again, and "
+      "report the mean-brightness delta. Proves the inspector is bound to the "
+      "live A14 model rather than decorating one.",
+      "prefix");
+  parser.addOption(optInspectorDemo);
+  QCommandLineOption optCaptureClusterDemo(
+      "capture-cluster-demo",
+      "Redesign evidence hook: PREFIX — open the capture window and shoot the "
+      "record cluster in each state the C2 machine can be in without hardware "
+      "(untested / testing), then, if --mid360-selftest also ran, armed / "
+      "recording / paused.",
+      "prefix");
+  parser.addOption(optCaptureClusterDemo);
+  QCommandLineOption optWorkspace(
+      "workspace",
+      "Select a workspace at startup, the same way clicking the icon rail does: "
+      "projects|capture|review|plan|merge|jobs. Redesign evidence hook.",
+      "name");
+  parser.addOption(optWorkspace);
   parser.process(app);
+
+  if (parser.isSet(optFontReport)) {
+    std::fprintf(stderr, "[lidarscan] bundled typefaces (QFontDatabase):\n");
+    for (const QString& l : lidarscan::theme::fontReport()) {
+      std::fprintf(stderr, "[lidarscan]   %s\n", l.toUtf8().constData());
+    }
+    std::fprintf(stderr, "[lidarscan]   all three bundled: %s\n",
+                 lidarscan::theme::fontsLoaded() ? "yes" : "NO");
+  }
 
   lidarscan::EngineHost host;
   if (!host.ok()) {
@@ -240,6 +286,15 @@ int main(int argc, char** argv) {
   if (parser.isSet(optSize)) {
     const QStringList wh = parser.value(optSize).split('x');
     if (wh.size() == 2) win.resize(wh[0].toInt(), wh[1].toInt());
+  }
+  if (parser.isSet(optWorkspace)) {
+    const QString ws = parser.value(optWorkspace);
+    if (!win.showWorkspaceNamed(ws)) {
+      std::fprintf(stderr,
+                   "[lidarscan] --workspace: unknown workspace '%s' "
+                   "(projects|capture|review|plan|merge|jobs)\n",
+                   ws.toUtf8().constData());
+    }
   }
   win.show();
 
@@ -524,6 +579,120 @@ int main(int argc, char** argv) {
                      s.a[0], s.a[1], s.a[2], s.b[0], s.b[1], s.b[2], s.distance_m);
       }
     });
+  }
+
+  // --- redesign evidence hooks -------------------------------------------
+  //
+  // Both drive the REAL widgets through their real signal paths (a QSlider
+  // value change, the record cluster's own buttons' slots), so a green run is
+  // evidence about the shipped UI rather than about a parallel test harness.
+  if (parser.isSet(optInspectorDemo)) {
+    const QString prefix = QFileInfo(parser.value(optInspectorDemo)).absoluteFilePath();
+    QDir().mkpath(QFileInfo(prefix).absolutePath());
+    // Mean ABSOLUTE per-pixel difference between the two shots, not a
+    // brightness comparison. Growing the points does not simply "add light":
+    // at 12 px the near surfaces occlude the far ones, so this fixture gets
+    // measurably DARKER (53.5 -> 35.9 mean luma on the first run of this
+    // hook). A signed brightness test would have called that a failure. What
+    // is actually being asserted is that the frame changed at all, and by how
+    // much of the frame.
+    auto frameDelta = [](const QString& a, const QString& b, double* changedFrac) -> double {
+      QImage ia(a), ib(b);
+      if (ia.isNull() || ib.isNull() || ia.size() != ib.size()) return -1.0;
+      ia = ia.convertToFormat(QImage::Format_Grayscale8);
+      ib = ib.convertToFormat(QImage::Format_Grayscale8);
+      double sum = 0.0;
+      qint64 changed = 0;
+      for (int y = 0; y < ia.height(); ++y) {
+        const uchar* ra = ia.constScanLine(y);
+        const uchar* rb = ib.constScanLine(y);
+        for (int x = 0; x < ia.width(); ++x) {
+          const int d = std::abs(int(ra[x]) - int(rb[x]));
+          sum += d;
+          if (d > 16) ++changed;
+        }
+      }
+      const double n = double(ia.width()) * ia.height();
+      if (changedFrac) *changedFrac = double(changed) / n;
+      return sum / n;
+    };
+    win.showWorkspaceNamed("review");
+    const int t0 = int(parser.value(optShotDelay).toDouble() * 1000.0);
+    QTimer::singleShot(t0, &win, [&win, prefix] {
+      win.viewport()->captureScreenshot(prefix + "-before.png");
+    });
+    QTimer::singleShot(t0 + 700, &win, [&win, prefix] {
+      auto* insp = win.inspector();
+      if (!insp) {
+        std::fprintf(stderr, "[lidarscan] inspector-demo: no inspector card\n");
+        return;
+      }
+      const double applied = insp->setPointSizeForCli(12.0);
+      std::fprintf(stderr,
+                   "[lidarscan] inspector-demo: point-size slider -> 12.0 px, A14 model now "
+                   "%.2f px (viewport params %.2f px)\n",
+                   applied, win.viewport()->displayParams().point_size.fixed_px);
+    });
+    QTimer::singleShot(t0 + 2000, &win, [&win, prefix, frameDelta] {
+      win.viewport()->captureScreenshot(prefix + "-after.png");
+      double changedFrac = 0.0;
+      const double d = frameDelta(prefix + "-before.png", prefix + "-after.png", &changedFrac);
+      std::fprintf(stderr,
+                   "[lidarscan] inspector-demo: mean |delta| %.4f over %.1f%% of the frame — %s\n",
+                   d, changedFrac * 100.0,
+                   (d > 1.0 && changedFrac > 0.02) ? "VIEWPORT CHANGED"
+                                                   : "NO VISIBLE CHANGE (investigate)");
+    });
+  }
+
+  if (parser.isSet(optCaptureClusterDemo)) {
+    const QString prefix = QFileInfo(parser.value(optCaptureClusterDemo)).absoluteFilePath();
+    QDir().mkpath(QFileInfo(prefix).absolutePath());
+    lidarscan::CaptureWindow* cap = win.captureWindow();
+    cap->setProjectDir(parser.value(optProject));
+    cap->show();
+    cap->raise();
+    auto shot = [cap](const QString& path, const char* label) {
+      const bool ok = cap->grab().save(path);
+      std::fprintf(stderr, "[lidarscan] capture-cluster-demo: %s %s -> %s\n", label,
+                   ok ? "OK" : "FAILED", path.toUtf8().constData());
+    };
+    // The gated state needs no hardware at all — that IS the state the owner
+    // said was missing, so it is shot first and unconditionally.
+    QTimer::singleShot(600, cap, [shot, prefix] { shot(prefix + "-01-gated.png", "gated"); });
+    QObject::connect(cap, &lidarscan::CaptureWindow::selfTestFinished, &app,
+                     [shot, prefix](bool passed, const QString&) {
+                       if (!passed) {
+                         shot(prefix + "-02-failed.png", "self-test failed");
+                         return;
+                       }
+                       shot(prefix + "-02-armed.png", "armed");
+                     });
+    QObject::connect(cap, &lidarscan::CaptureWindow::captureStarted, &app,
+                     [cap, shot, prefix, &win](const QString&) {
+                       QTimer::singleShot(1400, cap, [cap, shot, prefix, &win] {
+                         shot(prefix + "-03-recording.png", "recording");
+                         // The badge lives on the MAIN window's viewport, not
+                         // in the capture dialog, so it needs its own grab.
+                         const bool ok = win.grab().save(prefix + "-03-badge-recording.png");
+                         std::fprintf(stderr,
+                                      "[lidarscan] capture-cluster-demo: viewport RECORDING badge "
+                                      "%s -> %s\n",
+                                      ok ? "OK" : "FAILED",
+                                      (prefix + "-03-badge-recording.png").toUtf8().constData());
+                         cap->triggerPauseResumeForCli();
+                         QTimer::singleShot(700, cap, [cap, shot, prefix, &win] {
+                           shot(prefix + "-04-paused.png", "paused");
+                           const bool ok2 = win.grab().save(prefix + "-04-badge-paused.png");
+                           std::fprintf(stderr,
+                                        "[lidarscan] capture-cluster-demo: viewport PAUSED badge "
+                                        "%s -> %s\n",
+                                        ok2 ? "OK" : "FAILED",
+                                        (prefix + "-04-badge-paused.png").toUtf8().constData());
+                           cap->triggerPauseResumeForCli();  // back to recording
+                         });
+                       });
+                     });
   }
 
   if (parser.isSet(optMid360Selftest)) {

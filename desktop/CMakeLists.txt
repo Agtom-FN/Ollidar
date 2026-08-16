@@ -37,6 +37,13 @@ if(NOT CMAKE_PREFIX_PATH AND APPLE AND EXISTS "/opt/homebrew/opt/qt")
     set(CMAKE_PREFIX_PATH "/opt/homebrew/opt/qt")
 endif()
 set(CMAKE_AUTOMOC ON)
+# AUTORCC: resources/lidarscan.qrc carries the redesign's bundled typefaces
+# (Space Grotesk / Inter / JetBrains Mono, all SIL OFL 1.1) and their licence
+# texts. They are compiled INTO the binary rather than copied next to it so
+# that the plain dev build, the .app bundle and the NSIS/AppImage installers
+# all resolve ":/fonts/..." identically — src/ui/Theme.cpp is the only reader
+# and it has no filesystem path to get wrong.
+set(CMAKE_AUTORCC ON)
 # Network: C4's "Submit to cloud…" dialog makes a REAL QNetworkAccessManager
 # request against A15's cloud REST contract (see src/app/QtHttpTransport.*) —
 # the task is explicit that the scripted fake HttpTransport A15's own tests
@@ -258,6 +265,14 @@ endif()
 
 set(LIDARSCAN_SOURCES
     src/main.cpp
+    resources/lidarscan.qrc
+    src/ui/Theme.cpp
+    src/ui/Icons.cpp
+    src/ui/Widgets.cpp
+    src/ui/IconRail.cpp
+    src/ui/ViewportHost.cpp
+    src/ui/InspectorCard.cpp
+    src/ui/RecordCluster.cpp
     src/app/EngineHost.cpp
     src/app/Project.cpp
     src/app/ReplayController.cpp

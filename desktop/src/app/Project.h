@@ -37,6 +37,11 @@ struct ProjectInfo {
   bool sealed = false;  // false after a crash — a POSITIVE signal per A5 §2
   QString manifest_raw;
   QString profile;
+  // A5 manifest "crs" — empty when the session was never georeferenced (the
+  // key is written as JSON null). The projects sidebar's georef badge and the
+  // status bar's georef segment both read this for a project on disk; the
+  // LIVE georef state during a capture comes from Engine::crs_epsg() instead.
+  QString crs;
 
   QVector<StreamInfo> streams;
 

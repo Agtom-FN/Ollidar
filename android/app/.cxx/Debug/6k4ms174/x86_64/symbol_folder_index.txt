@@ -1,1 +1,0 @@
-/Users/admin/lidarscan/android/app/build/intermediates/cxx/Debug/6k4ms174/obj/x86_64

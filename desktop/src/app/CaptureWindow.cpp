@@ -24,6 +24,8 @@
 #include <algorithm>
 
 #include "app/EngineHost.h"
+#include "ui/RecordCluster.h"
+#include "ui/Theme.h"
 
 namespace lidarscan {
 namespace {
@@ -31,6 +33,16 @@ namespace {
 // WCH's CH340/CH341 USB-serial chip — the vendor's own D6 adapter, and the
 // one every per-OS driver-guidance string in this file already names.
 constexpr quint16 kCh340VendorId = 0x1A86;
+
+// The self-test verdict used two hard-coded Material greens/reds
+// (#2e7d32 / #c62828) that predate the palette; they are now the semantic
+// good/bad tokens, so the verdict matches every other pass/fail in the app.
+QString kPassStyle() {
+  return QString("color:%1;font-weight:600;").arg(theme::css(theme::good()));
+}
+QString kFailStyle() {
+  return QString("color:%1;font-weight:600;").arg(theme::css(theme::bad()));
+}
 
 QString humanBytesLocal(quint64 b) {
   static const char* u[] = {"B", "KB", "MB", "GB"};
@@ -95,7 +107,7 @@ void CaptureWindow::buildUi() {
 
     ch340_hint_ = new QLabel();
     ch340_hint_->setWordWrap(true);
-    ch340_hint_->setStyleSheet("color:#2e7d32;");
+    ch340_hint_->setStyleSheet(QString("color:%1;").arg(theme::css(theme::good())));
     f->addRow(ch340_hint_);
 
     baud_ = new QSpinBox();
@@ -196,23 +208,19 @@ void CaptureWindow::buildUi() {
         "MainWindow reads this via project()/viewport wiring at capture start.");
     f->addRow(live_mode_);
 
-    test_button_ = new QPushButton("Test device");
-    record_button_ = new QPushButton("Record");
-    pause_button_ = new QPushButton("Pause");
-    stop_button_ = new QPushButton("Stop");
-    connect(test_button_, &QPushButton::clicked, this, &CaptureWindow::onTestDevice);
-    connect(record_button_, &QPushButton::clicked, this, &CaptureWindow::onRecord);
-    connect(pause_button_, &QPushButton::clicked, this, &CaptureWindow::onPauseResume);
-    connect(stop_button_, &QPushButton::clicked, this, &CaptureWindow::onStop);
-    auto* brow = new QWidget();
-    auto* bl = new QHBoxLayout(brow);
-    bl->setContentsMargins(0, 0, 0, 0);
-    bl->addWidget(test_button_);
-    bl->addWidget(record_button_);
-    bl->addWidget(pause_button_);
-    bl->addWidget(stop_button_);
-    bl->addStretch(1);
-    f->addRow(brow);
+    // The four transport buttons that used to live HERE — four equal 12 px
+    // pills in the middle of this form, which is exactly the "start-record /
+    // end-record buttons missing" the owner reported — are gone. They are now
+    // the record cluster pinned across the foot of this window; see below and
+    // ui/RecordCluster.h. This note stays in the UI too, so the next person
+    // looking for Record in the Session card is told where it went.
+    auto* moved = new QLabel(
+        "Transport, session and self-test are configured here; <b>Test device · "
+        "Start · Pause · Stop</b> live in the record cluster at the foot of this "
+        "window.");
+    moved->setWordWrap(true);
+    moved->setProperty("role", "hint");
+    f->addRow(moved);
 
     self_test_label_ = new QLabel();
     self_test_label_->setWordWrap(true);
@@ -240,7 +248,68 @@ void CaptureWindow::buildUi() {
   log_->setMinimumHeight(120);
   v->addWidget(log_, 1);
 
-  resize(660, 720);
+  // --- THE record cluster -------------------------------------------------
+  //
+  // Pinned to the foot of the window, outside the layout's margins, so it
+  // reads as a control bar rather than one more form row. It owns no state:
+  // every button emits an intent that lands on the same onTestDevice() /
+  // onRecord() / onPauseResume() / onStop() slots the old buttons called, so
+  // the C2 state machine is byte-for-byte the one that was verified against
+  // the S2 simulator.
+  record_cluster_ = new RecordCluster(this);
+  connect(record_cluster_, &RecordCluster::testRequested, this, &CaptureWindow::onTestDevice);
+  connect(record_cluster_, &RecordCluster::startRequested, this, &CaptureWindow::onRecord);
+  connect(record_cluster_, &RecordCluster::pauseResumeRequested, this,
+          &CaptureWindow::onPauseResume);
+  connect(record_cluster_, &RecordCluster::stopRequested, this, &CaptureWindow::onStop);
+  v->setContentsMargins(v->contentsMargins().left(), v->contentsMargins().top(),
+                        v->contentsMargins().right(), 0);
+  v->addWidget(record_cluster_);
+
+  // Switching transport re-gates Start: a self-test result for the D6 says
+  // nothing about the Mid-360 link and vice versa.
+  connect(tabs_, &QTabWidget::currentChanged, this, [this](int idx) {
+    if (phase_ != Phase::kIdle) return;
+    last_self_test_failed_ = false;
+    self_test_passed_ = false;
+    record_cluster_->setTransportIsD6(idx == 0);
+    updateRecordCluster();
+  });
+
+  // The clock ticks at 4 Hz off its own timer rather than the 300 ms health
+  // timer, so the seconds digit never visibly stalls.
+  elapsed_timer_ = new QTimer(this);
+  connect(elapsed_timer_, &QTimer::timeout, this, [this] {
+    if (record_cluster_) record_cluster_->setElapsedSeconds(recordedSecondsNow());
+  });
+  elapsed_timer_->start(250);
+
+  resize(920, 800);
+}
+
+double CaptureWindow::recordedSecondsNow() const {
+  double s = recorded_seconds_accum_;
+  if (phase_ == Phase::kRecording && record_segment_clock_.isValid()) {
+    s += record_segment_clock_.elapsed() / 1000.0;
+  }
+  return s;
+}
+
+void CaptureWindow::updateRecordCluster() {
+  if (!record_cluster_) return;
+  RecordCluster::State s = RecordCluster::State::kUntested;
+  switch (phase_) {
+    case Phase::kIdle:
+      s = last_self_test_failed_ ? RecordCluster::State::kFailed
+                                 : RecordCluster::State::kUntested;
+      break;
+    case Phase::kTesting: s = RecordCluster::State::kTesting; break;
+    case Phase::kReady: s = RecordCluster::State::kArmed; break;
+    case Phase::kRecording: s = RecordCluster::State::kRecording; break;
+    case Phase::kPaused: s = RecordCluster::State::kPaused; break;
+  }
+  record_cluster_->setState(s);
+  record_cluster_->setElapsedSeconds(recordedSecondsNow());
 }
 
 void CaptureWindow::refreshPorts() {
@@ -410,10 +479,12 @@ void CaptureWindow::onTestDevice() {
   }
 
   self_test_passed_ = false;
+  last_self_test_failed_ = false;
   self_test_clock_.start();
   auto h = host_->engine()->device_health(device_);
   self_test_baseline_points_ = h.ok() ? h.value().points_out : 0;
   self_test_window_s_ = device_is_d6_ ? 3.0 : 8.0;
+  if (record_cluster_) record_cluster_->setTransportIsD6(device_is_d6_);
 
   setPhase(Phase::kTesting);
   self_test_label_->setStyleSheet(QString());
@@ -447,14 +518,15 @@ void CaptureWindow::evaluateSelfTest() {
       const QString detail =
           QString("%1 pts/s over %2 s (%3 points)").arg(rate, 0, 'f', 0).arg(elapsed, 0, 'f', 1).arg(gained);
       self_test_passed_ = passed;
+      last_self_test_failed_ = !passed;
       self_test_progress_->setValue(100);
       if (passed) {
-        self_test_label_->setStyleSheet("color:#2e7d32;font-weight:600;");
+        self_test_label_->setStyleSheet(kPassStyle());
         self_test_label_->setText("Self-test PASSED — " + detail);
         setPhase(Phase::kReady);
         log("self-test passed: " + detail);
       } else {
-        self_test_label_->setStyleSheet("color:#c62828;font-weight:600;");
+        self_test_label_->setStyleSheet(kFailStyle());
         self_test_label_->setText("Self-test FAILED — " + detail);
         log("self-test failed: " + detail);
         QString err;
@@ -469,8 +541,9 @@ void CaptureWindow::evaluateSelfTest() {
       const QString detail = QString("first packet after %1 s").arg(elapsed, 0, 'f', 2);
       const bool passed = true;
       self_test_passed_ = passed;
+      last_self_test_failed_ = false;
       self_test_progress_->setValue(100);
-      self_test_label_->setStyleSheet("color:#2e7d32;font-weight:600;");
+      self_test_label_->setStyleSheet(kPassStyle());
       self_test_label_->setText("Self-test PASSED — " + detail);
       setPhase(Phase::kReady);
       log("self-test passed: " + detail);
@@ -481,8 +554,9 @@ void CaptureWindow::evaluateSelfTest() {
                                   .arg(self_test_window_s_, 0, 'f', 0)
                                   .arg(state);
       self_test_passed_ = false;
+      last_self_test_failed_ = true;
       self_test_progress_->setValue(100);
-      self_test_label_->setStyleSheet("color:#c62828;font-weight:600;");
+      self_test_label_->setStyleSheet(kFailStyle());
       self_test_label_->setText("Self-test FAILED — " + detail);
       log("self-test failed: " + detail);
       QString err;
@@ -649,6 +723,7 @@ void CaptureWindow::updateHealth() {
 }
 
 void CaptureWindow::setPhase(Phase p) {
+  const bool was_live = phase_ == Phase::kRecording || phase_ == Phase::kPaused;
   phase_ = p;
   const bool idle = p == Phase::kIdle;
   const bool testing = p == Phase::kTesting;
@@ -656,15 +731,18 @@ void CaptureWindow::setPhase(Phase p) {
   const bool recording = p == Phase::kRecording;
   const bool paused = p == Phase::kPaused;
 
-  test_button_->setEnabled(idle);
-  record_button_->setEnabled(ready);
-  pause_button_->setEnabled(recording || paused);
-  pause_button_->setText(paused ? "Resume" : "Pause");
-  stop_button_->setEnabled(testing || ready || recording || paused);
   tabs_->setEnabled(idle);
   project_edit_->setEnabled(idle || ready);
   profile_->setEnabled(idle);
   self_test_progress_->setVisible(testing);
+
+  updateRecordCluster();
+
+  // The viewport badge follows the phase, not the other way round. Emitted on
+  // every transition (including live -> live, i.e. pause/resume) so the badge
+  // can swap RECORDING <-> PAUSED, and on the way back to idle so it clears.
+  const bool live = recording || paused;
+  if (live || was_live) Q_EMIT recordingStateChanged(recording, paused);
 }
 
 void CaptureWindow::loadMid360Settings() {
@@ -706,6 +784,8 @@ void CaptureWindow::triggerRecordForCli(const QString& projectDir) {
   project_edit_->setText(projectDir);
   onRecord();
 }
+
+void CaptureWindow::triggerPauseResumeForCli() { onPauseResume(); }
 
 void CaptureWindow::triggerStopForCli() { onStop(); }
 
