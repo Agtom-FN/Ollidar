@@ -1,12 +1,13 @@
-<title>LidarScan Interfaces</title>
+<title>LidarScan Cockpit</title>
 <style>
-  /* LidarScan interface showcase — deliberately single-theme: these are
+  /* LidarScan interactive mockup — deliberately single-theme: these are
      dark-cockpit instrument UIs, shown in their own world. Every color is
      explicit; the page never borrows the host's ground. */
   :root{
     --ground:#11151a;      /* blue-biased near-black */
     --panel:#181e25;
     --panel-2:#1e252e;
+    --panel-3:#232b35;
     --line:#2a333d;
     --line-soft:#222a33;
     --ink:#e9edf1;
@@ -24,390 +25,2715 @@
     --sans:"Avenir Next","Segoe UI",system-ui,-apple-system,sans-serif;
   }
   *{box-sizing:border-box;margin:0;padding:0}
+  html{-webkit-text-size-adjust:100%}
   body{background:var(--ground);color:var(--ink);font-family:var(--sans);
-       line-height:1.55;padding:0 20px 80px}
-  .wrap{max-width:1060px;margin:0 auto}
-  header{padding:64px 0 30px;border-bottom:1px solid var(--line)}
-  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.22em;
-           color:var(--ember);text-transform:uppercase}
-  h1{font-size:clamp(30px,5vw,44px);font-weight:600;letter-spacing:-.015em;
-     margin:10px 0 12px;text-wrap:balance}
-  .lede{color:var(--ink-mute);max-width:62ch;font-size:16px}
-  section{margin-top:64px}
-  h2{font-size:13px;font-family:var(--mono);letter-spacing:.2em;
-     text-transform:uppercase;color:var(--ink-mute);margin-bottom:6px}
-  h3{font-size:22px;font-weight:600;margin-bottom:18px;letter-spacing:-.01em}
-  .split{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:36px;align-items:start}
-  @media (max-width:840px){.split{grid-template-columns:1fr}}
-  .notes{display:flex;flex-direction:column;gap:14px}
-  .note{border-left:2px solid var(--ember-dim);padding:2px 0 2px 14px}
-  .note b{display:block;font-size:13.5px;font-weight:600}
-  .note span{font-size:13px;color:var(--ink-mute)}
-  /* ---- device chrome ---- */
-  .phone{width:300px;margin:0 auto;background:#000;border:1px solid #333;
-         border-radius:34px;padding:10px;box-shadow:0 24px 60px rgba(0,0,0,.5)}
-  .phone-screen{border-radius:24px;overflow:hidden;background:#0b0e12;
-                display:flex;flex-direction:column;height:600px}
-  .win{border:1px solid var(--line);border-radius:10px;overflow:hidden;
-       background:var(--panel);box-shadow:0 24px 60px rgba(0,0,0,.5)}
-  .titlebar{display:flex;align-items:center;height:36px;padding:0 12px;
-            background:var(--panel-2);border-bottom:1px solid var(--line);
-            font-size:12.5px;color:var(--ink-mute)}
+       line-height:1.5;font-size:15px;overflow-x:hidden}
+  button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+  input,select{font:inherit;color:inherit}
+  ::selection{background:rgba(255,122,82,.3)}
+
+  /* ─────────────── page shell ─────────────── */
+  .top{position:sticky;top:0;z-index:40;display:flex;align-items:center;gap:14px;
+       padding:10px 16px;background:rgba(17,21,26,.92);backdrop-filter:blur(10px);
+       border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .brand{display:flex;align-items:center;gap:9px;font-size:13.5px;font-weight:600;letter-spacing:-.01em}
+  .brand i{width:9px;height:9px;border-radius:2px;background:var(--ember);
+           box-shadow:0 0 10px rgba(255,122,82,.8);display:block;transform:rotate(45deg)}
+  .brand em{font-style:normal;font-family:var(--mono);font-size:10px;letter-spacing:.18em;
+            color:var(--ink-faint);text-transform:uppercase;padding-left:2px}
+  .devsw{display:flex;gap:2px;padding:3px;border:1px solid var(--line);border-radius:9px;background:var(--panel)}
+  .devsw button{padding:5px 13px;border-radius:6px;font-size:12.5px;color:var(--ink-mute);
+                display:flex;align-items:center;gap:6px;white-space:nowrap}
+  .devsw button:hover{color:var(--ink)}
+  .devsw button[aria-pressed=true]{background:var(--panel-3);color:var(--ink);box-shadow:inset 0 0 0 1px var(--line)}
+  .topright{margin-left:auto;display:flex;align-items:center;gap:10px}
+  .progpill{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11px;
+            color:var(--ink-mute);border:1px solid var(--line);border-radius:99px;padding:4px 11px}
+  .progpill i{display:block;width:54px;height:4px;border-radius:2px;background:var(--line);overflow:hidden}
+  .progpill i b{display:block;height:100%;background:var(--fix-good);border-radius:2px;transition:width .3s}
+  .flagbtn{display:flex;align-items:center;gap:7px;border:1px solid var(--ember-dim);color:var(--ember);
+           background:rgba(255,122,82,.09);border-radius:8px;padding:6px 13px;font-size:12.5px;font-weight:600}
+  .flagbtn:hover{background:rgba(255,122,82,.17)}
+
+  .stage{padding:26px 16px 60px;display:flex;flex-direction:column;align-items:center;gap:18px;
+         width:100%;max-width:100%}
+  .stagehint{font-size:12.5px;color:var(--ink-faint);text-align:center;max-width:70ch;font-family:var(--mono)}
+  .stagehint b{color:var(--ink-mute);font-weight:400}
+
+  /* ─────────────── device chrome ─────────────── */
+  .phone{width:330px;max-width:100%;background:#000;border:1px solid #333;border-radius:38px;
+         padding:11px;box-shadow:0 24px 60px rgba(0,0,0,.55);flex:none}
+  .phone-screen{border-radius:27px;overflow:hidden;background:#0b0e12;display:flex;
+                flex-direction:column;height:660px;position:relative}
+  .notch{position:absolute;top:0;left:50%;transform:translateX(-50%);width:96px;height:20px;
+         background:#000;border-radius:0 0 12px 12px;z-index:9}
+  .statusbar{display:flex;align-items:center;padding:6px 16px 2px;font-family:var(--mono);
+             font-size:9.5px;color:var(--ink-faint);letter-spacing:.04em;flex:none}
+  .statusbar span:last-child{margin-left:auto}
+
+  .win{width:min(1080px,100%);min-width:0;max-width:100%;border:1px solid var(--line);
+       border-radius:10px;overflow:hidden;background:var(--panel);box-shadow:0 24px 60px rgba(0,0,0,.5)}
+  .win.w32{border-radius:6px}
+  .titlebar{display:flex;align-items:center;height:38px;padding:0 12px;background:var(--panel-2);
+            border-bottom:1px solid var(--line);font-size:12.5px;color:var(--ink-mute);flex:none;
+            overflow:hidden;white-space:nowrap}
+  .titlebar .tt{overflow:hidden;text-overflow:ellipsis;min-width:0}
+  .titlebar.w32{height:32px}
   .lights{display:flex;gap:7px;margin-right:12px}
-  .lights i{width:11px;height:11px;border-radius:50%;display:block}
-  .winctl{margin-left:auto;display:flex;gap:2px;font-family:var(--mono);
-          color:var(--ink-faint);font-size:11px}
-  .winctl s{display:inline-flex;width:34px;height:24px;align-items:center;
-            justify-content:center;text-decoration:none}
-  /* ---- shared app pieces ---- */
+  .lights button{width:11px;height:11px;border-radius:50%;display:block;padding:0}
+  .winctl{margin-left:auto;display:flex;gap:2px;font-family:var(--mono);color:var(--ink-faint);font-size:11px}
+  .winctl button{display:inline-flex;width:36px;height:26px;align-items:center;justify-content:center;border-radius:3px}
+  .winctl button:hover{background:var(--panel-3)}
+  .winctl button.x:hover{background:#e05252;color:#fff}
+  .menubar{display:flex;gap:2px;padding:3px 8px;background:var(--panel-2);flex:none;
+           border-bottom:1px solid var(--line-soft);font-size:12px;color:var(--ink-mute)}
+  .menubar button{padding:2px 9px;border-radius:4px}
+  .menubar button:hover{background:var(--panel-3);color:var(--ink)}
+
+  /* ─────────────── shared app pieces ─────────────── */
   canvas{display:block;width:100%;height:100%}
-  .chip{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);
-        font-size:10.5px;letter-spacing:.06em;padding:3px 9px;border-radius:99px;
-        border:1px solid var(--line)}
-  .dot{width:7px;height:7px;border-radius:50%}
-  .statgrid{display:grid;grid-template-columns:repeat(4,1fr);
-            border-top:1px solid var(--line-soft)}
-  .stat{padding:8px 4px;text-align:center}
-  .stat em{display:block;font-style:normal;font-family:var(--mono);
-           font-size:14px;font-variant-numeric:tabular-nums}
-  .stat label{font-size:8.5px;letter-spacing:.14em;color:var(--ink-faint);
-              text-transform:uppercase}
-  .toggle{display:inline-flex;border:1px solid var(--line);border-radius:8px;
-          overflow:hidden;font-size:11px;font-family:var(--mono)}
-  .toggle b{padding:4px 12px;font-weight:500;background:var(--ember);color:#1a0d08}
-  .toggle span{padding:4px 12px;color:var(--ink-mute)}
-  .dockcard{border-top:1px solid var(--line-soft);padding:10px 12px}
-  .dockcard h4{font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;
-               color:var(--ink-faint);margin-bottom:8px;font-weight:600}
-  .slider{display:flex;align-items:center;gap:8px;font-size:11px;
-          color:var(--ink-mute);margin:6px 0}
-  .slider i{flex:1;height:3px;background:var(--line);border-radius:2px;position:relative}
-  .slider i::before{content:"";position:absolute;left:0;top:0;bottom:0;
-                    width:var(--v,50%);background:var(--ember);border-radius:2px}
-  .slider i::after{content:"";position:absolute;top:50%;left:var(--v,50%);
-                   width:11px;height:11px;border-radius:50%;background:var(--ink);
-                   transform:translate(-50%,-50%)}
-  .row{display:flex;align-items:center;gap:8px}
+  .body{flex:1;overflow-y:auto;overscroll-behavior:contain;min-height:0}
+  .body::-webkit-scrollbar{width:6px}
+  .body::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}
+  .appbar{display:flex;align-items:center;gap:9px;padding:9px 14px;flex:none;
+          border-bottom:1px solid var(--line-soft)}
+  .appbar h1{font-size:15px;font-weight:600;letter-spacing:-.01em;line-height:1.2}
+  .appbar .sub{font-size:10.5px;color:var(--ink-faint);font-family:var(--mono)}
+  .iconbtn{width:30px;height:30px;border-radius:8px;display:inline-flex;align-items:center;
+           justify-content:center;color:var(--ink-mute);font-size:15px;flex:none}
+  .iconbtn:hover{background:var(--panel-2);color:var(--ink)}
+
+  .chip{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10.5px;
+        letter-spacing:.06em;padding:3px 9px;border-radius:99px;border:1px solid var(--line);
+        white-space:nowrap;line-height:1.5}
+  .chip.good{background:rgba(73,209,127,.12);border-color:rgba(73,209,127,.45);color:var(--fix-good)}
+  .chip.warn{background:rgba(229,185,60,.12);border-color:rgba(229,185,60,.45);color:var(--fix-warn)}
+  .chip.bad{background:rgba(224,82,82,.12);border-color:rgba(224,82,82,.45);color:var(--fix-bad)}
+  .chip.ember{background:rgba(255,122,82,.12);border-color:rgba(255,122,82,.45);color:var(--ember)}
+  .chip.faint{color:var(--ink-faint)}
+  .dot{width:7px;height:7px;border-radius:50%;flex:none}
+  .ro{font-family:var(--mono);font-size:8.5px;letter-spacing:.1em;text-transform:uppercase;
+      color:var(--ink-faint);border:1px dashed var(--line);border-radius:4px;padding:1px 5px;
+      white-space:nowrap;vertical-align:middle}
+
+  .statgrid{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--line-soft);flex:none}
+  .stat{padding:7px 3px;text-align:center;min-width:0}
+  .stat em{display:block;font-style:normal;font-family:var(--mono);font-size:14px;
+           font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+  .stat label{font-size:8.5px;letter-spacing:.13em;color:var(--ink-faint);text-transform:uppercase}
+
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;
+       font-size:11px;font-family:var(--mono);flex:none}
+  .seg button{padding:4px 11px;color:var(--ink-mute);white-space:nowrap}
+  .seg button:hover{background:var(--panel-2);color:var(--ink)}
+  .seg button[aria-pressed=true]{background:var(--ember);color:#1a0d08;font-weight:600}
+  .seg.sm button{padding:3px 9px;font-size:10px}
+
+  .sw{display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--ink-mute)}
+  .sw i{width:30px;height:17px;border-radius:9px;background:var(--line);position:relative;
+        transition:background .16s;flex:none;display:block}
+  .sw i::after{content:"";position:absolute;left:2px;top:2px;width:13px;height:13px;border-radius:50%;
+               background:#8b97a3;transition:transform .16s,background .16s}
+  .sw[aria-pressed=true] i{background:var(--ember)}
+  .sw[aria-pressed=true] i::after{transform:translateX(13px);background:#fff}
+  .sw[aria-pressed=true]{color:var(--ink)}
+
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;border:1px solid var(--line);
+       border-radius:8px;padding:8px 14px;font-size:13px;color:var(--ink);background:var(--panel-2);
+       transition:background .13s,border-color .13s;white-space:nowrap}
+  .btn:hover{background:var(--panel-3);border-color:#38434f}
+  .btn.pri{background:var(--ember);border-color:var(--ember);color:#1a0d08;font-weight:600}
+  .btn.pri:hover{background:#ff8f6c;border-color:#ff8f6c}
+  .btn.ghost{background:none}
+  .btn.sm{padding:5px 10px;font-size:12px;border-radius:7px}
+  .btn.wide{width:100%}
+  .btn[disabled]{opacity:.4;cursor:not-allowed}
+  .btn.danger{color:var(--fix-bad);border-color:rgba(224,82,82,.4)}
+
+  .card{border:1px solid var(--line);border-radius:10px;background:var(--panel);padding:12px 14px}
+  .card+.card{margin-top:9px}
+  .list{display:flex;flex-direction:column}
+  .lrow{display:flex;align-items:center;gap:11px;padding:11px 14px;border-bottom:1px solid var(--line-soft);
+        text-align:left;width:100%;background:none}
+  .lrow:hover{background:var(--panel-2)}
+  .lrow b{font-size:13.5px;font-weight:600;display:block;letter-spacing:-.005em}
+  .lrow span{font-size:10.5px;color:var(--ink-faint);font-family:var(--mono);display:block;
+             white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .lrow .go{margin-left:auto;color:var(--ink-faint);font-size:15px;flex:none}
+  .lrow[aria-selected=true]{background:var(--panel-2);box-shadow:inset 2px 0 0 var(--ember)}
+
+  .sect{font-family:var(--mono);font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;
+        color:var(--ink-faint);padding:14px 14px 6px;font-weight:600}
+  .hint{font-size:11.5px;color:var(--ink-faint);line-height:1.5}
+  .hint b{color:var(--ink-mute);font-weight:600}
+  .kv{display:flex;gap:10px;font-size:12px;padding:4px 0;border-bottom:1px solid var(--line-soft)}
+  .kv:last-child{border-bottom:none}
+  .kv span{color:var(--ink-faint)}
+  .kv b{margin-left:auto;font-family:var(--mono);font-weight:500;font-variant-numeric:tabular-nums;text-align:right}
+
+  .field{display:block;margin:9px 0}
+  .field label{display:block;font-size:10px;letter-spacing:.13em;text-transform:uppercase;
+               color:var(--ink-faint);margin-bottom:4px;font-family:var(--mono)}
+  .field input,.field select{width:100%;background:var(--panel-2);border:1px solid var(--line);
+    border-radius:7px;padding:7px 10px;font-size:13px;font-family:var(--mono);outline:none}
+  .field input:focus,.field select:focus{border-color:var(--ember);background:var(--panel-3)}
+  .field.inline{display:flex;align-items:center;gap:9px;margin:7px 0}
+  .field.inline label{margin:0;flex:1}
+  .field.inline input{width:96px;text-align:right}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+
+  .slider{display:flex;align-items:center;gap:9px;font-size:11px;color:var(--ink-mute);margin:7px 0}
+  .slider label{width:64px;flex:none;font-family:var(--mono);font-size:10.5px}
+  .slider input[type=range]{flex:1;min-width:0;accent-color:var(--ember);height:3px;cursor:pointer}
+  .slider b{width:56px;text-align:right;font-family:var(--mono);font-size:10.5px;color:var(--ink);
+            font-variant-numeric:tabular-nums;flex:none}
+
+  .bar{height:6px;background:var(--line-soft);border-radius:3px;overflow:hidden;margin:8px 0 6px}
+  .bar i{display:block;height:100%;background:var(--ember);border-radius:3px;transition:width .25s linear}
+  .bar.good i{background:var(--fix-good)}
+
+  .steps{display:flex;gap:5px;padding:9px 14px;flex:none;align-items:center}
+  .steps i{height:3px;flex:1;border-radius:2px;background:var(--line);display:block}
+  .steps i.on{background:var(--ember)}
+  .steps i.done{background:var(--ember-dim)}
+
   .pill-tabs{display:flex;gap:2px;padding:6px 10px;border-bottom:1px solid var(--line);
-             background:var(--panel-2);font-size:12px}
-  .pill-tabs span{padding:4px 12px;border-radius:6px;color:var(--ink-mute)}
-  .pill-tabs .on{background:var(--panel);color:var(--ink);border:1px solid var(--line)}
-  table{border-collapse:collapse;width:100%;font-size:13.5px}
-  th{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;
-     text-transform:uppercase;color:var(--ink-faint);text-align:left;
-     padding:8px 12px;border-bottom:1px solid var(--line)}
+             background:var(--panel-2);font-size:12px;overflow-x:auto;flex:none}
+  .pill-tabs button{padding:4px 12px;border-radius:6px;color:var(--ink-mute);white-space:nowrap}
+  .pill-tabs button:hover{color:var(--ink)}
+  .pill-tabs button[aria-pressed=true]{background:var(--panel);color:var(--ink);box-shadow:inset 0 0 0 1px var(--line)}
+
+  .dockcard{border-top:1px solid var(--line-soft);padding:10px 12px}
+  .dockcard:first-child{border-top:none}
+  .dockcard h4{font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-faint);
+               margin-bottom:8px;font-weight:600;display:flex;align-items:center;gap:6px}
+  .row{display:flex;align-items:center;gap:8px}
+  .wrap8{display:flex;flex-wrap:wrap;gap:8px}
+  .vp{position:relative;background:#0b0e12;overflow:hidden;touch-action:none}
+  .vp .ovl{position:absolute;pointer-events:none;max-width:calc(100% - 24px)}
+  .vp .ovl .chip{overflow:hidden;text-overflow:ellipsis;max-width:100%}
+  .vp .ovl.act{pointer-events:auto}
+
+  .toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,14px);background:var(--panel-3);
+         border:1px solid var(--line);border-radius:9px;padding:9px 16px;font-size:12.5px;z-index:80;
+         opacity:0;transition:opacity .2s,transform .2s;pointer-events:none;box-shadow:0 10px 30px rgba(0,0,0,.5);
+         max-width:min(420px,90vw)}
+  .toast.on{opacity:1;transform:translate(-50%,0)}
+
+  /* ─────────────── confirm drawer ─────────────── */
+  .drawer{position:fixed;top:0;right:0;bottom:0;width:min(430px,100%);background:var(--panel);
+          border-left:1px solid var(--line);z-index:60;display:flex;flex-direction:column;
+          transform:translateX(100%);transition:transform .24s ease;box-shadow:-20px 0 60px rgba(0,0,0,.5)}
+  .drawer.on{transform:none}
+  .drawer header{display:flex;align-items:center;gap:10px;padding:13px 15px;border-bottom:1px solid var(--line);flex:none}
+  .drawer header h2{font-size:14px;font-weight:600}
+  .drawer header .sub{font-family:var(--mono);font-size:10.5px;color:var(--ink-faint)}
+  .drawer .tools{display:flex;gap:7px;padding:9px 15px;border-bottom:1px solid var(--line-soft);flex:none;flex-wrap:wrap}
+  .drawer .scroll{flex:1;overflow-y:auto;padding-bottom:30px}
+  .drawer .scroll::-webkit-scrollbar{width:7px}
+  .drawer .scroll::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
+  .cgroup{border-bottom:1px solid var(--line-soft)}
+  .cgroup>h3{position:sticky;top:0;background:var(--panel-2);z-index:2;padding:6px 15px;font-size:10px;
+             letter-spacing:.15em;text-transform:uppercase;color:var(--ink-mute);font-family:var(--mono);
+             display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--line-soft)}
+  .cgroup>h3 em{margin-left:auto;font-style:normal;color:var(--ink-faint);font-size:9.5px}
+  .citem{padding:9px 15px;border-bottom:1px solid rgba(34,42,51,.6)}
+  .citem:last-child{border-bottom:none}
+  .citem .lab{display:flex;gap:9px;align-items:flex-start;font-size:12.5px;line-height:1.45}
+  .citem .lab button.goto{text-align:left;flex:1;color:var(--ink)}
+  .citem .lab button.goto:hover{color:var(--ember)}
+  .citem .lab button.goto code{font-family:var(--mono);font-size:10.5px;color:var(--ink-faint);
+                               display:block;margin-top:1px}
+  .cbtns{display:flex;gap:5px;flex:none}
+  .cbtns button{width:29px;height:26px;border-radius:6px;border:1px solid var(--line);font-size:12px;
+                display:flex;align-items:center;justify-content:center;color:var(--ink-faint)}
+  .cbtns button:hover{background:var(--panel-2);color:var(--ink)}
+  .cbtns button.ok[aria-pressed=true]{background:rgba(73,209,127,.16);border-color:var(--fix-good);color:var(--fix-good)}
+  .cbtns button.no[aria-pressed=true]{background:rgba(224,82,82,.16);border-color:var(--fix-bad);color:var(--fix-bad)}
+  .citem textarea{width:100%;margin-top:7px;background:var(--panel-2);border:1px solid var(--line);
+    border-radius:6px;padding:6px 9px;font-size:12px;font-family:var(--sans);resize:vertical;
+    min-height:34px;outline:none;color:var(--ink)}
+  .citem textarea:focus{border-color:var(--ember)}
+  .citem[data-v=no]{background:rgba(224,82,82,.05)}
+  .citem[data-v=ok]{background:rgba(73,209,127,.04)}
+  .scrim{position:fixed;inset:0;background:rgba(8,10,13,.6);z-index:55;opacity:0;pointer-events:none;
+         transition:opacity .24s}
+  .scrim.on{opacity:1;pointer-events:auto}
+  .report{position:fixed;inset:auto 0 0 0;top:0;z-index:70;background:var(--ground);padding:24px 18px;
+          display:none;flex-direction:column;gap:12px}
+  .report.on{display:flex}
+  .report textarea{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:9px;
+    padding:14px;font-family:var(--mono);font-size:12px;color:var(--ink);resize:none;outline:none;line-height:1.6}
+
+  /* ─────────────── reference footer ─────────────── */
+  .ref{max-width:1080px;margin:0 auto;padding:0 16px 70px;width:100%}
+  .ref>button{width:100%;display:flex;align-items:center;gap:10px;padding:12px 0;
+              border-top:1px solid var(--line);color:var(--ink-mute);font-size:12.5px;font-family:var(--mono);
+              letter-spacing:.14em;text-transform:uppercase}
+  .ref>button:hover{color:var(--ink)}
+  .refbody{display:none;padding:6px 0 10px}
+  .refbody.on{display:block}
+  .swrap{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:26px}
+  .swatch{width:138px;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .swatch i{display:block;height:42px}
+  .swatch b{display:block;font-size:11.5px;padding:6px 9px 1px;font-weight:600}
+  .swatch span{display:block;font-family:var(--mono);font-size:10.5px;color:var(--ink-faint);padding:0 9px 7px}
+  table{border-collapse:collapse;width:100%;font-size:13px}
+  th{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;
+     color:var(--ink-faint);text-align:left;padding:8px 12px;border-bottom:1px solid var(--line)}
   td{padding:8px 12px;border-bottom:1px solid var(--line-soft);vertical-align:top}
   td:first-child{white-space:nowrap;font-weight:600}
   .tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px}
-  .sw{display:flex;flex-wrap:wrap;gap:10px}
-  .swatch{width:132px;border:1px solid var(--line);border-radius:8px;overflow:hidden}
-  .swatch i{display:block;height:44px}
-  .swatch b{display:block;font-size:11.5px;padding:6px 9px 1px;font-weight:600}
-  .swatch span{display:block;font-family:var(--mono);font-size:10.5px;
-               color:var(--ink-faint);padding:0 9px 7px}
-  .foot{margin-top:70px;padding-top:18px;border-top:1px solid var(--line);
-        color:var(--ink-faint);font-size:12.5px;max-width:70ch}
+  .mergetbl td{padding:6px 7px;white-space:nowrap}
+  .mergetbl td:first-child{white-space:normal;font-weight:500}
+  .mergetbl th{padding:6px 7px}
+  .refbody h4{font-size:12px;font-family:var(--mono);letter-spacing:.16em;text-transform:uppercase;
+              color:var(--ink-mute);margin:22px 0 10px}
+  .refbody p{color:var(--ink-mute);font-size:13.5px;max-width:70ch;margin-top:14px}
+
+  .dgrid>*{min-width:0}
+  @media (max-width:880px){
+    .dgrid{grid-template-columns:1fr !important}
+    .dgrid>*{border-left:none !important;max-height:none !important}
+    .dgrid>*+*{border-top:1px solid var(--line)}
+    .dgrid .vp{min-height:0 !important;height:280px}
+  }
+  @media (max-width:760px){
+    .stage{padding:16px 10px 50px}
+    .win{border-radius:8px}
+    .top{gap:9px;padding:9px 11px}
+    .brand em{display:none}
+    .progpill i{width:38px}
+    .devsw button{padding:5px 10px;font-size:12px}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *{transition-duration:.01ms !important}
+  }
 </style>
 
-<div class="wrap">
-<header>
-  <div class="eyebrow">LidarScan · Interface Design</div>
-  <h1>One engine, three cockpits</h1>
-  <p class="lede">The phone is the handheld capture instrument; the desktop is the
-  workstation. Same C++ engine, same point pipeline, same design tokens — the chrome
-  changes per platform, the layout logic doesn't. Everything below mirrors the
-  screens as implemented; the point clouds are rendered live by this page.</p>
-</header>
-
-<!-- ═══════════════ ANDROID ═══════════════ -->
-<section>
-  <h2>Android · Kotlin + Compose</h2>
-  <h3>Capture — the instrument in your hand</h3>
-  <div class="split">
-    <div class="phone"><div class="phone-screen">
-      <!-- app bar -->
-      <div style="display:flex;align-items:center;gap:8px;padding:12px 14px 8px">
-        <span style="font-size:13.5px;font-weight:600">warehouse-scan-03</span>
-        <span class="chip" style="margin-left:auto;border-color:rgba(73,209,127,.4)">
-          <span class="dot" style="background:var(--fix-good)"></span>MID-360</span>
-      </div>
-      <!-- fix strip -->
-      <div style="display:flex;gap:6px;padding:0 14px 8px">
-        <span class="chip" style="background:rgba(73,209,127,.12);border-color:rgba(73,209,127,.45);color:var(--fix-good)">
-          <span class="dot" style="background:var(--fix-good)"></span>RTK FIXED · 1.9 cm</span>
-        <span class="chip">NTRIP 0.8 s</span>
-      </div>
-      <!-- 3D viewport -->
-      <div style="position:relative;flex:1;background:#0b0e12">
-        <canvas id="cv-phone"></canvas>
-        <div style="position:absolute;top:10px;left:12px" class="toggle"><b>3D</b><span>AR</span></div>
-        <div style="position:absolute;bottom:10px;right:12px" class="chip"
-             style2="">MAP · kSlamMap</div>
-      </div>
-      <!-- stats -->
-      <div class="statgrid">
-        <div class="stat"><em>199 987</em><label>pts / s</label></div>
-        <div class="stat"><em>8.4 M</em><label>points</label></div>
-        <div class="stat"><em>04:12</em><label>rec</label></div>
-        <div class="stat"><em>212 MB</em><label>.lscan</label></div>
-      </div>
-      <!-- controls -->
-      <div style="display:flex;align-items:center;gap:14px;padding:12px 16px 16px">
-        <div style="display:flex;flex-direction:column;gap:2px;font-size:10.5px;color:var(--ink-mute)">
-          <span class="row"><span style="width:26px;height:15px;border-radius:9px;background:var(--ember);position:relative"><i style="position:absolute;right:2px;top:2px;width:11px;height:11px;border-radius:50%;background:#fff"></i></span> Live SLAM</span>
-          <span style="color:var(--ink-faint)">record-only if hot</span>
-        </div>
-        <div style="margin-left:auto;display:flex;align-items:center;gap:12px">
-          <span style="width:34px;height:34px;border-radius:50%;border:1.5px solid var(--line);display:flex;align-items:center;justify-content:center;color:var(--ink-mute);font-size:11px">❙❙</span>
-          <span style="width:54px;height:54px;border-radius:50%;background:var(--ember);display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 4px rgba(255,122,82,.18)">
-            <i style="width:18px;height:18px;border-radius:4px;background:#1a0d08;display:block"></i></span>
-        </div>
-      </div>
-    </div></div>
-    <div class="notes">
-      <div class="note"><b>The map is the hero</b><span>Live SLAM output
-        (kSlamMap stream) fills the screen; UI floats over it. Height ramp
-        teal→sand; the ember trajectory is you.</span></div>
-      <div class="note"><b>AR ⇄ 3D, one thumb</b><span>AR mode anchors the same
-        cloud in the camera view — coverage gaps are visible on the spot
-        (ARCore session shared with pose + keyframes).</span></div>
-      <div class="note"><b>Fix quality is a traffic light</b><span>FIXED green /
-        FLOAT amber / SINGLE red, with live accuracy. D6-outdoor profiles gate
-        Record on it.</span></div>
-      <div class="note"><b>Thermals have an exit</b><span>Live SLAM toggle drops
-        to record-only mid-session without losing a byte — record-always is the
-        engine's rule, not the UI's choice.</span></div>
-      <div class="note"><b>Mono numerals, tabular</b><span>Stats never jitter as
-        digits change; pts/s at full rate proves the link health at a
-        glance.</span></div>
-    </div>
+<div class="top">
+  <div class="brand"><i></i>LidarScan <em>mockup</em></div>
+  <div class="devsw" id="devsw" role="group" aria-label="Device">
+    <button data-dev="android" aria-pressed="true">Android</button>
+    <button data-dev="mac" aria-pressed="false">macOS</button>
+    <button data-dev="win" aria-pressed="false">Windows</button>
   </div>
-</section>
-
-<!-- ═══════════════ MACOS ═══════════════ -->
-<section>
-  <h2>macOS · Qt 6 (universal: Apple Silicon + Intel)</h2>
-  <h3>Workstation — review, merge, floor plans</h3>
-  <div class="win">
-    <div class="titlebar">
-      <span class="lights"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></span>
-      LidarScan — warehouse-scan-03.lscan
+  <div class="topright">
+    <div class="progpill" id="progpill" title="Functions you have confirmed">
+      <span id="progtxt">0 / 0</span><i><b id="progbar" style="width:0%"></b></i>
     </div>
-    <div class="pill-tabs">
-      <span>Capture</span><span class="on">Review</span><span>Floor plan</span>
-      <span>Merge</span><span>Processing</span>
-    </div>
-    <div style="display:grid;grid-template-columns:168px 1fr 190px;min-height:380px">
-      <!-- sidebar -->
-      <div style="border-right:1px solid var(--line);padding:10px 0;font-size:12px">
-        <div style="padding:0 12px 6px;font-size:9.5px;letter-spacing:.16em;color:var(--ink-faint)">PROJECTS</div>
-        <div style="padding:7px 12px;background:var(--panel-2);border-left:2px solid var(--ember)">
-          warehouse-scan-03<br><span style="color:var(--ink-faint);font-size:10.5px">8.4 M pts · georef ✓</span></div>
-        <div style="padding:7px 12px;color:var(--ink-mute)">site-north-01<br>
-          <span style="color:var(--ink-faint);font-size:10.5px">12.1 M pts · georef ✓</span></div>
-        <div style="padding:7px 12px;color:var(--ink-mute)">corridor-d6-test<br>
-          <span style="color:var(--ink-faint);font-size:10.5px">1.2 M pts · pushbroom</span></div>
-      </div>
-      <!-- viewport -->
-      <div style="position:relative;background:#0b0e12">
-        <canvas id="cv-mac"></canvas>
-        <span class="chip" style="position:absolute;top:10px;left:12px">MEASURE · 2.454 m</span>
-        <span class="chip" style="position:absolute;bottom:10px;left:12px;color:var(--ink-faint)">59 fps · 8.4 M pts · Metal</span>
-      </div>
-      <!-- display params dock -->
-      <div style="border-left:1px solid var(--line)">
-        <div class="dockcard"><h4>Display</h4>
-          <div class="slider">size<i style="--v:38%"></i></div>
-          <div class="slider">LOD<i style="--v:72%"></i></div>
-          <div class="slider">gamma<i style="--v:50%"></i></div>
-          <div class="row" style="font-size:11px;color:var(--ink-mute);margin-top:6px">
-            color <span class="toggle" style="margin-left:auto"><b>height</b><span>RGB</span></span></div>
-        </div>
-        <div class="dockcard"><h4>Clipping</h4>
-          <div class="slider">z-max<i style="--v:81%"></i></div>
-        </div>
-        <div class="dockcard"><h4>Export</h4>
-          <div style="font-size:11px;color:var(--ink-mute)">LAS 1.4 · EPSG 32650<br>
-          <span style="color:var(--fix-good);font-family:var(--mono);font-size:10.5px">georef converged ✓</span></div>
-        </div>
-      </div>
-    </div>
+    <button class="flagbtn" id="flagbtn" aria-expanded="false">⚑ <span>Confirm</span></button>
   </div>
-  <div class="notes" style="margin-top:18px;display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px">
-    <div class="note"><b>Docks, not dialogs</b><span>Display params, clipping and
-      export live beside the viewport and apply live — the A14 parameter model
-      both apps bind to.</span></div>
-    <div class="note"><b>Merge workbench</b><span>The Merge tab colors the cloud
-      per session (run-table provenance), plots the ICP residual trace, and
-      refuses low-overlap pairs out loud.</span></div>
-    <div class="note"><b>CRS shown only when earned</b><span>The EPSG label
-      appears when georeferencing has converged — a cloud is never labeled UTM
-      on hope.</span></div>
-  </div>
-</section>
-
-<!-- ═══════════════ WINDOWS ═══════════════ -->
-<section>
-  <h2>Windows · same Qt codebase</h2>
-  <h3>Identical layout, native chrome</h3>
-  <div class="win" style="border-radius:6px">
-    <div class="titlebar" style="height:32px">
-      <span style="color:var(--ember);font-family:var(--mono);font-size:11px;margin-right:10px">◆</span>
-      LidarScan — Processing
-      <span class="winctl"><s>—</s><s>▢</s><s style="color:#e05252">✕</s></span>
-    </div>
-    <div class="pill-tabs">
-      <span>Capture</span><span>Review</span><span>Floor plan</span>
-      <span>Merge</span><span class="on">Processing</span>
-    </div>
-    <div style="padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-height:210px">
-      <div style="border:1px solid var(--line);border-radius:8px;padding:10px 14px">
-        <div class="row" style="font-size:13px"><b>Post-process — warehouse-scan-03</b>
-          <span class="chip" style="margin-left:auto;color:var(--fix-warn);border-color:rgba(229,185,60,.4)">RUNNING</span></div>
-        <div style="height:6px;background:var(--line-soft);border-radius:3px;margin:10px 0 6px">
-          <div style="width:64%;height:100%;background:var(--ember);border-radius:3px"></div></div>
-        <div style="font-family:var(--mono);font-size:11px;color:var(--ink-mute)">64% · re-integration · 391 069 pts kept</div>
-      </div>
-      <div style="border:1px solid var(--line);border-radius:8px;padding:10px 14px">
-        <div class="row" style="font-size:13px"><b>Colorize — site-north-01</b>
-          <span class="chip" style="margin-left:auto;color:var(--ink-faint)">QUEUED · after post</span></div>
-        <div style="font-size:11.5px;color:var(--ink-faint);margin-top:4px">6 keyframes · sync quality: good · motion-gated</div>
-      </div>
-      <div class="row" style="font-size:12px;color:var(--ink-mute)">
-        Run on: <span class="toggle"><b>This PC</b><span>Cloud</span><span>Export bundle</span></span>
-        <span style="margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--ink-faint)">worker: engine_cli --post</span>
-      </div>
-    </div>
-  </div>
-  <div class="notes" style="margin-top:18px;display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px">
-    <div class="note"><b>One codebase, honest chrome</b><span>Traffic lights on
-      macOS, caption buttons on Windows, the app itself is pixel-for-pixel the
-      same Qt layout. Linux gets the same treatment (X11).</span></div>
-    <div class="note"><b>Jobs speak plainly</b><span>Every job shows stage +
-      progress from the engine's own labels; a refusal names its cause
-      ("no keyframes — capture with camera on").</span></div>
-    <div class="note"><b>Local / Cloud / Bundle</b><span>The three processing
-      modes are one segmented control — same pipeline, three places to run
-      it.</span></div>
-  </div>
-</section>
-
-<!-- ═══════════════ TOKENS ═══════════════ -->
-<section>
-  <h2>Shared design tokens</h2>
-  <h3>The system underneath all three</h3>
-  <div class="sw">
-    <div class="swatch"><i style="background:#11151a"></i><b>Ground</b><span>#11151A</span></div>
-    <div class="swatch"><i style="background:#181e25"></i><b>Panel</b><span>#181E25</span></div>
-    <div class="swatch"><i style="background:#ff7a52"></i><b>Ember · accent</b><span>#FF7A52</span></div>
-    <div class="swatch"><i style="background:linear-gradient(90deg,#3ec4b0,#e5c468)"></i><b>Height ramp</b><span>#3EC4B0→#E5C468</span></div>
-    <div class="swatch"><i style="background:#6aa7e8"></i><b>Pose / trajectory</b><span>#6AA7E8</span></div>
-    <div class="swatch"><i style="background:#49d17f"></i><b>Fixed / healthy</b><span>#49D17F</span></div>
-    <div class="swatch"><i style="background:#e5b93c"></i><b>Float / degraded</b><span>#E5B93C</span></div>
-    <div class="swatch"><i style="background:#e05252"></i><b>Single / fault</b><span>#E05252</span></div>
-  </div>
-  <p style="color:var(--ink-mute);font-size:13.5px;margin-top:16px;max-width:66ch">
-    Semantic colors (fix quality, health) are never the brand accent — ember is for
-    <em>your</em> actions and <em>your</em> path; green/amber/red always mean state.
-    Numbers are always tabular mono. Dark ground is a deliberate commitment: these
-    are instruments read over a glowing point cloud, indoors and at dusk.</p>
-</section>
-
-<!-- ═══════════════ SCREEN MAP ═══════════════ -->
-<section>
-  <h2>Screen map</h2>
-  <h3>What exists, per platform</h3>
-  <div class="tablewrap"><table>
-    <tr><th>Screen</th><th>Android</th><th>macOS / Windows / Linux desktop</th></tr>
-    <tr><td>Projects</td><td>Cards: sensor badge, profile chip, point count</td><td>Sidebar library; drag-drop / file-association import of .lscan.zip</td></tr>
-    <tr><td>Device setup</td><td>D6 USB wizard · Mid-360 static-IP wizard + self-test</td><td>Serial picker (CH340 hint) · Mid-360 IP config + self-test</td></tr>
-    <tr><td>Capture</td><td>Live 3D / AR overlay, stats strip, Live-SLAM toggle, RTK gate</td><td>Capture window: guided self-test → record, health panel</td></tr>
-    <tr><td>Calibration</td><td>S6 checkerboard wizard (roll prompts, split-half gate)</td><td>—  (imports the phone's calibration)</td></tr>
-    <tr><td>RTK</td><td>BT rover pairing, NTRIP config, fix strip</td><td>NTRIP config; GNSS trajectory mode for D6 pushbroom</td></tr>
-    <tr><td>Processing</td><td>Job list; Local / Cloud / Transfer</td><td>Processing dock; result loads into viewport</td></tr>
-    <tr><td>Review</td><td>Viewer, display panel, measure</td><td>Viewport + display dock + measure with segment list</td></tr>
-    <tr><td>Floor plan</td><td>View + DXF/PDF share</td><td>Full workspace: slice slider, regions, live re-extract</td></tr>
-    <tr><td>Merge</td><td>Georef auto-merge only</td><td>Workbench: 3-point align, ICP trace chart, per-session color</td></tr>
-  </table></div>
-</section>
-
-<p class="foot">Every screen above corresponds to implemented code (Compose on
-Android; Qt 6 Widgets on desktop — Filament renders the clouds on all three).
-The mockups use the apps' real telemetry values from test runs. Static page;
-no external resources.</p>
 </div>
 
+<div class="stage" id="stage"></div>
+<div class="stagehint" id="stagehint"></div>
+
+<div class="ref">
+  <button id="refbtn" aria-expanded="false">▸ Design system &amp; screen map</button>
+  <div class="refbody" id="refbody">
+    <h4>Shared design tokens</h4>
+    <div class="swrap">
+      <div class="swatch"><i style="background:#11151a"></i><b>Ground</b><span>#11151A</span></div>
+      <div class="swatch"><i style="background:#181e25"></i><b>Panel</b><span>#181E25</span></div>
+      <div class="swatch"><i style="background:#ff7a52"></i><b>Ember · accent</b><span>#FF7A52</span></div>
+      <div class="swatch"><i style="background:linear-gradient(90deg,#3ec4b0,#e5c468)"></i><b>Height ramp</b><span>#3EC4B0→#E5C468</span></div>
+      <div class="swatch"><i style="background:#6aa7e8"></i><b>Pose / trajectory</b><span>#6AA7E8</span></div>
+      <div class="swatch"><i style="background:#49d17f"></i><b>Fixed / healthy</b><span>#49D17F</span></div>
+      <div class="swatch"><i style="background:#e5b93c"></i><b>Float / degraded</b><span>#E5B93C</span></div>
+      <div class="swatch"><i style="background:#e05252"></i><b>Single / fault</b><span>#E05252</span></div>
+    </div>
+    <h4>Screen map — what exists, per platform</h4>
+    <div class="tablewrap"><table>
+      <tr><th>Screen</th><th>Android · Compose</th><th>Desktop · Qt 6</th></tr>
+      <tr><td>Projects</td><td>Cards: sensor badge, profile chip, point count</td><td>Sidebar library; import of .lscan.zip</td></tr>
+      <tr><td>Device setup</td><td>D6 USB wizard · Mid-360 static-IP wizard + self-test</td><td>Serial picker (CH340 hint) · Mid-360 IP config + self-test</td></tr>
+      <tr><td>Capture</td><td>Live 3D / AR overlay, stats strip, Live-SLAM toggle, RTK gate</td><td>Capture window: guided self-test → record, health panel</td></tr>
+      <tr><td>Calibration</td><td>S6 checkerboard wizard (roll prompts, split-half gate)</td><td>— (imports the phone's calibration)</td></tr>
+      <tr><td>RTK</td><td>BT rover pairing, NTRIP config, fix strip</td><td>NTRIP config; GNSS trajectory mode for D6 pushbroom</td></tr>
+      <tr><td>Processing</td><td>Job list; Local / Cloud / Transfer</td><td>Processing dock; result loads into viewport</td></tr>
+      <tr><td>Review</td><td>Viewer, display panel, measure</td><td>Viewport + display dock + measure with segment list</td></tr>
+      <tr><td>Floor plan</td><td>View + DXF/PDF share</td><td>Full workspace: slice slider, regions, live re-extract</td></tr>
+      <tr><td>Merge</td><td>Georef auto-merge only</td><td>Workbench: 3-point align, ICP trace, per-session colour</td></tr>
+    </table></div>
+    <p>Semantic colors (fix quality, health) are never the brand accent — ember is for
+    <em>your</em> actions and <em>your</em> path; green/amber/red always mean state. Numbers are
+    always tabular mono. Dark ground is a deliberate commitment: these are instruments read over a
+    glowing point cloud, indoors and at dusk.</p>
+  </div>
+</div>
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-label="Confirm checklist">
+  <header>
+    <div style="flex:1">
+      <h2>Function confirmation</h2>
+      <div class="sub" id="drawersub">—</div>
+    </div>
+    <button class="iconbtn" id="drawerclose" title="Close (Esc)">✕</button>
+  </header>
+  <div class="tools">
+    <button class="btn sm" data-cfilter="all" aria-pressed="true">All</button>
+    <button class="btn sm" data-cfilter="open">Open</button>
+    <button class="btn sm" data-cfilter="ok">Confirmed</button>
+    <button class="btn sm" data-cfilter="no">Needs change</button>
+    <button class="btn sm" id="copyreport" style="margin-left:auto">⧉ Copy report</button>
+    <button class="btn sm danger" id="resetall">Reset</button>
+  </div>
+  <div class="scroll" id="clist"></div>
+</aside>
+<div class="report" id="report">
+  <div class="row"><b style="font-size:14px">Confirmation report — Markdown</b>
+    <button class="btn sm" id="reportcopy" style="margin-left:auto">Copy again</button>
+    <button class="btn sm" id="reportclose">Close</button></div>
+  <div class="hint">Clipboard access can be blocked in an embedded frame — select all below and copy manually if needed.</div>
+  <textarea id="reporttext" spellcheck="false"></textarea>
+</div>
+<div class="toast" id="toast"></div>
+
 <script>
-/* Deterministic point-cloud renders — a warehouse room scan, height-colored,
-   with the operator's ember trajectory. Same generator for both viewports,
-   different camera + density. */
-(function(){
-  function lcg(seed){return function(){seed=(seed*1664525+1013904223)>>>0;return seed/4294967296}}
-  function ramp(t){ // teal -> sand
-    const a=[0x3e,0xc4,0xb0], b=[0xe5,0xc4,0x68];
-    const c=a.map((v,i)=>Math.round(v+(b[i]-v)*t));
-    return c;
+"use strict";
+/* ═══════════════════════════════════════════════════════════════════════════
+   LidarScan interactive mockup.
+   One file, no external anything. Three device shells over one screen table,
+   one canvas point-cloud engine (progressive accumulation, orbit, 2D plan),
+   and a confirm-checklist that persists to localStorage.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+const RM = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+const $  = (s,r)=> (r||document).querySelector(s);
+const $$ = (s,r)=> Array.from((r||document).querySelectorAll(s));
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+const fmt = n => n.toLocaleString('en-US').replace(/,/g,' ');
+const f1=n=>n.toFixed(1), f2=n=>n.toFixed(2), f3=n=>n.toFixed(3);
+const esc = s => String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const mmss = s => String(Math.floor(s/60)).padStart(2,'0')+':'+String(Math.floor(s%60)).padStart(2,'0');
+
+let toastT;
+function toast(msg){
+  const t=$('#toast'); t.textContent=msg; t.classList.add('on');
+  clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('on'),2200);
+}
+
+/* ─────────────────────── state ─────────────────────── */
+const PROFILES = {
+  SURVEY:{name:'Survey', blurb:'Georeferenced, RTK-accurate capture for professional surveying and as-built records.',
+          liveSlam:true, export:'LAS 1.4', keyframes:true, colorize:true, gate:'RTK Float (blocks)', slice:'1.0–1.5 m'},
+  FLOOR_PLAN:{name:'Floor plan', blurb:'Interior walkthroughs tuned for wall and opening extraction into DXF/PDF plans.',
+          liveSlam:true, export:'PLY (binary)', keyframes:false, colorize:false, gate:'no RTK gate', slice:'1.0–1.5 m'},
+  RESEARCH:{name:'Research', blurb:'Full-fidelity capture that keeps every raw stream for detailed offline analysis.',
+          liveSlam:false, export:'PLY (binary)', keyframes:true, colorize:true, gate:'no RTK gate', slice:'1.0–1.5 m'},
+  QUICK_SCAN:{name:'Quick scan', blurb:'Minimal setup, single pass, live preview only — a fast look at a space.',
+          liveSlam:true, export:'PLY (binary)', keyframes:false, colorize:false, gate:'no RTK gate', slice:'1.0–1.5 m'},
+};
+const SENSORS = {
+  MID360:{name:'Livox Mid-360', badge:'Mid-360', link:'Ethernet · static IP', rate:200000},
+  COIN_D6:{name:'COIN-D6', badge:'D6', link:'USB-C OTG · CH340 serial', rate:43200},
+};
+const FIX = {
+  NONE:{label:'No fix', short:'—', cls:'bad', acc:null},
+  SINGLE:{label:'Single', short:'SINGLE', cls:'bad', acc:1.42},
+  DGPS:{label:'DGPS', short:'DGPS', cls:'warn', acc:0.62},
+  RTK_FLOAT:{label:'RTK Float', short:'FLOAT', cls:'warn', acc:0.29},
+  RTK_FIXED:{label:'RTK Fixed', short:'FIXED', cls:'good', acc:0.019},
+};
+const FIXORDER=['NONE','SINGLE','DGPS','RTK_FLOAT','RTK_FIXED'];
+
+const newCap = ()=>({state:'idle', view:'3d', liveSlam:true, prog:0, pts:0, elapsed:0,
+                     rate:0, mb:0, kf:0, drops:0, follow:true, seed:7});
+
+const S = {
+  dev:'android',
+  scr:{android:'projects', mac:'review', win:'processing'},
+  pid:'warehouse-scan-03',
+  projects:[
+    {id:'warehouse-scan-03', name:'warehouse-scan-03', sensor:'MID360', profile:'FLOOR_PLAN',
+     pts:8_432_190, created:'2026-08-12 09:41', georef:true, calib:true, sizeMb:212, epsg:'EPSG:32650'},
+    {id:'site-north-01', name:'site-north-01', sensor:'MID360', profile:'SURVEY',
+     pts:12_104_775, created:'2026-08-09 14:02', georef:true, calib:true, sizeMb:301, epsg:'EPSG:32650'},
+    {id:'corridor-d6-test', name:'corridor-d6-test', sensor:'COIN_D6', profile:'RESEARCH',
+     pts:1_209_440, created:'2026-08-04 17:26', georef:false, calib:false, sizeMb:38, epsg:null},
+  ],
+  np:{name:'', sensor:null, profile:null},
+  d6:{scanning:false, found:false, state:'idle', bytes:0, pps:0, ok:0, bad:0, rate:0, hz:0},
+  m360:{hostIp:'192.168.1.5', lidarIp:'192.168.1.100', pt:56300, imu:56400, cmd:56100,
+        eth:'eth0 · 192.168.1.5/24', test:'idle', pct:0, step:0, saved:false, log:[]},
+  rtk:{scanning:false, rover:null, devices:[
+        {n:'ZED-F9P-3A21', mac:'DC:0D:30:1F:8B:44', kind:'u-blox ZED-F9P'},
+        {n:'UM982-7715',   mac:'A4:C1:38:2C:91:07', kind:'Unicore UM982'},
+        {n:'JBL Flip 6',   mac:'B8:27:EB:41:00:9C', kind:'audio — not a rover'}],
+      caster:{host:'rtk.hk-cors.example.com', port:2101, user:'lidarscan', pass:'••••••••', mount:''},
+      mounts:[{m:'HKCORS_RTCM32', f:'RTCM 3.2 · MSM4 · GPS+GAL+BDS', vrs:false},
+              {m:'VRS_MSM5',      f:'RTCM 3.2 · MSM5 · VRS (wants GGA)', vrs:true},
+              {m:'NEARBASE_KLT',  f:'RTCM 3.0 · legacy', vrs:false}],
+      ntrip:'IDLE', fix:'NONE', sats:0, age:0, bytesIn:0, rtcmOut:0, auto:true, georef:false},
+  calib:{step:0, square:99.0, poses:0, target:8, solving:false, result:null, bracket:'BRK-A2-alu'},
+  cap:newCap(),
+  dcap:Object.assign(newCap(),{seed:7, transport:'mid360', port:'/dev/tty.usbserial-14230', baud:230400,
+        selftest:'idle', stpct:0, live:true}),
+  jobs:[
+    {id:1041, kind:'POST_PROCESS', state:'RUNNING', p:0.64, stage:'re-integration', note:'391 069 pts kept'},
+    {id:1042, kind:'COLORIZE', state:'QUEUED', p:0, stage:'waiting for #1041', note:'6 keyframes · sync: good · motion-gated'},
+  ],
+  nextJob:1043, runMode:'local',
+  rev:{yaw:2.25, pitch:0.95, zoom:34, size:2.0, color:'height', lod:8, gamma:1.0, edl:true,
+       zmax:3.2, traj:true, measure:false, marks:[], segs:[], units:'m'},
+  plan:{slice:1.25, band:0.5, ortho:true, sill:true, minCell:12, rooms:true, openings:true,
+        state:'none', pct:0, region:'Include'},
+  merge:{sel:[0,1], anchor:0, phase:'idle', res:null, iter:[], colorBy:true, voxel:0.03, built:false, overlap:null},
+  set:{units:'m', theme:'Dark', profile:'FLOOR_PLAN', sim:false, cloud:'https://cloud.example.com',
+       storage:'/storage/emulated/0/LidarScan', gate:true},
+  xfer:{state:'idle', pct:0, incl:true, path:'~/Desktop/warehouse-scan-03.lscan.zip'},
+  exp:{fmt:'LAS 1.4', rgb:true, inten:true, dec:1, bounds:false, state:'idle', pct:0},
+};
+const proj = id => S.projects.find(p=>p.id===(id||S.pid)) || S.projects[0];
+
+/* ═══════════════ point-cloud engine ═══════════════
+   A rectangular warehouse bay with an internal partition + doorway and four
+   shelving blocks. Points carry a walk-time t so the cloud can accumulate
+   progressively, exactly the way a live session fills in. */
+const ROOM = {w:14, d:10, h:3.2};
+const WALLS = [ // x1,y1,x2,y2  (metres, room centred on origin)
+  [-7,-5, 7,-5],[ 7,-5, 7, 5],[ 7, 5,-7, 5],[-7, 5,-7,-5],   // outer shell
+  [ 0,-5, 0,-1.1],[ 0, 1.1, 0, 5],                            // partition, 2.2 m doorway
+  [-7, 0.6,-3.4, 0.6],                                        // office stub
+];
+const DOORS = [{x:0, y:0, w:2.2, dir:'v'}, {x:-3.4, y:0.6, w:1.0, dir:'h'}];
+const BLOCKS = [ // shelving racks: cx,cy,w,d,h
+  [ 3.1,-3.0, 4.4, 1.0, 2.4],[ 3.1, 0.4, 4.4, 1.0, 2.4],
+  [ 3.1, 3.2, 4.4, 1.0, 1.6],[-4.4,-3.1, 1.4, 3.4, 1.9],
+];
+const ROOMS = [
+  {name:'Bay A',  cx:-2.1, cy:-4.2, area:41.2},
+  {name:'Bay B',  cx: 1.3, cy: 4.2, area:69.8},
+  {name:'Office', cx:-5.2, cy: 2.9, area:12.4},
+];
+const PATH = [[-5.6,-3.8],[-1.6,-3.9],[-1.5,-0.2],[-5.4,-0.1],[-5.6, 2.9],[-1.2, 3.6],
+              [-0.1, 0.0],[ 2.2, 0.2],[ 2.3,-3.6],[ 5.6,-3.4],[ 5.7, 3.4],[ 1.6, 3.6],[ 0.2, 1.4]];
+
+function lcg(seed){ let s=seed>>>0; return ()=>{ s=(s*1664525+1013904223)>>>0; return s/4294967296; }; }
+
+/** Resample PATH to N poses with cumulative-length t in [0,1]. */
+function buildPath(n){
+  const seg=[]; let total=0;
+  for(let i=1;i<PATH.length;i++){
+    const L=Math.hypot(PATH[i][0]-PATH[i-1][0], PATH[i][1]-PATH[i-1][1]);
+    seg.push(L); total+=L;
   }
-  function render(id, opts){
-    const cv=document.getElementById(id); if(!cv) return;
-    const dpr=Math.min(2,window.devicePixelRatio||1);
-    const w=cv.clientWidth, h=cv.clientHeight;
-    cv.width=w*dpr; cv.height=h*dpr;
-    const ctx=cv.getContext('2d'); ctx.scale(dpr,dpr);
+  const out=[]; let acc=0;
+  for(let i=1;i<PATH.length;i++){
+    const steps=Math.max(2,Math.round(n*seg[i-1]/total));
+    for(let k=0;k<steps;k++){
+      const u=k/steps;
+      out.push({x:PATH[i-1][0]+(PATH[i][0]-PATH[i-1][0])*u,
+                y:PATH[i-1][1]+(PATH[i][1]-PATH[i-1][1])*u,
+                t:(acc+seg[i-1]*u)/total});
+    }
+    acc+=seg[i-1];
+  }
+  out.push({x:PATH[PATH.length-1][0], y:PATH[PATH.length-1][1], t:1});
+  return out;
+}
+const POSES = buildPath(260);
+
+const scanCache = new Map();
+/** Deterministic scan: points sorted by walk-time, plus per-point colour seeds. */
+function buildScan(seed, n, sess){
+  const key=seed+'/'+n+'/'+(sess||1);
+  if(scanCache.has(key)) return scanCache.get(key);
+  const rnd=lcg(seed), pts=[];
+  const push=(x,y,z,kind)=>{ pts.push({x,y,z,k:kind}); };
+  const wallLen = WALLS.reduce((a,w)=>a+Math.hypot(w[2]-w[0],w[3]-w[1]),0);
+  // walls
+  for(const w of WALLS){
+    const L=Math.hypot(w[2]-w[0],w[3]-w[1]);
+    const m=Math.round(n*0.40*L/wallLen);
+    for(let i=0;i<m;i++){
+      const u=rnd(), z=rnd()*ROOM.h;
+      push(w[0]+(w[2]-w[0])*u+(rnd()-0.5)*0.035, w[1]+(w[3]-w[1])*u+(rnd()-0.5)*0.035, z, 'w');
+    }
+  }
+  // floor
+  for(let i=0;i<n*0.26;i++) push((rnd()-0.5)*ROOM.w,(rnd()-0.5)*ROOM.d,(rnd()-0.5)*0.02,'f');
+  // ceiling hints
+  for(let i=0;i<n*0.07;i++) push((rnd()-0.5)*ROOM.w*0.96,(rnd()-0.5)*ROOM.d*0.96,ROOM.h-rnd()*0.06,'c');
+  // shelving
+  for(const b of BLOCKS){
+    for(let i=0;i<n*0.055;i++){
+      const face=rnd();
+      let x,y;
+      if(face<0.42){ x=b[0]+(rnd()<0.5?-1:1)*b[2]/2; y=b[1]+(rnd()-0.5)*b[3]; }
+      else if(face<0.84){ x=b[0]+(rnd()-0.5)*b[2]; y=b[1]+(rnd()<0.5?-1:1)*b[3]/2; }
+      else { x=b[0]+(rnd()-0.5)*b[2]; y=b[1]+(rnd()-0.5)*b[3]; }
+      push(x+(rnd()-0.5)*0.03, y+(rnd()-0.5)*0.03, rnd()*b[4], 's');
+    }
+  }
+  // assign walk-time = nearest pose within sensor range; drop the unreachable
+  const kept=[];
+  for(const p of pts){
+    let best=1e9, bt=0;
+    for(let i=0;i<POSES.length;i+=2){
+      const d=(POSES[i].x-p.x)**2+(POSES[i].y-p.y)**2;
+      if(d<best){ best=d; bt=POSES[i].t; }
+    }
+    if(best>13*13) continue;               // Mid-360 usable range
+    p.t=bt+ (rnd()-0.5)*0.012;
+    p.i=0.35+0.65*Math.exp(-Math.sqrt(best)/9);   // intensity falls with range
+    kept.push(p);
+  }
+  kept.sort((a,b)=>a.t-b.t);
+  scanCache.set(key,kept);
+  return kept;
+}
+
+function ramp(t){ // teal -> sand
+  const a=[0x3e,0xc4,0xb0], b=[0xe5,0xc4,0x68];
+  return [Math.round(a[0]+(b[0]-a[0])*t),Math.round(a[1]+(b[1]-a[1])*t),Math.round(a[2]+(b[2]-a[2])*t)];
+}
+const RGBK = {w:[176,172,164], f:[122,118,112], c:[150,146,158], s:[196,150,96]};
+
+/** Camera projection shared by every 3D viewport. */
+function makeCam(w,h,o){
+  const cy=Math.cos(o.yaw), sy=Math.sin(o.yaw), cp=Math.cos(o.pitch), sp=Math.sin(o.pitch);
+  const zoom=o.zoom, cx=o.cx||0, cyy=o.cy||0;
+  function proj(x,y,z){
+    const X=(x-cx)*cy-(y-cyy)*sy, Y=(x-cx)*sy+(y-cyy)*cy;
+    const Y2=Y*cp - z*sp, Z2=Y*sp + z*cp;
+    const d=1/(1+Y2*0.06);
+    return [w/2 + X*zoom*d, h*0.58 - Z2*zoom*d + Y2*zoom*0.28*d, d];
+  }
+  /** Inverse of proj on the z = 0 plane — what makes Measure give real metres. */
+  function unproj(sx,sy_){
+    const A=sy_-h*0.58, k=zoom*(0.28*cp - sp);
+    const Y=A/(k-0.06*cp*A);
+    const d=1/(1+Y*cp*0.06);
+    const X=(sx-w/2)/(zoom*d);
+    return [X*cy + Y*sy + cx, -X*sy + Y*cy + cyy];
+  }
+  return {proj, unproj};
+}
+
+/** The one cloud painter. Every 3D viewport in the mockup goes through here. */
+function drawCloud(cv, o){
+  const dpr=Math.min(2, window.devicePixelRatio||1);
+  const w=cv.clientWidth|0, h=cv.clientHeight|0;
+  if(!w||!h) return null;
+  if(cv.width!==w*dpr||cv.height!==h*dpr){ cv.width=w*dpr; cv.height=h*dpr; }
+  const ctx=cv.getContext('2d');
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+
+  // ground / AR backdrop
+  if(o.ar){
+    const g=ctx.createLinearGradient(0,0,0,h);
+    g.addColorStop(0,'#2b2a2c'); g.addColorStop(.46,'#3a3630'); g.addColorStop(.47,'#2a2724'); g.addColorStop(1,'#17161a');
+    ctx.fillStyle=g; ctx.fillRect(0,0,w,h);
+    ctx.strokeStyle='rgba(255,255,255,.045)'; ctx.lineWidth=1;
+    for(let i=1;i<9;i++){ const y=h*0.47+ (h*0.53)*(i/9)**1.7;
+      ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke(); }
+    for(let i=-6;i<=6;i++){ ctx.beginPath(); ctx.moveTo(w/2+i*w*0.09, h*0.47);
+      ctx.lineTo(w/2+i*w*0.62, h); ctx.stroke(); }
+    ctx.fillStyle='rgba(20,18,22,.34)'; ctx.fillRect(0,0,w,h);
+  } else {
     ctx.fillStyle='#0b0e12'; ctx.fillRect(0,0,w,h);
-    const rnd=lcg(opts.seed);
-    const yaw=opts.yaw, pitch=opts.pitch, zoom=opts.zoom;
-    const cy=Math.cos(yaw), sy=Math.sin(yaw), cp=Math.cos(pitch), sp=Math.sin(pitch);
-    function proj(x,y,z){
-      let X=x*cy - y*sy, Y=x*sy + y*cy, Z=z;
-      let Y2=Y*cp - Z*sp, Z2=Y*sp + Z*cp;
-      const d=1/(1+Y2*0.06);
-      return [w/2 + X*zoom*d, h*0.58 - Z2*zoom*d + Y2*zoom*0.28*d, d];
+    if(o.grid!==false){
+      ctx.strokeStyle='rgba(42,51,61,.5)'; ctx.lineWidth=1;
+      const cam0=makeCam(w,h,o);
+      for(let gx=-7;gx<=7;gx+=3.5){
+        const a=cam0.proj(gx,-5,0), b=cam0.proj(gx,5,0);
+        ctx.beginPath(); ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]); ctx.stroke();
+      }
+      for(let gy=-5;gy<=5;gy+=2.5){
+        const a=cam0.proj(-7,gy,0), b=cam0.proj(7,gy,0);
+        ctx.beginPath(); ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]); ctx.stroke();
+      }
     }
-    const pts=[];
-    const R=opts.room; // [sx, sy, sz]
-    function add(x,y,z,jit){ pts.push([x+ (rnd()-0.5)*jit, y+(rnd()-0.5)*jit, z+(rnd()-0.5)*jit*0.4]); }
-    // floor
-    for(let i=0;i<opts.n*0.34;i++) add((rnd()-0.5)*R[0],(rnd()-0.5)*R[1],0,0.06);
-    // two walls
-    for(let i=0;i<opts.n*0.2;i++)  add(-R[0]/2,(rnd()-0.5)*R[1],rnd()*R[2],0.05);
-    for(let i=0;i<opts.n*0.2;i++)  add((rnd()-0.5)*R[0],R[1]/2,rnd()*R[2],0.05);
-    // shelving blocks
-    for(let b=0;b<4;b++){
-      const bx=(rnd()-0.6)*R[0]*0.7, by=(rnd()-0.5)*R[1]*0.6, bw=0.5+rnd()*0.6, bh=0.8+rnd()*1.4;
-      for(let i=0;i<opts.n*0.06;i++)
-        add(bx+(rnd()-0.5)*bw, by+(rnd()-0.5)*bw, rnd()*bh, 0.03);
+  }
+
+  const cam=makeCam(w,h,o);
+  const scan=o.scan;
+  const upto=clamp(o.upto===undefined?1:o.upto,0,1);
+  const stride=Math.max(1, Math.round(1/clamp(o.density||1,0.02,1)));
+  const raw=!!o.raw;
+  const alphaBase=o.ar?0.62:1;
+  const zmax=o.zmax===undefined?ROOM.h:o.zmax;
+  const gamma=o.gamma||1;
+
+  let drawn=0;
+  for(let i=0;i<scan.length;i+=stride){
+    const p=scan[i];
+    if(p.t>upto) break;
+    if(p.z>zmax) continue;
+    let x=p.x, y=p.y, z=p.z;
+    if(raw){ // un-registered: yaw drift accumulates along the walk
+      const dr=(p.t-0.5)*0.085, cs=Math.cos(dr), sn=Math.sin(dr);
+      const nx=x*cs-y*sn, ny=x*sn+y*cs;
+      x=nx+Math.sin(p.t*11)*0.14; y=ny+Math.cos(p.t*9)*0.14; z+=Math.sin(p.t*23)*0.05;
     }
-    // ceiling hints
-    for(let i=0;i<opts.n*0.08;i++) add((rnd()-0.5)*R[0]*0.9,(rnd()-0.5)*R[1]*0.9,R[2],0.05);
-    // depth sort cheap: draw floor->up already fine; draw
-    for(const p of pts){
-      const t=Math.max(0,Math.min(1,p[2]/R[2]));
-      const [pr,pg,pb]=ramp(t);
-      const [x,y,d]=proj(p[0],p[1],p[2]);
-      if(x<-4||x>w+4||y<-4||y>h+4) continue;
-      ctx.fillStyle='rgba('+pr+','+pg+','+pb+','+(0.35+0.5*d)+')';
-      const s=Math.max(0.7,1.7*d*opts.px);
-      ctx.fillRect(x,y,s,s);
-    }
-    // trajectory
-    ctx.strokeStyle='#ff7a52'; ctx.lineWidth=1.6; ctx.beginPath();
-    let first=true;
-    for(let i=0;i<=60;i++){
-      const u=i/60, ang=u*Math.PI*1.5;
-      const x=Math.cos(ang)*R[0]*0.22*(1-u*0.3), y=Math.sin(ang)*R[1]*0.25, z=0.4;
-      const [px_,py_]=proj(x,y,z);
-      if(first){ctx.moveTo(px_,py_);first=false}else ctx.lineTo(px_,py_);
+    const [sx,sy,d]=cam.proj(x,y,z);
+    if(sx<-4||sx>w+4||sy<-4||sy>h+4) continue;
+    let r,g,b;
+    if(o.color==='rgb'){ const c=RGBK[p.k]||RGBK.w; r=c[0];g=c[1];b=c[2]; }
+    else if(o.color==='intensity'){ const v=Math.round(60+195*p.i); r=v;g=v;b=Math.round(v*0.96); }
+    else if(o.color==='session'){ const c=o.sessColor||[62,196,176]; r=c[0];g=c[1];b=c[2]; }
+    else { const c=ramp(clamp(z/ROOM.h,0,1)); r=c[0];g=c[1];b=c[2]; }
+    if(gamma!==1){ r=Math.round(255*(r/255)**(1/gamma)); g=Math.round(255*(g/255)**(1/gamma)); b=Math.round(255*(b/255)**(1/gamma)); }
+    if(o.edl!==false){ const k=0.55+0.45*d; r=Math.round(r*k); g=Math.round(g*k); b=Math.round(b*k); }
+    ctx.fillStyle='rgba('+r+','+g+','+b+','+(alphaBase*(0.4+0.5*d)).toFixed(2)+')';
+    const s=Math.max(0.7,(o.size||1.7)*d*0.62);
+    ctx.fillRect(sx,sy,s,s);
+    drawn++;
+  }
+
+  // trajectory + head
+  if(o.traj!==false){
+    ctx.strokeStyle=o.trajColor||'#ff7a52'; ctx.lineWidth=1.7; ctx.lineJoin='round'; ctx.beginPath();
+    let first=true, head=null;
+    for(const q of POSES){
+      if(q.t>upto) break;
+      const [px,py]=cam.proj(q.x,q.y,0.42);
+      if(first){ ctx.moveTo(px,py); first=false; } else ctx.lineTo(px,py);
+      head=[px,py];
     }
     ctx.stroke();
-    const [hx,hy]=proj(Math.cos(Math.PI*1.5)*R[0]*0.154,Math.sin(Math.PI*1.5)*R[1]*0.25,0.4);
-    ctx.fillStyle='#ff7a52'; ctx.beginPath(); ctx.arc(hx,hy,3.4,0,7); ctx.fill();
-    ctx.strokeStyle='rgba(255,122,82,.35)'; ctx.beginPath(); ctx.arc(hx,hy,7,0,7); ctx.stroke();
+    if(head){
+      ctx.fillStyle='#ff7a52'; ctx.beginPath(); ctx.arc(head[0],head[1],3.6,0,7); ctx.fill();
+      ctx.strokeStyle='rgba(255,122,82,.35)'; ctx.lineWidth=1.4;
+      ctx.beginPath(); ctx.arc(head[0],head[1],7+(o.pulse||0),0,7); ctx.stroke();
+    }
   }
-  function all(){
-    render('cv-phone',{seed:7,n:5200,yaw:0.7,pitch:0.9,zoom:26,px:1.0,room:[10,8,3]});
-    render('cv-mac',  {seed:11,n:9000,yaw:2.2,pitch:0.95,zoom:34,px:1.1,room:[12,9,3]});
+  // pose-graph keyframes
+  if(o.poseGraph){
+    ctx.fillStyle='#6aa7e8';
+    for(let i=0;i<POSES.length;i+=18){
+      const q=POSES[i]; if(q.t>upto) break;
+      const [px,py]=cam.proj(q.x,q.y,0.42);
+      ctx.fillRect(px-1.6,py-1.6,3.2,3.2);
+    }
   }
-  all(); addEventListener('resize',all);
-})();
+  // measure markers + segments
+  if(o.marks&&o.marks.length){
+    for(const m of o.marks){
+      const [px,py]=cam.proj(m[0],m[1],0);
+      ctx.strokeStyle='#e5b93c'; ctx.lineWidth=1.4;
+      ctx.beginPath(); ctx.arc(px,py,5,0,7); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(px-8,py); ctx.lineTo(px+8,py); ctx.moveTo(px,py-8); ctx.lineTo(px,py+8); ctx.stroke();
+    }
+  }
+  if(o.segs){
+    ctx.font='11px ui-monospace,monospace';
+    for(const sg of o.segs){
+      const a=cam.proj(sg.a[0],sg.a[1],0), b=cam.proj(sg.b[0],sg.b[1],0);
+      ctx.strokeStyle='#e5c468'; ctx.lineWidth=1.6;
+      ctx.beginPath(); ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]); ctx.stroke();
+      const mx=(a[0]+b[0])/2, my=(a[1]+b[1])/2;
+      const lab=sg.label;
+      ctx.fillStyle='rgba(11,14,18,.85)';
+      const tw=ctx.measureText(lab).width;
+      ctx.fillRect(mx-tw/2-5,my-16,tw+10,15);
+      ctx.fillStyle='#e5c468'; ctx.textAlign='center'; ctx.fillText(lab,mx,my-5);
+      ctx.textAlign='left';
+    }
+  }
+  if(o.ar){ // AR reticle + coverage hint
+    ctx.strokeStyle='rgba(255,255,255,.28)'; ctx.lineWidth=1;
+    const cx=w/2, cy2=h/2, r=13;
+    ctx.beginPath(); ctx.arc(cx,cy2,r,0,7); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx-r-6,cy2); ctx.lineTo(cx-r+2,cy2);
+    ctx.moveTo(cx+r-2,cy2); ctx.lineTo(cx+r+6,cy2); ctx.stroke();
+  }
+  return {drawn, cam, w, h};
+}
+
+/** Second renderer: the 2D floor plan A12 extracts from the slice band. */
+function drawPlan(cv, o){
+  const dpr=Math.min(2,window.devicePixelRatio||1);
+  const w=cv.clientWidth|0, h=cv.clientHeight|0;
+  if(!w||!h) return;
+  if(cv.width!==w*dpr||cv.height!==h*dpr){ cv.width=w*dpr; cv.height=h*dpr; }
+  const ctx=cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.fillStyle='#0b0e12'; ctx.fillRect(0,0,w,h);
+  const pad=26, sc=Math.min((w-pad*2)/ROOM.w,(h-pad*2)/ROOM.d);
+  const P=(x,y)=>[w/2+x*sc, h/2-y*sc];
+  // grid
+  ctx.strokeStyle='rgba(34,42,51,.85)'; ctx.lineWidth=1;
+  for(let x=-7;x<=7;x++){ const a=P(x,-5), b=P(x,5); ctx.beginPath(); ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]); ctx.stroke(); }
+  for(let y=-5;y<=5;y++){ const a=P(-7,y), b=P(7,y); ctx.beginPath(); ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]); ctx.stroke(); }
+
+  if(o.state!=='done'){
+    ctx.fillStyle='#5c6873'; ctx.font='12px ui-monospace,monospace'; ctx.textAlign='center';
+    ctx.fillText(o.state==='busy'?'extracting…':'no plan extracted yet', w/2, h/2);
+    ctx.textAlign='left'; return;
+  }
+  const z=o.slice, band=o.band;
+  const lo=z-band/2, hi=z+band/2;
+  const clutter = lo < 1.9 && hi > 0.15;            // shelving intersects the band
+  const tooHigh = lo > 2.45;                        // above the racks: only shell survives
+  const tooLow  = hi < 0.28;                        // floor slab
+  const jit = o.ortho?0:0.5;
+
+  // walls
+  ctx.lineCap='round';
+  const segs = tooHigh ? WALLS.slice(0,4) : WALLS;
+  for(const wl of segs){
+    const a=P(wl[0]+ (Math.random()<0?0:0), wl[1]), b=P(wl[2],wl[3]);
+    ctx.strokeStyle= tooLow?'#3ec4b0':'#e9edf1';
+    ctx.lineWidth= tooLow?1.5:3.2;
+    ctx.beginPath();
+    if(jit){ // no orthogonality snap: walls wobble off-axis
+      ctx.moveTo(a[0],a[1]);
+      ctx.lineTo(b[0]+ (wl[0]===wl[2]?2.5:0), b[1]+ (wl[1]===wl[3]?2.5:0));
+    } else { ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]); }
+    ctx.stroke();
+  }
+  // shelving clutter picked up inside the band
+  if(clutter){
+    ctx.strokeStyle='rgba(229,185,60,.55)'; ctx.lineWidth=1.6; ctx.setLineDash([3,3]);
+    for(const b of BLOCKS){
+      if(z-band/2 > b[4]) continue;
+      const a=P(b[0]-b[2]/2,b[1]-b[3]/2), c=P(b[0]+b[2]/2,b[1]+b[3]/2);
+      ctx.strokeRect(a[0],c[1],c[0]-a[0],a[1]-c[1]);
+    }
+    ctx.setLineDash([]);
+  }
+  // openings
+  if(o.openings && !tooHigh && !tooLow){
+    for(const d of DOORS){
+      ctx.strokeStyle='#6aa7e8'; ctx.lineWidth=3.2;
+      if(d.dir==='v'){ const a=P(d.x,d.y-d.w/2), b=P(d.x,d.y+d.w/2);
+        ctx.beginPath(); ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]); ctx.stroke();
+        const p0=P(d.x,d.y-d.w/2);
+        ctx.strokeStyle='rgba(106,167,232,.45)'; ctx.lineWidth=1.2;
+        ctx.beginPath(); ctx.arc(p0[0],p0[1], d.w*sc, -Math.PI/2, 0); ctx.stroke();
+      } else { const a=P(d.x-d.w/2,d.y), b=P(d.x+d.w/2,d.y);
+        ctx.beginPath(); ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]); ctx.stroke(); }
+    }
+    if(o.sill){ // a window sill band survives the 0.35–0.80 m check
+      ctx.strokeStyle='rgba(62,196,176,.7)'; ctx.lineWidth=2.4; ctx.setLineDash([6,4]);
+      const a=P(2.4,5), b=P(5.4,5); ctx.beginPath(); ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+  // rooms
+  if(o.rooms && !tooLow){
+    ctx.font='11px ui-monospace,monospace'; ctx.textAlign='center';
+    for(const r of ROOMS){
+      if(tooHigh && r.name==='Office') continue;
+      const p=P(r.cx,r.cy);
+      ctx.fillStyle='rgba(255,122,82,.75)'; ctx.fillText(r.name, p[0], p[1]-2);
+      ctx.fillStyle='#5c6873'; ctx.fillText(r.area.toFixed(1)+' m²', p[0], p[1]+12);
+    }
+    ctx.textAlign='left';
+  }
+  // scale bar — screen space, so it never falls off the sheet
+  ctx.strokeStyle='#8b97a3'; ctx.lineWidth=1.4;
+  const bx=12, by=h-12, bw=5*sc;
+  ctx.beginPath(); ctx.moveTo(bx,by); ctx.lineTo(bx+bw,by);
+  ctx.moveTo(bx,by-4); ctx.lineTo(bx,by+4);
+  ctx.moveTo(bx+bw,by-4); ctx.lineTo(bx+bw,by+4); ctx.stroke();
+  ctx.fillStyle='#8b97a3'; ctx.font='10px ui-monospace,monospace'; ctx.fillText('5 m', bx+4, by-7);
+}
+
+/** Third renderer: the ICP residual trace on the merge workbench. */
+function drawTrace(cv, iter){
+  const dpr=Math.min(2,window.devicePixelRatio||1);
+  const w=cv.clientWidth|0, h=cv.clientHeight|0; if(!w||!h) return;
+  if(cv.width!==w*dpr||cv.height!==h*dpr){ cv.width=w*dpr; cv.height=h*dpr; }
+  const ctx=cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.fillStyle='#0b0e12'; ctx.fillRect(0,0,w,h);
+  ctx.strokeStyle='rgba(42,51,61,.7)'; ctx.lineWidth=1;
+  for(let i=1;i<4;i++){ const y=h*i/4; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke(); }
+  if(!iter.length){
+    ctx.fillStyle='#5c6873'; ctx.font='10px ui-monospace,monospace'; ctx.textAlign='center';
+    ctx.fillText('no alignment attempted yet', w/2, h/2); ctx.textAlign='left'; return;
+  }
+  const maxI=24, lo=Math.log10(0.5), hi=Math.log10(600);
+  ctx.strokeStyle='#ff7a52'; ctx.lineWidth=1.8; ctx.beginPath();
+  iter.forEach((v,i)=>{
+    const x=6+(w-12)*(i/(maxI-1));
+    const y=h-6-(h-12)*((Math.log10(Math.max(0.5,v))-lo)/(hi-lo));
+    i?ctx.lineTo(x,y):ctx.moveTo(x,y);
+  });
+  ctx.stroke();
+  const last=iter[iter.length-1];
+  const lx=6+(w-12)*((iter.length-1)/(maxI-1));
+  const ly=h-6-(h-12)*((Math.log10(Math.max(0.5,last))-lo)/(hi-lo));
+  ctx.fillStyle= last<5?'#49d17f':'#e5b93c';
+  ctx.beginPath(); ctx.arc(lx,ly,3,0,7); ctx.fill();
+  ctx.font='10px ui-monospace,monospace';
+  ctx.fillText(last.toFixed(1)+' mm', Math.min(lx+6,w-52), Math.max(11,ly-6));
+  ctx.fillStyle='#5c6873';
+  ctx.fillText('ICP residual · log scale', 6, h-4);
+}
+/* ═══════════════ scan data instances ═══════════════ */
+const SCAN   = buildScan(7, 11000);
+const SCAN_D = buildScan(7, 17000);
+const SESS = [
+  {id:0, name:'north-wing-2026-08-14', pts:12068, drop:0,  georef:true,  sigma:0.020, anchor:true,  src:'anchor',
+   col:[62,196,176],  xr:[-7.2,-0.6]},
+  {id:1, name:'centre-bay-2026-08-14',  pts:11428, drop:91, georef:true,  sigma:0.024, anchor:false, src:'georeferenced',
+   col:[255,122,82],  xr:[-3.2, 3.6]},
+  {id:2, name:'south-dock-2026-08-15',  pts:11210, drop:89, georef:false, sigma:null,  anchor:false, src:'unaligned',
+   col:[106,167,232], xr:[ 1.4, 7.2]},
+];
+SESS.forEach(s=>{ s.scan = SCAN.filter(p=>p.x>=s.xr[0]&&p.x<=s.xr[1]); });
+/* A13 §5's measured trace, verbatim — the gate step-down at it 5 is real, not a bug. */
+const ICP_TRACE = [280.2,108.2,105.7,105.6,105.6,11.1,9.6,9.6];
+const POST_STAGES = ['opening recording','full-density odometry','loop detection',
+                     'pose-graph optimization','re-integration','filtering','publishing','done'];
+
+/* ═══════════════ small HTML builders ═══════════════ */
+const B = (label, act, o={}) =>
+  `<button class="btn ${o.cls||''}" data-act="${act}"${o.arg!==undefined?` data-arg="${esc(o.arg)}"`:''}${o.dis?' disabled':''}${o.t?` title="${esc(o.t)}"`:''}>${label}</button>`;
+const SW = (label, on, act, arg) =>
+  `<button class="sw" role="switch" aria-pressed="${!!on}" data-act="${act}"${arg!==undefined?` data-arg="${esc(arg)}"`:''}><i></i>${label}</button>`;
+const SEG = (opts, cur, act, cls='') =>
+  `<div class="seg ${cls}">`+opts.map(([v,l])=>
+    `<button data-act="${act}" data-arg="${esc(v)}" aria-pressed="${v===cur}">${l}</button>`).join('')+`</div>`;
+const SL = (label, path, min, max, step, val, fmt, unit='') =>
+  `<div class="slider"><label>${label}</label>
+   <input type="range" min="${min}" max="${max}" step="${step}" value="${val}"
+          data-inp="${path}" data-live="draw" data-fmt="${fmt}" aria-label="${esc(label)}">
+   <b data-out="${path}" data-unit="${unit}">${fmtVal(val,fmt)}${unit}</b></div>`;
+function fmtVal(v,f){
+  v=+v;
+  if(f==='i') return String(Math.round(v));
+  if(f==='1') return v.toFixed(1);
+  if(f==='2') return v.toFixed(2);
+  if(f==='3') return v.toFixed(3);
+  if(f==='m') return v.toFixed(2)+' m';
+  if(f==='px') return v.toFixed(1)+' px';
+  if(f==='M') return v.toFixed(0);
+  return String(v);
+}
+const FLD = (label, path, val, o={}) =>
+  `<div class="field${o.inline?' inline':''}"><label>${label}</label>
+   <input type="${o.type||'text'}" value="${esc(val)}" data-inp="${path}"${o.ph?` placeholder="${esc(o.ph)}"`:''}${o.ro?' readonly style="opacity:.6"':''}></div>`;
+const KV = (k,v) => `<div class="kv"><span>${k}</span><b>${v}</b></div>`;
+const RO = t => `<span class="ro" title="${esc(t||'Shown for realism; not wired in this mockup')}">display-only</span>`;
+
+function bar(title, sub, o={}){
+  return `<div class="appbar">
+    ${o.back?`<button class="iconbtn" data-act="back" title="Back">←</button>`:''}
+    <div style="min-width:0"><h1>${title}</h1>${sub?`<div class="sub">${sub}</div>`:''}</div>
+    ${o.right||''}</div>`;
+}
+function fixStrip(){
+  const f=FIX[S.rtk.fix]||FIX.NONE, p=proj();
+  const gate=PROFILES[p.profile].gate;
+  const acc = f.acc===null?'no accuracy':(f.acc<1?`± ${(f.acc*100).toFixed(1)} cm`:`± ${f2(f.acc)} m`);
+  return `<div style="display:flex;gap:6px;padding:0 14px 8px;flex-wrap:wrap">
+    <button class="chip ${f.cls}" data-act="go" data-arg="rtk">
+      <span class="dot" style="background:currentColor"></span>${f.short==='—'?'NO FIX':'RTK '+f.short} · ${acc}</button>
+    <span class="chip faint">NTRIP ${S.rtk.ntrip}</span>
+    <span class="chip faint" title="Capture gate from the project's workflow profile">${gate}</span>
+  </div>`;
+}
+
+/* ═══════════════ ANDROID SCREENS ═══════════════ */
+const A = {};
+
+A.projects = ()=> bar('Projects', `${S.projects.length} on device`, {right:
+    `<button class="iconbtn" data-act="go" data-arg="settings" title="Settings" style="margin-left:auto">⚙</button>`})
+  + `<div class="body"><div class="list">`
+  + S.projects.map(p=>`<button class="lrow" data-act="open" data-arg="${p.id}">
+      <div style="min-width:0"><b>${p.name}</b>
+        <span>${p.pts?fmt(p.pts)+' pts':'No capture yet'} · ${p.created.slice(0,10)}</span></div>
+      <div style="display:flex;flex-direction:column;gap:3px;align-items:flex-end;flex:none">
+        <span class="chip">${SENSORS[p.sensor].badge}</span>
+        <span class="chip faint">${PROFILES[p.profile].name}</span>
+      </div><span class="go">›</span></button>`).join('')
+  + `</div><div style="padding:14px">${B('＋ New project','go',{arg:'new_project',cls:'pri wide'})}</div>
+     <div class="hint" style="padding:0 14px 18px">Long-press a card in the app to delete it.
+       ${RO('Delete dialog is not part of this mockup')}</div></div>`;
+
+A.new_project = ()=>{
+  const n=S.np;
+  return bar('New project','',{back:true})
+  + `<div class="body" style="padding:12px 14px 24px">
+    ${FLD('Project name','np.name',n.name,{ph:'warehouse-scan-04'})}
+    <div class="sect" style="padding-left:0">Sensor</div>
+    ${Object.entries(SENSORS).map(([k,s])=>`
+      <button class="card" style="width:100%;text-align:left;${n.sensor===k?'border-color:var(--ember);background:var(--panel-2)':''}"
+              data-act="npSensor" data-arg="${k}">
+        <div class="row"><b style="font-size:13.5px">${s.name}</b>
+          <span class="chip" style="margin-left:auto">${s.badge}</span></div>
+        <div class="hint" style="margin-top:3px">${s.link} · ~${fmt(s.rate)} pts/s</div>
+      </button>`).join('')}
+    <div class="sect" style="padding-left:0">Workflow profile</div>
+    ${Object.entries(PROFILES).map(([k,p])=>`
+      <button class="card" style="width:100%;text-align:left;${n.profile===k?'border-color:var(--ember);background:var(--panel-2)':''}"
+              data-act="npProfile" data-arg="${k}">
+        <div class="row"><b style="font-size:13.5px">${p.name}</b>
+          ${n.profile===k?'<span class="chip ember" style="margin-left:auto">selected</span>':''}</div>
+        <div class="hint" style="margin-top:3px">${p.blurb}</div>
+        ${n.profile===k?`<div class="hint" style="margin-top:6px;color:var(--ink-mute);font-family:var(--mono);font-size:10.5px">
+           ${p.liveSlam?'Live-SLAM':'Record-only'} · export ${p.export} · ${p.keyframes?'camera keyframes on':'no camera'} · ${p.gate}</div>`:''}
+      </button>`).join('')}
+    <div class="row" style="margin-top:16px;gap:9px">
+      ${B('Cancel','back',{cls:'ghost'})}
+      ${B('Create project','npCreate',{cls:'pri',dis:!(n.sensor&&n.profile)})}
+    </div>
+    ${!(n.sensor&&n.profile)?`<div class="hint" style="margin-top:8px">Pick a sensor and a profile to enable Create.</div>`:''}
+  </div>`;
+};
+
+A.detail = ()=>{
+  const p=proj();
+  const cards=[
+    ['capture','Capture','AR view. Live-SLAM vs Record-only starts from this project’s workflow profile.',true],
+    ...(p.sensor==='MID360'?[['mid360','Mid-360 connect',
+       S.m360.saved?`Lidar ${S.m360.lidarIp} → host ${S.m360.hostIp} (saved).`
+       :'Not configured. Ethernet adapter, static IP and a pre-capture self-test.',true]]
+      :[['connect_wizard','Connect D6','USB-C OTG (CH340 adapter), 230400 8N1.',true]]),
+    ['calib','Mount calibration', S.calib.result?`Saved for bracket ${S.calib.bracket} · ${S.calib.result.headline}`
+      :'Camera↔lidar extrinsic. Stored against the bracket, not this project.', true],
+    ['rtk','RTK rover','Bluetooth SPP rover, NTRIP corrections, georeferencing.',true],
+    ['processing','Processing','Local / Cloud / Extract for transfer. One job at a time.',true],
+    ['review','Review','Point-cloud viewer, display parameters, measure, floor plan.',true],
+    ['merge','Merge','Combine this capture with other georeferenced sessions.',true],
+  ];
+  return bar(p.name, `${SENSORS[p.sensor].badge} · ${PROFILES[p.profile].name}`,{back:true})
+  + `<div class="body" style="padding:12px 14px 24px">
+    <div class="card">
+      ${KV('Created',p.created)}${KV('Points captured',p.pts?fmt(p.pts):'—')}
+      ${KV('Size',p.sizeMb+' MB')}${KV('Schema version','4')}${KV('App version','0.1.0')}
+      ${KV('Directory',`${p.name}.lscan`)}
+      ${KV('Georeference',p.georef?`<span style="color:var(--fix-good)">Converged · ${p.epsg}</span>`:'<span style="color:var(--ink-faint)">local frame (no CRS)</span>')}
+    </div>
+    <div class="sect" style="padding-left:0">Workspace</div>
+    ${cards.map(([r,t,d])=>`<button class="lrow" style="border:1px solid var(--line);border-radius:10px;margin-bottom:8px"
+       data-act="go" data-arg="${r}"><div style="min-width:0"><b>${t}</b>
+       <span style="white-space:normal;font-family:var(--sans);font-size:11.5px;color:var(--ink-faint)">${d}</span></div>
+       <span class="go">›</span></button>`).join('')}
+  </div>`;
+};
+
+A.connect_wizard = ()=>{
+  const d=S.d6;
+  const stateLine = d.state==='idle'?'':
+    d.state==='perm'?'  Waiting for USB permission…':
+    d.state==='conn'?'  Connecting to /dev/bus/usb/001/004…':
+    d.state==='ok'?'  Connected — /dev/bus/usb/001/004':'  Connect failed';
+  return bar('Connect D6','USB-C OTG · CH340',{back:true})
+  + `<div class="body" style="padding:12px 14px 24px">
+    <div class="sect" style="padding-left:0">USB serial devices</div>
+    ${d.found?`<div class="card">
+        <div class="row"><div><b style="font-size:13.5px">CH340 USB-Serial</b>
+          <div class="hint" style="font-family:var(--mono)">VID 6790 / PID 29987 · 230400 8N1</div></div>
+          ${B(d.state==='ok'?'Connected':'Connect','d6Connect',{cls:d.state==='ok'?'':'pri',dis:d.state==='ok'})}</div>
+      </div>`
+     :`<div class="card"><b style="font-size:13.5px">No serial device found.</b>
+        <div class="hint" style="margin-top:5px">Plug in the D6 over USB-C OTG (CH340 adapter) and tap Rescan,
+        or attaching it will bring you back here automatically.</div></div>`}
+    <div class="row" style="margin-top:9px;gap:8px">
+      ${B(d.scanning?'Rescanning…':'Rescan','d6Rescan',{dis:d.scanning})}
+      ${d.state==='fail'?B('Retry','d6Connect',{}):''}
+      ${d.state==='ok'?B('Go to Capture','go',{arg:'capture',cls:'pri'}):''}
+    </div>
+    ${stateLine?`<div class="hint" style="margin-top:10px;font-family:var(--mono);color:${d.state==='ok'?'var(--fix-good)':d.state==='fail'?'var(--fix-bad)':'var(--ink-mute)'}">${stateLine}</div>`:''}
+    ${d.state==='ok'?`<div class="sect" style="padding-left:0">Device health</div>
+      <div class="card">
+        ${KV('State','<span style="color:var(--fix-good)">Streaming</span>')}
+        ${KV('Points/sec',fmt(d.pps))}${KV('Rotation',f2(d.hz)+' Hz')}
+        ${KV('Checksum pass rate','<span style="color:var(--fix-good)">99.98%</span>')}
+        ${KV('Packets ok / bad',fmt(d.ok)+' / '+d.bad)}${KV('Bytes in',fmt(d.bytes))}
+        ${KV('Last error','—')}</div>`
+     :`<div class="hint" style="margin-top:14px">Waiting for first sample…</div>`}
+    <div class="sect" style="padding-left:0">Livox Mid-360 (Ethernet)</div>
+    <div class="card"><div class="hint">USB-C Ethernet adapter, static IP, and a pre-capture self-test.
+      None of the USB-serial setup above applies to it.</div>
+      <div style="margin-top:9px">${B('Open Mid-360 connect','go',{arg:'mid360'})}</div></div>
+  </div>`;
+};
+
+A.mid360 = ()=>{
+  const m=S.m360;
+  const testing = m.test==='run';
+  return bar('Mid-360 connect', m.saved?'saved to project':'not configured',{back:true})
+  + `<div class="body" style="padding:12px 14px 24px">
+    <div class="sect" style="padding-left:0">1 · Ethernet interface</div>
+    <div class="card"><div class="row"><span class="chip good"><span class="dot" style="background:var(--fix-good)"></span>Present</span>
+      <span class="hint" style="margin-left:auto;font-family:var(--mono)">${m.eth}</span></div>
+      <div class="hint" style="margin-top:7px">The Mid-360 has no USB or wireless path and needs its own
+        9–27 V supply (~6.5 W); USB-C cannot power it.</div>
+      <div style="margin-top:8px">${B('Use this as the host IP','m360UseIp',{cls:'sm'})}</div></div>
+
+    <div class="sect" style="padding-left:0">2 · Static IP — Pixel / AOSP</div>
+    <div class="card"><div class="hint" style="line-height:1.7">
+      1. Settings → Network &amp; internet → Ethernet<br>
+      2. Tap the gear beside the adapter<br>
+      3. IP settings → Static<br>
+      4. Enter the host IP below, /24, no gateway</div>
+      <div style="margin-top:9px">${B('Open network settings','m360Net',{cls:'sm'})}</div>
+      <div class="hint" style="margin-top:8px">Menu paths are vendor guidance and vary by build — the addresses
+        read back from the live interface above are the ground truth.</div></div>
+
+    <div class="sect" style="padding-left:0">3 · Addresses</div>
+    <div class="card">
+      ${FLD('Lidar IP','m360.lidarIp',m.lidarIp)}
+      ${FLD('Host IP (this phone, static)','m360.hostIp',m.hostIp)}
+      <div class="grid2" style="margin-top:4px">
+        ${FLD('Point','m360.pt',m.pt,{ro:1})}${FLD('IMU','m360.imu',m.imu,{ro:1})}</div>
+      ${FLD('Command','m360.cmd',m.cmd,{ro:1})}
+      <div class="hint">Host-side ports follow Livox's +1 convention and are not editable. ${RO('Ports are fixed by the SDK')}</div>
+    </div>
+
+    <div class="sect" style="padding-left:0">4 · Transport</div>
+    <div class="card">${SEG([['sdk2','SDK2 (brings the device up)'],['raw','Bound socket']], m.transport||'sdk2','m360Transport')}
+      <div class="hint" style="margin-top:7px">Bound socket is raw UDP, listen-only, point-only — it carries no IMU.</div></div>
+
+    <div class="sect" style="padding-left:0">5 · Pre-capture self-test</div>
+    <div class="card">
+      <div class="row">${B(testing?'Stop':(m.test==='fail'?'Retry self-test':'Run self-test'),'m360Test',{cls:testing?'':'pri'})}
+        <span class="chip ${m.test==='pass'?'good':m.test==='fail'?'bad':'faint'}" style="margin-left:auto">
+          ${m.test==='pass'?'PASSED':m.test==='fail'?'FAILED':testing?'RUNNING':'IDLE'}</span></div>
+      ${m.test!=='idle'?`<div class="bar ${m.test==='pass'?'good':''}"><i style="width:${m.pct}%"></i></div>`:''}
+      ${m.log.length?`<div class="hint" style="font-family:var(--mono);line-height:1.7;margin-top:4px">
+        ${m.log.map(l=>esc(l)).join('<br>')}</div>`:''}
+      <div class="hint" style="margin-top:9px">Reference (A3 §7 soak): 200 000 pts/s at the sensor,
+        40 000 pts/s into the store after the live budget, 200 Hz IMU, 0.0000% loss. The window is 8 s.</div>
+      ${m.test==='pass'?`<div class="row" style="margin-top:10px;gap:8px">
+        ${B(m.saved?'Saved to project':'Save to project','m360Save',{dis:m.saved})}
+        ${B('Continue to capture','go',{arg:'capture',cls:'pri'})}</div>`:''}
+    </div>
+  </div>`;
+};
+
+const CALIB_STEPS=['Prepare','Capture','Clock sweep','Verdict','Verify'];
+A.calib = ()=>{
+  const c=S.calib;
+  const stepbar = `<div class="steps">${CALIB_STEPS.map((s,i)=>
+    `<i class="${i===c.step?'on':i<c.step?'done':''}"></i>`).join('')}</div>
+    <div class="hint" style="padding:0 14px 8px;font-family:var(--mono)">
+      Step ${c.step+1}/5 · ${CALIB_STEPS[c.step]}</div>`;
+  let bodyHtml='';
+  if(c.step===0){
+    bodyHtml=`<div class="card"><b style="font-size:13.5px">Print the target</b>
+      <div class="hint" style="margin-top:5px">A1 checkerboard, 8 × 6 inner corners (9 × 7 squares),
+        ${f1(c.square)} mm squares. Print at 100% scale on rigid backing — foam board bows by several
+        millimetres; aluminium composite is better.</div>
+      ${FLD('Measured square size (mm)','calib.square',c.square)}
+      <div class="hint">Measure a printed square — printers silently rescale PDFs.</div>
+      ${FLD('Bracket ID','calib.bracket',c.bracket)}
+      <div class="hint">The calibration is stored against this bracket, not this project.</div></div>
+    <div class="card"><b style="font-size:13.5px">Three rules</b>
+      <div class="hint" style="margin-top:5px;line-height:1.8">
+        · Stand back 1.2–2 m. Matte, evenly lit, no glare.<br>
+        · Do not move the board once you start.<br>
+        · Keep 0.5 m clear behind the board.</div></div>
+    <div class="card"><b style="font-size:13.5px">Preconditions</b>
+      ${KV('Lidar streaming','<span style="color:var(--fix-good)">ready</span>')}
+      ${KV('AR tracking','<span style="color:var(--fix-good)">ready</span>')}
+      ${KV('Native engine','<span style="color:var(--fix-good)">loaded</span>')}</div>
+    <div style="margin-top:12px">${B(`Start — ${c.target} poses`,'calibStart',{cls:'pri wide'})}</div>`;
+  } else if(c.step===1){
+    const checks=[['Board fully visible',true],['Viewing angle',true],['Roll matched',c.poses%3!==2],
+                  ['Lidar sees it',true],['Hold still',true]];
+    bodyHtml=`<div class="card"><div class="row"><b style="font-size:14px">Pose ${Math.min(c.poses+1,c.target)} of ${c.target}</b>
+        <span class="chip ember" style="margin-left:auto">${c.poses}/${c.target}</span></div>
+      <div class="hint" style="margin-top:5px">Tilt to ${[0,18,-22,34,-38,12,-14,26][c.poses%8]}° ·
+        stand ${[0,-24,20,-12,26,-30,14,22][c.poses%8]}° to the side</div>
+      <div class="bar"><i style="width:${(c.poses/c.target*100).toFixed(0)}%"></i></div></div>
+    <div class="card"><b style="font-size:13.5px">Live checks</b>
+      ${checks.map(([t,ok])=>`<div class="kv"><span>${t}</span>
+        <b style="color:${ok?'var(--fix-good)':'var(--fix-warn)'}">${ok?'✓':'…'}</b></div>`).join('')}
+      <div class="hint" style="margin-top:6px">${fmt(1840+c.poses*137)} returns on the board.
+        Any red frame resets the auto-shutter ring to zero.</div></div>
+    <div class="card"><b style="font-size:13.5px">Pose diversity</b>
+      ${['Side to side','Up and down','Tilt (roll)'].map((ax,i)=>{
+        const v=Math.min(100,(c.poses/c.target)*100*(i===2?0.72:1));
+        return `<div class="slider"><label>${ax}</label>
+          <div style="flex:1;height:4px;background:var(--line);border-radius:2px">
+            <div style="width:${v}%;height:100%;background:${v>60?'var(--fix-good)':'var(--fix-warn)'};border-radius:2px"></div>
+          </div><b>${v.toFixed(0)}%</b></div>`;}).join('')}
+      <div class="hint">Tilt the phone more between shots — poses that vary only in position roughly double the error.</div></div>
+    <div class="row" style="margin-top:12px;gap:8px">
+      ${B('Capture pose','calibPose',{cls:'pri',dis:c.poses>=c.target})}
+      ${B(`Solve (${c.poses})`,'calibSolve',{dis:c.poses<4||c.solving})}</div>
+    ${c.solving?`<div class="hint" style="margin-top:9px;font-family:var(--mono);color:var(--ember)">Solving…</div>`:''}`;
+  } else if(c.step===2){
+    bodyHtml=`<div class="card"><b style="font-size:13.5px">Clock sweep</b>
+      <div class="hint" style="margin-top:5px">Sweep the phone smoothly left and right across the board,
+        about one sweep per second, for 8 seconds.</div>
+      <div class="row" style="margin-top:10px"><span class="chip warn">Not available in this build</span></div>
+      <div class="hint" style="margin-top:7px">The saved calibration leaves <code>clockOffsetNs</code> unset.
+        Unblocked by ABI 4's <code>scan_clock_sweep_estimate()</code>. ${RO('Real screen shows this same refusal')}</div></div>
+      <div style="margin-top:12px">${B('Skip to verdict','calibStep',{arg:'3',cls:'pri wide'})}</div>`;
+  } else if(c.step===3){
+    const r=c.result||{};
+    const cls = r.gate==='GOOD'?'good':r.gate==='USABLE'?'warn':'bad';
+    bodyHtml=`<div class="card"><div class="row"><b style="font-size:13.5px">Split-half gate</b>
+        <span class="chip ${cls}" style="margin-left:auto">${r.gate||'—'}</span></div>
+      <div class="hint" style="margin-top:6px">${r.headline||''}</div>
+      ${KV('Residual RMS',`${f1(r.px||0)} px at 3 m`)}
+      ${KV('Mount alignment',`± ${f1(r.mm||0)} mm at 3 m`)}
+      ${KV('Poses used',`${r.poses||0} of ${c.target}`)}
+      ${KV('Lidar residuals',`${f1((r.mm||0)*0.7)} mm RMS`)}</div>
+    <div class="card"><b style="font-size:13.5px">Diagnostics — not the gate</b>
+      <div class="hint" style="margin-top:5px;font-family:var(--mono)">
+        σ_rot ${f3(r.srot||0.048)}° · σ_trans ${f1(r.stra||3.1)} mm · condition ${(r.cond||184).toFixed(0)}</div>
+      ${KV('Converged','<span style="color:var(--fix-good)">yes</span>')}
+      ${KV('Degenerate',r.degenerate?'<span style="color:var(--fix-warn)">yes — too few or too similar poses</span>':'no')}
+      <div class="hint" style="margin-top:6px">σ and condition are never gated on. The gate is the split-half
+        verdict, reported in mm at 3 m — never in pixels.</div></div>
+    <div class="wrap8" style="margin-top:12px">
+      ${B('Drop the worst 2','calibDrop')}${B('Redo the capture','calibRedo')}
+      ${B('Save and verify','calibStep',{arg:'4',cls:'pri'})}</div>`;
+  } else {
+    bodyHtml=`<div class="card"><b style="font-size:13.5px">Does it line up?</b>
+      <div class="hint" style="margin-top:5px">Point the rig at a doorframe or a table edge. The lidar points
+        should sit on the edge you can see. This catches what no residual can: the wrong bracket slot, the phone
+        seated backwards, the wrong lidar selected.</div></div>
+    <div class="vp" style="height:170px;border-radius:10px;margin-top:10px;border:1px solid var(--line)">
+      <canvas data-cloud="calib"></canvas></div>
+    <div class="row" style="margin-top:12px;gap:8px">
+      ${B('Looks aligned','calibVerify',{arg:'ok',cls:'pri'})}
+      ${B('Looks off','calibVerify',{arg:'no'})}</div>
+    ${c.saved?`<div class="hint" style="margin-top:10px;color:var(--fix-good);font-family:var(--mono)">
+      Saved for bracket ${esc(c.bracket)} · ${esc((c.result||{}).headline||'')}</div>`:''}`;
+  }
+  return bar('Mount calibration',`bracket ${esc(c.bracket)}`,{back:true}) + stepbar
+       + `<div class="body" style="padding:4px 14px 24px">${bodyHtml}</div>`;
+};
+
+A.capture = ()=>{
+  const c=S.cap, p=proj(), rec=c.state==='rec', paused=c.state==='paused';
+  const canRec = FIX[S.rtk.fix] && (!S.set.gate || !PROFILES[p.profile].gate.includes('blocks')
+                  || FIXORDER.indexOf(S.rtk.fix)>=FIXORDER.indexOf('RTK_FLOAT'));
+  return `<div class="appbar" style="padding-bottom:6px">
+      <button class="iconbtn" data-act="back">←</button>
+      <div style="min-width:0"><h1>${p.name}</h1><div class="sub">${c.state==='idle'?'idle':rec?'recording':paused?'paused':'stopping'} · ${PROFILES[p.profile].name}</div></div>
+      <span class="chip good" style="margin-left:auto"><span class="dot" style="background:var(--fix-good)"></span>${SENSORS[p.sensor].badge}</span>
+    </div>`
+  + fixStrip()
+  + `<div class="vp" style="flex:1;min-height:0" data-orbit="cap">
+      <canvas data-cloud="cap"></canvas>
+      <div class="ovl act" style="top:10px;left:12px">${SEG([['3d','3D'],['ar','AR']],c.view,'capView','sm')}</div>
+      <div class="ovl act" style="top:10px;right:12px">${SEG([['orbit','Orbit'],['follow','Follow']],c.follow?'follow':'orbit','capFollow','sm')}</div>
+      <div class="ovl" style="bottom:10px;left:12px"><span class="chip faint">${c.liveSlam?'MAP · kSlamMap':'RAW · kLidarMid360'}</span></div>
+      <div class="ovl" style="bottom:10px;right:12px"><span class="chip ${c.health==='deg'?'warn':'faint'}" id="cap-health">${c.health==='deg'?'Degraded':'Healthy'}</span></div>
+      ${c.state==='idle'&&c.prog===0?`<div class="ovl" style="inset:0;display:flex;align-items:center;justify-content:center">
+        <span class="hint" style="text-align:center;max-width:70%">Press Record to start the session.<br>
+        The engine records every raw byte either way.</span></div>`:''}
+    </div>
+    <div class="statgrid">
+      <div class="stat"><em id="cap-pps">0</em><label>pts / s</label></div>
+      <div class="stat"><em id="cap-pts">0</em><label>points</label></div>
+      <div class="stat"><em id="cap-dur">00:00</em><label>rec</label></div>
+      <div class="stat"><em id="cap-mb">0 MB</em><label>.lscan</label></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px;padding:11px 14px 14px;flex:none">
+      <div style="display:flex;flex-direction:column;gap:3px;min-width:0">
+        ${SW(c.liveSlam?'Live-SLAM':'Record-only', c.liveSlam,'capSlam')}
+        <span class="hint" style="font-size:10px">${c.state==='idle'?'editable while idle':'locked during a session'}</span>
+      </div>
+      <div style="margin-left:auto;display:flex;align-items:center;gap:11px;flex:none">
+        <button class="iconbtn" data-act="capStop" title="Stop"
+          style="width:34px;height:34px;border:1.5px solid var(--line);border-radius:50%;${c.state==='idle'?'opacity:.35':''}">■</button>
+        <button data-act="capRec" title="${rec?'Pause':'Record'}"
+          style="width:56px;height:56px;border-radius:50%;background:var(--ember);display:flex;align-items:center;
+                 justify-content:center;box-shadow:0 0 0 4px rgba(255,122,82,.18);${canRec?'':'opacity:.45'}">
+          ${rec?`<span style="display:flex;gap:4px"><i style="width:5px;height:17px;background:#1a0d08;display:block"></i>
+                 <i style="width:5px;height:17px;background:#1a0d08;display:block"></i></span>`
+               :`<i style="width:18px;height:18px;border-radius:4px;background:#1a0d08;display:block"></i>`}
+        </button>
+      </div>
+    </div>
+    <div class="body" style="max-height:150px;border-top:1px solid var(--line-soft);padding:0 14px 14px">
+      <div class="sect" style="padding-left:0">Display (A14 contract)</div>
+      ${SEG([['height','Height'],['rgb','RGB'],['intensity','Intensity']],c.color||'height','capColor','sm')}
+      ${SL('size','cap.size',0.5,12,0.5,c.size||2.0,'px')}
+      <div class="sect" style="padding-left:0">AR + camera keyframes</div>
+      ${KV('AR tracking', c.view==='ar'?'<span style="color:var(--fix-good)">TRACKING</span>':'<span style="color:var(--ink-faint)">off</span>')}
+      ${KV('Keyframes written', String(c.kf))}
+      ${KV('Tracking-loss episodes','0')}
+      ${KV('Skipped (turning too fast)', String(c.drops))}
+      ${KV('Rolling shutter','not reported by this camera')}
+    </div>`;
+};
+
+A.rtk = ()=>{
+  const r=S.rtk, f=FIX[r.fix]||FIX.NONE;
+  return bar('RTK rover','device-level, not per project',{back:true})
+  + `<div class="body" style="padding:12px 14px 24px">
+    <div class="card"><div class="row"><b style="font-size:13.5px">${f.label}</b>
+        <span class="chip ${f.cls}" style="margin-left:auto"><span class="dot" style="background:currentColor"></span>${f.short}</span></div>
+      <div class="hint" style="margin-top:6px;font-family:var(--mono)">
+        ${f.acc===null?'No accuracy — no fix':`±${f3(f.acc)} m horizontal (1σ) · CEP95 ${f3(f.acc*1.73)} m · ${r.sats*37} samples`}</div>
+      <div class="hint" style="font-family:var(--mono)">${r.sats} sats · NMEA in: ${fmt(r.bytesIn)} bytes · RTCM out: ${fmt(r.rtcmOut)} bytes</div>
+    </div>
+
+    <div class="sect" style="padding-left:0">Rover (Bluetooth SPP)</div>
+    <div class="card" style="padding:0">
+      ${r.devices.map((d,i)=>`<button class="lrow" data-act="rtkRover" data-arg="${i}" aria-selected="${r.rover===i}">
+        <div style="min-width:0"><b>${d.n}</b><span>${d.mac} · ${d.kind}</span></div>
+        <span class="chip ${r.rover===i?'good':'faint'}">${r.rover===i?'connected':'pair'}</span></button>`).join('')}
+    </div>
+    <div class="hint" style="margin-top:7px">Bonded devices only — pairing itself goes to system Bluetooth settings. ${RO('System pairing sheet')}</div>
+
+    <div class="sect" style="padding-left:0">NTRIP corrections</div>
+    <div class="card">
+      ${FLD('Caster host','rtk.caster.host',r.caster.host)}
+      <div class="grid2">${FLD('Port','rtk.caster.port',r.caster.port)}${FLD('Username','rtk.caster.user',r.caster.user)}</div>
+      ${FLD('Password','rtk.caster.pass',r.caster.pass,{type:'password'})}
+      <div class="sect" style="padding:8px 0 4px">Mountpoints — nearest first</div>
+      ${r.mounts.map((m,i)=>`<button class="lrow" style="padding-left:0;padding-right:0" data-act="rtkMount" data-arg="${i}"
+        aria-selected="${r.caster.mount===m.m}"><div style="min-width:0"><b>${m.m}</b><span>${m.f}</span></div>
+        <span class="chip ${r.caster.mount===m.m?'ember':'faint'}">${r.caster.mount===m.m?'in use':'Use'}</span></button>`).join('')}
+      ${SW('Auto-reconnect', r.auto, 'rtkAuto')}
+      <div class="row" style="margin-top:11px;gap:8px">
+        ${B(r.ntrip==='STREAMING'?'Disconnect':'Connect','rtkConnect',{cls:r.ntrip==='STREAMING'?'':'pri',dis:r.rover===null||!r.caster.mount})}
+        <span class="chip ${r.ntrip==='STREAMING'?'good':r.ntrip==='CONNECTING'?'warn':'faint'}" style="margin-left:auto">${r.ntrip}</span>
+      </div>
+      ${r.rover===null?`<div class="hint" style="margin-top:7px">Connect a rover first.</div>`
+        :!r.caster.mount?`<div class="hint" style="margin-top:7px">Pick a mountpoint. Baseline length is the dominant term in Fixed-vs-Float.</div>`:''}
+    </div>
+
+    <div class="sect" style="padding-left:0">Georeferencing</div>
+    <div class="card"><div class="hint">${r.georef
+      ? `<span style="color:var(--fix-good)">Converged · EPSG:32650</span>`
+      : `Not converged: ${r.ntrip==='STREAMING'?'clock correlation has not converged yet — normal for roughly the first 16 s of a 1 Hz stream, and not an error.':'no rover attached.'}`}</div></div>
+
+    <div class="card" style="border-color:var(--ember-dim)"><div class="hint">
+      The capture gate compares the live fix against the project profile's threshold.
+      <b>Survey</b> blocks below RTK Float; the other profiles only warn.</div></div>
+  </div>`;
+};
+
+const KINDNAME={POST_PROCESS:'Post-process',COLORIZE:'Colorize',EXPORT_POINTS:'Export',
+                TRANSFER_EXPORT:'Transfer bundle',CLOUD_SUBMIT:'Cloud submit'};
+const STATECLS={QUEUED:'faint',RUNNING:'warn',CANCELLING:'warn',DONE:'good',FAILED:'bad'};
+function jobRows(){
+  if(!S.jobs.length) return `<div class="hint" style="padding:10px 0">Nothing queued. The queue runs one job at
+    a time — that is A15's design, not a limit of this screen.</div>`;
+  return S.jobs.map(j=>`<div class="card">
+    <div class="row"><b style="font-size:13px">${KINDNAME[j.kind]} <span style="color:var(--ink-faint);font-family:var(--mono);font-weight:400">#${j.id}</span></b>
+      <span class="chip ${STATECLS[j.state]}" style="margin-left:auto">${j.state}</span></div>
+    <div class="bar ${j.state==='DONE'?'good':''}"><i style="width:${(j.p*100).toFixed(1)}%"></i></div>
+    <div class="hint" style="font-family:var(--mono)">${(j.p*100).toFixed(0)}% · ${esc(j.stage)}${j.note?' · '+esc(j.note):''}</div>
+    ${j.err?`<div class="hint" style="color:var(--fix-bad);margin-top:4px">${esc(j.err)}</div>`:''}
+    <div class="wrap8" style="margin-top:8px">
+      ${j.state==='QUEUED'||j.state==='RUNNING'?B('Cancel','jobCancel',{arg:j.id,cls:'sm'}):''}
+      ${j.state==='DONE'&&j.kind==='POST_PROCESS'?B('Load result','jobLoad',{arg:j.id,cls:'sm'}):''}
+      ${j.state==='FAILED'?B('Retry','jobRetry',{arg:j.id,cls:'sm'}):''}
+    </div></div>`).join('');
+}
+A.processing = ()=>{
+  const p=proj();
+  return bar('Processing',p.name,{back:true})
+  + `<div class="body" style="padding:12px 14px 24px">
+    <div class="sect" style="padding-left:0">Mode</div>
+    ${SEG([['local','Local'],['cloud','Cloud'],['transfer','Extract for transfer']],S.runMode,'runMode')}
+    <div class="hint" style="margin-top:7px">${
+      S.runMode==='local'?'Post-process runs the full-density LIO re-run on this phone. Expect minutes, and the phone to get warm.'
+      :S.runMode==='cloud'?'Uploads the bundle in 8 MiB chunks to the configured worker. 2 GiB cap, checked before the first request.'
+      :'Packages the .lscan into a .lscan.zip for a desktop to finish.'}</div>
+    <div class="wrap8" style="margin-top:12px">
+      ${S.runMode==='local'?B('Post-process','jobNew',{arg:'POST_PROCESS',cls:'pri'})+
+        B('Colorize','jobNew',{arg:'COLORIZE'})+B('Export','jobNew',{arg:'EXPORT_POINTS'}):''}
+      ${S.runMode==='cloud'?B('Cloud submit','jobNew',{arg:'CLOUD_SUBMIT',cls:'pri'}):''}
+      ${S.runMode==='transfer'?B('Transfer bundle','jobNew',{arg:'TRANSFER_EXPORT',cls:'pri'}):''}
+    </div>
+    ${S.runMode==='cloud'?`<div class="hint" style="margin-top:8px">Server: ${esc(S.set.cloud)} — no server exists in
+      this environment, so a real submit fails gracefully with a network error and the row shows it.</div>`:''}
+    <div class="sect" style="padding-left:0">Queue</div>
+    ${jobRows()}
+  </div>`;
+};
+
+A.review = ()=>{
+  const r=S.rev, p=proj();
+  return bar('Review',`${fmt(p.pts)} pts · ${p.epsg||'local frame'}`,{back:true, right:
+    `<button class="iconbtn" data-act="go" data-arg="plan" title="Floor plan" style="margin-left:auto">▤</button>`})
+  + `<div class="vp" style="height:270px;flex:none" data-orbit="rev" data-pick="rev">
+      <canvas data-cloud="rev"></canvas>
+      <div class="ovl act" style="top:10px;left:12px">
+        <button class="chip ${r.measure?'ember':''}" data-act="measure">MEASURE ${r.measure?'ON':'OFF'}</button></div>
+      <div class="ovl" style="bottom:10px;left:12px"><span class="chip faint" id="rev-fps">59 fps · ${fmt(p.pts)} pts</span></div>
+      ${r.measure?`<div class="ovl" style="top:10px;right:12px"><span class="chip warn">${r.marks.length===1?'pick 2nd point':'tap a point'}</span></div>`:''}
+    </div>
+    <div class="body" style="padding:0 14px 24px">
+      ${r.segs.length?`<div class="sect" style="padding-left:0">Segments</div>
+        ${r.segs.map((s,i)=>`<div class="kv"><span>${i+1}</span><b>${s.label} · Δz ${f2(s.dz)} m</b></div>`).join('')}
+        <div class="wrap8" style="margin-top:8px">${B('Clear all','measClear',{cls:'sm'})}</div>`:''}
+      <div class="sect" style="padding-left:0">Colour</div>
+      ${SEG([['height','Height'],['rgb','RGB'],['intensity','Intensity'],['time','Time']],r.color,'revColor','sm')}
+      ${r.color==='time'?`<div class="hint" style="margin-top:6px;color:var(--fix-warn)">No per-point time in PointVertex — falls back to RGB.</div>`:''}
+      ${SL('gamma','rev.gamma',0.1,4,0.05,r.gamma,'2')}
+      <div class="sect" style="padding-left:0">Point size</div>
+      ${SL('fixed px','rev.size',0.5,12,0.5,r.size,'px')}
+      <div class="sect" style="padding-left:0">Detail</div>
+      ${SL('LOD','rev.lod',1,20,1,r.lod,'M',' M pts')}
+      <div class="hint">Page-admission ceiling — it drops whole pages, it does not decimate within a page.</div>
+      <div class="sect" style="padding-left:0">Clipping</div>
+      ${SL('z-max','rev.zmax',0.2,3.2,0.1,r.zmax,'m')}
+      <div class="sect" style="padding-left:0">Overlays</div>
+      <div class="wrap8">${SW('Trajectory',r.traj,'revTraj')}
+        <span class="sw" style="opacity:.45">EDL shading ${RO('Persisted, but no post-process pass renders it')}</span></div>
+      <div style="margin-top:14px">${B('Reset to this project’s profile defaults','revReset',{cls:'wide'})}</div>
+    </div>`;
+};
+
+A.plan = ()=>{
+  const q=S.plan;
+  return bar('Floor plan',`slice ${f2(q.slice-q.band/2)}–${f2(q.slice+q.band/2)} m`,{back:true})
+  + `<div class="vp" style="height:250px;flex:none;border-bottom:1px solid var(--line)">
+      <canvas data-plan="1"></canvas></div>
+    <div class="body" style="padding:0 14px 24px">
+      <div class="row" style="padding:11px 0;gap:8px">
+        ${B(q.state==='busy'?'Extracting…':'Extract','planExtract',{cls:'pri',dis:q.state==='busy'})}
+        ${q.state==='done'?B('DXF','planExport',{arg:'dxf'})+B('PDF','planExport',{arg:'pdf'}):''}
+      </div>
+      ${q.state==='busy'?`<div class="bar"><i style="width:${q.pct}%"></i></div>`:''}
+      ${q.state==='done'?`<div class="card"><div class="hint" style="font-family:var(--mono);line-height:1.7">
+        ${q.stats.walls} walls · ${q.stats.openings} openings · ${q.stats.rooms} rooms (${f1(q.stats.area)} m²)<br>
+        ${fmt(q.stats.cells)} occupied cells · ${q.stats.lines} RANSAC lines · ${q.stats.paired} paired · ${q.stats.snapped} snapped<br>
+        dominant direction ${f3(q.stats.dom)}°</div></div>`:''}
+      <div class="sect" style="padding-left:0">Slice band</div>
+      ${SL('height','plan.slice',-1,5,0.05,q.slice,'m')}
+      ${SL('band','plan.band',0.05,3,0.05,q.band,'m')}
+      <div class="hint">§3.6's default is 1.0–1.5 m, which clears furniture and catches door frames.</div>
+      <div class="sect" style="padding-left:0">Options</div>
+      ${SL('min/cell','plan.minCell',1,30,1,q.minCell,'i')}
+      <div class="wrap8" style="margin-top:8px">
+        ${SW('Snap to orthogonal (7°)',q.ortho,'planOrtho')}
+        ${SW('Detect openings',q.openings,'planOpenings')}
+        ${SW('Detect rooms',q.rooms,'planRooms')}
+        ${SW('Window sill check (0.35–0.80 m)',q.sill,'planSill')}
+      </div>
+      <div class="sect" style="padding-left:0">What you are looking at</div>
+      <div class="hint" style="line-height:1.8">
+        Thick white = wall measured on both faces · thin teal = one side measured, thickness assumed<br>
+        Blue = opening (door swing drawn) · dashed teal = window, solid below the 0.35–0.80 m sill band<br>
+        Dashed amber = shelving the slice band cut through — raise the band or draw an exclude region</div>
+      <div class="hint" style="margin-top:8px">Include/exclude regions need draw-on-plan and ship on desktop only. ${RO('Android has the slice slider only')}</div>
+    </div>`;
+};
+
+A.merge = ()=>{
+  const m=S.merge;
+  const eligible=S.projects.filter(p=>p.georef);
+  return bar('Merge sessions','georeferenced auto-merge',{back:true})
+  + `<div class="body" style="padding:12px 14px 24px">
+    <div class="hint">Android runs one path only: <code>align_georeferenced()</code> → <code>refine()</code> →
+      <code>build()</code>. 3-point manual alignment is the desktop workbench.</div>
+    <div class="sect" style="padding-left:0">Projects</div>
+    ${S.projects.map((p,i)=>`<button class="lrow" style="border:1px solid var(--line);border-radius:10px;margin-bottom:8px"
+      data-act="mergeSel" data-arg="${i}" aria-selected="${m.sel.includes(i)}" ${p.georef?'':'disabled style="opacity:.45;border:1px solid var(--line);border-radius:10px;margin-bottom:8px"'}>
+      <div style="min-width:0"><b>${p.name}</b>
+        <span>${p.georef?`${p.epsg} · ±${f3(0.02+i*0.004)} m (1σ)`:'No georeference recorded — this capture had no RTK rover attached.'}</span></div>
+      <span class="chip ${m.sel.includes(i)?'ember':'faint'}">${m.sel.includes(i)?'selected':'—'}</span></button>`).join('')}
+    <div class="row" style="gap:8px;margin-top:6px">
+      ${B(m.phase==='run'?'Merging…':'Merge selected','mergeRun',{cls:'pri',dis:m.sel.length<2||m.phase==='run'})}
+      ${m.built?B('Share .ply','share',{arg:'merged.ply'}):''}
+    </div>
+    ${m.sel.length<2?`<div class="hint" style="margin-top:8px">Pick at least two georeferenced sessions.</div>`:''}
+    ${m.phase==='run'?`<div class="bar"><i style="width:${m.pct}%"></i></div>`:''}
+    ${m.built?`<div class="card" style="margin-top:12px"><b style="font-size:13px">Result</b>
+      <div class="hint" style="font-family:var(--mono);line-height:1.7;margin-top:5px">
+        georeferenced align: 2 aligned, 0 skipped, max ENU-origin separation 331.57 m<br>
+        refine: 1 pair refined, 1 converged, 0 low-overlap, worst rms 9.9 mm<br>
+        built: 23 496 input → 23 405 merged points (91 dedup-dropped), 1 page</div></div>`:''}
+  </div>`;
+};
+
+A.settings = ()=>{
+  const s=S.set;
+  return bar('Settings','',{back:true})
+  + `<div class="body" style="padding:12px 14px 24px">
+    <div class="sect" style="padding-left:0">Units</div>
+    ${SEG([['m','Meters (m)'],['ft','Feet (ft)']],s.units,'setUnits')}
+    <div class="sect" style="padding-left:0">Theme</div>
+    ${SEG([['System','System'],['Light','Light'],['Dark','Dark']],s.theme,'setTheme')}
+    <div class="hint" style="margin-top:6px">The mockup itself stays in the dark cockpit theme. ${RO('Light theme not drawn')}</div>
+    <div class="sect" style="padding-left:0">Storage location</div>
+    <div class="card"><div class="hint" style="font-family:var(--mono)">${esc(s.storage)}</div>
+      <div class="hint" style="margin-top:5px">A location picker is a future addition. ${RO('Read-only by design')}</div></div>
+    <div class="sect" style="padding-left:0">Workflow profiles</div>
+    ${Object.entries(PROFILES).map(([k,p])=>`<div class="card">
+      <div class="row"><b style="font-size:13px">${p.name}</b>
+        ${s.profile===k?'<span class="chip ember" style="margin-left:auto">app default</span>'
+          :`<span style="margin-left:auto">${B('Make default','setProfile',{arg:k,cls:'sm'})}</span>`}</div>
+      <div class="hint" style="margin-top:5px;font-family:var(--mono);line-height:1.7">
+        ${p.liveSlam?'Live-SLAM':'Record-only'} · export ${p.export} · display ${p.name}<br>
+        ${p.keyframes?'camera keyframes on':'no camera'} · ${p.gate} · slice ${p.slice}</div></div>`).join('')}
+    <div class="hint" style="margin-top:6px">Changing the app default changes new projects only —
+      an existing capture keeps the settings written into its manifest.</div>
+    <div class="sect" style="padding-left:0">Cloud processing</div>
+    <div class="card">${FLD('Server URL','set.cloud',s.cloud)}
+      ${FLD('Token','set.token','••••••••••••',{type:'password'})}
+      <div style="margin-top:8px">${B('Save','setSave',{cls:'sm'})}</div>
+      <div class="hint" style="margin-top:6px">Stored in app-private preferences, not the Android Keystore.</div></div>
+    <div class="sect" style="padding-left:0">Processing</div>
+    <div class="card">${SW('Colorize with poor clock sync', s.poorSync, 'setPoorSync')}
+      <div class="hint" style="margin-top:5px">Above 15 ms of jitter the colorizer refuses by default.</div></div>
+    <div class="sect" style="padding-left:0">Engine (developer)</div>
+    <div class="card">${SW('Use simulated engine', s.sim, 'setSim')}
+      <div class="hint" style="margin-top:5px">Takes effect after restarting the app.</div>
+      <div style="margin-top:9px">${B('Replay synthetic capture','replay',{cls:'sm'})}</div></div>
+  </div>`;
+};
+
+/* ═══════════════ DESKTOP SCREENS ═══════════════ */
+const D = {};
+const TABS = [['projects','Projects'],['capture','Capture'],['review','Review'],
+              ['plan','Floor plan'],['merge','Merge'],['processing','Processing'],
+              ['transfer','Transfer'],['export','Export']];
+
+D.projects = ()=>`
+  <div class="dgrid" style="display:grid;grid-template-columns:300px 1fr;min-height:440px">
+    <div style="border-right:1px solid var(--line);display:flex;flex-direction:column">
+      <div class="sect">Projects — recents</div>
+      <div class="list">${S.projects.map(p=>`
+        <button class="lrow" data-act="open" data-arg="${p.id}" aria-selected="${p.id===S.pid}">
+          <div style="min-width:0"><b>${p.name}.lscan</b>
+            <span>${fmt(p.pts)} pts · ${p.georef?'georef ✓':'local frame'}</span></div></button>`).join('')}</div>
+      <div class="wrap8" style="padding:11px">${B('Open…','deskOpen',{cls:'sm'})}${B('New…','deskNew',{cls:'sm'})}
+        ${B('Import raw D6…','deskImportD6',{cls:'sm'})}</div>
+      <div class="dockcard"><h4>Replay (D6 raw → engine → viewport)</h4>
+        <div class="slider"><label>speed</label>
+          <input type="range" min="0" max="8" step="0.5" value="${S.replaySpeed||1}" data-inp="replaySpeed" data-live="draw" data-fmt="1">
+          <b data-out="replaySpeed">${f1(S.replaySpeed||1)}</b></div>
+        <div class="hint">0 = "max" — pushes chunks as fast as the engine decodes them.</div>
+        <div class="wrap8" style="margin-top:8px">${B('Replay','deskReplay',{cls:'sm'})}${B('Stop','deskReplayStop',{cls:'sm'})}</div></div>
+    </div>
+    <div style="display:flex;flex-direction:column;min-width:0">
+      <div class="dockcard"><h4>Project</h4>
+        <div class="hint" style="font-family:var(--mono);line-height:1.7">
+          ${esc(proj().name)}.lscan · 193 chunks · ${proj().sizeMb} MB · span 17.07 s<br>
+          sealed: <span style="color:var(--fix-good)">true</span></div></div>
+      <div class="dockcard"><h4>Streams</h4>
+        <table style="font-size:12px"><tr><th>Stream</th><th>Chunks</th><th>Payload</th><th>Span</th></tr>
+          <tr><td>lidar (Mid-360 packets)</td><td>1667</td><td>385.0 KB</td><td>17.07 s</td></tr>
+          <tr><td>imu (Mid-360)</td><td>1601</td><td>44.8 KB</td><td>17.07 s</td></tr>
+          <tr><td>frames (camera)</td><td>6</td><td>1.9 MB</td><td>16.4 s</td></tr></table>
+        <div class="hint" style="margin-top:7px;color:var(--fix-good)">no reader warnings — project looks sane</div></div>
+      <div class="dockcard" style="flex:1"><h4>Log</h4>
+        <div class="hint" style="font-family:var(--mono);line-height:1.75;white-space:pre-wrap">${esc(S.log.join('\n'))}</div></div>
+    </div>
+  </div>`;
+
+D.capture = ()=>{
+  const c=S.dcap, rec=c.state==='rec';
+  return `<div class="dgrid" style="display:grid;grid-template-columns:1fr 330px;min-height:440px">
+    <div class="vp" data-orbit="dcap" style="min-height:300px"><canvas data-cloud="dcap"></canvas>
+      <div class="ovl" style="bottom:10px;left:12px"><span class="chip faint" id="dcap-stats">idle</span></div>
+      <div class="ovl act" style="top:10px;left:12px">${SEG([['3d','3D'],['ar','AR']],c.view,'dcapView','sm')}</div>
+    </div>
+    <div style="border-left:1px solid var(--line);overflow-y:auto;max-height:520px">
+      <div class="pill-tabs" style="border-top:none">
+        <button data-act="dcapTransport" data-arg="d6" aria-pressed="${c.transport==='d6'}">COIN-D6 (serial)</button>
+        <button data-act="dcapTransport" data-arg="mid360" aria-pressed="${c.transport==='mid360'}">Livox Mid-360 (Ethernet)</button>
+      </div>
+      ${c.transport==='d6'?`
+      <div class="dockcard"><h4>Serial</h4>
+        <div class="field"><label>Serial port (auto-refreshes every 2 s while idle)</label>
+          <select data-inp="dcap.port"><option>/dev/tty.usbserial-14230</option>
+            <option>/dev/cu.wchusbserial-14230</option><option>(no serial ports found)</option></select></div>
+        <div class="hint" style="color:var(--fix-good)">This looks like the vendor's own CH340 USB-serial adapter.</div>
+        ${FLD('Baud (8N1)','dcap.baud',c.baud,{inline:1})}
+        <div style="margin-top:6px">${SW('Send start/stop command frames (AA 55 F0 0F / AA 55 F5 0A)',c.frames!==false,'dcapFrames')}</div>
+        <div class="hint" style="margin-top:7px">${S.dev==='mac'
+          ? 'macOS: the CH340 driver is in-box on modern releases; choose the cu.* node, not tty.*, or open() blocks on carrier detect.'
+          : 'Windows: install the CH340 driver shipped in the vendor kit before the adapter appears as a COM port.'}</div></div>`
+      :`
+      <div class="dockcard"><h4>Ethernet</h4>
+        ${FLD('Host IP (static)','m360.hostIp',S.m360.hostIp,{inline:1})}
+        ${FLD('Lidar IP','m360.lidarIp',S.m360.lidarIp,{inline:1})}
+        ${FLD('Point port','m360.pt',S.m360.pt,{inline:1})}
+        ${FLD('IMU port','m360.imu',S.m360.imu,{inline:1})}
+        ${FLD('Command port','m360.cmd',S.m360.cmd,{inline:1})}
+        <div class="hint" style="margin-top:6px">The lidar IP is required on macOS: stock SDK2 broadcast discovery
+          fails with EADDRNOTAVAIL there. Power is 9–27 V / ~6.5 W — an external battery is required.</div></div>`}
+      <div class="dockcard"><h4>Session</h4>
+        ${FLD('.lscan project','dcap.path',`~/Captures/${proj().name}.lscan`)}
+        <div class="field"><label>Profile</label>
+          <select data-inp="dcap.profile" data-live="draw">
+            ${['quickscan','survey','floorplan','research'].map(p=>
+              `<option${(c.profile||'floorplan')===p?' selected':''}>${p}</option>`).join('')}</select></div>
+        <div style="margin:8px 0">${SW('Live (render while capturing)',c.live,'dcapLive')}</div>
+        <div class="wrap8">
+          ${B('Test device','dcapTest',{cls:'sm',dis:c.selftest==='run'})}
+          ${B('Record','dcapRec',{cls:'sm pri',dis:c.selftest!=='pass'||rec})}
+          ${B(c.state==='paused'?'Resume':'Pause','dcapPause',{cls:'sm',dis:c.state==='idle'})}
+          ${B('Stop','dcapStop',{cls:'sm',dis:c.state==='idle'})}
+        </div>
+        ${c.selftest!=='idle'?`<div class="bar ${c.selftest==='pass'?'good':''}"><i style="width:${c.stpct}%"></i></div>
+          <div class="hint" style="font-family:var(--mono);color:${c.selftest==='pass'?'var(--fix-good)':c.selftest==='fail'?'var(--fix-bad)':'var(--ink-mute)'}">
+          ${esc(c.stmsg||'')}</div>`:
+          `<div class="hint" style="margin-top:8px">Record unlocks after the self-test passes —
+            ${c.transport==='d6'?'≥ 3 000 pts/s over a 3 s window':'first packet within 8 s'}.</div>`}
+      </div>
+      <div class="dockcard"><h4>Health (polled 300 ms)</h4>
+        <div class="hint" style="font-family:var(--mono);line-height:1.7" id="dcap-health">idle</div></div>
+    </div></div>`;
+};
+
+D.review = ()=>{
+  const r=S.rev, p=proj();
+  return `<div class="dgrid" style="display:grid;grid-template-columns:1fr 300px;min-height:440px">
+    <div class="vp" data-orbit="rev" data-pick="rev" style="min-height:340px"><canvas data-cloud="rev"></canvas>
+      <div class="ovl act" style="top:10px;left:12px">
+        <button class="chip ${r.measure?'ember':''}" data-act="measure">MEASURE ${r.measure?'ON':'OFF'}</button></div>
+      <div class="ovl" style="bottom:10px;left:12px"><span class="chip faint" id="rev-fps2">
+        ${fmt(p.pts)} pts · 59.2 fps · cpu p95 0.23 ms · gpu p95 1.97 ms · ${S.dev==='mac'?'Metal':'Vulkan'}</span></div>
+      ${r.measure?`<div class="ovl" style="top:10px;right:12px"><span class="chip warn">
+        ${r.marks.length===1?'First point picked — click a second point':'Click a point to start'}</span></div>`:''}
+    </div>
+    <div style="border-left:1px solid var(--line);overflow-y:auto;max-height:520px">
+      <div class="dockcard"><h4>Workflow profile</h4>
+        <div class="field"><label>Profile</label><select data-inp="rev.profile" data-live="preset">
+          ${['(custom)','survey','floorPlan','research','quickScan'].map(v=>
+            `<option${(r.profile||'(custom)')===v?' selected':''}>${v}</option>`).join('')}</select></div>
+        <div class="hint">Selecting one replaces every parameter below with A14's <code>profile_defaults()</code>.</div></div>
+      <div class="dockcard"><h4>Colour</h4>
+        ${SEG([['height','height'],['rgb','rgb'],['intensity','intensity'],['time','time']],r.color,'revColor','sm')}
+        ${SL('gamma','rev.gamma',0.1,4,0.05,r.gamma,'2')}
+        ${SL('brightness','rev.bright',0.1,3,0.05,r.bright||1,'2')}</div>
+      <div class="dockcard"><h4>Point size</h4>
+        ${SL('fixed px','rev.size',0.5,64,0.5,r.size,'px')}</div>
+      <div class="dockcard"><h4>Detail</h4>
+        ${SL('LOD budget','rev.lod',1,50,1,r.lod,'M',' M')}
+        <div class="hint">Drops whole pages past the budget; true coarse-to-fine LOD is C3 work.</div>
+        <div style="margin-top:7px;opacity:.45">${SW('EDL shading',false,'noop')} ${RO('Stored + persisted; no post-process pass renders it')}</div></div>
+      <div class="dockcard"><h4>Clipping</h4>
+        ${SL('z max','rev.zmax',0.2,3.2,0.1,r.zmax,'m')}</div>
+      <div class="dockcard"><h4>Overlays</h4>
+        <div class="wrap8">${SW('Trajectory',r.traj,'revTraj')}${SW('Pose graph',r.pg,'revPg')}</div></div>
+      <div class="dockcard"><h4>Measure</h4>
+        <div>${SW('Measure mode (click two points in the viewport)',r.measure,'measure')}</div>
+        <div class="field" style="margin-top:8px"><label>Units</label>
+          <select data-inp="rev.units" data-live="draw">
+            <option value="m"${r.units==='m'?' selected':''}>Metric (m)</option>
+            <option value="ft"${r.units==='ft'?' selected':''}>Imperial (ft)</option></select></div>
+        ${r.segs.length?r.segs.map((s,i)=>`<div class="kv"><span>${i+1}:</span><b>${s.label}</b></div>`).join('')
+          :`<div class="hint">${r.measure?'Click a point in the viewport to start a measurement.':'Measure mode is off.'}</div>`}
+        <div class="wrap8" style="margin-top:8px">${B('Clear all','measClear',{cls:'sm'})}</div></div>
+      <div class="dockcard"><h4>Export</h4>
+        <div class="hint">LAS 1.4 · ${p.epsg||'no CRS'}<br>
+          ${p.georef?'<span style="color:var(--fix-good);font-family:var(--mono)">georef converged ✓</span>'
+                    :'<span style="color:var(--ink-faint)">local frame — LAS gets no CRS</span>'}</div>
+        <div style="margin-top:8px">${B('Export…','tab',{arg:'export',cls:'sm'})}</div></div>
+    </div></div>`;
+};
+
+D.plan = ()=>{
+  const q=S.plan;
+  return `<div class="dgrid" style="display:grid;grid-template-columns:1fr 330px;min-height:440px">
+    <div class="vp" style="min-height:340px"><canvas data-plan="1"></canvas></div>
+    <div style="border-left:1px solid var(--line);overflow-y:auto;max-height:520px">
+      <div class="dockcard">
+        ${B(q.state==='busy'?'Extracting…':'Extract floor plan from current cloud','planExtract',{cls:'wide pri',dis:q.state==='busy'})}
+        ${q.state==='busy'?`<div class="bar"><i style="width:${q.pct}%"></i></div>`:''}</div>
+      <div class="dockcard"><h4>Slice</h4>
+        ${SL('height','plan.slice',-1,5,0.05,q.slice,'m')}
+        ${SL('band width','plan.band',0.05,3,0.05,q.band,'m')}
+        <div class="hint" style="font-family:var(--mono)">band ${f2(q.slice-q.band/2)} .. ${f2(q.slice+q.band/2)} m</div>
+        <div style="margin-top:8px">${SW('Orthogonality snap (7 deg)',q.ortho,'planOrtho')}</div>
+        <div style="margin-top:5px">${SW('Window sill check (0.35-0.80 m)',q.sill,'planSill')}</div>
+        <div class="hint" style="margin-top:6px">Snap is the fast path (walls only). Band and sill rebuild the
+          occupancy grid — the slow path.</div></div>
+      <div class="dockcard"><h4>Include / exclude regions</h4>
+        <div class="row">${SEG([['Include','Include'],['Exclude','Exclude']],q.region,'planRegionMode','sm')}
+          ${B('Draw region on plan','planRegion',{cls:'sm'})}</div>
+        ${q.regions&&q.regions.length?q.regions.map((rg,i)=>`<div class="kv"><span>${rg.mode.toLowerCase()}</span>
+          <b>(${f1(rg.x0)},${f1(rg.y0)})-(${f1(rg.x1)},${f1(rg.y1)})</b></div>`).join('')
+          :`<div class="hint" style="margin-top:6px">No regions — every point is kept. Exclude always wins over include.</div>`}
+        ${q.regions&&q.regions.length?`<div class="wrap8" style="margin-top:7px">${B('Clear all','planRegionClear',{cls:'sm'})}</div>`:''}</div>
+      <div class="dockcard"><h4>Detail</h4>
+        ${SL('min/cell','plan.minCell',1,30,1,q.minCell,'i')}
+        <div class="wrap8" style="margin-top:6px">${SW('Detect openings',q.openings,'planOpenings')}${SW('Detect rooms',q.rooms,'planRooms')}</div></div>
+      <div class="dockcard"><h4>Stats</h4>
+        <div class="hint" style="font-family:var(--mono);line-height:1.7">${q.state==='done'
+          ? `${q.stats.walls} walls, ${q.stats.openings} openings, ${q.stats.rooms} rooms (${f1(q.stats.area)} m2 total)<br>
+             ${fmt(q.stats.cells)} occupied cells, dominant direction ${f3(q.stats.dom)} deg<br>
+             slice ${f2(q.slice-q.band/2)}..${f2(q.slice+q.band/2)} m`
+          : 'no plan extracted yet'}</div></div>
+      <div class="dockcard"><h4>Export</h4>
+        <div class="wrap8">${B('Export DXF…','planExport',{arg:'dxf',cls:'sm',dis:q.state!=='done'})}
+          ${B('Export PDF…','planExport',{arg:'pdf',cls:'sm',dis:q.state!=='done'})}</div>
+        <div class="hint" style="margin-top:6px">DXF R12 (AC1009), layers WALLS / OPENINGS / ROOMS / DIMENSIONS.
+          PDF 1:50 with a north arrow marked <b>N (ASSUMED)</b> until georeferencing sets it.</div></div>
+    </div></div>`;
+};
+
+D.merge = ()=>{
+  const m=S.merge;
+  const pair = m.res!==null;
+  return `<div class="dgrid" style="display:grid;grid-template-columns:1fr 360px;min-height:440px">
+    <div class="vp" style="min-height:340px"><canvas data-cloud="merge"></canvas>
+      <div class="ovl" style="bottom:10px;left:12px"><span class="chip faint" id="merge-stat">
+        ${m.built?'merged cloud · run-table provenance':'sessions in their own frames'}</span></div>
+      ${m.phase==='align'?`<div class="ovl" style="top:10px;left:12px"><span class="chip warn" id="merge-res">aligning…</span></div>`:''}
+    </div>
+    <div style="border-left:1px solid var(--line);overflow-y:auto;max-height:520px">
+      <div class="dockcard"><h4>Sessions</h4>
+        <div style="overflow-x:auto"><table style="font-size:11.5px" class="mergetbl"><tr><th>Provenance</th><th>Georef</th><th>Kept/dropped</th></tr>
+        ${SESS.map((s,i)=>`<tr style="${m.anchor===i?'background:var(--panel-2)':''}">
+          <td style="white-space:normal"><span style="display:inline-block;width:8px;height:8px;border-radius:2px;
+            background:rgb(${s.col.join(',')});margin-right:6px"></span>${s.name}${m.anchor===i?' <span class="chip ember">anchor</span>':''}
+            <div style="color:var(--ink-faint);font-family:var(--mono);font-size:10px;margin-left:14px">
+              ${m.built||m.res!==null?(s.georef?'georeferenced':'icp'):s.src}</div></td>
+          <td style="${s.georef?'color:var(--fix-good)':'color:var(--ink-faint)'}">${s.georef?`±${f3(s.sigma)} m`:'—'}</td>
+          <td>${fmt(s.pts)}/${s.drop}</td></tr>`).join('')}</table></div>
+        <div class="wrap8" style="margin-top:8px">${B('Add from open project','mergeAdd',{cls:'sm'})}
+          ${B('Set as anchor','mergeAnchor',{cls:'sm'})}${B('Remove selected','mergeRemove',{cls:'sm'})}</div></div>
+      <div class="dockcard"><h4>Coarse alignment (§3.10)</h4>
+        <div class="wrap8">${B('Auto (georeferenced)','mergeGeoref',{cls:'sm'})}
+          ${B('3-point manual…','mergeManual',{cls:'sm'})}${B('Yaw search vs reference','mergeYaw',{cls:'sm'})}</div>
+        <div class="hint" style="margin-top:7px;font-family:var(--mono)">${esc(m.alignStatus||'no alignment attempted yet')}</div></div>
+      <div class="dockcard"><h4>Refine (voxel point-to-plane ICP)</h4>
+        <div class="wrap8">${B('Survey overlap','mergeOverlap',{cls:'sm'})}
+          ${B(m.phase==='align'?'Refining…':'Refine','mergeRefine',{cls:'sm pri',dis:m.phase==='align'})}</div>
+        <div class="hint" style="margin-top:7px;font-family:var(--mono)">${esc(m.refineStatus||'not refined yet')}</div>
+        <div style="height:96px;margin-top:9px;border:1px solid var(--line);border-radius:7px;overflow:hidden">
+          <canvas data-trace="1"></canvas></div>
+        ${pair?`<table style="font-size:11px;margin-top:8px">
+          <tr><th>Pair</th><th>RMS before</th><th>RMS after</th><th>Ovl</th><th>Status</th></tr>
+          <tr><td>0↔1</td><td>119.21 mm</td><td>${f2(m.res)} mm</td><td>33.8/35.1%</td>
+              <td style="color:var(--fix-good)">converged</td></tr>
+          <tr><td>1↔2</td><td>107.43 mm</td><td>9.95 mm</td><td>35.6/36.3%</td>
+              <td style="color:var(--fix-good)">converged</td></tr>
+          <tr><td>0↔2</td><td>0.00 mm</td><td>0.00 mm</td><td>0.0/0.0%</td>
+              <td style="color:var(--fix-warn)">low overlap</td></tr></table>
+          <div class="hint" style="margin-top:6px">A low-overlap pair is a first-class outcome, not an error —
+            these two do not see the same place.</div>`:''}</div>
+      <div class="dockcard"><h4>Build merged cloud</h4>
+        <div>${SW('Colour by session (run-table ranges → distinct colours)',m.colorBy,'mergeColor')}</div>
+        ${SL('dedup','merge.voxel',0,0.5,0.005,m.voxel,'3',' m')}
+        <div class="wrap8" style="margin-top:8px">${B('Build merged cloud → viewport','mergeBuild',{cls:'sm pri'})}
+          ${B('Export merged…','tab',{arg:'export',cls:'sm',dis:!m.built})}</div>
+        <div class="hint" style="margin-top:7px;font-family:var(--mono)">${m.built
+          ? 'built: 34 949 input → 34 706 merged points (63 dedup-dropped, 180 priority-dropped), 1 page (2 shared)'
+          : 'not built yet'}</div></div>
+    </div></div>`;
+};
+
+D.processing = ()=>`
+  <div style="padding:14px 16px;display:flex;flex-direction:column;gap:11px;min-height:440px">
+    <div class="wrap8">
+      ${B('Post-process…','jobNew',{arg:'POST_PROCESS'})}${B('Colorize…','jobNew',{arg:'COLORIZE'})}
+      ${B('Export…','jobNew',{arg:'EXPORT_POINTS'})}${B('Transfer bundle…','jobNew',{arg:'TRANSFER_EXPORT'})}
+      ${B('Submit to cloud…','jobNew',{arg:'CLOUD_SUBMIT'})}
+    </div>
+    <div class="tablewrap"><table>
+      <tr><th>ID</th><th>Kind</th><th>State</th><th>Progress</th><th>Stage</th><th>Message</th><th></th></tr>
+      ${S.jobs.length?S.jobs.map(j=>`<tr>
+        <td>#${j.id}</td><td style="font-family:var(--mono);font-size:12px">${j.kind.toLowerCase().replace('_','-')}</td>
+        <td><span class="chip ${STATECLS[j.state]}">${j.state.toLowerCase()}</span></td>
+        <td style="min-width:130px"><div class="bar ${j.state==='DONE'?'good':''}" style="margin:0"><i style="width:${(j.p*100).toFixed(1)}%"></i></div>
+          <span style="font-family:var(--mono);font-size:10.5px;color:var(--ink-faint)">${(j.p*100).toFixed(1)}%</span></td>
+        <td style="font-family:var(--mono);font-size:11.5px">${esc(j.stage)}</td>
+        <td style="font-size:11.5px;color:${j.err?'var(--fix-bad)':'var(--ink-faint)'}">${esc(j.err||j.note||'')}</td>
+        <td class="wrap8">${j.state==='QUEUED'||j.state==='RUNNING'?B('Cancel','jobCancel',{arg:j.id,cls:'sm'}):''}
+          ${j.state==='DONE'&&j.kind==='POST_PROCESS'?B('Load result','jobLoad',{arg:j.id,cls:'sm'}):''}</td></tr>`).join('')
+        :`<tr><td colspan="7" style="color:var(--ink-faint)">Queue is empty — one worker thread, priority then FIFO.</td></tr>`}
+    </table></div>
+    <div class="row" style="font-size:12px;color:var(--ink-mute);flex-wrap:wrap;gap:9px">
+      Run on: ${SEG([['local','This PC'],['cloud','Cloud'],['transfer','Export bundle']],S.runMode,'runMode')}
+      <span style="margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--ink-faint)">worker: engine_cli --post</span>
+    </div>
+    <div class="hint">Stages come from the engine's own labels: ${POST_STAGES.join(' → ')}.
+      A cancelled job settles into <b>failed</b> with <code>kCancelled</code> — there is no separate cancelled state.</div>
+  </div>`;
+
+D.transfer = ()=>{
+  const x=S.xfer;
+  return `<div style="padding:18px 16px;min-height:440px;display:flex;justify-content:center">
+    <div style="width:min(560px,100%)">
+      <div class="card">
+        <b style="font-size:14px">Export transfer bundle</b>
+        <div class="hint" style="margin-top:5px">Project: ${esc(proj().name)}.lscan</div>
+        ${FLD('Bundle (.lscan.zip)','xfer.path',x.path)}
+        <div style="margin:8px 0">${SW('Include processed/ results (uncheck for raw-only transfer)',x.incl,'xferIncl')}</div>
+        ${x.state!=='idle'?`<div class="bar ${x.state==='done'?'good':''}"><i style="width:${x.pct}%"></i></div>`:''}
+        <div class="hint" style="font-family:var(--mono);min-height:18px">${esc(x.msg||'')}</div>
+        <div class="wrap8" style="margin-top:9px">
+          ${B('Export','xferRun',{cls:'pri',dis:x.state==='run'})}
+          ${B('Cancel','xferCancel',{dis:x.state!=='run'})}
+          ${B('Open containing folder','reveal',{dis:x.state!=='done'})}
+        </div>
+        <div class="hint" style="margin-top:8px">Cancel semantics are asymmetric on purpose:
+          export cancel <b>removes</b> the partial zip (a half-written zip looks openable and is not);
+          import cancel <b>leaves</b> whatever was extracted.</div>
+      </div>
+      <div class="card">
+        <b style="font-size:14px">Import transfer bundle</b>
+        ${FLD('Bundle (.lscan.zip)','xfer.inPath','~/Downloads/site-north-01.lscan.zip')}
+        ${FLD('Destination .lscan directory (created fresh)','xfer.dest','~/Captures/site-north-01.lscan')}
+        <div class="hint" style="margin-top:7px">Manifest sanity report (FileRecordReader, same code path as the Projects panel):</div>
+        <table style="font-size:11.5px;margin-top:6px"><tr><th>Stream</th><th>Chunks</th><th>Payload</th><th>Span</th></tr>
+          <tr><td>lidar (Mid-360 packets)</td><td>193</td><td>394 287 B</td><td>17.07 s</td></tr></table>
+        <div class="hint" style="margin-top:6px;color:var(--fix-good)">no reader warnings — bundle looks sane</div>
+        <div class="wrap8" style="margin-top:9px">${B('Import','xferImport',{cls:'pri'})}${B('Open in library','deskOpen')}</div>
+        <div class="hint" style="margin-top:8px">Drag a <code>.lscan.zip</code> onto the window for the same funnel. ${RO('Drag-and-drop needs a real window')}</div>
+      </div>
+    </div></div>`;
+};
+
+D.export = ()=>{
+  const e=S.exp, p=proj();
+  const sizes={'PLY (binary)':'1 925 061 B','LAS 1.4':'3 128 653 B','PCD (binary)':'2 406 200 B'};
+  return `<div style="padding:18px 16px;min-height:440px;display:flex;justify-content:center">
+    <div style="width:min(520px,100%)">
+      <div class="card"><b style="font-size:14px">Export</b>
+        <div class="field"><label>Format</label>
+          <select data-inp="exp.fmt" data-live="rerender">
+            ${['PLY (binary)','LAS 1.4','PCD (binary)'].map(f=>`<option${e.fmt===f?' selected':''}>${f}</option>`).join('')}
+          </select></div>
+        ${e.fmt==='LAS 1.4'&&!p.georef?`<div class="hint" style="color:var(--fix-warn)">
+          This project has no georeference — LAS 1.4 will be written without a CRS.</div>`:''}
+        <div class="wrap8" style="margin:9px 0">${SW('Include colour (RGB)',e.rgb,'expRgb')}${SW('Include intensity',e.inten,'expInten')}</div>
+        ${SL('decimate','exp.dec',1,50,1,e.dec,'i',' : 1')}
+        <div style="margin:7px 0">${SW('Bounds from current clipping',e.bounds,'expBounds')}</div>
+        ${FLD('Output file','exp.path',`~/Captures/${p.name}.lscan/exports/${p.name}.${e.fmt.startsWith('PLY')?'ply':e.fmt.startsWith('LAS')?'las':'pcd'}`)}
+        ${e.state!=='idle'?`<div class="bar ${e.state==='done'?'good':''}"><i style="width:${e.pct}%"></i></div>`:''}
+        <div class="hint" style="font-family:var(--mono);min-height:18px">${esc(e.msg||'')}</div>
+        <div class="wrap8" style="margin-top:9px">${B('Export','expRun',{cls:'pri',dis:e.state==='run'})}
+          ${B('Cancel','expCancel',{dis:e.state!=='run'})}${B('Open containing folder','reveal',{dis:e.state!=='done'})}</div>
+        <div class="hint" style="margin-top:8px">Reference sizes for the 120 300-point capture —
+          ${Object.entries(sizes).map(([k,v])=>`${k}: ${v}`).join(' · ')}. The writer polls the cancel token
+          every 4096 raw points.</div>
+      </div></div></div>`;
+};
+
+/* ═══════════════ extra state defaults ═══════════════ */
+Object.assign(S,{ log:['engine: starting','renderer: Metal · CAMetalLayer','project opened: warehouse-scan-03.lscan',
+                       'streams: 1667 point packets, 1601 imu packets'], replaySpeed:1 });
+Object.assign(S.cap,{size:2.0, color:'height', health:'ok'});
+Object.assign(S.dcap,{size:2.0, color:'height', profile:'floorplan', frames:true, stmsg:'', path:''});
+Object.assign(S.rev,{bright:1, pg:false, profile:'(custom)'});
+Object.assign(S.plan,{stats:null, regions:[]});
+Object.assign(S.merge,{alignStatus:'', refineStatus:'', pct:0, off:1, iter:[]});
+Object.assign(S.set,{token:'', poorSync:false});
+Object.assign(S.m360,{transport:'sdk2'});
+Object.assign(S.xfer,{msg:'', inPath:'', dest:''});
+Object.assign(S.exp,{msg:'', path:''});
+
+const CAM = {
+  cap:{yaw:0.70,pitch:0.95,zoom:23}, dcap:{yaw:0.60,pitch:0.92,zoom:30},
+  rev:S.rev, merge:{yaw:2.45,pitch:0.50,zoom:28}, calib:{yaw:0.85,pitch:0.80,zoom:34},
+};
+
+/* ═══════════════ device shells ═══════════════ */
+const MENUS = {
+  'File':[['New project…','deskNew'],['Open project…','deskOpen'],['Import raw D6 capture…','deskImportD6'],
+          ['—'],['Save display parameters to project','deskSaveParams'],['—'],
+          ['Export…  (Ctrl+E)','tab','export'],['—'],
+          ['Export transfer bundle…','tab','transfer'],['Import transfer bundle…','tab','transfer']],
+  'Capture':[['Open capture window…','tab','capture']],
+  'View':[['Fit to cloud  (F)','fit'],['Auto-orbit','autoOrbit'],['Vsync','vsync'],['—'],['Screenshot…','shot']],
+  'Tools':[['Load synthetic building fixture…','fixture'],['Build synthetic Mid-360 test project…','synthProject']],
+  'Help':[['About LidarScan','about']],
+};
+function phoneShell(inner){
+  return `<div class="phone"><div class="phone-screen">
+    <div class="notch"></div>
+    <div class="statusbar"><span>9:41</span><span>LTE ▮▮▮ 78%</span></div>
+    ${inner}</div></div>`;
+}
+function winShell(dev, inner){
+  const mac = dev==='mac';
+  const tab = S.scr[dev];
+  const title = `LidarScan — ${TABS.find(t=>t[0]===tab)[1]}${tab==='projects'?'':' · '+proj().name+'.lscan'}`;
+  return `<div class="win${mac?'':' w32'}">
+    <div class="titlebar${mac?'':' w32'}">
+      ${mac?`<span class="lights">
+        <button style="background:#ff5f57" data-act="chrome" data-arg="close" title="Close"></button>
+        <button style="background:#febc2e" data-act="chrome" data-arg="min" title="Minimise"></button>
+        <button style="background:#28c840" data-act="chrome" data-arg="zoom" title="Zoom"></button></span>`
+       :`<span style="color:var(--ember);font-family:var(--mono);font-size:11px;margin-right:10px">◆</span>`}
+      <span class="tt">${esc(title)}</span>
+      ${mac?'':`<span class="winctl" style="flex:none">
+        <button data-act="chrome" data-arg="min">—</button>
+        <button data-act="chrome" data-arg="zoom">▢</button>
+        <button class="x" data-act="chrome" data-arg="close">✕</button></span>`}
+    </div>
+    <div class="menubar" style="position:relative">
+      ${Object.keys(MENUS).map(m=>`<button data-act="menu" data-arg="${m}">${m}</button>`).join('')}
+      ${S.menu?menuPop(S.menu):''}
+    </div>
+    <div class="pill-tabs">
+      ${TABS.map(([v,l])=>`<button data-act="tab" data-arg="${v}" aria-pressed="${v===tab}">${l}</button>`).join('')}
+    </div>
+    ${inner}
+    <div style="display:flex;gap:14px;padding:5px 12px;border-top:1px solid var(--line);background:var(--panel-2);
+                font-family:var(--mono);font-size:10.5px;color:var(--ink-faint);flex-wrap:wrap">
+      <span id="deskstatus">engine ready · ${S.dcap.state==='rec'?'recording':'idle'}</span>
+      <span style="margin-left:auto">${fmt(proj().pts)} pts · 59.2 fps · ${dev==='mac'?'Metal':'Vulkan'} ·
+        dpr ${dev==='mac'?'2.00':'1.00'} · vsync on</span>
+    </div></div>`;
+}
+function menuPop(name){
+  const items=MENUS[name]||[];
+  const idx=Object.keys(MENUS).indexOf(name);
+  return `<div style="position:absolute;top:26px;left:${8+idx*62}px;z-index:30;min-width:250px;
+    background:var(--panel-3);border:1px solid var(--line);border-radius:8px;padding:5px;
+    box-shadow:0 14px 40px rgba(0,0,0,.6)">
+    ${items.map(it=> it[0]==='—'?`<div style="height:1px;background:var(--line);margin:4px 6px"></div>`
+      :`<button style="display:block;width:100%;text-align:left;padding:5px 10px;border-radius:5px;font-size:12.5px"
+          data-act="${it[1]}"${it[2]?` data-arg="${it[2]}"`:''} onmouseover="this.style.background='var(--panel-2)'"
+          onmouseout="this.style.background='none'">${it[0]}</button>`).join('')}
+  </div>`;
+}
+
+const HINTS={
+  projects:'Tap a project card to open it · “＋ New project” runs the real creation flow.',
+  new_project:'Pick a sensor and a profile — Create stays disabled until both are chosen.',
+  detail:'Every card here navigates. The Mid-360 card reflects whether the wizard saved addresses.',
+  connect_wizard:'Rescan → Connect. The health panel fills once the link is up.',
+  mid360:'Run the self-test — it animates for 2 s, then unlocks “Save to project”.',
+  calib:'Capture 8 poses → Solve → read the split-half gate → verify.',
+  capture:'Press Record: the cloud streams in progressively. Toggle AR, Live-SLAM, drag to orbit.',
+  rtk:'Pair a rover → pick a mountpoint → Connect. The fix climbs SINGLE → FLOAT → FIXED.',
+  processing:'Queue a job — it advances through the engine’s real stage labels.',
+  review:'Drag the viewport to orbit, scroll to zoom. Turn Measure on and tap two points.',
+  plan:'Extract, then drag the slice height — the plan is re-drawn from that band.',
+  merge:'Select two georeferenced sessions and merge.',
+  settings:'Profiles are read-only in the app; “Make default” changes what new projects get.',
+  transfer:'Export runs a real progress bar; Cancel removes the partial bundle.',
+  export:'Format changes the warning line and the output extension.',
+};
+
+/* ═══════════════ render ═══════════════ */
+let RENDERING=false, lastSoft=0;
+/** Progress animations re-render often; throttle them so typing survives. */
+function softRender(now){ if(now-lastSoft<130) return; lastSoft=now; render(); }
+function render(){
+  RENDERING=true;
+  // keep the caret where the operator left it across a background re-render
+  const ae=document.activeElement;
+  const keep = ae && ae.dataset && ae.dataset.inp
+    ? {p:ae.dataset.inp, s:ae.selectionStart, e:ae.selectionEnd} : null;
+  const st=$('#stage');
+  const scr=S.scr[S.dev];
+  st.innerHTML = S.dev==='android' ? phoneShell((A[scr]||A.projects)())
+                                   : winShell(S.dev,(D[scr]||D.projects)());
+  $$('#devsw button').forEach(b=>b.setAttribute('aria-pressed', String(b.dataset.dev===S.dev)));
+  $('#stagehint').innerHTML = (HINTS[scr]?`<b>${esc(HINTS[scr])}</b>`:'') +
+    (S.dev==='android'?'':' &nbsp;·&nbsp; Same Qt layout on both desktops; only the chrome differs.');
+  mount();
+  if(keep){
+    const el=$(`[data-inp="${keep.p}"]`);
+    if(el && el.focus){ el.focus();
+      try{ el.setSelectionRange(keep.s,keep.e); }catch(err){} }
+  }
+  RENDERING=false;
+}
+let CANVASES=[];
+function mount(){
+  CANVASES = $$('canvas');
+  $$('[data-orbit]').forEach(el=>attachOrbit(el, el.dataset.orbit));
+  $$('[data-pick]').forEach(el=>attachPick(el, el.dataset.pick));
+  redraw();
+}
+
+function capOpts(o, key){
+  const cam=CAM[key];
+  const follow = o.follow && o.state!=='idle';
+  return {scan: key==='dcap'?SCAN_D:SCAN, upto:o.prog,
+    yaw: cam.yaw + (follow?o.prog*1.1:0), pitch:cam.pitch, zoom:cam.zoom,
+    color:o.color, size:o.size, raw:!o.liveSlam, ar:o.view==='ar',
+    density: o.state==='rec'?0.75:1, traj:true, pulse:o.pulse||0, edl:true};
+}
+function revOpts(){
+  const r=S.rev;
+  return {scan:SCAN_D, upto:1, yaw:r.yaw, pitch:r.pitch, zoom:r.zoom, color:r.color==='time'?'rgb':r.color,
+    size:r.size, gamma:r.gamma, zmax:r.zmax, traj:r.traj, poseGraph:r.pg,
+    density: clamp(r.lod/20,0.08,1), marks:r.marks, segs:r.segs, edl:true};
+}
+function drawMerge(cv){
+  const m=S.merge, cam=CAM.merge;
+  const dpr=Math.min(2,window.devicePixelRatio||1);
+  const w=cv.clientWidth|0,h=cv.clientHeight|0; if(!w||!h) return;
+  if(cv.width!==w*dpr||cv.height!==h*dpr){cv.width=w*dpr;cv.height=h*dpr;}
+  const ctx=cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.fillStyle='#0b0e12'; ctx.fillRect(0,0,w,h);
+  const C=makeCam(w,h,{yaw:cam.yaw,pitch:cam.pitch,zoom:cam.zoom});
+  SESS.forEach((s,si)=>{
+    // misalignment decays to zero as the ICP trace converges
+    const off = si===0?0 : m.off*(si===1?1:1.35);
+    const dyaw = off*0.035*(si===1?1:-1), dx=off*0.42*(si===1?1:-0.6), dy=off*0.3;
+    const cs=Math.cos(dyaw), sn=Math.sin(dyaw);
+    const col = m.colorBy? s.col : null;
+    for(let i=0;i<s.scan.length;i+=2){
+      const p=s.scan[i];
+      const x=p.x*cs-p.y*sn+dx, y=p.x*sn+p.y*cs+dy;
+      const [sx,sy,d]=C.proj(x,y,p.z);
+      if(sx<-3||sx>w+3||sy<-3||sy>h+3) continue;
+      let r,g,b;
+      if(col){ r=col[0];g=col[1];b=col[2]; } else { const c=ramp(clamp(p.z/ROOM.h,0,1)); r=c[0];g=c[1];b=c[2]; }
+      const k=0.55+0.45*d;
+      ctx.fillStyle='rgba('+(r*k|0)+','+(g*k|0)+','+(b*k|0)+','+(0.4+0.45*d).toFixed(2)+')';
+      ctx.fillRect(sx,sy,Math.max(0.7,1.6*d),Math.max(0.7,1.6*d));
+    }
+  });
+  if(m.res!==null){
+    ctx.font='11px ui-monospace,monospace'; ctx.textAlign='right';
+    ctx.fillStyle= m.res<5?'#49d17f':'#e5b93c';
+    ctx.fillText('residual '+f2(m.res)+' mm', w-12, h-12);
+    ctx.textAlign='left';
+  }
+}
+function redraw(){
+  for(const cv of CANVASES){
+    const k=cv.dataset.cloud;
+    try{
+      if(k==='cap')       drawCloud(cv, capOpts(S.cap,'cap'));
+      else if(k==='dcap') drawCloud(cv, capOpts(S.dcap,'dcap'));
+      else if(k==='rev')  drawCloud(cv, revOpts());
+      else if(k==='merge')drawMerge(cv);
+      else if(k==='calib')drawCloud(cv,{scan:SCAN,upto:1,yaw:CAM.calib.yaw,pitch:CAM.calib.pitch,
+                                        zoom:CAM.calib.zoom,color:'height',size:2.2,traj:false,ar:true,density:0.5});
+      else if(cv.dataset.plan) drawPlan(cv, S.plan);
+      else if(cv.dataset.trace) drawTrace(cv, S.merge.iter);
+    }catch(e){ /* a viewport must never take the page down */ }
+  }
+}
+
+/* ═══════════════ orbit / pick ═══════════════ */
+function attachOrbit(el, key){
+  const cam=CAM[key]; if(!cam||el._orb) return; el._orb=1;
+  let down=false, lx=0, ly=0, moved=0;
+  el.addEventListener('pointerdown',e=>{
+    if(e.target.closest('.ovl.act')) return;
+    down=true; moved=0; lx=e.clientX; ly=e.clientY; el.setPointerCapture(e.pointerId);
+  });
+  el.addEventListener('pointermove',e=>{
+    if(!down) return;
+    const dx=e.clientX-lx, dy=e.clientY-ly; lx=e.clientX; ly=e.clientY;
+    moved+=Math.abs(dx)+Math.abs(dy);
+    cam.yaw -= dx*0.008; cam.pitch = clamp(cam.pitch + dy*0.006, 0.05, 1.5);
+    redraw();
+  });
+  const up=e=>{ if(down){ down=false; el._moved=moved; } };
+  el.addEventListener('pointerup',up); el.addEventListener('pointercancel',up);
+  el.addEventListener('wheel',e=>{
+    e.preventDefault();
+    cam.zoom = clamp(cam.zoom*(1 - e.deltaY*0.0012), 6, 140); redraw();
+  },{passive:false});
+}
+function attachPick(el, key){
+  if(el._pick) return; el._pick=1;
+  el.addEventListener('click',e=>{
+    if(!S.rev.measure || el._moved>6) return;
+    const cv=$('canvas',el); if(!cv) return;
+    const r=cv.getBoundingClientRect();
+    const cam=makeCam(r.width,r.height,{yaw:S.rev.yaw,pitch:S.rev.pitch,zoom:S.rev.zoom});
+    const [wx,wy]=cam.unproj(e.clientX-r.left, e.clientY-r.top);
+    if(!isFinite(wx)||!isFinite(wy)||Math.abs(wx)>20||Math.abs(wy)>20) return;
+    // snap to the nearest sampled return, exactly as the real tool does
+    let best=1e9,bp=null;
+    for(let i=0;i<SCAN_D.length;i+=3){
+      const p=SCAN_D[i], d=(p.x-wx)**2+(p.y-wy)**2;
+      if(d<best){best=d;bp=p;}
+    }
+    const pt = bp && best<1.4 ? [bp.x,bp.y,bp.z] : [wx,wy,0];
+    S.rev.marks.push(pt);
+    if(S.rev.marks.length===2){
+      const [a,b]=S.rev.marks;
+      const horiz=Math.hypot(b[0]-a[0], b[1]-a[1]);
+      const dz=b[2]-a[2];
+      const d3=Math.hypot(horiz,dz);
+      const lab = S.rev.units==='ft' ? `${(d3*3.28084).toFixed(3)} ft` : `${f3(d3)} m`;
+      S.rev.segs.push({a,b,label:lab,dz});
+      S.rev.marks=[];
+      toast('Segment '+S.rev.segs.length+': '+lab);
+    }
+    render();
+  });
+}
+
+/* ═══════════════ actions ═══════════════ */
+function setPath(path,val){
+  const parts=path.split('.'); let o=S;
+  for(let i=0;i<parts.length-1;i++) o=o[parts[i]];
+  const k=parts[parts.length-1];
+  o[k] = (typeof o[k]==='number' && val!=='' && !isNaN(+val)) ? +val : val;
+}
+const ACT = {
+  /* navigation */
+  go:(a)=>{ S.scr.android=a; if(a==='new_project') S.np={name:'',sensor:null,profile:null}; render(); },
+  back:()=>{ const m={new_project:'projects', detail:'projects', capture:'detail', connect_wizard:'detail',
+      mid360:'detail', calib:'detail', rtk:'detail', processing:'detail', review:'detail',
+      plan:'review', merge:'detail', settings:'projects'};
+    S.scr.android = m[S.scr.android]||'projects'; render(); },
+  open:(id)=>{ S.pid=id; if(S.dev==='android'){S.scr.android='detail';} else {S.scr[S.dev]='review';} render(); },
+  tab:(t)=>{ S.scr[S.dev]=t; S.menu=null; render(); },
+  menu:(m)=>{ S.menu = S.menu===m?null:m; render(); },
+
+  /* new project */
+  npSensor:(k)=>{ S.np.sensor=k; render(); },
+  npProfile:(k)=>{ S.np.profile=k; render(); },
+  npCreate:()=>{
+    const n=S.np, name=(n.name||'').trim()||`scan-${String(S.projects.length+1).padStart(2,'0')}`;
+    const id=name.toLowerCase().replace(/[^a-z0-9]+/g,'-');
+    S.projects.unshift({id,name,sensor:n.sensor,profile:n.profile,pts:0,
+      created:'2026-08-16 '+new Date().toTimeString().slice(0,5),georef:false,calib:false,sizeMb:0,epsg:null});
+    S.pid=id; S.scr.android='detail';
+    toast(`Created ${name}.lscan — manifest, captureDefaults and displayParams written`);
+    render();
+  },
+
+  /* D6 wizard */
+  d6Rescan:()=>{ S.d6.scanning=true; render();
+    setTimeout(()=>{ S.d6.scanning=false; S.d6.found=true; render();
+      toast('Found CH340 USB-Serial · VID 6790 / PID 29987'); }, RM?200:900); },
+  d6Connect:()=>{ const d=S.d6; d.state='perm'; render();
+    setTimeout(()=>{ d.state='conn'; render();
+      setTimeout(()=>{ d.state='ok'; d.pps=4120; d.hz=10.02; d.ok=18422; d.bad=3; d.bytes=1994880; render();
+        toast('Connected — 230400 8N1, DTR cleared'); }, RM?150:700); }, RM?150:600); },
+
+  /* Mid-360 wizard */
+  m360UseIp:()=>{ S.m360.hostIp='192.168.1.5'; toast('Host IP taken from the live interface'); render(); },
+  m360Net:()=>toast('Opens Settings → Network & internet → Ethernet (system intent)'),
+  m360Transport:(v)=>{ S.m360.transport=v; render(); },
+  m360Test:()=>{ const m=S.m360;
+    if(m.test==='run'){ m.test='idle'; m.pct=0; m.log=[]; render(); return; }
+    m.test='run'; m.pct=0; m.log=['self-test: binding 192.168.1.5:56300 …'];
+    render(); },
+  m360Save:()=>{ S.m360.saved=true; toast('Saved to project manifest'); render(); },
+
+  /* calibration */
+  calibStart:()=>{ S.calib.step=1; S.calib.poses=0; render(); },
+  calibPose:()=>{ S.calib.poses=Math.min(S.calib.target,S.calib.poses+1);
+    if(S.calib.poses===S.calib.target) toast('All 8 poses captured — Solve is unlocked'); render(); },
+  calibSolve:()=>{ S.calib.solving=true; render();
+    setTimeout(()=>{ const c=S.calib;
+      const good=c.poses>=7;
+      c.result={gate:good?'GOOD':'USABLE', px:good?7.4:14.8, mm:good?15.2:30.4, poses:c.poses,
+        srot:good?0.048:0.104, stra:good?3.1:7.4, cond:good?184:702, degenerate:c.poses<6,
+        headline:`Mount alignment: ±${good?'15.2':'30.4'} mm at 3 m — ${good?'Good':'Usable'}`};
+      c.solving=false; c.step=3; render();
+    }, RM?200:1400); },
+  calibStep:(n)=>{ S.calib.step=+n; render(); },
+  calibDrop:()=>{ const c=S.calib; if(c.result){ c.result.px*=0.72; c.result.mm*=0.72;
+      c.result.gate='GOOD'; c.result.poses=Math.max(4,c.poses-2);
+      c.result.headline=`Mount alignment: ±${f1(c.result.mm)} mm at 3 m — Good`; }
+    toast('Re-solved without the two worst poses'); render(); },
+  calibRedo:()=>{ S.calib.step=1; S.calib.poses=0; S.calib.result=null; render(); },
+  calibVerify:(v)=>{ if(v==='ok'){ S.calib.saved=true; proj().calib=true;
+      toast(`Saved for bracket ${S.calib.bracket}`); } else { S.calib.step=1; S.calib.poses=0;
+      toast('Back to capture — check the bracket slot and the selected lidar'); }
+    render(); },
+
+  /* capture — the live preview */
+  capRec:()=>{ const c=S.cap, p=proj();
+    if(PROFILES[p.profile].gate.includes('blocks') && S.set.gate
+       && FIXORDER.indexOf(S.rtk.fix)<FIXORDER.indexOf('RTK_FLOAT')){
+      toast('Blocked: the Survey profile gates Record at RTK Float. Open RTK and get a fix.'); return; }
+    if(c.state==='rec'){ c.state='paused'; toast('Paused — the engine keeps the recording open'); }
+    else { c.state='rec'; if(c.prog===0) toast('Recording — record-always is the engine’s rule'); }
+    render(); },
+  capStop:()=>{ const c=S.cap; if(c.state==='idle') return;
+    c.state='idle';
+    const p=proj(); p.pts=Math.round(c.pts); p.sizeMb=Math.round(c.mb);
+    toast(`Session summary — ${mmss(c.elapsed)} · ${fmt(Math.round(c.pts))} points · ${Math.round(c.mb)} MB`);
+    render(); },
+  capSlam:()=>{ const c=S.cap;
+    if(c.state!=='idle'){ toast('Live-SLAM is editable only while idle'); return; }
+    c.liveSlam=!c.liveSlam; toast(c.liveSlam?'Live-SLAM: registered map (kSlamMap)':'Record-only: raw returns, no registration');
+    render(); },
+  capView:(v)=>{ S.cap.view=v; render(); },
+  capFollow:(v)=>{ S.cap.follow = v==='follow'; render(); },
+  capColor:(v)=>{ S.cap.color=v; render(); },
+
+  /* RTK */
+  rtkRover:(i)=>{ i=+i;
+    if(S.rtk.devices[i].kind.includes('not a rover')){ toast('That is an audio device — no NMEA will arrive'); return; }
+    S.rtk.rover = S.rtk.rover===i?null:i;
+    if(S.rtk.rover!==null){ S.rtk.fix='SINGLE'; S.rtk.sats=14; S.rtk.bytesIn=4820;
+      toast('Rover connected — NMEA flowing, fix SINGLE'); }
+    else { S.rtk.fix='NONE'; S.rtk.ntrip='IDLE'; S.rtk.sats=0; S.rtk.georef=false; }
+    render(); },
+  rtkMount:(i)=>{ S.rtk.caster.mount=S.rtk.mounts[+i].m; render(); },
+  rtkAuto:()=>{ S.rtk.auto=!S.rtk.auto; render(); },
+  rtkConnect:()=>{ const r=S.rtk;
+    if(r.ntrip==='STREAMING'){ r.ntrip='IDLE'; r.fix='SINGLE'; r.georef=false; render(); return; }
+    r.ntrip='CONNECTING'; r.fixStep=0; render(); },
+
+  /* jobs */
+  runMode:(m)=>{ S.runMode=m; render(); },
+  jobNew:(kind)=>{
+    const j={id:S.nextJob++, kind, state:S.jobs.some(x=>x.state==='RUNNING')?'QUEUED':'RUNNING',
+      p:0, stage:kind==='POST_PROCESS'?POST_STAGES[0]:kind.toLowerCase().replace('_','-'), note:''};
+    if(kind==='COLORIZE'&&!PROFILES[proj().profile].keyframes){
+      j.state='FAILED'; j.stage='failed'; j.err='no keyframes — this project’s profile captures no camera';
+      S.jobs.push(j); toast('Colorize refused: ' + j.err); render(); return; }
+    S.jobs.push(j); toast(`Queued ${KINDNAME[kind]} #${j.id}`); render(); },
+  jobCancel:(id)=>{ const j=S.jobs.find(x=>x.id==id); if(!j) return;
+    if(j.state==='QUEUED'){ j.state='FAILED'; j.stage='cancelled'; j.err='kCancelled — never ran'; }
+    else { j.state='CANCELLING'; j.stage='cancelling'; }
+    render(); },
+  jobLoad:(id)=>{ S.scr[S.dev]= S.dev==='android'?'review':'review';
+    toast('Result loaded into the viewport — 83 228 points'); render(); },
+  jobRetry:(id)=>{ const j=S.jobs.find(x=>x.id==id);
+    if(j){ j.state='RUNNING'; j.p=0; j.err=''; j.stage=POST_STAGES[0]; } render(); },
+
+  /* review */
+  revColor:(v)=>{ S.rev.color=v; render(); },
+  revTraj:()=>{ S.rev.traj=!S.rev.traj; render(); },
+  revPg:()=>{ S.rev.pg=!S.rev.pg; render(); },
+  measure:()=>{ S.rev.measure=!S.rev.measure; S.rev.marks=[]; render(); },
+  measClear:()=>{ S.rev.segs=[]; S.rev.marks=[]; render(); },
+  revReset:()=>{ Object.assign(S.rev,{size:1.5,color:'height',lod:8,gamma:1,zmax:1.5,traj:false,pg:false});
+    toast('Reset to Floor plan profile defaults — 8 M budget, 1.5 px, height band 1.0–1.5 m'); render(); },
+
+  /* plan */
+  planExtract:()=>{ S.plan.state='busy'; S.plan.pct=0; render(); },
+  planOrtho:()=>{ S.plan.ortho=!S.plan.ortho; toast(S.plan.ortho?'Snapping on — fast path, walls only'
+      :'Snapping off — walls keep their measured angles'); render(); },
+  planSill:()=>{ S.plan.sill=!S.plan.sill; toast('Sill check rebuilds the 0.35–0.80 m grid — the slow path'); render(); },
+  planOpenings:()=>{ S.plan.openings=!S.plan.openings; render(); },
+  planRooms:()=>{ S.plan.rooms=!S.plan.rooms; render(); },
+  planRegionMode:(v)=>{ S.plan.region=v; render(); },
+  planRegion:()=>{ const q=S.plan;
+    q.regions.push({mode:q.region, x0:2.2,y0:-4.4,x1:5.6,y1:-1.6});
+    toast(`${q.region} region added — exclude always wins over include`); render(); },
+  planRegionClear:()=>{ S.plan.regions=[]; render(); },
+  planExport:(f)=>toast(f==='dxf'
+    ? 'floorplan.dxf written — R12 (AC1009), layers WALLS / OPENINGS / ROOMS / DIMENSIONS, 4 694 B'
+    : 'floorplan.pdf written — PDF 1.4, A4 at 1:50, north arrow “N (ASSUMED)”, 2 512 B'),
+
+  /* merge */
+  mergeSel:(i)=>{ i=+i; if(!S.projects[i].georef){ toast('No georeference recorded — this capture had no RTK rover attached'); return; }
+    const k=S.merge.sel.indexOf(i); k<0?S.merge.sel.push(i):S.merge.sel.splice(k,1); render(); },
+  mergeRun:()=>{ S.merge.phase='run'; S.merge.pct=0; render(); },
+  mergeAnchor:()=>{ S.merge.anchor=(S.merge.anchor+1)%SESS.length;
+    SESS.forEach((s,i)=>s.anchor=i===S.merge.anchor);
+    toast(`Anchor → ${SESS[S.merge.anchor].name} · the merged frame is the anchor’s local frame`); render(); },
+  mergeAdd:()=>toast('Added from the open project — sessions cannot be removed once added'),
+  mergeRemove:()=>toast('Sessions cannot be removed from an in-progress MergeProject (no remove_session() in merge.h). Close and reopen the dock to start over.'),
+  mergeGeoref:()=>{ S.merge.alignStatus='georeferenced align: 2 aligned, 1 skipped (not georeferenced), reference session 0, max ENU-origin separation 331.57 m';
+    S.merge.off=0.45; toast('Composed through each session’s own ENU frame'); render(); },
+  mergeManual:()=>{ S.merge.alignStatus='pick 1 of 3: click a feature in SOURCE session “centre-bay-2026-08-14” (shown alone in the viewport)';
+    S.merge.off=0.7; render(); },
+  mergeYaw:()=>{ S.merge.alignStatus='yaw search vs 0: applied — yaw 12.0°, overlap 1.000, margin 0.150 (runner-up 90° at 0.850)';
+    S.merge.off=0.3; render(); },
+  mergeOverlap:()=>{ S.merge.refineStatus='overlap survey: 0↔1 33.8%/35.1% · 1↔2 35.6%/36.3% · 0↔2 0.0%/0.0% (below the 0.15 gate)'; render(); },
+  mergeRefine:()=>{ S.merge.phase='align'; S.merge.iter=[]; S.merge.step=0; S.merge.res=ICP_TRACE[0]; render(); },
+  mergeColor:()=>{ S.merge.colorBy=!S.merge.colorBy; render(); },
+  mergeBuild:()=>{ S.merge.built=true; S.merge.off=0;
+    toast('Built 34 706 merged points — provenance is a run table, one contiguous run per session'); render(); },
+
+  /* desktop capture */
+  dcapTransport:(v)=>{ S.dcap.transport=v; S.dcap.selftest='idle'; render(); },
+  dcapLive:()=>{ S.dcap.live=!S.dcap.live; render(); },
+  dcapFrames:()=>{ S.dcap.frames=!S.dcap.frames; render(); },
+  dcapView:(v)=>{ S.dcap.view=v; render(); },
+  dcapTest:()=>{ const c=S.dcap; c.selftest='run'; c.stpct=0;
+    c.stmsg = c.transport==='d6' ? 'Testing device: expect ~4,000 pts/s within 3 s…'
+      : 'Testing device: waiting for the first Mid-360 packet…';
+    render(); },
+  dcapRec:()=>{ S.dcap.state='rec'; render(); },
+  dcapPause:()=>{ S.dcap.state = S.dcap.state==='paused'?'rec':'paused'; render(); },
+  dcapStop:()=>{ const c=S.dcap; c.state='idle';
+    toast(`Session summary — ${f1(c.elapsed)} s recording · ${fmt(Math.round(c.pts))} points decoded · 0 drops`);
+    render(); },
+
+  /* transfer + export */
+  xferIncl:()=>{ S.xfer.incl=!S.xfer.incl; render(); },
+  xferRun:()=>{ S.xfer.state='run'; S.xfer.pct=0; S.xfer.msg='Exporting…'; render(); },
+  xferCancel:()=>{ S.xfer.state='idle'; S.xfer.pct=0;
+    S.xfer.msg='Export cancelled — the partial bundle was removed (a half-written zip looks openable and is not).';
+    render(); },
+  xferImport:()=>{ toast('Imported 193 chunks / 394 287 bytes — no reader warnings'); },
+  expRgb:()=>{ S.exp.rgb=!S.exp.rgb; render(); },
+  expInten:()=>{ S.exp.inten=!S.exp.inten; render(); },
+  expBounds:()=>{ S.exp.bounds=!S.exp.bounds; render(); },
+  expRun:()=>{ S.exp.state='run'; S.exp.pct=0; S.exp.msg='Exporting…'; render(); },
+  expCancel:()=>{ S.exp.state='idle'; S.exp.pct=0;
+    S.exp.msg='Export cancelled — the partial output file was removed.'; render(); },
+  reveal:()=>toast(S.dev==='mac'?'open -R — reveals and selects the file':'explorer.exe /select,'),
+
+  /* settings */
+  setUnits:(v)=>{ S.set.units=v; S.rev.units=v; render(); },
+  setTheme:(v)=>{ S.set.theme=v; toast('The mockup itself stays in the dark cockpit theme'); render(); },
+  setProfile:(k)=>{ S.set.profile=k; toast(`${PROFILES[k].name} is the default for new projects`); render(); },
+  setSim:()=>{ S.set.sim=!S.set.sim; toast('Takes effect after restarting the app'); render(); },
+  setPoorSync:()=>{ S.set.poorSync=!S.set.poorSync; render(); },
+  setSave:()=>toast('Saved to app-private preferences (not the Android Keystore)'),
+  replay:()=>{ S.pid=S.projects[0].id; S.scr.android='capture'; S.cap=Object.assign(newCap(),{size:2,color:'height'});
+    toast('Replay synthetic capture — assets/replay/synth.lscan through the ReplayEngineBridge'); render(); },
+  share:(what)=>toast(`Share sheet: ${what}`),
+
+  /* desktop chrome + menus */
+  chrome:(w)=>toast(w==='close'?'Close — the mockup keeps the window open'
+    :w==='min'?'Minimise':'Zoom / maximise'),
+  deskOpen:()=>toast('QFileDialog — “Open .lscan project”'),
+  deskNew:()=>{ S.dev!=='android'&&(S.scr[S.dev]='capture'); toast('New .lscan project — choose a path in the Capture window'); render(); },
+  deskImportD6:()=>toast('Raw D6 bytes pushed at the wire rate, 23 040 B/s, so arrival stamps stay realistic'),
+  deskSaveParams:()=>{ S.menu=null; toast('Wrote processed/display_params.json'); render(); },
+  deskReplay:()=>{ S.scr[S.dev]='capture'; S.dcap.selftest='pass'; S.dcap.state='rec';
+    toast(`replay started at ${S.replaySpeed===0?'max':S.replaySpeed+'x'}`); render(); },
+  deskReplayStop:()=>{ S.dcap.state='idle'; render(); },
+  fit:()=>{ CAM.rev.zoom=34; CAM.rev.yaw=2.25; CAM.rev.pitch=0.95; S.menu=null; toast('Fit to cloud'); render(); },
+  autoOrbit:()=>{ S.autoOrbit=!S.autoOrbit; S.menu=null; toast('Auto-orbit '+(S.autoOrbit?'on':'off')); render(); },
+  vsync:()=>{ S.menu=null; toast('Vsync toggled'); render(); },
+  shot:()=>{ S.menu=null; toast('Screenshot via Renderer::readPixels() off the swapchain — not an OS grab'); render(); },
+  fixture:()=>{ S.menu=null; S.scr[S.dev]='plan'; toast('Synthetic building fixture loaded'); render(); },
+  synthProject:()=>{ S.menu=null; toast('Wrote 1667 point packets (127 425 points) + 1601 IMU packets over 8.0 s'); render(); },
+  about:()=>{ S.menu=null; toast('LidarScan 0.1.0 · Qt 6.11.1 · Filament · engine ABI 5'); render(); },
+  noop:()=>toast('Display-only in this build'),
+};
+
+/* delegated events */
+document.addEventListener('click', e=>{
+  const el=e.target.closest('[data-act]');
+  if(!el){ if(S.menu && !e.target.closest('.menubar')){ S.menu=null; render(); } return; }
+  const fn=ACT[el.dataset.act];
+  if(fn){ if(S.menu && el.dataset.act!=='menu' && !el.closest('.menubar')) S.menu=null; fn(el.dataset.arg, el); }
+});
+document.addEventListener('input', e=>{
+  const el=e.target.closest('[data-inp]'); if(!el) return;
+  setPath(el.dataset.inp, el.value);
+  const live=el.dataset.live;
+  const out=$(`[data-out="${el.dataset.inp}"]`);
+  if(out) out.textContent = fmtVal(el.value, el.dataset.fmt||'2') +
+    (out.dataset.unit||'');
+  if(live==='draw'){ redraw(); syncDerived(); }
+  else if(live==='rerender'||live==='preset'){ if(live==='preset') applyProfile(el.value); render(); }
+});
+document.addEventListener('change', e=>{
+  const el=e.target.closest('[data-inp]'); if(!el||el.tagName!=='SELECT') return;
+  setPath(el.dataset.inp, el.value);
+  if(el.dataset.live==='preset') applyProfile(el.value);
+  render();
+});
+function syncDerived(){
+  const b=$('.appbar .sub');
+  if(S.dev==='android' && S.scr.android==='plan' && b)
+    b.textContent = `slice ${f2(S.plan.slice-S.plan.band/2)}–${f2(S.plan.slice+S.plan.band/2)} m`;
+}
+function applyProfile(name){
+  const P={survey:{size:1.5,lod:15,color:'height',zmax:3.2,traj:true,pg:true},
+           floorPlan:{size:1.5,lod:8,color:'height',zmax:1.5,traj:false,pg:false},
+           research:{size:2.0,lod:50,color:'rgb',zmax:3.2,traj:true,pg:true},
+           quickScan:{size:3.0,lod:2,color:'intensity',zmax:3.2,traj:true,pg:false}}[name];
+  if(P){ Object.assign(S.rev,P); S.rev.profile=name;
+    toast(`A14 profile_defaults(${name}) applied — every parameter replaced`); }
+}
+
+/* ═══════════════ animation loop ═══════════════ */
+const CAP_DUR=26, CAP_PTS=8_432_190, CAP_MB=212;
+let last=performance.now(), rmAcc=0;
+function tick(now){
+  let dt=clamp((now-last)/1000, 0, 0.05); last=now;
+  requestAnimationFrame(tick);
+  let dirty=false, rerender=false, soft=false;
+
+  if(RM){ rmAcc+=dt; if(rmAcc<0.45){ return; } dt=rmAcc; rmAcc=0; }
+
+  /* capture streams */
+  for(const [o,key] of [[S.cap,'cap'],[S.dcap,'dcap']]){
+    if(o.state==='rec'){
+      const step = RM?0.11:dt/CAP_DUR;
+      o.prog=Math.min(1,o.prog+step);
+      o.elapsed+=RM?CAP_DUR*0.11:dt;
+      o.pts=o.prog*CAP_PTS; o.mb=o.prog*CAP_MB;
+      o.rate=199987+Math.round(Math.sin(now/300)*1400);
+      o.kf=Math.floor(o.elapsed/2.6); o.drops=Math.floor(o.elapsed/9);
+      o.pulse=Math.sin(now/220)*2.5;
+      if(o.prog>=1){ o.state='idle'; rerender=true; toast('Recording stopped — the walk is complete'); }
+      dirty=true;
+    }
+  }
+  if(dirty){
+    const set=(id,v)=>{ const el=document.getElementById(id); if(el&&el.textContent!==v) el.textContent=v; };
+    if(S.dev==='android'){
+      set('cap-pps',fmt(S.cap.state==='rec'?S.cap.rate:0));
+      set('cap-pts',(S.cap.pts/1e6).toFixed(2)+' M');
+      set('cap-dur',mmss(S.cap.elapsed));
+      set('cap-mb',Math.round(S.cap.mb)+' MB');
+    } else {
+      const el=document.getElementById('dcap-stats');
+      if(el) el.textContent=`${fmt(Math.round(S.dcap.pts))} pts · ${f1(S.dcap.elapsed)} s · ${fmt(S.dcap.rate)} pts/s`;
+      const h=document.getElementById('dcap-health');
+      if(h) h.textContent=`streaming · ${fmt(S.dcap.rate)} pts/s · 10.00 Hz IMU · 99.98% ok rate · `+
+        `${fmt(Math.round(S.dcap.pts))} pts total · 0 drops`;
+    }
+  }
+
+  /* Mid-360 self-test */
+  if(S.m360.test==='run'){
+    S.m360.pct=Math.min(100,S.m360.pct + (RM?34:dt*52));
+    const p=S.m360.pct, L=S.m360.log;
+    const add=(t)=>{ if(!L.includes(t)) L.push(t); };
+    if(p>20) add('link: UP · SDK2 handshake 1.45 s');
+    if(p>45) add('datagrams: 1 240 point / 248 IMU · 1 190 400 B');
+    if(p>72) add('rate: 199 987 pts/s · 200 Hz IMU · loss 0.0000%');
+    if(p>=100){ S.m360.test='pass'; add('self-test PASSED — first packet after 1.45 s'); rerender=true; }
+    else soft=true;
+  }
+  /* desktop self-test */
+  if(S.dcap.selftest==='run'){
+    S.dcap.stpct=Math.min(100,S.dcap.stpct+(RM?34:dt*48));
+    const p=S.dcap.stpct;
+    S.dcap.stmsg = S.dcap.transport==='d6'
+      ? `Testing… ${Math.round(3120*p/100)} pts/s so far (target ~4,000, ${(p*0.03).toFixed(0)} / 3 s)`
+      : `Testing… waiting for first packet (${(p*0.08).toFixed(0)} / 8 s)`;
+    if(p>=100){ S.dcap.selftest='pass';
+      S.dcap.stmsg = S.dcap.transport==='d6' ? 'Self-test PASSED — 4 118 pts/s over 3 s'
+        : 'Self-test PASSED — first packet after 1.63 s';
+      rerender=true; }
+    else soft=true;
+  }
+
+  /* RTK fix ladder */
+  if(S.rtk.ntrip==='CONNECTING'){
+    S.rtk.t=(S.rtk.t||0)+dt;
+    if(S.rtk.t>(RM?0.3:1.0)){ S.rtk.ntrip='STREAMING'; S.rtk.fix='SINGLE'; S.rtk.t=0; S.rtk.stage=0; rerender=true; }
+  } else if(S.rtk.ntrip==='STREAMING'){
+    S.rtk.t=(S.rtk.t||0)+dt; S.rtk.bytesIn+=Math.round(dt*220); S.rtk.rtcmOut+=Math.round(dt*1150);
+    const want=['SINGLE','RTK_FLOAT','RTK_FIXED'][clamp(Math.floor(S.rtk.t/(RM?0.6:2.2))|0,0,2)];
+    if(want!==S.rtk.fix){ S.rtk.fix=want; S.rtk.sats=want==='RTK_FIXED'?21:17;
+      if(want==='RTK_FIXED'){ S.rtk.georef=true; toast('RTK Fixed — georeferencing converged, EPSG:32650'); }
+      rerender=true; }
+  }
+
+  /* jobs */
+  const DUR={POST_PROCESS:9,COLORIZE:5,EXPORT_POINTS:3,TRANSFER_EXPORT:3,CLOUD_SUBMIT:6};
+  let running=S.jobs.find(j=>j.state==='RUNNING'||j.state==='CANCELLING');
+  if(running){
+    running.p=Math.min(1,running.p+(RM?0.2:dt/DUR[running.kind]));
+    if(running.kind==='POST_PROCESS')
+      running.stage=POST_STAGES[Math.min(POST_STAGES.length-1,Math.floor(running.p*POST_STAGES.length))];
+    if(running.kind==='CLOUD_SUBMIT') running.stage= running.p<0.7?'upload':'download';
+    if(running.state==='CANCELLING' && running.p>0.15){
+      running.state='FAILED'; running.stage='cancelled'; running.err='kCancelled'; rerender=true; }
+    else if(running.p>=1){
+      if(running.kind==='CLOUD_SUBMIT'){ running.state='FAILED'; running.stage='upload';
+        running.err='kNetworkError — connection refused after 5 attempts (500 ms × 2, capped at 30 s)'; }
+      else { running.state='DONE'; running.stage='done';
+        running.note = running.kind==='POST_PROCESS'?'83 228 points kept':
+                       running.kind==='EXPORT_POINTS'?'1 925 061 B written':'complete'; }
+      const nx=S.jobs.find(j=>j.state==='QUEUED'); if(nx){ nx.state='RUNNING'; nx.stage=nx.kind==='POST_PROCESS'?POST_STAGES[0]:'running'; }
+      rerender=true;
+    } else soft=true;
+  }
+
+  /* plan extraction */
+  if(S.plan.state==='busy'){
+    S.plan.pct=Math.min(100,S.plan.pct+(RM?34:dt*90));
+    if(S.plan.pct>=100){ S.plan.state='done';
+      S.plan.stats={walls:6,openings:3,rooms:3,area:38.28,cells:4992,lines:8,paired:2,snapped:8,dom:89.996};
+      rerender=true; } else soft=true;
+  }
+
+  /* merge ICP */
+  if(S.merge.phase==='align'){
+    S.merge.t=(S.merge.t||0)+dt;
+    const i=Math.min(ICP_TRACE.length-1, Math.floor(S.merge.t/(RM?0.12:0.3)));
+    if(i+1!==S.merge.iter.length){
+      S.merge.iter=ICP_TRACE.slice(0,i+1);
+      S.merge.res=ICP_TRACE[i];
+      S.merge.off = 1 - i/(ICP_TRACE.length-1);
+      const el=document.getElementById('merge-res');
+      if(el) el.textContent='residual '+f1(S.merge.res)+' mm';
+      dirty=true;
+    }
+    if(i>=ICP_TRACE.length-1){ S.merge.phase='idle'; S.merge.off=0; S.merge.res=0.88; S.merge.t=0;
+      S.merge.refineStatus='refine: 2 pairs refined, 2 converged, 1 low-overlap, worst rms 9.95 mm · 393.98 mm / 2.000° → 0.88 mm / 0.0061°';
+      rerender=true; }
+  }
+  /* android merge */
+  if(S.merge.phase==='run'){
+    S.merge.pct=Math.min(100,S.merge.pct+(RM?34:dt*55));
+    if(S.merge.pct>=100){ S.merge.phase='idle'; S.merge.built=true; rerender=true;
+      toast('Merged — 23 405 points, ±20 mm georeferenced align'); } else soft=true;
+  }
+  /* transfer + export */
+  for(const [o,doneMsg] of [[S.xfer,'Export complete: warehouse-scan-03.lscan.zip (389.4 KB)'],
+                            [S.exp,'Export complete: 1 925 061 B written']]){
+    if(o.state==='run'){
+      o.pct=Math.min(100,o.pct+(RM?34:dt*46));
+      if(o.pct>=100){ o.state='done'; o.msg=doneMsg; rerender=true; } else soft=true;
+    }
+  }
+  if(S.autoOrbit && S.dev!=='android'){ CAM.rev.yaw+=0.0045; dirty=true; }
+
+  if(RENDERING) return;
+  if(rerender) render();
+  else if(soft) softRender(now);
+  else if(dirty) redraw();
+}
+requestAnimationFrame(tick);
+
+/* ═══════════════ confirm checklist ═══════════════ */
+const CHECK=[
+ ['Android · Projects & setup','android','projects',[
+  ['a-proj-list','Project list — sensor badge, profile chip, point count, created date'],
+  ['a-proj-open','Tapping a card opens Project detail'],
+  ['a-proj-new','“＋ New project” opens the creation flow'],
+ ]],
+ ['Android · New project','android','new_project',[
+  ['a-np-name','Project name field'],
+  ['a-np-sensor','Sensor picker — COIN-D6 / Livox Mid-360 with link + rate'],
+  ['a-np-profile','Workflow profile picker — the four profiles and what each one sets'],
+  ['a-np-create','Create is gated until sensor + profile are chosen, then writes the project'],
+ ]],
+ ['Android · Project detail','android','detail',[
+  ['a-det-meta','Metadata block — created, points, size, schema, directory, georeference'],
+  ['a-det-nav','Workspace cards navigate to every per-project screen'],
+  ['a-det-state','Mid-360 / calibration cards reflect real saved state'],
+ ]],
+ ['Android · Device setup','android','connect_wizard',[
+  ['a-d6-scan','D6: Rescan finds the CH340 adapter and shows VID/PID'],
+  ['a-d6-conn','D6: Connect walks permission → connecting → connected'],
+  ['a-d6-health','D6: device-health panel (pts/s, rotation Hz, checksum rate, packets, bytes)'],
+  ['a-d6-cross','D6 wizard links across to the Mid-360 wizard'],
+ ]],
+ ['Android · Mid-360 wizard','android','mid360',[
+  ['a-m3-eth','Ethernet interface section + “Use this as the host IP”'],
+  ['a-m3-guide','Per-OEM static-IP steps + “Open network settings”'],
+  ['a-m3-addr','Lidar IP / Host IP editable; the three ports read-only'],
+  ['a-m3-trans','Transport selector — SDK2 vs bound socket'],
+  ['a-m3-test','Pre-capture self-test runs, logs, and passes against the 8 s window'],
+  ['a-m3-save','Save to project, then Continue to capture'],
+ ]],
+ ['Android · Mount calibration','android','calib',[
+  ['a-cal-prep','Prepare — checkerboard spec, measured square size, bracket ID, three rules'],
+  ['a-cal-pose','Capture — pose counter 0/8 → 8/8, live checks, pose-diversity wheel'],
+  ['a-cal-sweep','Clock sweep is honestly marked “Not available in this build”'],
+  ['a-cal-gate','Verdict — split-half gate in mm at 3 m, diagnostics kept separate'],
+  ['a-cal-recover','Recovery paths — drop the worst 2 / redo the capture'],
+  ['a-cal-verify','Verify — “does it line up?” against a real edge, then save to the bracket'],
+ ]],
+ ['Android · Capture','android','capture',[
+  ['a-cap-live','LIVE PREVIEW — the cloud streams in progressively as you walk'],
+  ['a-cap-traj','The ember trajectory draws itself with the walk'],
+  ['a-cap-stats','pts/s, points, duration and .lscan size tick live'],
+  ['a-cap-rec','Record / Pause / Stop actually change state'],
+  ['a-cap-ar','AR ⇄ 3D swaps to the camera-anchored variant'],
+  ['a-cap-slam','Live-SLAM ⇄ Record-only visibly changes registered vs raw'],
+  ['a-cap-gate','RTK gate blocks Record for a Survey project below RTK Float'],
+  ['a-cap-orbit','Orbit / Follow, and drag-to-rotate in the viewport'],
+  ['a-cap-disp','Colour mode + point size apply to the live cloud'],
+  ['a-cap-sum','Stop writes the session summary back onto the project'],
+ ]],
+ ['Android · RTK','android','rtk',[
+  ['a-rtk-rover','Bonded rover list — connect / disconnect, non-rovers refused'],
+  ['a-rtk-ntrip','NTRIP form — caster, port, credentials'],
+  ['a-rtk-mount','Mountpoint source table with VRS/GGA notes'],
+  ['a-rtk-fix','Fix strip climbs SINGLE → FLOAT → FIXED on connect'],
+  ['a-rtk-georef','Georeferencing converges and reports the EPSG'],
+ ]],
+ ['Android · Processing','android','processing',[
+  ['a-prc-mode','Local / Cloud / Extract-for-transfer selector'],
+  ['a-prc-run','Jobs queue and advance through the engine’s real stage labels'],
+  ['a-prc-cancel','Cancel — a cancelled job settles into Failed with kCancelled'],
+  ['a-prc-refuse','Colorize refuses out loud when the profile captured no keyframes'],
+ ]],
+ ['Android · Review','android','review',[
+  ['a-rev-orbit','Orbit the cloud by dragging; pinch/scroll to zoom'],
+  ['a-rev-measure','Measure — two taps place markers and report the distance'],
+  ['a-rev-disp','Colour mode, gamma, point size, LOD and z-clip all change the render'],
+  ['a-rev-reset','Reset to the project’s profile defaults'],
+ ]],
+ ['Android · Floor plan','android','plan',[
+  ['a-plan-extract','Extract runs and reports walls / openings / rooms / cells'],
+  ['a-plan-slice','Slice height + band re-draw the plan (shelving appears in a low band)'],
+  ['a-plan-opts','Orthogonality snap, openings, rooms, sill check'],
+  ['a-plan-export','DXF / PDF export'],
+ ]],
+ ['Android · Merge & settings','android','merge',[
+  ['a-mrg-sel','Multi-select — non-georeferenced sessions are refused with the reason'],
+  ['a-mrg-run','Auto-merge runs and reports the result'],
+ ]],
+ ['Android · Settings','android','settings',[
+  ['a-set-units','Units and theme'],
+  ['a-set-profiles','Workflow-profile table — what each profile sets'],
+  ['a-set-cloud','Cloud server URL + token'],
+  ['a-set-dev','Engine developer card + Replay synthetic capture'],
+ ]],
+ ['Desktop · Projects','mac','projects',[
+  ['d-lib-list','Library sidebar with recents; opening loads the project'],
+  ['d-lib-streams','Stream table — chunks, payload, span, reader warnings'],
+  ['d-lib-replay','Replay speed control (0 = “max”) and Replay / Stop'],
+  ['d-lib-menus','Menu bar — File / Capture / View / Tools / Help all open and act'],
+ ]],
+ ['Desktop · Capture','mac','capture',[
+  ['d-cap-tabs','D6 (serial) vs Mid-360 (Ethernet) transport tabs'],
+  ['d-cap-serial','Serial port picker, CH340 hint, baud, command frames'],
+  ['d-cap-ip','Mid-360 host/lidar IP and the three ports'],
+  ['d-cap-test','Guided self-test with its real pass thresholds, then Record unlocks'],
+  ['d-cap-live','Live preview streams in the desktop viewport too'],
+  ['d-cap-health','Health line polled at 300 ms'],
+ ]],
+ ['Desktop · Review','mac','review',[
+  ['d-rev-orbit','Orbit / zoom in the viewport'],
+  ['d-rev-size','Point size slider visibly changes the render'],
+  ['d-rev-color','Colour mode height ⇄ RGB ⇄ intensity'],
+  ['d-rev-lod','LOD budget visibly changes density'],
+  ['d-rev-preset','Workflow-profile preset replaces every display parameter'],
+  ['d-rev-measure','Measure dock — segment list, units, clear'],
+ ]],
+ ['Desktop · Floor plan','mac','plan',[
+  ['d-plan-extract','Extract from the current cloud'],
+  ['d-plan-slice','Slice height + band width re-draw the 2D plan'],
+  ['d-plan-region','Include / exclude regions (exclude always wins)'],
+  ['d-plan-stats','Stats line — walls, openings, rooms, cells, dominant direction'],
+  ['d-plan-export','DXF R12 and PDF at 1:50 export'],
+ ]],
+ ['Desktop · Merge workbench','mac','merge',[
+  ['d-mrg-sessions','Session table — provenance, georef sigma, align source, kept/dropped'],
+  ['d-mrg-anchor','Set as anchor — the merged frame is the anchor’s frame'],
+  ['d-mrg-align','Coarse alignment: georeferenced / 3-point / yaw search'],
+  ['d-mrg-refine','Refine animates the residual 394 mm → 0.9 mm and the clouds snap together'],
+  ['d-mrg-trace','ICP residual trace chart, with the gate step-down visible'],
+  ['d-mrg-color','Colour-by-session toggle'],
+  ['d-mrg-build','Build merged cloud → viewport'],
+ ]],
+ ['Desktop · Processing & dialogs','mac','processing',[
+  ['d-prc-table','Job table — id, kind, state, progress, stage, message'],
+  ['d-prc-submit','The five submit actions'],
+  ['d-prc-cloud','Cloud submit fails honestly with a network error'],
+  ['d-xfer-export','Transfer bundle export with progress; cancel removes the partial zip'],
+  ['d-xfer-import','Import with the manifest sanity report'],
+  ['d-exp-dialog','Export dialog — format, RGB/intensity, decimate, bounds, progress'],
+ ]],
+ ['Cross-platform','win','review',[
+  ['x-devsw','Switching Android / macOS / Windows keeps each device on its own screen'],
+  ['x-chrome','macOS traffic lights vs Windows caption buttons over the same layout'],
+  ['x-tokens','The token system reads correctly — ember for your actions, semantic colours for state'],
+  ['x-mono','Numbers are tabular mono and never jitter'],
+ ]],
+];
+const FLAT=[]; CHECK.forEach(([g,d,s,items])=>items.forEach(([id,label])=>FLAT.push({id,g,d,s,label})));
+const LSKEY='lidarscan.mockup.confirm.v2';
+let CS={};
+try{ CS=JSON.parse(localStorage.getItem(LSKEY)||'{}'); }catch(e){ CS={}; }
+const saveCS=()=>{ try{ localStorage.setItem(LSKEY,JSON.stringify(CS)); }catch(e){} };
+let cfilter='all';
+
+function drawerHTML(){
+  return CHECK.map(([g,d,s,items])=>{
+    const rows=items.filter(([id])=>{
+      const v=(CS[id]||{}).v;
+      return cfilter==='all' || (cfilter==='open'&&!v) || cfilter===v;
+    });
+    if(!rows.length) return '';
+    const done=items.filter(([id])=>(CS[id]||{}).v==='ok').length;
+    return `<div class="cgroup"><h3>${esc(g)}<em>${done}/${items.length}</em></h3>
+      ${rows.map(([id,label])=>{
+        const c=CS[id]||{};
+        return `<div class="citem" data-v="${c.v||''}">
+          <div class="lab">
+            <button class="goto" data-act="cgoto" data-arg="${id}" title="Open this screen">
+              ${esc(label)}<code>${d==='android'?'Android':d==='mac'?'macOS':'Windows'} · ${s}</code></button>
+            <span class="cbtns">
+              <button class="ok" data-act="cset" data-arg="${id}|ok" aria-pressed="${c.v==='ok'}" title="Confirm">✓</button>
+              <button class="no" data-act="cset" data-arg="${id}|no" aria-pressed="${c.v==='no'}" title="Needs change">✕</button>
+            </span></div>
+          ${c.v==='no'||c.n?`<textarea data-note="${id}" placeholder="What should change?">${esc(c.n||'')}</textarea>`:''}
+        </div>`;}).join('')}</div>`;
+  }).join('');
+}
+function renderDrawer(){
+  $('#clist').innerHTML=drawerHTML();
+  const ok=FLAT.filter(i=>(CS[i.id]||{}).v==='ok').length;
+  const no=FLAT.filter(i=>(CS[i.id]||{}).v==='no').length;
+  $('#progtxt').textContent=`${ok} / ${FLAT.length}`;
+  $('#progbar').style.width=(ok/FLAT.length*100).toFixed(1)+'%';
+  $('#drawersub').textContent=`${ok} confirmed · ${no} need change · ${FLAT.length-ok-no} open`;
+}
+ACT.cset=(arg)=>{
+  const [id,v]=arg.split('|');
+  const cur=CS[id]||{};
+  cur.v = cur.v===v ? '' : v;
+  CS[id]=cur; saveCS(); renderDrawer();
+};
+ACT.cgoto=(id)=>{
+  const it=FLAT.find(x=>x.id===id); if(!it) return;
+  S.dev=it.d; S.scr[it.d]=it.s;
+  if(it.d!=='android' && !TABS.some(t=>t[0]===it.s)) S.scr[it.d]='review';
+  closeDrawer(); render();
+  window.scrollTo({top:0,behavior:RM?'auto':'smooth'});
+};
+document.addEventListener('input', e=>{
+  const t=e.target.closest('[data-note]'); if(!t) return;
+  const id=t.dataset.note; CS[id]=CS[id]||{}; CS[id].n=t.value; saveCS();
+});
+$$('[data-cfilter]').forEach(b=>b.addEventListener('click',()=>{
+  cfilter=b.dataset.cfilter;
+  $$('[data-cfilter]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));
+  renderDrawer();
+}));
+
+function reportMd(){
+  const ok=FLAT.filter(i=>(CS[i.id]||{}).v==='ok').length;
+  const no=FLAT.filter(i=>(CS[i.id]||{}).v==='no');
+  let out=`# LidarScan — mockup function confirmation\n\n`;
+  out+=`_${new Date().toISOString().slice(0,10)} · ${ok} of ${FLAT.length} functions confirmed · ${no.length} need change_\n`;
+  if(no.length){
+    out+=`\n## Needs change (${no.length})\n\n`;
+    no.forEach(i=>{ const n=(CS[i.id]||{}).n;
+      out+=`- **${i.g} — ${i.label}**${n?`\n  - ${n.replace(/\n/g,'\n  - ')}`:''}\n`; });
+  }
+  out+=`\n## Full checklist\n`;
+  CHECK.forEach(([g,d,s,items])=>{
+    out+=`\n### ${g}\n\n`;
+    items.forEach(([id,label])=>{
+      const c=CS[id]||{};
+      const box=c.v==='ok'?'x':' ';
+      out+=`- [${box}] ${label}${c.v==='no'?'  — **needs change**':''}${c.n?`  \n      note: ${c.n.replace(/\n/g,' ')}`:''}\n`;
+    });
+  });
+  const notes=FLAT.filter(i=>(CS[i.id]||{}).n && (CS[i.id]||{}).v!=='no');
+  if(notes.length){
+    out+=`\n## Other notes\n\n`;
+    notes.forEach(i=>{ out+=`- **${i.label}** — ${CS[i.id].n}\n`; });
+  }
+  return out;
+}
+function copyReport(){
+  const md=reportMd();
+  $('#reporttext').value=md;
+  const done=()=>toast('Report copied to the clipboard as Markdown');
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(md).then(done,()=>{ $('#report').classList.add('on'); });
+  } else { $('#report').classList.add('on'); }
+}
+$('#copyreport').addEventListener('click',()=>{ copyReport(); $('#report').classList.add('on'); });
+$('#reportcopy').addEventListener('click',copyReport);
+$('#reportclose').addEventListener('click',()=>$('#report').classList.remove('on'));
+$('#resetall').addEventListener('click',()=>{
+  if(!confirm('Clear every decision and note?')) return;
+  CS={}; saveCS(); renderDrawer(); toast('Checklist cleared');
+});
+
+function openDrawer(){ $('#drawer').classList.add('on'); $('#scrim').classList.add('on');
+  $('#flagbtn').setAttribute('aria-expanded','true'); }
+function closeDrawer(){ $('#drawer').classList.remove('on'); $('#scrim').classList.remove('on');
+  $('#flagbtn').setAttribute('aria-expanded','false'); }
+$('#flagbtn').addEventListener('click',()=>
+  $('#drawer').classList.contains('on')?closeDrawer():openDrawer());
+$('#drawerclose').addEventListener('click',closeDrawer);
+$('#scrim').addEventListener('click',closeDrawer);
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'){
+    if($('#report').classList.contains('on')) $('#report').classList.remove('on');
+    else if($('#drawer').classList.contains('on')) closeDrawer();
+    else if(S.menu){ S.menu=null; render(); }
+  }
+});
+
+/* device switcher + reference footer */
+$('#devsw').addEventListener('click',e=>{
+  const b=e.target.closest('[data-dev]'); if(!b) return;
+  S.dev=b.dataset.dev; S.menu=null; render();
+});
+$('#refbtn').addEventListener('click',()=>{
+  const on=$('#refbody').classList.toggle('on');
+  $('#refbtn').setAttribute('aria-expanded',String(on));
+  $('#refbtn').firstChild.textContent = (on?'▾ ':'▸ ');
+});
+
+addEventListener('resize',()=>redraw());
+
+/* boot */
+render();
+renderDrawer();
+if(RM) toast('Reduced motion: streams advance in visible steps instead of animating');
+
 </script>

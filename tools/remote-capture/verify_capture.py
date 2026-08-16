@@ -15,9 +15,16 @@ Usage:
     python3 verify_capture.py bench_d6_30s.bin
     python3 verify_capture.py bench_mid360_60s.livoxdump
     python3 verify_capture.py bench_gnss_120s.nmea
-    python3 verify_capture.py FILE --type d6|mid360|nmea      (override auto-detect)
+    python3 verify_capture.py um982_90s.nmea                  (field-test kit output)
+    python3 verify_capture.py FILE --type d6|mid360|nmea|um982  (override auto-detect)
     python3 verify_capture.py bench_d6_30s.bin --seconds 30   (for an accurate rate check)
     python3 verify_capture.py bench_d6_30s.bin --d6cli /path/to/d6cli
+
+The `nmea` and `um982` types run the same checker: it handles plain NMEA 0183
+rovers AND Unicore UM982 captures, which interleave proprietary '#UNIHEADINGA'
+ASCII logs (8-hex CRC32 tail, not the NMEA 2-hex XOR) with the standard
+sentences. Those are counted and CRC-checked separately so a dual-antenna
+receiver is never scored as producing corrupt data.
 """
 
 import argparse
@@ -242,14 +249,30 @@ def verify_mid360(path):
             return results
 
         duration_s = (t_max - t_min) / 1e9 if t_min is not None and t_max is not None and t_max > t_min else None
+        idle = []
         for i, p in enumerate(port_table):
             if pkt_counts[i] == 0:
-                results.append(Result("WARN", f"port {p}: 0 packets"))
-            else:
-                rate_txt = ""
-                if duration_s:
-                    rate_txt = f", {byte_counts[i]/duration_s/1e6:.2f} MB/s"
-                results.append(Result("PASS", f"port {p}: {pkt_counts[i]:,} pkts, {byte_counts[i]:,} bytes{rate_txt}"))
+                idle.append(p)
+                continue
+            rate_txt = ""
+            if duration_s:
+                rate_txt = (f", {byte_counts[i]/duration_s/1e6:.2f} MB/s"
+                            f", {pkt_counts[i]/duration_s:,.0f} datagrams/s")
+            results.append(Result("PASS", f"port {p}: {pkt_counts[i]:,} pkts, {byte_counts[i]:,} bytes{rate_txt}"))
+        if idle:
+            # One aggregated line, not one per port: the field-test kit binds
+            # both Livox host-port conventions (56x00 and 56x01) on purpose,
+            # so most of them being silent is the expected shape.
+            results.append(Result("WARN", "ports with 0 packets: "
+                                            + ", ".join(str(p) for p in idle)
+                                            + " (expected -- not every bound port carries data)"))
+
+        if duration_s:
+            best = max(range(num_ports), key=lambda i: pkt_counts[i])
+            best_rate = pkt_counts[best] / duration_s
+            status = "PASS" if best_rate >= 1500 else "WARN"
+            results.append(Result(status, f"busiest port {port_table[best]}: {best_rate:,.0f} datagrams/s "
+                                            "(a healthy Mid-360 point stream is >1500/s)"))
 
     return results
 
@@ -257,6 +280,37 @@ def verify_mid360(path):
 # ---------------------------------------------------------------------------
 # NMEA / GNSS
 # ---------------------------------------------------------------------------
+
+def unicore_crc32(data):
+    """CRC32 used by Unicore/NovAtel ASCII logs ('#...*xxxxxxxx').
+
+    Standard CRC-32 polynomial, init 0, no final inversion -- i.e. NOT
+    zlib.crc32, which pre- and post-inverts. Mirrored in
+    tools/fieldtest-kit/tests/make_synthetic.py.
+    """
+    crc = 0
+    for b in data:
+        v = (crc ^ b) & 0xFF
+        for _ in range(8):
+            v = (v >> 1) ^ 0xEDB88320 if v & 1 else v >> 1
+        crc = v ^ (crc >> 8)
+    return crc & 0xFFFFFFFF
+
+
+def unicore_checksum_ok(line):
+    """line like '#UNIHEADINGA,...*d0a25a4f'. True/False, or None if unusable."""
+    if not line or line[0] != "#":
+        return None
+    star = line.rfind("*")
+    if star == -1 or star + 9 > len(line):
+        return None
+    claimed = line[star + 1:star + 9]
+    try:
+        claimed_val = int(claimed, 16)
+    except ValueError:
+        return None
+    return unicore_crc32(line[1:star].encode("ascii", errors="replace")) == claimed_val
+
 
 def nmea_checksum_ok(sentence):
     """sentence like '$GPGGA,...*4B' (no CR/LF). Returns True/False, or None if unchecksummable."""
@@ -277,7 +331,25 @@ def nmea_checksum_ok(sentence):
     return computed == claimed_val
 
 
-def verify_nmea(path):
+FIX_NAMES = {
+    "0": "no fix",
+    "1": "single (standalone GPS)",
+    "2": "DGPS",
+    "3": "PPS",
+    "4": "RTK Fixed",
+    "5": "RTK Float",
+    "6": "dead reckoning",
+    "7": "manual",
+    "8": "simulated",
+}
+
+# Unicore binary log sync words. If these show up the receiver is emitting
+# binary alongside (or instead of) ASCII, which the kit captures verbatim but
+# does not decode.
+UNICORE_BIN_SYNCS = (b"\xAA\x44\xB5", b"\xAA\x44\x12")
+
+
+def verify_nmea(path, seconds=None):
     results = []
     size = os.path.getsize(path)
     results.append(Result("PASS" if size > 0 else "FAIL", f"file size: {size:,} bytes"))
@@ -295,8 +367,29 @@ def verify_nmea(path):
     n_no_checksum = 0
     fix_hist = {}
     talkers = {}
+    sat_counts = []
+    # Unicore proprietary ASCII logs, tracked entirely separately from NMEA.
+    n_uni = 0
+    n_uni_crc_ok = 0
+    n_uni_crc_bad = 0
+    uni_types = {}
+    n_heading = 0
 
     for ln in lines:
+        if ln.startswith("#"):
+            n_uni += 1
+            m = re.match(r"^#([A-Za-z0-9_]+)", ln)
+            name = m.group(1) if m else "?"
+            uni_types[name] = uni_types.get(name, 0) + 1
+            if "HEADING" in name.upper() or "HDT" in name.upper():
+                n_heading += 1
+            ok = unicore_checksum_ok(ln)
+            if ok is True:
+                n_uni_crc_ok += 1
+            elif ok is False:
+                n_uni_crc_bad += 1
+            continue
+
         if not ln.startswith(("$", "!")):
             continue
         n_total += 1
@@ -313,36 +406,99 @@ def verify_nmea(path):
         fields = body.split(",")
         sentence_id = fields[0][1:] if fields and len(fields[0]) > 1 else ""
         talkers[sentence_id] = talkers.get(sentence_id, 0) + 1
+        if sentence_id[-3:] in ("HDT", "HDG", "HPR", "THS"):
+            n_heading += 1
 
         if sentence_id.endswith("GGA") and len(fields) > 6:
-            fix_q = fields[6]
+            fix_q = fields[6] or "0"
             fix_hist[fix_q] = fix_hist.get(fix_q, 0) + 1
+            if len(fields) > 7 and fields[7].strip().isdigit():
+                sat_counts.append(int(fields[7]))
 
-    results.append(Result("PASS" if n_total > 0 else "FAIL", f"NMEA-looking lines: {n_total}"))
-    if n_total == 0:
+    results.append(Result("PASS" if (n_total > 0 or n_uni > 0) else "FAIL",
+                          f"NMEA-looking lines: {n_total}"
+                          + (f" (+ {n_uni} Unicore proprietary lines)" if n_uni else "")))
+    if n_total == 0 and n_uni == 0:
         return results
 
-    if n_checksum_bad == 0 and n_checksum_ok > 0:
-        results.append(Result("PASS", f"checksums: {n_checksum_ok} valid, 0 invalid ({n_no_checksum} lines had no checksum field)"))
+    # --- rate ---------------------------------------------------------------
+    secs = seconds or guess_seconds_from_name(path)
+    if secs:
+        rate = (n_total + n_uni) / secs
+        status = "PASS" if rate >= 3.0 else "WARN"
+        results.append(Result(status, f"sentence rate: {rate:.1f}/s over {secs:.0f}s "
+                                        "(a 1 Hz receiver emitting GGA/RMC/GSA/GST/VTG gives ~5/s)"))
+    else:
+        results.append(Result("WARN", "sentence rate: unknown capture duration (pass --seconds, or name "
+                                        "the file like um982_90s.nmea) -- skipped"))
+
+    # --- NMEA checksums -----------------------------------------------------
+    if n_total == 0:
+        results.append(Result("WARN", "no NMEA 0183 sentences at all -- only proprietary output. "
+                                        "The receiver's NMEA messages are probably switched off."))
+    elif n_checksum_bad == 0 and n_checksum_ok > 0:
+        results.append(Result("PASS", f"NMEA checksums: {n_checksum_ok} valid, 0 invalid "
+                                        f"({n_no_checksum} lines had no checksum field)"))
     elif n_checksum_ok > 0:
         bad_frac = n_checksum_bad / (n_checksum_ok + n_checksum_bad)
         status = "WARN" if bad_frac < 0.01 else "FAIL"
-        results.append(Result(status, f"checksums: {n_checksum_ok} valid, {n_checksum_bad} INVALID "
+        results.append(Result(status, f"NMEA checksums: {n_checksum_ok} valid, {n_checksum_bad} INVALID "
                                         f"({bad_frac*100:.2f}% bad)"))
     else:
-        results.append(Result("WARN", "checksums: no checksummable sentences found"))
+        results.append(Result("WARN", "NMEA checksums: no checksummable sentences found"))
 
-    top_talkers = sorted(talkers.items(), key=lambda kv: -kv[1])[:8]
-    results.append(Result("PASS", "sentence types: " + ", ".join(f"{k}={v}" for k, v in top_talkers)))
+    if talkers:
+        top_talkers = sorted(talkers.items(), key=lambda kv: -kv[1])[:10]
+        results.append(Result("PASS", "sentence types: " + ", ".join(f"{k}={v}" for k, v in top_talkers)))
 
-    fix_names = {"0": "no fix", "1": "GPS (single)", "2": "DGPS", "4": "RTK Fixed", "5": "RTK Float"}
+    # --- Unicore proprietary output ----------------------------------------
+    if n_uni:
+        detail = ", ".join(f"{k}={v}" for k, v in sorted(uni_types.items(), key=lambda kv: -kv[1])[:6])
+        crc_txt = f"{n_uni_crc_ok} CRC32 ok, {n_uni_crc_bad} bad"
+        # Never FAIL on these: the CRC variant is vendor-specific and a
+        # mismatch is far more likely to mean "our CRC assumption is off"
+        # than "the receiver is broken". Presence is the useful signal.
+        status = "PASS" if n_uni_crc_bad == 0 else "WARN"
+        results.append(Result(status, f"Unicore proprietary ASCII logs: {n_uni} lines ({detail}); {crc_txt}"))
+    if n_heading:
+        results.append(Result("PASS", f"heading-bearing sentences seen: {n_heading} "
+                                        "(dual-antenna output -- needs BOTH antennas connected to be meaningful)"))
+    elif n_uni or n_total:
+        results.append(Result("WARN", "no heading sentences (UNIHEADING/HDT/THS) seen -- expected if only "
+                                        "ANT1 is connected, or if heading logs are not enabled"))
+
+    for sync in UNICORE_BIN_SYNCS:
+        if sync in raw:
+            results.append(Result("WARN", f"Unicore BINARY log sync {sync.hex()} present in the stream -- "
+                                            "captured verbatim but not decoded here; ask the tester to "
+                                            "confirm the receiver's output config"))
+            break
+
+    # --- fix quality --------------------------------------------------------
     if fix_hist:
-        hist_txt = ", ".join(f"{fix_names.get(k, k)}={v}" for k, v in sorted(fix_hist.items()))
-        has_fix = any(k != "0" and int(k) > 0 for k in fix_hist if k.isdigit())
-        status = "PASS" if has_fix else "WARN"
-        results.append(Result(status, f"GGA fix-quality histogram: {hist_txt}"))
+        hist_txt = ", ".join(f"{FIX_NAMES.get(k, k)}={v}" for k, v in sorted(fix_hist.items()))
+        has_fix = any(k.isdigit() and int(k) > 0 for k in fix_hist)
+        only_zero = set(fix_hist) == {"0"}
+        if has_fix:
+            # A bench capture with no correction source cannot do better than
+            # "single". That is the pass condition, not a shortfall.
+            status = "PASS"
+            note = ""
+            if not any(k in fix_hist for k in ("4", "5")):
+                note = "  -- single/DGPS only, which is correct for a bench test with no NTRIP/base"
+            results.append(Result(status, f"GGA fix-quality histogram: {hist_txt}{note}"))
+        else:
+            results.append(Result("WARN", f"GGA fix-quality histogram: {hist_txt} -- receiver never got a "
+                                            "fix. Tolerated (indoor antenna / short capture), but the "
+                                            "position path is unproven; re-run with the antenna outdoors."))
+        if only_zero:
+            pass
     else:
         results.append(Result("WARN", "no $GxGGA sentences found -- can't build a fix-quality histogram"))
+
+    if sat_counts:
+        results.append(Result("PASS", f"satellites in GGA: max {max(sat_counts)}, "
+                                        f"mean {sum(sat_counts)/len(sat_counts):.1f}"))
 
     return results
 
@@ -362,9 +518,11 @@ def overall_status(results):
 def main():
     ap = argparse.ArgumentParser(description="Verify a capture file returned from the remote-capture kit.")
     ap.add_argument("file", help="Path to the returned capture file")
-    ap.add_argument("--type", choices=["d6", "mid360", "nmea"], help="Override auto-detected file type")
-    ap.add_argument("--seconds", type=float, help="Known capture duration (for D6 rate check); "
-                                                     "inferred from a filename like bench_d6_30s.bin otherwise")
+    ap.add_argument("--type", choices=["d6", "mid360", "nmea", "um982"],
+                    help="Override auto-detected file type ('um982' is an alias for 'nmea')")
+    ap.add_argument("--seconds", type=float, help="Known capture duration (D6 byte-rate and NMEA "
+                                                     "sentence-rate checks); inferred from a filename like "
+                                                     "bench_d6_30s.bin / um982_90s.nmea otherwise")
     ap.add_argument("--d6cli", default=DEFAULT_D6CLI, help="Path to the S1 spike's d6cli binary")
     args = ap.parse_args()
 
@@ -381,8 +539,8 @@ def main():
         results = verify_d6(args.file, args.seconds, args.d6cli)
     elif ftype == "mid360":
         results = verify_mid360(args.file)
-    elif ftype == "nmea":
-        results = verify_nmea(args.file)
+    elif ftype in ("nmea", "um982"):
+        results = verify_nmea(args.file, args.seconds)
     else:
         print(f"error: unknown type {ftype}", file=sys.stderr)
         return 1

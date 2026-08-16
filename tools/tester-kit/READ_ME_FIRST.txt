@@ -23,3 +23,11 @@ STEP 3  SEND THE RESULT BACK
 IF SOMETHING GOES WRONG
   The window explains what to try, in order.
   If it still fails: take a PHOTO of the window and send the photo.
+
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+NOTE FOR THE LIDARSCAN TEAM (not for the tester):
+  This is kit v1 - the COIN-D6 lidar only, Windows only. It still
+  works and anything already sent out keeps working. New sends
+  should use tools/fieldtest-kit/ instead, which covers all three
+  sensors (D6, Mid-360, UM982 GPS) on Windows AND macOS.
+  See tools/fieldtest-kit/NOTES.md.
