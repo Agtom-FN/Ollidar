@@ -331,7 +331,7 @@
   .dispfab[aria-expanded=true]{border-color:var(--ember);color:var(--ember)}
   .sheet-scrim{position:absolute;inset:0;z-index:30;background:rgba(6,9,12,.58);
                animation:sheetFade .18s ease-out}
-  .sheet{position:absolute;left:0;right:0;bottom:0;z-index:34;height:65%;max-height:470px;
+  .sheet{position:absolute;left:0;right:0;bottom:0;z-index:34;height:73%;max-height:540px;
          background:var(--panel);border-top:1px solid var(--line);
          border-radius:20px 20px 0 0;box-shadow:0 -14px 40px rgba(0,0,0,.62);
          display:flex;flex-direction:column;
@@ -343,8 +343,8 @@
   @keyframes sheetFade{from{opacity:0}to{opacity:1}}
   @keyframes sheetFadeOut{from{opacity:1}to{opacity:0}}
   /* the grabber is a real 44 px-tall dismiss target, not decoration */
-  .sheet-grab{width:100%;height:34px;display:flex;align-items:center;justify-content:center;
-              flex:none;padding-top:10px}
+  .sheet-grab{width:100%;height:30px;display:flex;align-items:center;justify-content:center;
+              flex:none;padding-top:8px}
   .sheet-grab i{display:block;width:44px;height:5px;border-radius:3px;background:var(--line);
                 transition:background .14s}
   .sheet-grab:hover i{background:var(--ink-faint)}
@@ -352,24 +352,29 @@
   .sheet:focus{outline:none}
   .sheet-grab:focus{outline:none}
   .sheet-grab:focus-visible i{background:var(--ember);width:56px}
-  .sheet-head{display:flex;align-items:baseline;gap:10px;padding:0 18px 4px;flex:none}
+  .sheet-head{display:flex;align-items:baseline;gap:10px;padding:0 18px 3px;flex:none}
   .sheet-head h2{font-family:var(--display);font-size:19px;font-weight:600;letter-spacing:-.02em}
-  .sheet-body{flex:1;min-height:0;overflow-y:auto;padding:2px 18px 10px}
-  .sheet-row{padding:16px 0 10px;border-top:1px solid var(--line-soft)}
-  .sheet-row:first-child{border-top:none;padding-top:4px}
-  .sheet-row>label{display:flex;align-items:baseline;gap:8px;margin-bottom:6px;
+  .sheet-body{flex:1;min-height:0;overflow-y:auto;padding:0 18px 6px}
+  .sheet-row{padding:12px 0 7px;border-top:1px solid var(--line-soft)}
+  .sheet-row:first-child{border-top:none;padding-top:2px}
+  .sheet-row>label{display:flex;align-items:baseline;gap:8px;margin-bottom:4px;
                    font-family:var(--mono);font-size:10px;letter-spacing:.14em;
                    text-transform:uppercase;color:var(--ink-faint)}
   .sheet-row>label b{margin-left:auto;font-size:12.5px;letter-spacing:0;text-transform:none;
                      color:var(--ink);font-variant-numeric:tabular-nums;font-weight:500}
-  /* the range lives in the label, not in a second row under the track — the
-     three control rows have to fit above the fold or the fix has not landed */
+  /* the range lives in the label, not in a second row under the track — all four
+     control rows (View, colour, point size, LOD) have to fit above the fold or the
+     fix has not landed; the sheet grew to 73 % when View moved in, and the viewport
+     still shows a live band of cloud above it */
   .sheet-row>label i{font-style:normal;font-size:9.5px;letter-spacing:.06em;
                      text-transform:none;color:var(--ink-faint);opacity:.85}
   .seg.sheetseg{display:flex;width:100%;padding:4px;border-radius:99px;
                 font-family:var(--sans);font-size:13.5px;background:var(--panel-2)}
   .seg.sheetseg button{flex:1;height:40px;justify-content:center;text-align:center;
                        border-radius:99px;font-weight:500;padding:0 6px}
+  /* View row: the 3D/AR mode moved off the viewport and into the sheet, so it gets
+     the largest target on the sheet — two equal halves, 48 px tall (min 44 px). */
+  .seg.sheetseg.viewseg button{height:48px;font-size:14px;font-weight:600;min-width:0}
   /* 28 px knob on an 8 px track — the whole 44 px row is draggable */
   .sheet-slider{-webkit-appearance:none;appearance:none;display:block;width:100%;height:44px;
                 background:none;cursor:pointer;outline:none}
@@ -383,7 +388,7 @@
   .sheet-slider::-moz-range-thumb{width:28px;height:28px;border-radius:50%;background:var(--ember);
     border:3px solid var(--panel);box-shadow:0 2px 8px rgba(0,0,0,.55)}
   .sheet-slider:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 4px rgba(255,122,82,.4)}
-  .sheet-foot{flex:none;padding:10px 18px 14px;border-top:1px solid var(--line-soft);
+  .sheet-foot{flex:none;padding:9px 18px 12px;border-top:1px solid var(--line-soft);
               background:var(--panel)}
 
   /* ─────────────── Android · job tiles ─────────────── */
@@ -1542,7 +1547,6 @@ A.capture = ()=>{
   + fixStrip()
   + `<div class="vp hero" style="flex:1;min-height:0" data-orbit="cap">
       <canvas data-cloud="cap"></canvas>
-      <div class="ovl act" style="top:12px;left:14px">${SEG([['3d','3D'],['ar','AR']],c.view,'capView','sm onview')}</div>
       <div class="ovl act" style="top:12px;right:14px">${SEG([['orbit','Orbit'],['follow','Follow']],c.follow?'follow':'orbit','capFollow','sm onview')}</div>
       <div class="ovl" style="bottom:12px;left:14px"><span class="chip onview">
         <span class="dot" style="background:var(--pose)"></span>${c.liveSlam?'LIVE MAP · SLAM':'RAW · '+SENSORS[p.sensor].code}</span></div>
@@ -1578,7 +1582,7 @@ A.capture = ()=>{
     </div>
     <div class="body haspad" style="flex:none;height:126px;padding:0 16px">
       <div class="sect" style="padding-left:0">AR + camera keyframes</div>
-      ${KV('AR tracking', c.view==='ar'?'<span style="color:var(--fix-good)">TRACKING</span>':'<span style="color:var(--ink-faint)">off</span>')}
+      ${KV('AR tracking', `<span id="cap-artrack" style="color:var(--${c.view==='ar'?'fix-good':'ink-faint'})">${c.view==='ar'?'TRACKING':'off'}</span>`)}
       ${KV('Keyframes written', String(c.kf))}
       ${KV('Tracking-loss episodes','0')}
       ${KV('Skipped (turning too fast)', String(c.drops))}
@@ -1595,6 +1599,7 @@ A.capture = ()=>{
    the sheet never jumps under your thumb. */
 function capSheet(c){
   const COLOURS=[['height','Height'],['rgb','RGB'],['intensity','Intensity']];
+  const VIEWS=[['3d','3D orbit'],['ar','AR overlay']];
   return `<div class="sheet-scrim" id="cap-sheet-scrim" data-act="capSheet" data-arg="close"
                aria-hidden="true"></div>
     <section class="sheet" id="cap-sheet" role="dialog" aria-modal="false" tabindex="-1"
@@ -1607,6 +1612,11 @@ function capSheet(c){
               letter-spacing:.13em;text-transform:uppercase">A14 · live</span>
       </div>
       <div class="sheet-body">
+        <div class="sheet-row" id="cap-view-row">
+          <label>View <i>how the cloud is framed</i><b id="cap-view-out">${VIEWS.find(x=>x[0]===(c.view||'3d'))[1]}</b></label>
+          <div class="seg sheetseg viewseg">${VIEWS.map(([v,l])=>
+            `<button data-act="capView" data-arg="${v}" aria-pressed="${v===(c.view||'3d')}">${l}</button>`).join('')}</div>
+        </div>
         <div class="sheet-row">
           <label>Colour mode <b id="cap-colour-out">${COLOURS.find(x=>x[0]===(c.color||'height'))[1]}</b></label>
           <div class="seg sheetseg">${COLOURS.map(([v,l])=>
@@ -2369,8 +2379,9 @@ const HINTS={
   connect_wizard:'Rescan → Connect. The health panel fills once the link is up.',
   mid360:'Run the self-test — it animates for 2 s, then unlocks “Save to project”.',
   calib:'Capture 8 poses → Solve → read the split-half gate → verify.',
-  capture:'Press Record: the cloud streams in progressively. Toggle AR, Live-SLAM, drag to orbit. '
-         +'On Android the sliders icon on the view opens the Display bottom sheet; on the desktops the '
+  capture:'Press Record: the cloud streams in progressively. Toggle Live-SLAM, drag to orbit. '
+         +'On Android the sliders icon on the view opens the Display bottom sheet — view mode (3D orbit / '
+         +'AR overlay), colour, point size and LOD all live there; on the desktops the '
          +'record cluster sits under the viewport.',
   rtk:'Pair a rover → pick a mountpoint → Connect. The fix climbs SINGLE → FLOAT → FIXED.',
   processing:'Queue a job — it advances through the engine’s real stage labels.',
@@ -2646,7 +2657,25 @@ const ACT = {
     if(c.state!=='idle'){ toast('Live-SLAM is editable only while idle'); return; }
     c.liveSlam=!c.liveSlam; toast(c.liveSlam?'Live-SLAM: registered map (kSlamMap)':'Record-only: raw returns, no registration');
     render(); },
-  capView:(v)=>{ S.cap.view=v; render(); },
+  /* View mode (3D orbit ⇄ AR overlay) now lives at the top of the display sheet.
+     Same in-place treatment as the colour chips: patch the pressed states, patch the
+     AR-tracking readout behind the sheet, repaint the canvas — no re-render, so the
+     sheet never jumps and the backdrop swap is verifiable while it is still open. */
+  capView:(v)=>{ S.cap.view=v;
+    const sh=$('#cap-sheet');
+    if(S.cap.sheet && sh){
+      let label=v;
+      $$('[data-act="capView"]',sh).forEach(b=>{
+        const on = b.dataset.arg===v;
+        b.setAttribute('aria-pressed', String(on));
+        if(on) label=b.textContent.trim();
+      });
+      const out=$('#cap-view-out'); if(out) out.textContent=label;
+      const trk=$('#cap-artrack');
+      if(trk){ trk.textContent = v==='ar'?'TRACKING':'off';
+               trk.style.color = v==='ar'?'var(--fix-good)':'var(--ink-faint)'; }
+      redraw();
+    } else render(); },
   capFollow:(v)=>{ S.cap.follow = v==='follow'; render(); },
   /* Colour mode lives in the bottom sheet: patch the pressed states in place and
      repaint the canvas rather than re-rendering, so the sheet stays put. */
@@ -2676,7 +2705,7 @@ const ACT = {
     }
     S.cap.sheet=true; render();
     const sh=$('#cap-sheet'); if(sh) sh.focus();   // focus lands in the dialog, not on the grabber
-    toast('Display sheet — colour, point size and LOD apply to the live cloud behind it'); },
+    toast('Display sheet — view mode, colour, point size and LOD apply to the live cloud behind it'); },
 
   /* RTK */
   rtkRover:(i)=>{ i=+i;
@@ -3065,13 +3094,13 @@ const CHECK=[
   ['a-cap-traj','The ember trajectory draws itself with the walk'],
   ['a-cap-stats','pts/s, points, duration and .lscan size tick live'],
   ['a-cap-rec','Record / Pause / Stop actually change state'],
-  ['a-cap-ar','AR ⇄ 3D swaps to the camera-anchored variant'],
+  ['a-cap-ar','View mode lives at the top of the Display sheet: AR overlay ⇄ 3D orbit swaps the viewport to the camera-anchored variant behind the open sheet — there is no floating 3D/AR control on the viewport any more'],
   ['a-cap-slam','Live-SLAM ⇄ Record-only visibly changes registered vs raw'],
   ['a-cap-gate','RTK gate blocks Record for a Survey project below RTK Float'],
   ['a-cap-orbit','Orbit / Follow, and drag-to-rotate in the viewport'],
-  ['a-cap-sheet','The Display button on the viewport opens a bottom sheet — grabber, scrim, ~60 % height — and the grabber, the scrim, Esc and Done all close it'],
-  ['a-cap-disp','In the sheet: colour-mode chips (40 px), point-size and LOD sliders (28 px knobs) apply to the live cloud while the sheet is open'],
-  ['a-cap-view','The viewport stays visible above the sheet, so every display change is verifiable as you make it'],
+  ['a-cap-sheet','The Display button on the viewport is the single entry point for view + display settings: it opens a bottom sheet — grabber, scrim, ~70 % height — and the grabber, the scrim, Esc and Done all close it'],
+  ['a-cap-disp','In the sheet: the 48 px View row (3D orbit / AR overlay) on top, then colour-mode chips (40 px), point-size and LOD sliders (28 px knobs) — all apply to the live cloud while the sheet is open'],
+  ['a-cap-view','The viewport stays visible above the sheet, so every display change — view mode included — is verifiable as you make it'],
   ['a-cap-sum','Stop writes the session summary back onto the project'],
  ]],
  ['Android · RTK','android','rtk',[

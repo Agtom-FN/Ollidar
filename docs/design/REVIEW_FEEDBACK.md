@@ -22,3 +22,28 @@ Verified headless via CDP: 60/60 assertions, zero console errors, no dead contro
 
 ## 2026-08-16 — round 2
 3. **Android · Capture**: move the AR setting into the Display bottom sheet — view mode (3D/AR) belongs with the display settings, not as a separate floating control.
+
+### Resolution — 2026-08-16 (mockup v5)
+3. **Fixed.** The floating 3D/AR segmented control is gone from the capture viewport. View mode
+   is now the **top section of the Display sheet**: a full-width, 48 px-tall segmented row —
+   two equal halves, **3D orbit / AR overlay** — above colour mode, point size and LOD. It is
+   bound to the same `capView` action and `S.cap.view` state as before, so nothing was
+   re-plumbed; `capView` just got the in-place treatment the colour chips already had: it
+   patches `aria-pressed`, the row read-out and the *AR tracking* line behind the sheet, then
+   `redraw()`s. The viewport swaps to the camera-anchored AR backdrop live, with the sheet
+   still open and un-jumped. The Display button is now the single entry point for view +
+   display settings; the **Orbit / Follow** camera control stays on the viewport, untouched,
+   and desktop capture keeps its own `dcapView` control.
+   The sheet grew 65 % → 73 % with tightened row rhythm (12 px) so all four rows still fit
+   above the fold with no scrolling, while 77 px of live viewport stays on screen above it —
+   enough that the AR swap is plainly visible (mean band brightness 14 → 38).
+   Checklist: `a-cap-ar` rewritten to the new location (and to assert the overlay control is
+   gone), `a-cap-sheet` reworded to "single entry point for view + display settings, ~70 %
+   height", `a-cap-disp` now lists the 48 px View row first, `a-cap-view` extended to cover
+   view mode. No items added or removed — still 110. No dead controls or orphan handlers:
+   `capView` remains referenced (from the sheet), and no `data-act` was left behind.
+
+Verified headless via CDP: 44/44 round-2 assertions plus the full round-1 suite re-run green
+(60/60) — 104 total, zero console errors, zero uncaught exceptions, 87 actions audited across
+every screen with the sheet both open and closed, and a record → AR-toggle → stop cycle driven
+end to end. Screenshots: `redesign-exports/fix-r2-*.png`.
