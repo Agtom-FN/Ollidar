@@ -91,3 +91,6 @@ that now matched the rate row, the "no scrolling" rule superseded by pinned-View
 errors, zero uncaught exceptions, 89 distinct actions audited across every screen with the sheet
 open *and* closed *and* with keyframes both on and off, and a record → keyframes-off → keyframes-on
 → rate-change → stop cycle driven end to end. Screenshots: `redesign-exports/fix-r3-*.png`.
+
+## 2026-08-16 — round 3
+4. **Android · Capture**: remove the "AR + camera keyframes" telemetry block (AR tracking / Keyframes written / Tracking-loss episodes / Skipped-turning / Rolling shutter) from the capture screen body. Relocate into a Diagnostics view opened from the device-health chip (one tap away, capture body stays clean).
