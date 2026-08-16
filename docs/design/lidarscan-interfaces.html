@@ -414,6 +414,27 @@
   .sheet-slider:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 4px rgba(255,122,82,.4)}
   .sheet-foot{flex:none;padding:9px 18px 12px;border-top:1px solid var(--line-soft);
               background:var(--panel)}
+  /* Diagnostics is read-only, so it needs less thumb room than Capture settings and
+     gives the viewport it is diagnosing back the difference: 74 % → 60 %. */
+  .sheet.diagsheet{height:60%;max-height:460px}
+  /* a diagnostics row is a KV, not a control: no target, no border, tabular numbers */
+  .diagrow{display:flex;align-items:baseline;gap:10px;padding:6px 0 5px;
+           border-top:1px solid var(--line-soft);font-size:12.5px}
+  .diagrow:first-of-type{border-top:none}
+  .diagrow>span{font-family:var(--mono);font-size:10px;letter-spacing:.14em;
+                text-transform:uppercase;color:var(--ink-faint)}
+  .diagrow>b{margin-left:auto;font-weight:500;color:var(--ink);text-align:right;font-size:12px}
+  /* A chip that is also a button: it keeps its chip size, and hangs an invisible
+     44 × 44 px target off its centre so the thumb target meets the floor even
+     though the ink does not. The pseudo-element is the hit area, not the chip. */
+  /* overflow must stay visible or the .ovl clip rule would crop the hit target away */
+  .vp .ovl .chip.hit44{overflow:visible}
+  .chip.hit44{position:relative;cursor:pointer;font-family:var(--mono)}
+  .chip.hit44::after{content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+                     min-width:44px;min-height:44px;width:100%;height:100%}
+  .chip.hit44:hover{border-color:var(--ember);color:var(--ember)}
+  .chip.hit44[aria-expanded=true]{border-color:var(--ember);color:var(--ember)}
+  .chip.hit44:focus-visible{outline:2px solid var(--ember);outline-offset:3px}
 
   /* ─────────────── Android · job tiles ─────────────── */
   .jobtile{display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line-soft);
@@ -759,7 +780,10 @@ const newCap = ()=>({state:'idle', view:'3d', liveSlam:true, prog:0, pts:0, elap
                      /* AR + camera keyframes (colorization capture) — B7/B8 */
                      keyframes:true, kfRate:3, kfAcc:0, arTrack:null,
                      /* display parameters — surfaced through the capture bottom sheet */
-                     color:'height', size:2.0, lod:20, sheet:false});
+                     color:'height', size:2.0, lod:20, sheet:false,
+                     /* the diagnostics sheet behind the viewport health chip — the
+                        telemetry the capture body used to carry, one tap away */
+                     diag:false});
 
 const S = {
   dev:'android',
@@ -1592,8 +1616,7 @@ function paintKf(){
 
 A.capture = ()=>{
   const c=S.cap, p=proj(), rec=c.state==='rec', paused=c.state==='paused';
-  const kfOn = c.keyframes!==false, kfLive = rec && kfOn;
-  const [artTxt,artCol] = ART[arTrackState(c)];
+  const kfLive = rec && c.keyframes!==false;
   const canRec = FIX[S.rtk.fix] && (!S.set.gate || !PROFILES[p.profile].gate.includes('blocks')
                   || FIXORDER.indexOf(S.rtk.fix)>=FIXORDER.indexOf('RTK_FLOAT'));
   const live = c.state!=='idle';
@@ -1607,7 +1630,14 @@ A.capture = ()=>{
       <div class="ovl act" style="top:12px;right:14px">${SEG([['orbit','Orbit'],['follow','Follow']],c.follow?'follow':'orbit','capFollow','sm onview')}</div>
       <div class="ovl" style="bottom:12px;left:14px"><span class="chip onview">
         <span class="dot" style="background:var(--pose)"></span>${c.liveSlam?'LIVE MAP · SLAM':'RAW · '+SENSORS[p.sensor].code}</span></div>
-      <div class="ovl" style="bottom:12px;right:14px"><span class="chip onview ${c.health==='deg'?'warn':''}" id="cap-health">${c.health==='deg'?'Degraded':'Healthy'}</span></div>
+      <!-- the health chip is the door to Diagnostics: it reads the state, and a tap
+           opens the numbers behind it. The chip itself is chip-sized; .hit44 hangs an
+           invisible 44 px target off it so the thumb is not asked to hit 22 px. -->
+      <div class="ovl act" style="bottom:12px;right:14px"><button
+        class="chip onview hit44 ${c.health==='deg'?'warn':''}" id="cap-health"
+        data-act="capDiag" data-arg="open" aria-haspopup="dialog" aria-expanded="${!!c.diag}"
+        aria-controls="cap-diag" title="Diagnostics — device, AR + camera"
+        aria-label="Diagnostics — device health ${c.health==='deg'?'degraded':'healthy'}">${c.health==='deg'?'Degraded':'Healthy'}</button></div>
       <!-- the keyframe counter rides the TOP band of the viewport: that strip stays on
            screen with the sheet open, so the switch you just flipped is verifiable -->
       <div class="ovl" style="top:12px;left:14px"><span class="chip onview kfchip" id="cap-kfchip"
@@ -1625,7 +1655,9 @@ A.capture = ()=>{
       <div class="stat"><em id="cap-dur">00:00</em><label>rec</label></div>
       <div class="stat"><em id="cap-mb">0 MB</em><label>.lscan</label></div>
     </div>
-    <div class="caprow">
+    <!-- the transport is now the last thing on the screen, so it carries the tab-bar
+         clearance the removed telemetry body used to provide -->
+    <div class="caprow haspad">
       <div style="display:flex;flex-direction:column;gap:2px;min-width:0">
         <button class="sw big" role="switch" aria-pressed="${!!c.liveSlam}" data-act="capSlam"><i></i>${c.liveSlam?'Live SLAM':'Record-only'}</button>
         <span class="hint" style="font-size:10.5px">${c.state==='idle'?'editable while idle':'locked during a session'}</span>
@@ -1641,17 +1673,11 @@ A.capture = ()=>{
         </button>
       </div>
     </div>
-    <div class="body haspad" style="flex:none;height:126px;padding:0 16px">
-      <div class="sect" style="padding-left:0">AR + camera keyframes</div>
-      ${KV('AR tracking', `<span id="cap-artrack-body" data-artrack style="color:${artCol}">${artTxt}</span>`)}
-      ${KV('Keyframes written', kfOn
-        ? `<span id="cap-kf-out">${c.kf}</span><span style="color:var(--ink-faint)"> · ${c.kfRate} fps</span>`
-        : '<span style="color:var(--ink-faint)">off — no colorization</span>')}
-      ${KV('Tracking-loss episodes','0')}
-      ${KV('Skipped (turning too fast)', String(c.drops))}
-      ${KV('Rolling shutter','not reported by this camera')}
-    </div>`
-  + (c.sheet ? capSheet(c) : '');
+    <!-- the AR + camera telemetry that used to sit here now lives in the Diagnostics
+         sheet behind the viewport health chip: the capture screen is a viewport, four
+         numbers and the transport, and nothing you read once per session. -->`
+  + (c.sheet ? capSheet(c) : '')
+  + (c.diag ? diagSheet(c) : '');
 };
 
 /* The capture bottom sheet — A14's view + AR/camera + display contract at thumb scale.
@@ -1721,6 +1747,101 @@ function capSheet(c){
         <button class="btn lg pri wide" data-act="capSheet" data-arg="close">Done</button>
       </div>
     </section>`;
+}
+
+/* ── Diagnostics ────────────────────────────────────────────────────────────────
+   Everything the capture body used to spend 126 px carrying, moved behind the
+   viewport's health chip. Same sheet chrome as Capture settings — scrim, grabber,
+   scrollable body, Done — but shorter (60 %) because it is read-only: nothing in
+   here is a target, so it does not need thumb room, and the extra viewport it
+   leaves on screen is the thing you are actually diagnosing.
+   Every row is painted from the same live state the rest of the screen reads, and
+   repainted by paintDiag() on the animation tick, so the numbers keep moving while
+   the sheet is open — a frozen diagnostic is a lie. */
+function diagSheet(c){
+  const [artTxt,artCol]=ART[arTrackState(c)];
+  const kfOn=c.keyframes!==false, rec=c.state==='rec';
+  const state = c.state==='rec'?['Streaming','var(--fix-good)']
+              : c.state==='paused'?['Paused','var(--fix-warn)']
+              : c.state==='stopping'?['Stopping','var(--fix-warn)']:['Idle','var(--ink-mute)'];
+  const mono='font-family:var(--mono);font-variant-numeric:tabular-nums';
+  return `<div class="sheet-scrim" id="cap-diag-scrim" data-act="capDiag" data-arg="close"
+               aria-hidden="true"></div>
+    <section class="sheet diagsheet" id="cap-diag" role="dialog" aria-modal="false" tabindex="-1"
+             aria-label="Diagnostics">
+      <button class="sheet-grab" data-act="capDiag" data-arg="close"
+              aria-label="Close diagnostics"><i></i></button>
+      <div class="sheet-head">
+        <h2>Diagnostics</h2>
+        <span class="hint" style="margin-left:auto;font-family:var(--mono);font-size:10px;
+              letter-spacing:.13em;text-transform:uppercase">read-only · live</span>
+      </div>
+      <div class="sheet-body">
+        <div class="sheet-sect">Device</div>
+        <div class="diagrow"><span>State</span>
+          <b id="diag-state" style="color:${state[1]};${mono}">${state[0]}</b></div>
+        <div class="diagrow"><span>Points / sec</span>
+          <b id="diag-pps" style="${mono}">${fmt(rec?c.rate:0)}</b></div>
+        <div class="diagrow"><span>Rotation</span>
+          <b style="${mono}">10.00 Hz</b></div>
+        <div class="diagrow"><span>IMU</span>
+          <b style="${mono}">200 Hz · ${SENSORS[proj().sensor].code}</b></div>
+        <div class="diagrow"><span>Checksum pass rate</span>
+          <b style="color:var(--fix-good);${mono}">99.98%</b></div>
+        <div class="diagrow"><span>Packet loss</span>
+          <b id="diag-loss" style="${mono}">0 dropped · 0.00%</b></div>
+        <div class="sheet-sect">AR + camera</div>
+        <div class="diagrow"><span>AR tracking</span>
+          <b id="diag-artrack" data-artrack style="color:${artCol};${mono};letter-spacing:.1em">${artTxt}</b></div>
+        <div class="diagrow"><span>Keyframes written</span>
+          <b id="diag-kf" style="${mono}">${kfOn
+            ? `<span id="cap-kf-out">${c.kf}</span><span style="color:var(--ink-faint)"> · ${c.kfRate} fps</span>`
+            : '<span style="color:var(--ink-faint)">off — no colorization</span>'}</b></div>
+        <div class="diagrow"><span>Tracking-loss episodes</span>
+          <b style="${mono}">0</b></div>
+        <div class="diagrow"><span>Skipped (turning too fast)</span>
+          <b id="diag-drops" style="${mono}">${c.drops}</b></div>
+        <div class="diagrow"><span>Rolling shutter</span>
+          <b style="${mono};color:var(--ink-mute)">not reported by this camera</b></div>
+        <div class="hint" style="margin-top:10px">Read-only. The capture settings that drive these —
+          camera keyframes and their rate — live in the Capture-settings sheet.</div>
+      </div>
+      <div class="sheet-foot">
+        <button class="btn lg pri wide" data-act="capDiag" data-arg="close">Done</button>
+      </div>
+    </section>`;
+}
+/* the live half of the Diagnostics sheet — driven from the same tick as the stat
+   strip, so the sheet can never show a number the screen behind it disagrees with */
+function paintDiag(){
+  const sh=$('#cap-diag'); if(!sh) return;
+  const c=S.cap, rec=c.state==='rec';
+  const st=$('#diag-state');
+  if(st){ const [t,col] = rec?['Streaming','var(--fix-good)']
+        : c.state==='paused'?['Paused','var(--fix-warn)']
+        : c.state==='stopping'?['Stopping','var(--fix-warn)']:['Idle','var(--ink-mute)'];
+    if(st.textContent!==t) st.textContent=t; st.style.color=col; }
+  const set=(id,v)=>{ const el=$('#'+id); if(el && el.textContent!==v) el.textContent=v; };
+  set('diag-pps', fmt(rec?c.rate:0));
+  set('diag-drops', String(c.drops));
+  set('diag-loss', '0 dropped · 0.00%');
+}
+/* one dismissal path for both capture sheets: play the exit animation, then re-render
+   the screen without it — unless the other sheet claimed the screen in the meantime */
+/* Opening a sheet re-renders the screen, which removes the button you just pressed.
+   Chrome answers that by resetting focus to <body> — and that fixup can land *after*
+   the .focus() call below, leaving the dialog open with focus nowhere. So claim focus
+   twice: now, and again on the next task once the fixup has had its turn. */
+function focusSheet(sel){
+  const el=$(sel); if(el) el.focus();
+  setTimeout(()=>{ const e=$(sel); if(e && document.activeElement!==e) e.focus(); },0);
+}
+function closeCapSheets(sel,scrimSel){
+  const sh=$(sel), sc=$(scrimSel);
+  if(sh && !RM){ sh.classList.add('out'); if(sc) sc.classList.add('out');
+    setTimeout(()=>{ if(S.dev==='android' && S.scr.android==='capture'
+                        && !S.cap.sheet && !S.cap.diag) render(); },170);
+  } else render();
 }
 
 A.rtk = ()=>{
@@ -2465,8 +2586,9 @@ const HINTS={
   calib:'Capture 8 poses → Solve → read the split-half gate → verify.',
   capture:'Press Record: the cloud streams in progressively. Toggle Live-SLAM, drag to orbit. '
          +'On Android the sliders icon on the view opens the Capture-settings bottom sheet — view mode (3D orbit / '
-         +'AR overlay), AR & camera keyframes (on/off + 2/3/5 fps) with the AR-tracking readout, then colour, point size and LOD all live there; on the desktops the '
-         +'record cluster sits under the viewport.',
+         +'AR overlay), AR & camera keyframes (on/off + 2/3/5 fps) with the AR-tracking readout, then colour, point size and LOD all live there; '
+         +'the Healthy chip in the corner of the view opens Diagnostics — device health and the AR + camera counters, read-only and still ticking; '
+         +'on the desktops the record cluster sits under the viewport.',
   rtk:'Pair a rover → pick a mountpoint → Connect. The fix climbs SINGLE → FLOAT → FIXED.',
   processing:'Queue a job — it advances through the engine’s real stage labels.',
   review:'Drag the viewport to orbit, scroll to zoom. Turn Measure on and tap two points.',
@@ -2652,12 +2774,12 @@ function setPath(path,val){
 }
 const ACT = {
   /* navigation */
-  go:(a)=>{ S.scr.android=a; S.cap.sheet=false;
+  go:(a)=>{ S.scr.android=a; S.cap.sheet=false; S.cap.diag=false;
     if(a==='new_project') S.np={name:'',sensor:null,profile:null}; render(); },
   back:()=>{ const m={new_project:'projects', detail:'projects', capture:'detail', connect_wizard:'detail',
       mid360:'detail', calib:'detail', rtk:'detail', processing:'detail', review:'detail',
       plan:'review', merge:'detail', settings:'projects'};
-    S.scr.android = m[S.scr.android]||'projects'; S.cap.sheet=false; render(); },
+    S.scr.android = m[S.scr.android]||'projects'; S.cap.sheet=false; S.cap.diag=false; render(); },
   open:(id)=>{ S.pid=id; if(S.dev==='android'){S.scr.android='detail';} else {S.scr[S.dev]='review';} render(); },
   tab:(t)=>{ S.scr[S.dev]=t; S.menu=null; render(); },
   menu:(m)=>{ S.menu = S.menu===m?null:m; render(); },
@@ -2796,21 +2918,33 @@ const ACT = {
       const out=$('#cap-colour-out'); if(out) out.textContent=label;
       redraw();
     } else render(); },
-  /* Bottom sheet: the grabber, the scrim and Done all dismiss it. Closing plays
-     the exit animation first, then re-renders the screen without the sheet. */
+  /* Bottom sheets: the grabber, the scrim, Esc and Done all dismiss them. Closing
+     plays the exit animation first, then re-renders the screen without the sheet.
+     Two sheets now share the capture viewport — Capture settings and Diagnostics —
+     and exactly one of them may be open: opening either closes the other, so the
+     scrim, the focus and the Esc key always belong to a single dialog. */
   capSheet:(mode)=>{
     if(mode==='close' || S.cap.sheet){
       if(!S.cap.sheet) return;
-      S.cap.sheet=false;
-      const sh=$('#cap-sheet'), sc=$('#cap-sheet-scrim');
-      if(sh && !RM){ sh.classList.add('out'); if(sc) sc.classList.add('out');
-        setTimeout(()=>{ if(S.dev==='android' && S.scr.android==='capture' && !S.cap.sheet) render(); },170);
-      } else render();
+      S.cap.sheet=false; closeCapSheets('#cap-sheet','#cap-sheet-scrim');
       return;
     }
+    S.cap.diag=false;                              // one sheet at a time
     S.cap.sheet=true; render();
-    const sh=$('#cap-sheet'); if(sh) sh.focus();   // focus lands in the dialog, not on the grabber
+    focusSheet('#cap-sheet');                      // focus lands in the dialog, not on the grabber
     toast('Capture settings — view, AR & camera keyframes, colour, point size and LOD, all live behind the sheet'); },
+  /* Diagnostics: read-only, opened from the viewport health chip. Nothing in it is
+     a control, so it takes focus on the dialog itself and gives it back on close. */
+  capDiag:(mode)=>{
+    if(mode==='close' || S.cap.diag){
+      if(!S.cap.diag) return;
+      S.cap.diag=false; closeCapSheets('#cap-diag','#cap-diag-scrim');
+      return;
+    }
+    S.cap.sheet=false;                             // one sheet at a time
+    S.cap.diag=true; render(); paintDiag();
+    focusSheet('#cap-diag');
+    toast('Diagnostics — device health and the AR + camera counters, live while you record'); },
 
   /* RTK */
   rtkRover:(i)=>{ i=+i;
@@ -3039,6 +3173,7 @@ function tick(now){
       set('cap-dur',mmss(S.cap.elapsed));
       set('cap-mb',Math.round(S.cap.mb)+' MB');
       paintKf();                                   // KF counter + "keyframes written"
+      paintDiag();                                 // Diagnostics rows, if that sheet is up
     } else {
       const el=document.getElementById('dcap-stats');
       if(el) el.textContent=`${fmt(Math.round(S.dcap.pts))} pts · ${f1(S.dcap.elapsed)} s · ${fmt(S.dcap.rate)} pts/s`;
@@ -3211,8 +3346,9 @@ const CHECK=[
   ['a-cap-slam','Live-SLAM ⇄ Record-only visibly changes registered vs raw'],
   ['a-cap-gate','RTK gate blocks Record for a Survey project below RTK Float'],
   ['a-cap-orbit','Orbit / Follow, and drag-to-rotate in the viewport'],
-  ['a-cap-kf','AR & Camera section in the capture sheet: the 44 px Camera-keyframes switch and the 2 / 3 / 5 fps rate chips — the KF counter on the viewport ticks while recording with keyframes on, disappears when they are off, and the rate row dims to 50 % while it is off'],
-  ['a-cap-sheet','The Capture-settings button on the viewport is the single entry point for view + AR/camera + display: it opens a bottom sheet — grabber, scrim, ~74 % height, View pinned above the scroll — and the grabber, the scrim, Esc and Done all close it'],
+  ['a-cap-kf','AR & Camera section in the capture sheet: the 44 px Camera-keyframes switch and the 2 / 3 / 5 fps rate chips — the KF counter on the viewport ticks while recording with keyframes on, disappears when they are off, and the rate row dims to 50 % while it is off. The written-keyframe count and the rest of the AR telemetry are no longer in the capture body — they read out in the diagnostics sheet from the health chip'],
+  ['a-cap-diag','The device-health chip on the viewport is a 44 px target that opens a read-only Diagnostics sheet — Device (state, pts/s, rotation, IMU, checksum, packet loss) and AR + camera (AR tracking, keyframes written, tracking-loss episodes, skipped-turning, rolling shutter). Values keep ticking live while the sheet is open; grabber, scrim, Esc and Done all close it; only one of Diagnostics / Capture settings is ever open'],
+  ['a-cap-sheet','The Capture-settings button on the viewport is the single entry point for view + AR/camera + display: it opens a bottom sheet — grabber, scrim, ~74 % height, View pinned above the scroll — and the grabber, the scrim, Esc and Done all close it. Opening it closes Diagnostics, and vice versa'],
   ['a-cap-disp','In the sheet: the pinned 48 px View row (3D orbit / AR overlay), then AR & Camera (keyframes switch, rate chips, AR-tracking readout), then colour-mode chips (40 px), point-size and LOD sliders (28 px knobs) — all apply to the live cloud while the sheet is open'],
   ['a-cap-view','The viewport stays visible above the sheet, so every display change — view mode included — is verifiable as you make it'],
   ['a-cap-sum','Stop writes the session summary back onto the project'],
@@ -3427,6 +3563,7 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Escape'){
     if($('#report').classList.contains('on')) $('#report').classList.remove('on');
     else if($('#drawer').classList.contains('on')) closeDrawer();
+    else if(S.cap.diag && $('#cap-diag')) ACT.capDiag('close');
     else if(S.cap.sheet && $('#cap-sheet')) ACT.capSheet('close');
     else if(S.menu){ S.menu=null; render(); }
   }

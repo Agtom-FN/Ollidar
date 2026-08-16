@@ -94,3 +94,56 @@ open *and* closed *and* with keyframes both on and off, and a record → keyfram
 
 ## 2026-08-16 — round 3
 4. **Android · Capture**: remove the "AR + camera keyframes" telemetry block (AR tracking / Keyframes written / Tracking-loss episodes / Skipped-turning / Rolling shutter) from the capture screen body. Relocate into a Diagnostics view opened from the device-health chip (one tap away, capture body stays clean).
+
+### Resolution — 2026-08-16 (mockup v7)
+4. **Fixed.** The five-row **"AR + camera keyframes"** KV block is gone from the Android capture
+   body — with it, the whole 126 px `.body` that carried it. The capture screen is now viewport →
+   stat strip → transport, and nothing else: the reclaimed height went to the live cloud
+   (**225 px → 351 px**, 50 % of the screen), and the record cluster picked up the tab-bar
+   clearance the removed body used to provide (12 px between Record and the tab bar).
+   * **The health chip is the door.** The `Healthy` / `Degraded` chip in the bottom-right of the
+     viewport is now a real `<button>` (`capDiag`, `aria-haspopup="dialog"`, `aria-controls`,
+     `aria-expanded`). Its ink is chip-sized — 68.5 × 23.8 px — so a `.hit44` pseudo-element hangs
+     an invisible **69 × 44 px** target off its centre rather than inflating the chip; measured by
+     probing `elementFromPoint` around the target, not by trusting the CSS. (`overflow` has to be
+     forced back to `visible` there: the `.vp .ovl .chip` ellipsis rule would otherwise crop the
+     hit area away.)
+   * **The Diagnostics sheet.** Same chrome as Capture settings — scrim, 30 px grabber, 20 px top
+     radius, scrolling body, 55 px Done — but **60 %** tall (420 of 700 px) instead of 74 %,
+     because nothing in it is a target: read-only rows need no thumb room, and the 168 px of live
+     viewport it leaves on screen is the thing being diagnosed. Two sections:
+     **Device** (state, points/sec, rotation, IMU, checksum pass rate, packet loss) and
+     **AR + camera** (the five relocated rows verbatim, in their original order: AR tracking,
+     keyframes written, tracking-loss episodes, skipped-turning, rolling shutter). Zero `data-act`
+     and zero focusable elements inside the body — asserted, not assumed.
+   * **Still live.** `paintDiag()` rides the same animation tick as the stat strip, off the same
+     `S.cap.*`, so state / pts-per-second / skipped-frames / the keyframe count all keep moving
+     while the sheet is open. The KF count in the sheet and the KF chip on the viewport are one
+     number rendered twice — verified equal mid-recording (`KF 6` = sheet `6`) — and with camera
+     keyframes off the row reads *off — no colorization* instead of freezing a stale integer.
+   * **One sheet at a time.** Opening Diagnostics sets `S.cap.sheet=false`, opening Capture
+     settings sets `S.cap.diag=false`; both dismiss through one `closeCapSheets()` path, so there
+     is only ever one scrim, one `.sheet` and one dialog to own Esc. Esc reaches Diagnostics first
+     when it is the sheet that is up. All four close paths work on both (scrim, Done, grabber,
+     Esc), and navigating off capture closes either.
+   * **One focus bug found and fixed on the way.** Opening a sheet re-renders the screen,
+     which removes the button that was just pressed; Chrome answers that by resetting focus to
+     `<body>`, and that fixup can land *after* the `.focus()` call — leaving an open dialog with
+     focus nowhere. It surfaced as a ~1-in-8 flake on the round-1 assertion too, so it predates
+     this round. Both sheets now go through one `focusSheet()` that claims focus and re-claims it
+     on the next task. 12 consecutive full-suite runs green since.
+   * **The sheet's own AR-tracking row stays.** It is a setting-context readout, not telemetry.
+     The `[data-artrack]` painter now has exactly one live target at a time — the Capture-settings
+     row, or the Diagnostics row — and still repaints on a view toggle (TRACKING → LIMITED).
+   Checklist: **`a-cap-diag` added** (health chip → 44 px target → read-only Diagnostics, both
+   sections, live values, four close paths, mutual exclusion); `a-cap-kf` extended to say the
+   written-keyframe count and the rest of the AR telemetry now read out in the diagnostics sheet
+   from the health chip rather than in the capture body; `a-cap-sheet` given the one-sheet-at-a-time
+   rule. 111 → **112** items, no duplicates. The capture footer note now names the Healthy chip.
+
+Verified headless via CDP: **207 assertions green** — 46 round-4, plus round-1 (60/60), round-2
+(44/44) and round-3 (57/57) re-run after patching round-2's stale `#cap-artrack-body` fallback
+(the AR-tracking line no longer has a home in the capture body, so it now falls back to the
+Diagnostics row and then to the resolver itself). Zero console errors, zero uncaught exceptions,
+**90 distinct actions audited** across every screen × Capture settings open / Diagnostics open /
+both closed × keyframes on / off. Screenshots: `redesign-exports/fix-r4-*.png`.
