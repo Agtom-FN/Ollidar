@@ -295,13 +295,18 @@ std::optional<D6Probe> ProbeSerialD6(const std::vector<std::string>& port_paths,
 std::optional<Um982Probe> ProbeSerialUm982(const std::vector<std::string>& port_paths,
                                            int per_port_ms) {
   const int budget = per_port_ms > 0 ? per_port_ms : 1000;
-  // The sweep costs one dwell per rate, so the per-rate dwell is the budget
-  // divided by the sweep — but never below 150 ms, which is the shortest
-  // window that reliably contains two sentences of a 1 Hz receiver's burst.
+  // A 1 Hz receiver emits its whole sentence burst in a few tens of ms and
+  // then goes SILENT for the rest of the second — so any dwell shorter than
+  // one full period mostly samples the silence and misses the device (field
+  // failure 2026-08-17: real UM982 @ 1 Hz missed by a 150 ms dwell). The
+  // dwell must cover one period plus margin: 1100 ms, regardless of how
+  // small the caller's budget is. Cost containment comes from the silent-
+  // port fast-path below, not from shrinking the window.
   const int dwell_ms =
-      std::max(150, budget / static_cast<int>(kUm982BaudSweepCount));
+      std::max(1100, budget / static_cast<int>(kUm982BaudSweepCount));
 
   for (const std::string& path : port_paths) {
+    bool saw_any_bytes = false;
     for (std::size_t bi = 0; bi < kUm982BaudSweepCount; ++bi) {
       const std::uint32_t baud = kUm982BaudSweep[bi];
       discovery_serial::SerialPort port;
@@ -322,9 +327,19 @@ std::optional<Um982Probe> ProbeSerialUm982(const std::vector<std::string>& port_
       while (now_ms() < end && !sniffer.Identified()) {
         const int n = port.Read(buf.data(), buf.size(), 50);
         if (n < 0) break;
-        if (n > 0) sniffer.Feed(buf.data(), static_cast<std::size_t>(n));
+        if (n > 0) {
+          saw_any_bytes = true;
+          sniffer.Feed(buf.data(), static_cast<std::size_t>(n));
+        }
       }
-      if (!sniffer.Identified()) continue;
+      if (!sniffer.Identified()) {
+        // A UM982 transmits continuously at SOME rate — wrong-baud garbage
+        // still arrives as bytes. A port that stayed completely silent for a
+        // full period has no free-running transmitter on it: skip the rest of
+        // the sweep instead of spending four more dwells on a silent line.
+        if (bi == 0 && !saw_any_bytes) break;
+        continue;
+      }
 
       // One more dwell at the winning rate, purely to see whether a heading
       // sentence is in the 1 Hz rotation — it is what decides whether the app

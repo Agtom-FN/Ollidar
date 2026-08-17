@@ -90,3 +90,14 @@ Evidence: captures/d6_soak_180s.bin (2.5 MB, 100% pass on replay).
   lidar's Ethernet/power physically disconnected during hardware shuffling (UM982
   also still unplugged). Rerun the chained selftest once cables are back.
 - TestPack rezipped with round-5 DMG + APK.
+
+## Session 3 (close) — round-5 build verified on ALL THREE sensors
+- UM982 renumbered to /dev/cu.usbserial-21130 after replug. App auto-detect initially
+  missed it → root cause: 150 ms per-baud dwell vs a 1 Hz NMEA burst (mostly silence).
+  Fix: dwell >= 1100 ms (one period + margin) + silent-port fast-path (no bytes in the
+  first full period => skip remaining bauds). Suite still 2,280,270 assertions green.
+- FINAL round-5 verification on kc-m4, shipping app, one invocation:
+  "auto-detect: Mid-360 FOUND, D6 FOUND, UM982 FOUND (@230400, 7 sentences, heading yes)"
+  -> chained selftest PASSED (first packet 0.52 s) -> 3 s recording, 7,226 chunks /
+  8.9 MB, 0 drops, sealed. en7 permanent config SURVIVED the replug (networksetup fix
+  proven). TestPack rezipped with the final DMG.
