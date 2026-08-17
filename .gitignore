@@ -6,3 +6,6 @@ local.properties
 .idea/
 .vscode/
 CMakeUserPresets.json
+.claude/
+captures/*.livoxdump
+captures/mid360_real_30s.lscan/
