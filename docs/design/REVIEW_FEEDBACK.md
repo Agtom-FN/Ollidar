@@ -226,3 +226,16 @@ both closed × keyframes on / off. Screenshots: `redesign-exports/fix-r4-*.png`.
 26. From owner log: mount trim LOST on next capture (trim=none) — must persist until
     re-zeroed; and scan-009 recorded 0 points silently — no-data captures must scream
     during capture, never seal quietly empty.
+
+### round 8 (owner, on 0.4.0)
+27. **Recorded D6 scans must BE 3D**: opening a saved scan shows the 3D map, not raw 2D
+    slices. Engine: record the trajectory (kPoseAr writer) + resolved map so the project
+    is self-contained; Review re-resolves/loads the 3D result.
+28. Capture tab layout: the scan view keeps >=60% of screen height; settings collapse
+    into a few buttons.
+29. Default display for lidar scan: colormap=intensity, point size 1 px, gamma 1.0,
+    brightness 1.0, live refresh 30 fps.
+30. "Set mount reference" must visibly work: persistent confirmation (trim angle + age)
+    and clear refusal reasons; investigate the owner's "looks not working".
+31. Post-capture flow: Stop => file kept, auto-return to Projects (new scan highlighted),
+    Capture tab resets ready for the next scan.
