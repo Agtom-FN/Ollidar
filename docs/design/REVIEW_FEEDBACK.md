@@ -155,3 +155,19 @@ both closed × keyframes on / off. Screenshots: `redesign-exports/fix-r4-*.png`.
    UM982 via port+baud sweep. Manual IP entry defeated the GUI on first contact.
 6. **Single-instance guard** (desktop): a leftover instance holding UDP ports makes the
    next launch's SDK init fail with an opaque I/O error.
+
+## 2026-08-17 — round 5 (owner, after first full hardware session with both sensors)
+7. **No popup windows; fewer steps.** Replace dialogs with inline panels/sheets; collapse
+   multi-step flows (self-test gates, wizards) — live preview showing points IS the proof
+   a device works.
+8. **Tab roles**: Projects = list of projects + preview of the selected scan, nothing else.
+   Capture = creating new scan projects only.
+9. **Auto-project creation**: Start always begins a NEW project; if the user typed no name,
+   default = series number + date + time (e.g. Scan-014 2026-08-17 19:32).
+10. **Pre-capture live preview**: before recording, stream live with all display parameters
+    adjustable — live refresh rate, point size, gamma, brightness, etc. Capture itself also
+    runs with live view.
+11. **D6 is PHONE-ONLY and produces 3D, not 2D.** D6 has no built-in IMU (owner-verified).
+    Mount: on the back of the phone; phone ARCore (camera+IMU VIO) supplies the 6-DoF
+    trajectory; A8 pushbroom builds the 3D cloud. Remove D6 from desktop capture (desktop
+    keeps D6 project post-processing/replay). Desktop capture = Mid-360 + RTK.
