@@ -101,3 +101,14 @@ Evidence: captures/d6_soak_180s.bin (2.5 MB, 100% pass on replay).
   -> chained selftest PASSED (first packet 0.52 s) -> 3 s recording, 7,226 chunks /
   8.9 MB, 0 drops, sealed. en7 permanent config SURVIVED the replug (networksetup fix
   proven). TestPack rezipped with the final DMG.
+
+## Owner field bug report vs round-5 desktop capture (GUI use on kc-m4)
+Verbatim: "wrongly detect me walking and moving while i am stay still and its not
+recording and changing from live while there are moving. i notice that it only
+record when the first connected."
+Read as: (A) motion hint false-positives while stationary (pose-jitter walk-speed);
+(B) live view stops following real changes (suspect downshift w/o recovery or motion
+state gating renders); (C) recording works only on the FIRST Start after connect —
+second Start after Stop/seal records nothing (session not re-armable).
+Fix wave dispatched (desktop Opus repro-vs-sim + --record-cycles hook; Android audit
+for the same modes). Hardware re-verification pending.
