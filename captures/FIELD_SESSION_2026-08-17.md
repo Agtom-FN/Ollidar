@@ -171,3 +171,7 @@ for the same modes). Hardware re-verification pending.
   persistence fixed 4-deep. Engine 524 cases / 2,281,393 assertions green.
 - DMG staged at /tmp/LidarScan-0.3.0-universal.dmg on kc-m4 (NOT installed — owner's app
   instance running; per the no-collision rule, install deferred to owner signal).
+- Desktop 0.3.0 installed on kc-m4 (owner-authorized) + REAL-HW eviction proof:
+  --live-map-soak 180 --live-store-pages 2 => full=yes recycling=yes, 281 windows past
+  fill, 0 stalled / 0 dropped / newest always drawn, 6 pages (4.2M pts) recycled — PASS.
+  Full-size store no longer fillable in a 2-min preview (interleaving fix confirmed live).
