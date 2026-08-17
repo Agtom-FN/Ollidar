@@ -71,16 +71,48 @@ class RigMotionTracker(
      * window — B8 then clears `kKeyframeFlagMotionValid` rather than writing a
      * made-up rate, because a colorizer reading a zero rate would treat the
      * frame as ideally still.
+     *
+     * ROUND 5 AUDIT BUGFIX (false-motion-while-stationary investigation): this
+     * used to pick `after` as `samples.lastOrNull { it.tMonoNs <= tMonoNs +
+     * windowNs }` with **no lower bound at all**, and `before` as the closest
+     * sample `<= tMonoNs` (inclusive of `tMonoNs` itself). In the one call
+     * pattern every real caller actually uses —
+     * [com.lidarscan.app.ar.KeyframeRecorder.onFrame] and
+     * `MountCalibrationViewModel.processDetection` both call [add] and then
+     * immediately `estimateAt(sameTimestamp)` in the same frame, live, with no
+     * future sample ever having been added yet — `after` and `before` both
+     * resolved to that exact same just-added sample (it is simultaneously the
+     * closest one `<= tMonoNs` AND the most recent one `<= tMonoNs +
+     * windowNs`, because nothing newer exists). `dtNs` was therefore always
+     * exactly `0`, and this returned `valid = false` on **every single live
+     * call, forever** — confirmed empirically (a 40-sample live-streaming
+     * simulation produced zero valid estimates). That silently defeated B8's
+     * whole motion gate online (every frame "qualified" via
+     * [KeyframeSelector]'s `!motionValid` short-circuit, `skippedMotion` never
+     * grew, and every recorded keyframe's `angularRateRadPerS`/
+     * `linearSpeedMPerS` was always `0f` with `MOTION_VALID` never set) and
+     * left the mount-calibration wizard's live motion readout permanently
+     * reading "stationary" whether or not the phone actually was.
+     *
+     * Fixed by requiring `before` to be **strictly older** than `after`,
+     * which forces the two to be genuinely distinct samples. `after` keeps
+     * its original "nearest sample within windowNs of the query, favouring
+     * the future when one exists" search (unchanged — this is what gives a
+     * true centred difference when replaying a fully-buffered stream
+     * OFFLINE, where future samples exist); `before` now searches for the
+     * OLDEST sample still within `windowNs` of `after` (not of the raw
+     * query), so a live caller — where `after` degenerates to "whatever was
+     * just added" — naturally gets a **backward** difference over the
+     * available window instead of a permanent zero.
      */
     fun estimateAt(tMonoNs: Long): RigMotionEstimate {
-        val before = samples.lastOrNull { it.tMonoNs <= tMonoNs + windowNs && it.tMonoNs >= tMonoNs - windowNs && it.tMonoNs <= tMonoNs }
-            ?: samples.firstOrNull { it.tMonoNs >= tMonoNs - windowNs }
-            ?: return RigMotionEstimate(0f, 0f, false)
         val after = samples.lastOrNull { it.tMonoNs <= tMonoNs + windowNs }
             ?: return RigMotionEstimate(0f, 0f, false)
+        val before = samples.firstOrNull { it.tMonoNs >= after.tMonoNs - windowNs && it.tMonoNs < after.tMonoNs }
+            ?: return RigMotionEstimate(0f, 0f, false)
 
-        val a = if (before.tMonoNs <= after.tMonoNs) before else after
-        val b = if (before.tMonoNs <= after.tMonoNs) after else before
+        val a = before
+        val b = after
         val dtNs = b.tMonoNs - a.tMonoNs
         if (dtNs <= 0L) return RigMotionEstimate(0f, 0f, false)
         val dt = dtNs / 1e9

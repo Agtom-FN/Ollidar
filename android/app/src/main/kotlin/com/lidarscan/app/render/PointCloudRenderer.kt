@@ -79,6 +79,21 @@ data class PointCloudRenderStats(
     val residentPoints: Long = 0,
     val pagesDrawn: Int = 0,
     val boundsValid: Boolean = false,
+    /**
+     * ROUND 5 AUDIT bugfix: true once a `SCAN_STREAM_SLAM_MAP` page has
+     * actually been seen — mirrors [StreamFilter.MAPPED_ONLY]'s own
+     * `mappedSeen` fallback rule. The Capture screen's "LIVE MAP · SLAM" vs
+     * "RAW" chip used to key off `liveSlam` alone (the *requested* mode), which
+     * reads as "LIVE MAP" for the whole stretch `MAPPED_ONLY` is still falling
+     * back to drawing raw pages because A6/A8 have not resolved a mapped page
+     * yet — telling the operator they are looking at a registered map while
+     * they are actually looking at raw, un-extruded sensor-frame points. For a
+     * D6 session in particular, that raw fallback view is a flat-looking fan
+     * pattern with no pushbroom applied, which is exactly what a field report
+     * of "the scan is a flat plane, not 3D" looks like if the operator judged
+     * the capture by the live screen rather than the resolved `.lscan`.
+     */
+    val hasSeenMappedPage: Boolean = false,
 )
 
 /**
@@ -321,6 +336,12 @@ class PointCloudRenderer(
     }
 
     /**
+     * The last [requestToken] actually applied — see [setMaxRefreshHz]'s audit
+     * bugfix note for why this exists alongside [maxRefreshHz] itself.
+     */
+    private var appliedRefreshRequestToken: Int = 0
+
+    /**
      * ROUND 5: caps how often the live view repaints (see [maxRefreshHz]).
      * `0` means uncapped — the Choreographer's own rate, i.e. the panel's.
      *
@@ -328,10 +349,25 @@ class PointCloudRenderer(
      * 90, and the *hardware* ceiling is what bounds the choice (the control's
      * options come from `RefreshGovernor.optionsFor`). Setting it also resets the
      * governor, because an explicit choice outranks an automatic downshift.
+     *
+     * ROUND 5 AUDIT bugfix: [requestToken] (`CaptureViewModel
+     * .refreshRequestToken`) is the "the operator actually asked" signal.
+     * `PointCloudView` calls this every recomposition with whatever `hz` the
+     * ViewModel currently holds — cheap and correct for the common case, but
+     * it meant `hz == maxRefreshHz` (the old, only, guard) was ALSO true every
+     * time the operator re-picked the option already showing selected, which
+     * is exactly how one recovers from an auto-downshift by hand. Gating on
+     * `requestToken` too — which changes on every explicit
+     * `CaptureViewModel.setRefreshHz` call regardless of whether the numeric
+     * value moved — lets that re-pick through to `governor.request()` while
+     * still swallowing the once-per-recomposition repeats that would
+     * otherwise fight the governor's own auto-downshift every frame.
      */
-    fun setMaxRefreshHz(hz: Int) {
-        if (hz == maxRefreshHz) return
-        maxRefreshHz = if (hz > 0) hz else 0
+    fun setMaxRefreshHz(hz: Int, requestToken: Int = 0) {
+        val clamped = if (hz > 0) hz else 0
+        if (clamped == maxRefreshHz && requestToken == appliedRefreshRequestToken) return
+        maxRefreshHz = clamped
+        appliedRefreshRequestToken = requestToken
         governor?.request(maxRefreshHz)
     }
 
@@ -801,7 +837,7 @@ class PointCloudRenderer(
             pagesDrawn++
         }
 
-        lastStats = PointCloudRenderStats(resident, pagesDrawn, haveBounds)
+        lastStats = PointCloudRenderStats(resident, pagesDrawn, haveBounds, mappedPageSeen)
     }
 
     private fun updateCombinedBounds(page: com.lidarscan.app.engine.NativePointPage) {

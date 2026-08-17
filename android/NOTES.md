@@ -3562,3 +3562,383 @@ by unit test against fakes — not on hardware. The two that would repay a bench
 hour first are (a) that the 2 dp pose pump really does keep `Session.update()`
 running in 3D-orbit view on a physical phone, and (b) that a synthesized GGA/GST
 burst produces a non-zero `scan_engine_last_fix` with the phone's own accuracy.
+
+## ROUND 5 AUDIT — two desktop-round-5 field bugs, checked against Android, plus two urgent live field reports
+
+Scope: `android/**` only, no git, `engine/**` read-only (read for reference —
+the pose/pushbroom investigation below reads three `engine/` files to confirm
+a documented formula — never modified). Triggered by two desktop-round-5 field
+bugs the owner wanted audited on Android for the same failure modes, then
+expanded mid-task by two urgent real-hardware field reports from the same
+Pixel 8 Pro + COIN-D6 session. Per-symptom verdicts below; §5's verification
+block has the full test/build results.
+
+### 1. FALSE MOTION WHILE STATIONARY — bug found, fixed (two contributing bugs)
+
+The round-5 item 18 "walkthrough motion hint"
+(`CaptureViewModel.updateMotionHint`, §6 above) has two inputs: ARCore's own
+`EXCESSIVE_MOTION` tracking-failure reason, and B8's motion-gated keyframe
+skip counter (`RigMotionTracker`/`KeyframeSelector`, `core/capture/RigMotion.kt`).
+Auditing "pose jitter as displacement, bad dt, stale anchors, unit confusion"
+against both found one bug in each half.
+
+**(a) `RigMotionTracker.estimateAt()` had a bad-dt bug that made it permanently
+invalid online — `core/capture/RigMotion.kt`.** Its `before`/`after` sample
+search used to resolve to the exact SAME sample whenever called in the one
+pattern every real caller actually uses: `KeyframeRecorder.onFrame` and
+`MountCalibrationViewModel.processDetection` both call `motion.add(sample)`
+and then, in the same call, `motion.estimateAt(sample.tMonoNs)` — i.e. "the
+estimate AT the timestamp of the sample just added," with no future sample
+ever existing yet (this is live streaming, not a replay over a pre-loaded
+buffer). `before`'s search (`<= tMonoNs`) and `after`'s search (`<= tMonoNs +
+windowNs`, with **no lower bound at all**) both landed on that same
+just-added sample, giving `dtNs == 0` and `valid = false` on **every single
+live call** — confirmed empirically with a 40-sample live-streaming
+simulation before the fix (`validCount = 0`). This silently defeated B8's
+whole online motion gate (every frame "qualified" via `KeyframeSelector`'s
+`!motionValid` short-circuit, so `skippedMotion` never grew and the "Turning
+too fast" hint could never fire even when genuinely turning fast) and left
+the mount-calibration wizard's live motion readout permanently reading
+"stationary" regardless of actual motion.
+
+Fixed by requiring `before` to be **strictly older** than `after` (searching
+for the oldest sample within `windowNs` of `after`, rather than of the raw
+query time) — this still gives a true centred difference when replaying a
+fully-buffered stream offline (where future samples exist and the fix is a
+no-op against the old behaviour, confirmed: the pre-existing
+"recovers the commanded angular rate" test is byte-identical in output before
+and after), and gives a genuine **backward** difference over the available
+window when called live, instead of a permanent zero. New tests in
+`RigMotionTest.kt`: a stationary live stream reads ~0 (not "always invalid"),
+a stationary live stream **with pose jitter** (±3 mm / ±0.2° synthetic noise)
+stays well under both the 15°/s turn gate and any walking speed, a moving
+live stream (1.2 m/s) reads back within 0.05 m/s, and a direct regression
+pin for the exact live-call-pattern bug above.
+
+**(b) `CaptureArController.pause()` left `failureReason` stale across a
+pause/resume cycle — `app/ar/CaptureArController.kt`.** `pause()` reset
+`sessionRunning`/`tracking` but not `failureReason` (only `close()` did,
+via a full `ArStatus()` reset). `CaptureScreen.kt`'s `needsArSession` flips
+the AR session through `pause()`/`resume()` any time it goes momentarily
+false — which happens for a Mid-360 session (no `poseTrackingRequired`)
+exactly at Stop, and flips back true at the very next Start. If the LAST
+pose pushed before that pause happened to carry `EXCESSIVE_MOTION` (quite
+plausible at the tail end of an active walkthrough — people keep moving
+right up until they tap Stop), the stale `failureReason` survives the
+pause/resume, and `updateMotionHint()`'s 500 ms poll can read it — with
+`tracking` also still `false` from the same pause — before the next
+`onFrame()` gets a chance to refresh it. Result: **"Moving too fast — slow
+the walk so tracking can keep up" fires immediately on the second recording
+of a Start → Stop → Start session, while the phone is sitting still.** This
+is the closest, most field-realistic match to the reported symptom, and it
+lines up with task 2's own scenario. Fixed by resetting `failureReason` to
+`NONE` in `pause()` too, matching `close()`'s existing full reset.
+`CaptureArController` needs a real `Context`/ARCore `Session` this project
+has no Robolectric harness for, so this fix is verified by code inspection
+and by mirroring `close()`'s already-correct, already-tested-by-construction
+pattern, not by a dedicated JVM test — flagged here rather than silently
+skipped.
+
+Verdict: **bug found, fixed** (two contributing bugs, both in the capture
+path exactly as scoped). 10 new/changed `:core` tests in `RigMotionTest.kt`.
+
+### 2. MULTI-CYCLE RECORDING — bug found, fixed
+
+Traced `CaptureViewModel`'s state machine end to end. `startCapture()` reads
+`(_uiState.value as? CaptureUiState.Loaded)?.project ?:
+createProjectForThisScan()` — i.e. "record into whatever project is already
+loaded, and only create a new one if nothing is." `stopCapture()` used to
+unconditionally end with `projectStore.open(activeId)?.let { _uiState.value =
+CaptureUiState.Loaded(it) }` — refreshing the JUST-SEALED project back into
+`Loaded` state, with a comment explaining why ("the in-memory project must
+not go stale, or a later start would re-read the old manifest"). The
+consequence the comment's author did not follow through: **a second Start
+within the same connect session saw `_uiState` still `Loaded(project1)` and
+silently re-opened and re-recorded into project #1's already-sealed
+directory** — `createProjectForThisScan()` was never reached, the auto-name
+series counter was never spent for scan #2, and no second `.lscan` directory
+was ever created. The connect session itself (`CaptureAutoConnectController`,
+`EngineBridge.connectionState`) was untouched by this and stayed correctly
+re-armable — only the "which project does Start record into" state was
+wrong.
+
+Fixed by branching on `projectId` (the constructor param that is `null` on
+the Capture tab's own "create a new scan" route and non-null on a
+project-scoped route like replay/deep-link): the project-less case now
+returns to a fresh `CaptureUiState.NewScan(autoName = ...)` — re-computing
+the placeholder the same way `init{}` does — so `startCapture()`'s own
+`Loaded` check is naturally null again and `createProjectForThisScan()` runs
+on every Start, not just the first. The project-scoped case (replay) is
+unchanged, keeping the original comment's behaviour where it actually
+applies (there is only ever the one project on that route, so there is no
+ambiguity to introduce a bug).
+
+**Verified two ways:**
+- `app/src/test/kotlin/.../CaptureViewModelMultiCycleTest.kt` (new, JVM,
+  `:app:testDebugUnitTest`) drives the real `CaptureViewModel` against
+  `:core`'s `FakeEngineBridge` + a real `FileProjectStore` over a temp dir —
+  Start → Stop → Start → Stop, asserting the two projects have **different
+  ids**, that `store.list()` has **exactly two** entries, and that **both**
+  have a non-zero sealed `pointCountEstimate`. This is the test that can
+  actually assert "two distinct projects" — the emulator's only
+  hardware-free recording path (replay) structurally cannot, see below.
+- `ReplayCaptureSmokeTest.kt`'s `replaySyntheticCaptureDecodesPointsWithoutCrashing`
+  (extended, `:app:connectedDebugAndroidTest`, run on a booted `b4_test` AVD
+  in this task — see §5) now runs a **second** Start/Stop cycle after the
+  first (Stop → wait for the button to read "Start replay" again → Start →
+  assert the decoded point count actually grows again, not stuck at cycle
+  1's frozen value → Stop). This exercises the real JNI/native replay engine
+  restarting on the same handle twice in a row, end to end, with no crash.
+  **It is not the same two-distinct-projects assertion** — `ReplayEngineBridge`
+  is documented (`app/engine/ReplayEngineBridge.kt`) to ignore
+  `projectDirectory` and always reuse the one "Synthetic Replay Demo"
+  project (there is no hardware-free way to reach the New-scan Capture tab's
+  own Start on a bare emulator: it stays disabled with nothing to
+  auto-detect, per the existing `captureTabIsANewScanWithAutoDetectAndAnInlineManualFallback`
+  test) — so it complements the JVM test rather than duplicating it: JVM
+  proves the state-machine fix, the emulator proves the underlying
+  stop/restart machinery survives on real device/JNI code.
+
+Verdict: **bug found, fixed.**
+
+### 3. REFRESH GOVERNOR — downward shift already correct; two upward-recovery bugs found and fixed; no motion/hint state gates rendering (confirmed)
+
+`RefreshGovernor` (`core/render/RefreshGovernor.kt`) itself was already
+correct and already tested: downshift-only by design (never raises the cap
+on its own — a deliberate, documented, tested rule, not a gap), sustained-not-spiky,
+one notch at a time, and an explicit `request()` **always** fully resets the
+downshift regardless of whether the requested value differs from before (no
+"unchanged, skip" guard in the class itself) — confirmed with a new test,
+`re-requesting the SAME already-selected rate still clears an active
+downshift`.
+
+**What was broken is entirely in the app-layer wiring around it** — the
+operator's actual path to recovering after an auto-downshift:
+
+**(a) `PointCloudRenderer.setMaxRefreshHz`'s own no-op guard blocked
+recovery.** `PointCloudView` calls `renderer.setMaxRefreshHz(maxRefreshHz)`
+unconditionally on every recomposition (by design — cheap, idempotent,
+avoids fighting the governor's own auto-downshift every frame). Its guard,
+`if (hz == maxRefreshHz) return`, is what made that safe — but it also meant
+that re-selecting the SAME option the operator already had chosen (the
+natural way to ask for recovery, since the control still visually shows that
+option selected) was **completely indistinguishable from Compose merely
+recomposing with an unchanged value**, so `governor.request()` was never
+called again and a downshift was permanent for the rest of the session. The
+only way out was picking a genuinely different rate first, then flipping
+back — a two-tap dance the UI gave no hint was necessary.
+
+Fixed with an explicit "the operator asked" signal:
+`CaptureViewModel.refreshRequestToken` (bumped on every `setRefreshHz` call,
+even when the numeric value does not change) flows down through
+`CaptureScreen` → `CaptureViewport` → `PointCloudView` →
+`PointCloudRenderer.setMaxRefreshHz(hz, requestToken)`, whose guard now
+requires **both** the value and the token to be unchanged before skipping —
+so a genuine re-pick reaches `governor.request()` even when the numeric
+value is the same, while the per-recomposition repeats (same value, same
+token) still cost nothing.
+
+**(b) `CaptureViewModel.setRefreshHz` still had round-5.3's own removed
+clamp.** `if (hz in 1..59) hz else 0` silently coerced any pick of 60, 90 or
+120 fps (all real options `RefreshGovernor.optionsFor()` offers on a fast
+phone) back to `0` ("Max") — a leftover from before round 5.3 explicitly
+lifted this ceiling (`PointCloudRenderer.setMaxRefreshHz`'s own doc: "the cap
+is no longer clamped at 59"). Fixed to `if (hz > 0) hz else 0`, matching
+`PointCloudRenderer`'s own clamp.
+
+**No motion/hint state gates rendering — audited, confirmed true, nothing
+to fix.** `motionHint` (§1) and `refreshDownshiftNote` (this section) are
+both plain `String?` `StateFlow`s read only by `CaptureScreen`'s `Hint(...)`
+composables — one inline sentence each, painted over the viewport, never
+touched by `PointCloudRenderer`'s draw path, `PointCloudSource` polling, or
+any `if (motionHint != null)`-style gate anywhere in the render loop. The
+"stream filter" that DOES gate what's drawn (`StreamFilter`, §4 below) is
+driven by `liveSlam`/stream-id availability, never by hint/motion state.
+
+Verdict: **two bugs found and fixed** (recovery path); downshift and the
+"no rendering gate" property were already correct — confirmed, not assumed,
+by the tests above.
+
+### 4. URGENT FIELD ITEM — "the D6 scan result is a single vertical plane, not extruded along the walk"
+
+Real Pixel 8 Pro + COIN-D6 walk. Reported: ARCore tracking/the trail looked
+good; the D6 result did not — "capture the plane of Z-axis instead of XY."
+Investigated in two passes (a dedicated research pass over `engine/`, read
+only, plus this task's own synthetic test), since `engine/` cannot be
+modified even if the bug had turned out to live there.
+
+**Ruled out, with evidence, not assumption:**
+
+- **No axis-convention bug in the pose/composition chain.** ARCore's raw
+  pose (`pose.tx()/ty()/tz()`, `pose.qx()/qy()/qz()/qw()`) is passed
+  unchanged through every layer — `CaptureArController.publishPose` →
+  `ScanEngineNative.nativePushPose` → `arcore_jni.cpp` (a byte-for-byte
+  field copy) → `scan_engine_push_pose`. `engine/src/slam/pushbroom/pushbroom_assembler.cpp`'s
+  `resolve_()` and `engine/include/scanengine/poses/se3.h` are generic SE(3)
+  composition with **no axis specifically treated as "up"** — confirmed by
+  reading both files end to end. The D6/ARCore path never touches the
+  Mid-360/LIO path's own Z-up gravity-aligned frame
+  (`engine/docs/A6-lio.md`); the two conventions exist side by side but are
+  never mixed for one session.
+- **`BracketNominals.cadNominal(SensorType.COIN_D6)`'s rotation (identity)
+  is geometrically sound for a straight walk — proven, not just reasoned
+  about.** `core/src/test/kotlin/.../calib/D6PushbroomGeometryTest.kt` (new)
+  reimplements A8 §3.1's exact documented formula (`world_from_lidar =
+  world_from_phone(t) · phone_from_lidar`, `p_lidar = (d·sinθ, d·cosθ, 0)`)
+  using `:core`'s own `Mat4`/`Quat`/`Vec3` and the REAL production
+  `BracketNominals` matrix, against a synthetic 10 m straight walk with a
+  full D6 revolution per pose. Result: the walk (Z) axis extent spans ~the
+  walked distance (>8 m), the fan's own (X, Y) sweep stays bounded to its
+  own diameter (~2 m) regardless of how far the walk goes, and Z dominates Y
+  by >3x — axes asserted **by name** so a Y/Z mixup anywhere in this chain
+  would fail loudly. A second test confirms a **stationary** revolution
+  stays bounded on every axis (the negative-space check, proving the first
+  test's large Z spread really is the walk and not an unrelated blow-up).
+  This does not touch `engine/` — it is a from-scratch reimplementation in
+  `:core`, run against the actual Android-side matrix that goes into a real
+  capture.
+
+**Found and fixed — a live-view honesty bug that plausibly explains what the
+operator actually SAW while walking, independent of what the recorded
+`.lscan` itself contains:** `A8's assembled pushbroom cloud is
+INT24-wiring.md's own documented rule — it publishes under
+`SCAN_STREAM_SLAM_MAP` (id 8), the SAME stream id Mid-360's live-SLAM map
+uses, **regardless of the `live_slam` config flag** (that flag is
+`core/model/CaptureDefaults.kt`'s own documented "a Mid-360 concept, and the
+D6 case is not a bug" — the D6's pushbroom is gated on a mount calibration,
+not on `live_slam`). `StreamFilter.MAPPED_ONLY` (selected whenever
+`liveSlam == true`, which three of the four workflow profiles — including
+`QUICK_SCAN`, the app's own default — set true) correctly falls back to
+drawing **raw, un-pushbroomed sensor-frame pages** until the first mapped
+page has actually landed (a deliberate, documented, correct choice — a
+strict map-only filter would show a black screen while A6/A8 initialise).
+The bug: `CaptureScreen.kt`'s "what stream is on screen" chip read `liveSlam`
+alone and said **"LIVE MAP · SLAM" for the entire stretch that fallback was
+still active** — telling the operator they were looking at a registered,
+walk-extruded map while they were actually looking at raw fan slices (which,
+drawn without pose interpolation, look exactly like "a flat plane," matching
+the report almost word for word) — for however long A6/A8 take to resolve
+and flush a first page during a real walk on real hardware, which this
+environment cannot measure without the device.
+
+Fixed: `PointCloudRenderStats` gained `hasSeenMappedPage` (mirrors
+`StreamFilter.MAPPED_ONLY`'s own `mappedSeen` rule); `CaptureViewport` polls
+it (300 ms, cheap) and re-arms on every fresh `recording` transition (so it
+does not carry a stale "seen it" from cycle 1 into cycle 2 of a multi-cycle
+session — see §2); the chip now reads "BUILDING MAP…" until a mapped page
+has genuinely been seen, only then "LIVE MAP · SLAM".
+
+**Verdict: audited, root cause not found in code (proven, not assumed, via
+the synthetic geometry test) — a plausible, fixed, live-view-honesty
+contributor found and fixed instead.** What remains explicitly unverified,
+and needs a bench hour with the real bracket rather than more code reading:
+whether `BracketNominals.cadNominal`'s **physical** premise (a real D6
+bracket's spin axis actually mounted the way the CAD nominal assumes)
+matches the actual hardware used in the field test — `A8-pushbroom.md`
+itself already flags this nominal as an honest, unvalidated placeholder
+("no physical bracket exists yet") and recommends the mount-calibration
+wizard over trusting it for a real capture. Whether that wizard had been run
+before this field session is also unknown from this environment (the app's
+own `mountIsNominal` diagnostic row would answer it from a live manifest,
+which this environment does not have).
+
+### 5. URGENT FIELD ITEM — "the AR camera not show up"
+
+Same session, switching to the AR overlay view showed no camera image (the
+B7 stacked-surface AR overlay: camera background + point overlay), though
+the trail still looked correct — i.e. ARCore itself kept tracking; this is
+view/session plumbing, not ARCore startup.
+
+**Root cause: a session-ownership race the class's own doc comment warned
+about but did not structurally prevent.** `ArPosePumpView` (mounted in every
+non-AR view) and `ArOverlayView` (mounted in `CameraMode.AR`) both build an
+`ArCameraBackgroundRenderer` around the SAME shared `CaptureArController`
+(the app's one ARCore `Session`), and the class doc already said "never
+composed at the same time... two pumps would call `Session.update()` from
+two threads." That was true of *what Compose decides to compose*, never of
+*the underlying GL threads' lifecycle*: `AndroidView`'s `factory`/`onRelease`
+run on the main/Compose thread, but each `GLSurfaceView`'s
+`onSurfaceCreated` fires asynchronously, on its OWN GL thread, whenever the
+platform hands it a real `Surface` — nothing guaranteed the OLD renderer's
+thread had genuinely stopped calling `Session.update()`/
+`setCameraTextureName()` before the NEW one's thread started. Concretely:
+the pump's `RENDERMODE_CONTINUOUSLY` thread re-binds **its own** texture id
+on every single frame (`ArCameraBackgroundRenderer.onDrawFrame`), so if it
+won even one more race after the overlay's surface came up, ARCore would
+keep writing the camera image into the (now off-screen, 2 dp) pump's
+texture — the overlay's own texture is simply never written. No exception,
+no log line, just a permanently black background: exactly the report.
+
+Fixed with an explicit ownership token instead of an implicit
+Compose-branch assumption — `CaptureArController.RendererOwner` (`POSE_PUMP`
+/ `OVERLAY`), `claimRenderer(owner)`/`releaseRenderer(owner)` (the latter a
+no-op unless `owner` still holds it, so an out-of-order release from a
+stale, still-tearing-down renderer can never undo a newer claim), and
+`onFrame(owner)`/`setCameraTextureName(textureId, owner)` now both no-op
+entirely (never touch `session`) unless `owner` is the current claim. Both
+`ArPosePumpView` and `ArOverlayView` claim in their `AndroidView` `factory`
+(main thread, at the exact moment the view is created) and release in
+`onRelease`, and `MountCalibrationScreen` gets the same fix for free since
+it reuses `ArOverlayView` directly. This is the half of the fix that
+matters most for correctness (it is what actually prevents
+`Session.update()` from ever being called by two threads at once, which
+ARCore's own contract leaves undefined), not just the texture symptom.
+
+**Verdict: bug found, fixed.** `CaptureArController` needs a real ARCore
+`Session`/GL surfaces this project has no Robolectric/headless harness for
+(same posture as §1(b) above), so this is verified by code inspection
+against the exact race described, not by a device-run test — the emulator
+used for §2/§5's other verification cannot exercise real ARCore camera
+frames at all (no Play Services / ARCore support on a bare AVD). A real
+device is the only way to confirm the black-camera symptom is gone; this
+fix removes the specific mechanism that produces it either way.
+
+### 6. Files
+
+New (`:core`): `test/.../capture/D6PushbroomGeometryTest.kt`.
+New (`:app`): `test/.../ui/capture/CaptureViewModelMultiCycleTest.kt`.
+Changed (`:core`): `capture/RigMotion.kt` (+its test file).
+Changed (`:app`): `ar/CaptureArController.kt`, `ar/ArCameraBackgroundRenderer.kt`,
+`ar/ArPosePumpView.kt`, `ar/ArOverlayView.kt`, `ui/capture/CaptureViewModel.kt`,
+`ui/capture/CaptureScreen.kt`, `render/PointCloudRenderer.kt`,
+`render/PointCloudView.kt`, `androidTest/.../ReplayCaptureSmokeTest.kt`.
+
+### 7. Verification
+
+```
+$ ./gradlew clean :core:test :app:assembleDebug
+BUILD SUCCESSFUL
+$ ./gradlew :app:testDebugUnitTest
+BUILD SUCCESSFUL
+$ ./gradlew :app:connectedDebugAndroidTest   # b4_test AVD, API 34, arm64-v8a, booted THIS task
+Starting 4 tests on b4_test(AVD) - 14 ... BUILD SUCCESSFUL
+```
+
+- **`:core:test` — 306 (was 299), 0 failures** (5 skipped, pre-existing,
+  unrelated). New/changed: `RigMotionTest` (+5 tests: live-stationary,
+  live-stationary-with-jitter, live-moving, the exact live-call-pattern
+  regression pin, plus the pre-existing suite unchanged in behaviour),
+  `RefreshGovernorTest` (+1: same-value re-request clears a downshift),
+  `D6PushbroomGeometryTest` (+2, new file).
+- **`:app:testDebugUnitTest` — 13, 0 failures**, plain JVM (no
+  emulator/Robolectric — `FakeEngineBridge` + `FileProjectStore` +
+  `Dispatchers.Unconfined` for `viewModelScope`, real wall-clock delays).
+  New: `CaptureViewModelMultiCycleTest` (1 test, the multi-cycle
+  two-distinct-projects assertion).
+- **`:app:assembleDebug`** — succeeds, clean build from scratch including a
+  full native rebuild (arm64-v8a + x86_64) against the real `engine/` C++
+  sources — nothing here was skipped or stubbed.
+- **Emulator — booted a fresh `b4_test` AVD in this task** (API 34,
+  `google_apis/arm64-v8a`, the same system image B4's own NOTES entry used;
+  `avdmanager`'s default hardware profile is a tiny 320×640@160dpi phone
+  that made the PRE-EXISTING `captureTabIsAn...` test fail on an unrelated
+  scroll/visibility assertion — fixed by hand-editing `config.ini` to a
+  1080×2400@420dpi profile matching a real modern phone, not by touching
+  that test). **4/4 green**, including the extended
+  `replaySyntheticCaptureDecodesPointsWithoutCrashing` (§2's second
+  Start/Stop cycle, ~33 s total, real JNI/native replay code exercised
+  twice with no crash).
+- **Not run**: real ARCore camera frames, real D6/Mid-360 hardware, the
+  physical mount-bracket check §4 flags as the one remaining unverified
+  step — none of that is available in this environment, consistent with
+  every prior round's own stated posture.

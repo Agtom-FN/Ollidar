@@ -233,6 +233,7 @@ fun CaptureRoute(
     val liveSlam by viewModel.liveSlam.collectAsStateWithLifecycle()
     val liveView by viewModel.liveView.collectAsStateWithLifecycle()
     val refreshHz by viewModel.refreshHz.collectAsStateWithLifecycle()
+    val refreshRequestToken by viewModel.refreshRequestToken.collectAsStateWithLifecycle()
     val gamma by viewModel.gamma.collectAsStateWithLifecycle()
     val brightness by viewModel.brightness.collectAsStateWithLifecycle()
     val keyframeStats by viewModel.keyframeStats.collectAsStateWithLifecycle()
@@ -341,6 +342,7 @@ fun CaptureRoute(
         liveSlam = liveSlam,
         liveView = liveView,
         refreshHz = refreshHz,
+        refreshRequestToken = refreshRequestToken,
         gamma = gamma,
         brightness = brightness,
         isReplaySession = viewModel.isReplaySession,
@@ -455,6 +457,7 @@ fun CaptureScreen(
     liveSlam: Boolean,
     liveView: Boolean,
     refreshHz: Int,
+    refreshRequestToken: Int,
     gamma: Float,
     brightness: Float,
     isReplaySession: Boolean,
@@ -623,6 +626,7 @@ fun CaptureScreen(
                             pointSizePx = pointSizePx,
                             displayParams = displayParams,
                             refreshHz = refreshHz,
+                            refreshRequestToken = refreshRequestToken,
                             cameraMode = cameraMode,
                             liveSlam = liveSlam,
                             recording = recording,
@@ -1090,6 +1094,7 @@ private fun CaptureViewport(
     pointSizePx: Float,
     displayParams: com.lidarscan.core.render.DisplayParams,
     refreshHz: Int,
+    refreshRequestToken: Int,
     cameraMode: CameraMode,
     liveSlam: Boolean,
     recording: Boolean,
@@ -1111,6 +1116,39 @@ private fun CaptureViewport(
     onCameraModeChange: (CameraMode) -> Unit,
 ) {
     val shape = RoundedCornerShape(ScanDims.CardRadius)
+
+    // ROUND 5 AUDIT bugfix: the bottom-left "what stream is on screen" chip
+    // used to read `liveSlam` alone (the requested mode) — see
+    // `PointCloudRenderStats.hasSeenMappedPage`'s doc for why that mislabels
+    // the whole stretch `StreamFilter.MAPPED_ONLY` spends falling back to raw
+    // pages before the first registered/pushbroom-resolved page exists. This
+    // polls the renderer's own stats at a cheap, UI-appropriate cadence (not
+    // once per frame) so the chip only ever claims "LIVE MAP" once that is
+    // actually true.
+    var pointCloudRenderer by remember { mutableStateOf<com.lidarscan.app.render.PointCloudRenderer?>(null) }
+    var hasSeenMappedPage by remember { mutableStateOf(false) }
+    // ROUND 5 AUDIT bugfix (task 2, multi-cycle recording): the same viewport
+    // (and the same underlying PointCloudRenderer) survives a Stop -> Start
+    // within one connect session, so this must re-arm for the SECOND
+    // recording rather than staying stuck on the first one's "seen a mapped
+    // page" the moment `recording` flips true again — see
+    // `CaptureViewModel.stopCapture`'s own multi-cycle fix, which this pairs
+    // with (a fresh session, fresh chip state).
+    LaunchedEffect(recording) {
+        if (!recording) return@LaunchedEffect
+        hasSeenMappedPage = false
+        // Poll rather than a single check: the renderer callback
+        // (`onRendererReady`) and the first mapped page can both land after
+        // this effect starts.
+        while (!hasSeenMappedPage) {
+            if (pointCloudRenderer?.stats()?.hasSeenMappedPage == true) {
+                hasSeenMappedPage = true
+            } else {
+                kotlinx.coroutines.delay(300)
+            }
+        }
+    }
+
     Box(
         modifier
             .background(ViewportGround, shape)
@@ -1141,9 +1179,16 @@ private fun CaptureViewport(
                 displayParams = displayParams,
                 // ROUND 5 (item 10): the operator's own refresh cap.
                 maxRefreshHz = refreshHz,
+                // ROUND 5 AUDIT bugfix: the "operator explicitly asked" signal
+                // that lets a re-pick of the same option clear a downshift.
+                refreshRequestToken = refreshRequestToken,
                 // ROUND 5.3 (item 17): the ceiling is the panel's own, and the
                 // renderer eases down from it rather than hitching.
                 onRefreshDownshift = onRefreshAutoDownshift,
+                // ROUND 5 AUDIT bugfix: lets the "what stream is on screen"
+                // chip poll whether a mapped/pushbroom page has actually
+                // landed yet, instead of just parroting the requested mode.
+                onRendererReady = { pointCloudRenderer = it },
                 modifier = Modifier.fillMaxSize(),
             )
         } else {
@@ -1249,8 +1294,18 @@ private fun CaptureViewport(
         }
 
         // ── bottom-left: what stream is on screen ───────────────────────
+        //
+        // ROUND 5 AUDIT bugfix: `liveSlam` alone used to drive this label —
+        // true as soon as the OPERATOR asked for live SLAM/pushbroom, even
+        // while `StreamFilter.MAPPED_ONLY` was still falling back to raw
+        // pages because no mapped page had resolved yet. See
+        // `PointCloudRenderStats.hasSeenMappedPage`'s doc.
         ScanChip(
-            text = if (liveSlam) "LIVE MAP · SLAM" else "RAW · ${sensor.badgeLabel.uppercase()}",
+            text = when {
+                !liveSlam -> "RAW · ${sensor.badgeLabel.uppercase()}"
+                hasSeenMappedPage -> "LIVE MAP · SLAM"
+                else -> "BUILDING MAP…"
+            },
             color = PoseBlue,
             showDot = true,
             modifier = Modifier.align(Alignment.BottomStart).padding(start = 12.dp, bottom = 12.dp, end = 12.dp)

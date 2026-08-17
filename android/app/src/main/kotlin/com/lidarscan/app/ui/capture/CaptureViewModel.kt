@@ -198,6 +198,31 @@ class CaptureViewModel(
     private val _refreshHz = MutableStateFlow(0)
     val refreshHz: StateFlow<Int> = _refreshHz.asStateFlow()
 
+    /**
+     * ROUND 5 AUDIT bugfix: bumped on every [setRefreshHz] call, even when the
+     * numeric value does not change.
+     *
+     * `PointCloudView` calls `renderer.setMaxRefreshHz(refreshHz, ...)`
+     * unconditionally on every recomposition (cheap and idempotent BY
+     * DESIGN — see that call site's own comment), so
+     * `PointCloudRenderer.setMaxRefreshHz` has to ignore a repeat of the same
+     * `hz` or it would fight `RefreshGovernor`'s own auto-downshift every
+     * single frame. But `MutableStateFlow` also conflates a `.value =`
+     * assignment that does not change the value, so re-selecting the SAME
+     * option the operator already had chosen — the natural way to ask the
+     * governor to recover after an auto-downshift, since the control still
+     * shows that option as selected — used to be silently indistinguishable
+     * from Compose merely recomposing with the unchanged value: neither this
+     * flow nor the renderer's own cache would ever see a change, so
+     * `RefreshGovernor.request()` was never called again and the downshift
+     * was permanent for the rest of the session (the only way out was to pick
+     * a genuinely DIFFERENT rate first, then flip back — a two-tap dance the
+     * UI gave no hint was necessary). This token is the explicit "the
+     * operator asked" signal the value alone cannot carry.
+     */
+    private val _refreshRequestToken = MutableStateFlow(0)
+    val refreshRequestToken: StateFlow<Int> = _refreshRequestToken.asStateFlow()
+
     /** A14's scalar `gamma` (0.1 – 4.0), applied to whichever scalar block the colour mode selects. */
     private val _gamma = MutableStateFlow(1f)
     val gamma: StateFlow<Float> = _gamma.asStateFlow()
@@ -1073,9 +1098,38 @@ class CaptureViewModel(
             }
         }
         pushbroomEnabled = false
-        // The in-memory project must not go stale, or a later start would
-        // re-read the old manifest.
-        projectStore.open(activeId)?.let { _uiState.value = CaptureUiState.Loaded(it) }
+        // ROUND 5 AUDIT bugfix (multi-cycle recording): on the Capture tab
+        // (`projectId == null` — item 9's "Start creates the project"),
+        // `startCapture()` treats `_uiState is Loaded` as "record into THIS
+        // project" (`(_uiState.value as? Loaded)?.project ?:
+        // createProjectForThisScan()`). Leaving `_uiState` as
+        // `Loaded(sealedProject)` here — which is what this used to do
+        // unconditionally — meant a second Start within the same connect
+        // session silently re-opened and re-recorded into project #1 instead
+        // of creating project #2: `createProjectForThisScan()` was never
+        // reached, so the series counter was never spent and no second
+        // `.lscan` directory was ever created. `autoConnect`'s own state (the
+        // sensor is still connected and PREVIEWING) is untouched by this — the
+        // connect session survives, only the "which project is Start about to
+        // record into" state resets, exactly matching round 5's own "Start
+        // creates the project" contract on every Start, not just the first.
+        //
+        // A project-scoped entry (`projectId != null` — the replay/deep-link
+        // route, or a future "record into an existing project" flow) has no
+        // such ambiguity: there is only ever the one project, so it keeps
+        // refreshing `Loaded` with the manifest Stop just wrote, per the
+        // original comment ("the in-memory project must not go stale, or a
+        // later start would re-read the old manifest") this replaced.
+        if (projectId == null) {
+            _uiState.value = CaptureUiState.NewScan(
+                autoName = com.lidarscan.core.capture.ScanAutoName.format(
+                    series = runCatching { peekSeriesNumber() }.getOrDefault(1),
+                    epochMillis = clock(),
+                ),
+            )
+        } else {
+            projectStore.open(activeId)?.let { _uiState.value = CaptureUiState.Loaded(it) }
+        }
     }
 
     fun dismissSessionSummary() {
@@ -1109,8 +1163,19 @@ class CaptureViewModel(
     }
 
     /** ROUND 5: viewport refresh cap in fps, 0 = uncapped. Display-only; the recording is unaffected. */
+    /**
+     * ROUND 5 AUDIT bugfix: this used to clamp anything `>= 60` back to `0`
+     * ("Max") — a leftover from BEFORE round 5.3 lifted the viewport refresh
+     * cap's ceiling to the device's real rate (`PointCloudRenderer
+     * .setMaxRefreshHz`'s own doc comment: "the cap is no longer clamped at
+     * 59"). `RefreshGovernor.optionsFor()` offers 60/90/120 fps choices on a
+     * fast phone, and every one of them silently became "Max" here instead —
+     * see [refreshRequestToken] for the other half of the recovery fix this
+     * sits next to.
+     */
     fun setRefreshHz(hz: Int) {
-        _refreshHz.value = if (hz in 1..59) hz else 0
+        _refreshHz.value = if (hz > 0) hz else 0
+        _refreshRequestToken.value++
     }
 
     fun setGamma(value: Float) {

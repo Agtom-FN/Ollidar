@@ -63,6 +63,68 @@ class CaptureArController(
     private val installer: ArInstaller = ArInstaller(),
 ) {
 
+    /**
+     * ROUND 5 AUDIT bugfix (field report: "the AR camera not show up").
+     *
+     * There are two possible drivers of this session — [ArPosePumpView]'s 2 dp
+     * `GLSurfaceView` (mounted in every other view mode) and [ArOverlayView]'s
+     * own, full-screen `GLSurfaceView` (mounted in [CameraMode.AR]) — and the
+     * class doc above has always said "never composed at the same time...
+     * the Capture screen picks exactly one". That is true of *what Compose
+     * decides to compose*, but it was never true of *the underlying GL
+     * threads' lifecycle*: `AndroidView`'s `factory`/`onRelease` pair runs on
+     * the Compose/main thread, but each `GLSurfaceView`'s `onSurfaceCreated`
+     * fires asynchronously, on ITS OWN GL thread, whenever the platform
+     * actually hands it a `Surface` — there was no guarantee the OLD
+     * renderer's thread had genuinely stopped calling `Session.update()`/
+     * `setCameraTextureName()` before the NEW one's thread started calling
+     * them, right across a [CameraMode] switch. `Session.update()` from two
+     * threads is undefined by ARCore's own contract; concretely here, the
+     * pump's `RENDERMODE_CONTINUOUSLY` thread re-binds ITS OWN texture id on
+     * every single frame (`ArCameraBackgroundRenderer.onDrawFrame`), so if it
+     * won even one more race after the overlay claimed the session, ARCore
+     * would keep writing the camera image into the (now off-screen, 2 dp)
+     * pump's texture forever — the overlay's own texture is simply never
+     * written, which reads as "camera not show up", not a crash or a glitch.
+     *
+     * [claimRenderer]/[releaseRenderer] make ownership explicit instead of
+     * implicit-by-Compose-branch: whichever renderer is granted [activeOwner]
+     * is the only one whose [onFrame]/[setCameraTextureName] calls actually
+     * touch [session] — a stale renderer's calls are honoured right up until
+     * a newer claim lands, and are silently ignored afterwards, so the
+     * hand-off is safe regardless of which GL thread's `onSurfaceCreated`
+     * happens to fire first or last. Ownership is granted from the SAME
+     * `AndroidView` `factory`/`onRelease` lifecycle each view already had —
+     * see [ArPosePumpView]/[ArOverlayView] — which runs on the main thread
+     * and is exactly as ordered as Compose's own mount/unmount already is;
+     * only the ENFORCEMENT of "one at a time" moved from an assumption to a
+     * runtime check.
+     */
+    enum class RendererOwner { POSE_PUMP, OVERLAY }
+
+    @Volatile
+    private var activeOwner: RendererOwner? = null
+
+    /**
+     * Declares [owner] the only renderer allowed to drive this session from
+     * now on. Idempotent, safe from any thread. A later claim always
+     * supersedes an earlier one — the caller is switching TO that renderer,
+     * so there is never a reason to refuse it.
+     */
+    fun claimRenderer(owner: RendererOwner) {
+        activeOwner = owner
+    }
+
+    /**
+     * Relinquishes ownership, but only if [owner] still holds it — an
+     * out-of-order release (the old renderer's `AndroidView` disposing after
+     * a NEWER claim already landed, which is exactly the race this exists
+     * to survive) must never undo the newer owner's claim.
+     */
+    fun releaseRenderer(owner: RendererOwner) {
+        if (activeOwner == owner) activeOwner = null
+    }
+
     data class ArStatus(
         val availability: ArAvailability = ArAvailability.CHECKING,
         val sessionRunning: Boolean = false,
@@ -216,7 +278,26 @@ class CaptureArController(
 
     fun pause() {
         session?.pause()
-        _status.value = _status.value.copy(sessionRunning = false, tracking = false)
+        // ROUND 5 AUDIT bugfix: `failureReason` used to be left exactly as it
+        // was before the pause. `needsArSession` (CaptureScreen.kt) toggles
+        // this controller through pause()/resume() any time it goes momentarily
+        // false — most notably right as a SECOND recording starts in the same
+        // connect session (Stop drops `needsArSession` for a Mid-360 session,
+        // the next Start brings it back) — and until the next `onFrame()`
+        // actually runs, `updateMotionHint()`'s poll reads whatever
+        // `failureReason` happened to be at the moment of the LAST pose before
+        // the pause. If that was `EXCESSIVE_MOTION` (very plausible right at
+        // the end of an active walkthrough), the "Moving too fast" hint fired
+        // immediately on the new, perfectly stationary session — a stale
+        // reading, not a stale reading `close()` has: `close()` already resets
+        // to a fresh `ArStatus()` (`failureReason = NONE` by default), so
+        // `pause()` doing anything less than the same NONE reset for this one
+        // field was the actual gap, not a deliberate distinction.
+        _status.value = _status.value.copy(
+            sessionRunning = false,
+            tracking = false,
+            failureReason = TrackingFailureReason.NONE,
+        )
     }
 
     fun close() {
@@ -237,8 +318,16 @@ class CaptureArController(
         geometryDirty = true
     }
 
-    /** The camera texture ARCore renders the background into — created by [ArCameraBackgroundRenderer]. */
-    fun setCameraTextureName(textureId: Int) {
+    /**
+     * The camera texture ARCore renders the background into — created by
+     * [ArCameraBackgroundRenderer]. No-ops unless [owner] currently holds
+     * [claimRenderer]'s ownership — see [RendererOwner]'s doc for why: this is
+     * what stops a not-yet-torn-down pump/overlay GL thread from re-binding
+     * the session's camera texture out from under the one Compose actually
+     * wants on screen.
+     */
+    fun setCameraTextureName(textureId: Int, owner: RendererOwner) {
+        if (activeOwner != owner) return
         session?.setCameraTextureName(textureId)
     }
 
@@ -247,8 +336,15 @@ class CaptureArController(
      * the renderer can draw the background from the same object (ARCore
      * requires drawing the background with the frame that produced it — using
      * a stale one tears the image against the display transform).
+     *
+     * No-ops (returns `null`, calls nothing on [session]) unless [owner]
+     * currently holds [claimRenderer]'s ownership — see [RendererOwner]'s doc.
+     * This is the half of the fix that matters most: it is what actually
+     * prevents `Session.update()` from ever being called by two GL threads
+     * at once, which ARCore's own contract leaves undefined.
      */
-    fun onFrame(): Frame? {
+    fun onFrame(owner: RendererOwner): Frame? {
+        if (activeOwner != owner) return null
         val s = session ?: return null
         if (geometryDirty) {
             s.setDisplayGeometry(displayRotation, viewWidth, viewHeight)

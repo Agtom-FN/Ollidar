@@ -225,6 +225,68 @@ class ReplayCaptureSmokeTest {
                 "the session must survive a live display change (points were $lastSample, now $afterSlider)",
                 afterSlider >= lastSample,
             )
+
+            // Close the sheet so the record button underneath is reachable again.
+            androidx.test.espresso.Espresso.pressBack()
+            composeRule.waitUntil(timeoutMillis = 10_000) {
+                composeRule.onAllNodesWithTag("captureSettingsSheet").fetchSemanticsNodes().isEmpty()
+            }
+
+            // ROUND 5 AUDIT (task 2, multi-cycle recording): "Start -> Stop
+            // (seal) -> Start again within one connect session MUST produce a
+            // second valid recording." A bare emulator has no D6/Mid-360
+            // hardware, so the New-scan Capture tab's own Start stays
+            // permanently disabled there (see
+            // `captureTabIsANewScanWithAutoDetectAndAnInlineManualFallback`
+            // above) — this replay session is the one path on this AVD that
+            // can actually reach RECORDING at all, so it is what exercises the
+            // underlying stop/restart machinery twice in a row. It reuses one
+            // project by design (`ReplayEngineBridge`'s own doc: "records
+            // nothing new" into a fresh project — see NOTES.md for why that is
+            // NOT the same bug this audit fixed in `CaptureViewModel
+            // .stopCapture()`'s `_uiState` handling, which this cannot reach on
+            // a hardware-free AVD); what it DOES prove on real device/JNI code
+            // is that Stop leaves the session re-armable and a second Start
+            // genuinely restarts decoding rather than silently failing or
+            // wedging the process.
+            composeRule.onNodeWithContentDescription("Stop recording").performClick()
+            composeRule.waitUntil(timeoutMillis = 15_000) {
+                composeRule.onAllNodesWithContentDescription("Start replay").fetchSemanticsNodes().isNotEmpty()
+            }
+
+            val afterFirstStop = currentPointsCaptured()
+            composeRule.onNodeWithContentDescription("Start replay").performClick()
+            composeRule.waitUntil(timeoutMillis = 15_000) {
+                composeRule.onAllNodesWithContentDescription("Stop recording").fetchSemanticsNodes().isNotEmpty()
+            }
+
+            // Cycle 2 must actually be decoding again, not stuck at cycle 1's
+            // frozen count (which is what "Start silently does nothing" would
+            // look like from the UI's point of view).
+            var cycle2Grew = false
+            var lastCycle2Sample = currentPointsCaptured()
+            val cycle2DeadlineMillis = System.currentTimeMillis() + 10_000
+            while (System.currentTimeMillis() < cycle2DeadlineMillis) {
+                Thread.sleep(500)
+                val sample = currentPointsCaptured()
+                assertTrue(
+                    "cycle 2 points captured must never go backwards (was $lastCycle2Sample, now $sample)",
+                    sample >= lastCycle2Sample,
+                )
+                if (sample > lastCycle2Sample) cycle2Grew = true
+                lastCycle2Sample = sample
+            }
+            assertTrue(
+                "expected cycle 2 to actually decode points again after the first Stop (cycle 1 ended at " +
+                    "$afterFirstStop, cycle 2 started at $lastCycle2Sample and never grew) — a flat/stuck " +
+                    "count here is exactly \"Start after Stop does nothing\"",
+                cycle2Grew,
+            )
+
+            composeRule.onNodeWithContentDescription("Stop recording").performClick()
+            composeRule.waitUntil(timeoutMillis = 15_000) {
+                composeRule.onAllNodesWithContentDescription("Start replay").fetchSemanticsNodes().isNotEmpty()
+            }
         }
     }
 

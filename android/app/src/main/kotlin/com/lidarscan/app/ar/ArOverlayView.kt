@@ -71,6 +71,18 @@ fun ArOverlayView(
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
+                // ROUND 5 AUDIT bugfix (field report: "the AR camera not show
+                // up"): claimed here, on the main/Compose thread, at the exact
+                // moment this AndroidView is created — see
+                // `CaptureArController.RendererOwner`'s doc. Without this, the
+                // pump's still-alive GL thread could keep re-binding the
+                // session's camera texture to ITS OWN (2 dp, off-screen)
+                // texture after this overlay's surface came up, and ARCore
+                // would never write a frame into the texture this quad
+                // actually samples — a permanently black background with no
+                // exception and no log line, which is exactly the reported
+                // symptom.
+                controller.claimRenderer(CaptureArController.RendererOwner.OVERLAY)
                 GLSurfaceView(ctx).apply {
                     preserveEGLContextOnPause = true
                     setEGLContextClientVersion(2)
@@ -81,7 +93,7 @@ fun ArOverlayView(
                     // per-device EGL surprises.
                     setEGLConfigChooser(8, 8, 8, 8, 16, 0)
                     setRenderer(
-                        ArCameraBackgroundRenderer(controller) { frame ->
+                        ArCameraBackgroundRenderer(controller, CaptureArController.RendererOwner.OVERLAY) { frame ->
                             // Runs on the GL thread, immediately after the
                             // pose for this frame has been pushed. Hand the
                             // Filament camera the SAME frame's matrices so the
@@ -99,7 +111,10 @@ fun ArOverlayView(
                     controller.setDisplayGeometry(display, width.coerceAtLeast(1), height.coerceAtLeast(1))
                 }
             },
-            onRelease = { it.onPause() },
+            onRelease = {
+                it.onPause()
+                controller.releaseRenderer(CaptureArController.RendererOwner.OVERLAY)
+            },
         )
 
         AndroidView(

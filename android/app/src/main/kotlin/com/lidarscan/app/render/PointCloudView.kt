@@ -61,6 +61,13 @@ fun PointCloudView(
      */
     maxRefreshHz: Int = 0,
     /**
+     * ROUND 5 AUDIT bugfix: bumped by `CaptureViewModel.setRefreshHz` on every
+     * explicit call, independent of whether [maxRefreshHz] itself changed —
+     * see [PointCloudRenderer.setMaxRefreshHz]'s doc for why re-selecting the
+     * same option needs its own signal to reach the governor.
+     */
+    refreshRequestToken: Int = 0,
+    /**
      * ROUND 5.3 (item 17): the device's own display ceiling in Hz. 0 asks the
      * view to read it from the current display. Above this, the renderer's
      * governor eases the live view down when frame times sustain an overrun and
@@ -103,7 +110,7 @@ fun PointCloudView(
     }
     renderer.setCameraMode(cameraMode)
     renderer.setStreamFilter(streamFilter)
-    renderer.setMaxRefreshHz(maxRefreshHz)
+    renderer.setMaxRefreshHz(maxRefreshHz, refreshRequestToken)
 
     AndroidView(
         modifier = modifier.fillMaxSize(),

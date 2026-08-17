@@ -101,6 +101,38 @@ class RefreshGovernorTest {
         assertNull(g.note())
     }
 
+    /**
+     * ROUND 5 AUDIT: the app-layer recovery path (re-selecting the SAME option
+     * the operator already had chosen, after an auto-downshift eased it below
+     * that) depends on `request()` clearing the downshift even when the
+     * incoming value is IDENTICAL to what was already requested — this class
+     * has no "no-op if unchanged" guard, unlike the app-layer callers that
+     * wrap it (`PointCloudRenderer.setMaxRefreshHz`, `CaptureViewModel
+     * .setRefreshHz`'s `MutableStateFlow`), which is exactly why those needed
+     * their own audit fix (see `PointCloudRenderer.setMaxRefreshHz`'s doc).
+     * Pinning the class-level contract here so a future guard added to THIS
+     * class would fail loudly instead of silently reintroducing that bug.
+     */
+    @Test
+    fun `re-requesting the SAME already-selected rate still clears an active downshift`() {
+        val g = RefreshGovernor(deviceCeilingHz = 120)
+        g.request(0)
+        g.onFrameInterval(0, 40 * ms)
+        g.onFrameInterval(sustainNs, 40 * ms)
+        assertTrue(g.isDownshifted)
+        assertEquals(90, g.effectiveHz)
+
+        // Same request as the very first one — not a new value. `effectiveHz`
+        // itself goes back to `0` (request()'s own "Max" sentinel, same as a
+        // fresh instance that was never downshifted), and `isDownshifted`
+        // resolves it against the device ceiling to confirm the cap is
+        // genuinely back at 120, not just that the sentinel changed.
+        g.request(0)
+        assertEquals(0, g.effectiveHz)
+        assertFalse(g.isDownshifted)
+        assertNull(g.note())
+    }
+
     @Test
     fun `a target already at the floor is left alone`() {
         val g = RefreshGovernor(deviceCeilingHz = 60)

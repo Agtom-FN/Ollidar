@@ -56,6 +56,15 @@ import javax.microedition.khronos.opengles.GL10
  */
 class ArCameraBackgroundRenderer(
     private val controller: CaptureArController,
+    /**
+     * ROUND 5 AUDIT bugfix: which of the (at most one, by design) renderers
+     * that can be alive at once this instance is — [ArPosePumpView]'s pump or
+     * [ArOverlayView]'s overlay. Every call into [controller] carries it, so a
+     * renderer whose `AndroidView` has already been superseded (see
+     * `CaptureArController.RendererOwner`'s doc) safely becomes a no-op on the
+     * session instead of racing the new one for it.
+     */
+    private val owner: CaptureArController.RendererOwner,
     /** Invoked on the GL thread after each ARCore frame, for consumers that need it (the overlay camera). */
     private val onFrame: (Frame) -> Unit = {},
 ) : GLSurfaceView.Renderer {
@@ -82,7 +91,7 @@ class ArCameraBackgroundRenderer(
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
-        controller.setCameraTextureName(textureId)
+        controller.setCameraTextureName(textureId, owner)
 
         program = buildProgram()
         positionAttribute = GLES20.glGetAttribLocation(program, "a_Position")
@@ -97,9 +106,9 @@ class ArCameraBackgroundRenderer(
 
     override fun onDrawFrame(gl: GL10?) {
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT or GLES20.GL_DEPTH_BUFFER_BIT)
-        if (textureId >= 0) controller.setCameraTextureName(textureId)
+        if (textureId >= 0) controller.setCameraTextureName(textureId, owner)
 
-        val frame = controller.onFrame() ?: return
+        val frame = controller.onFrame(owner) ?: return
         if (frame.hasDisplayGeometryChanged()) updateTexCoords(frame)
         drawBackground()
         onFrame(frame)

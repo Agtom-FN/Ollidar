@@ -60,6 +60,12 @@ fun ArPosePumpView(
     AndroidView(
         modifier = modifier.size(POSE_PUMP_DP.dp).testTag("arPosePump"),
         factory = { ctx ->
+            // ROUND 5 AUDIT bugfix: claimed here, on the main/Compose thread,
+            // at the exact moment this AndroidView is created — see
+            // `CaptureArController.RendererOwner`'s doc for why an explicit
+            // claim (rather than "whichever GL thread's factory ran") is what
+            // actually prevents the black-camera race with ArOverlayView.
+            controller.claimRenderer(CaptureArController.RendererOwner.POSE_PUMP)
             GLSurfaceView(ctx).apply {
                 preserveEGLContextOnPause = true
                 setEGLContextClientVersion(2)
@@ -69,12 +75,18 @@ fun ArPosePumpView(
                 // recorder subscribes to the controller directly
                 // (CaptureViewModel.startArPipelines) rather than through the
                 // renderer, so it is fed by this pump too.
-                setRenderer(ArCameraBackgroundRenderer(controller))
+                setRenderer(ArCameraBackgroundRenderer(controller, CaptureArController.RendererOwner.POSE_PUMP))
                 renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
                 controller.setDisplayGeometry(display, width.coerceAtLeast(1), height.coerceAtLeast(1))
             }
         },
-        onRelease = { it.onPause() },
+        onRelease = {
+            it.onPause()
+            // Only relinquishes if the pump still owns it — see
+            // `releaseRenderer`'s own doc for why an out-of-order release must
+            // not undo a newer claim from the overlay switching in.
+            controller.releaseRenderer(CaptureArController.RendererOwner.POSE_PUMP)
+        },
     )
 }
 
