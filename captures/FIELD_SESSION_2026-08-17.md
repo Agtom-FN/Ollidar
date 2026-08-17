@@ -55,3 +55,23 @@ problem. D6 is now UNCONDITIONALLY CLEARED: capture path meets S1 at full duty.
 D6 now at /dev/cu.usbserial-21120 (new adapter); old adapter on -21130 should be
 unplugged; UM982 (-21140) not enumerated at session end — likely unplugged during swap.
 Evidence: captures/d6_soak_180s.bin (2.5 MB, 100% pass on replay).
+
+## Session 3 (cont.) — auto-detect shipped + full-chain verification
+- Owner requirement (GUI defeated by manual IP entry) answered same-day: device
+  auto-detect landed in engine (A16), desktop, Android. On the field Mac the
+  shipping app found BOTH sensors from cold with zero typed config:
+  "Found Mid-360 SN ARMCP7K0034759, fw 35010108, at 192.168.1.159" +
+  "COIN-D6: found on /dev/cu.usbserial-21120" (evidence:
+  desktop/evidence/17-autodetect-real-hardware.png).
+- Regression caught before the owner saw it: silent on-open discovery holds UDP
+  56201; fixed by both-ways serialization + CLI chaining. Field 'bind failed' was
+  ALSO the en7 alias having evaporated during USB re-plugging (EADDRNOTAVAIL is
+  indistinguishable in the SDK log — it discards errno).
+- Network made PERMANENT: en7 service manual 192.168.1.5/255.255.255.0 via
+  networksetup (survives reboot/replug; replaces the fragile route+alias recipe).
+- Final chained verification on the shipping app: suppressed silent pass →
+  auto-detect FOUND Mid-360 + D6 → 56201 released → mid360-selftest PASSED
+  (first packet 0.62 s) → real 3 s recording: 6,733 chunks / 8.5 MB / lidar+IMU
+  streams / sealed=true. macOS app fully verified on real hardware.
+- TestPack refreshed (new DMG + new APK with auto-detect); app reinstalled to
+  ~/Applications on kc-m4.
