@@ -20,3 +20,9 @@
 
 ## Still to test on hardware: UM982 (cu.usbmodem2111101 candidate), Android on
 Pixel 8 Pro, D6 powered-hub retest, mount rig + calibration.
+
+## Unicore UM982 (/dev/cu.usbserial-21140 @ 230400 — NOT the 115200 default)
+- 7 NMEA types @ 1 Hz incl. GPTHS (dual-antenna heading ENABLED in fw); 210/210 checksums
+- Fix 0, 0 SVs — antennas not connected / indoors; link+protocol path PROVEN (S5 bench leg
+  closed at maximum-achievable-indoors); needs antennas + sky for Single, NTRIP for RTK
+- /dev/cu.usbmodem2111101 = unrelated ESP32 (agri-IoT water-flow logger) on same Mac
