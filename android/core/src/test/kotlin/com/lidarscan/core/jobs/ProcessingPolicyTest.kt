@@ -51,7 +51,7 @@ class ProcessingPolicyTest {
 
     @Test
     fun `post-process needs something recorded`() {
-        assertTrue(ProcessingPolicy.postProcess(hasRawStreams = true).enabled)
+        assertTrue(ProcessingPolicy.postProcess(hasRawStreams = true, sensor = com.lidarscan.core.model.SensorType.MID360).enabled)
         val blocked = ProcessingPolicy.postProcess(hasRawStreams = false)
         assertFalse(blocked.enabled)
         assertNotNull(blocked.reason)
@@ -124,4 +124,45 @@ class ProcessingPolicyTest {
         stage: String = "",
         message: String = "",
     ) = ProcessingJob(1, JobKind.POST_PROCESS, state, 0.5f, stage, error, message)
+
+    // ── ROUND 7, item 4 ───────────────────────────────────────────────────
+
+    @Test
+    fun `post-processing a COIN-D6 scan is refused with the real reason, not a failed job`() {
+        // `PostSlamPipeline` counts kLidarMid360/kImu chunks and returns
+        // kNotFound when there are none, and JobQueue reduces that to the
+        // string "not found". Before ROUND 7 the button was enabled for a D6
+        // project and that two-word error was the entire feedback.
+        val gate = ProcessingPolicy.postProcess(
+            hasRawStreams = true,
+            sensor = com.lidarscan.core.model.SensorType.COIN_D6,
+        )
+        assertFalse(gate.enabled)
+        val why = gate.reason!!
+        assertTrue(why, why.contains("Mid-360"))
+        assertTrue(why, why.contains("COIN-D6"))
+        // And it says what DOES produce the D6's registered cloud, so the
+        // refusal is navigable rather than a dead end.
+        assertTrue(why, why.contains("pushbroom"))
+    }
+
+    @Test
+    fun `a Mid-360 scan with raw streams is still allowed`() {
+        assertTrue(
+            ProcessingPolicy.postProcess(
+                hasRawStreams = true,
+                sensor = com.lidarscan.core.model.SensorType.MID360,
+            ).enabled,
+        )
+    }
+
+    @Test
+    fun `nothing recorded outranks the sensor check`() {
+        val gate = ProcessingPolicy.postProcess(
+            hasRawStreams = false,
+            sensor = com.lidarscan.core.model.SensorType.COIN_D6,
+        )
+        assertFalse(gate.enabled)
+        assertTrue(gate.reason!!.contains("Nothing recorded yet"))
+    }
 }

@@ -95,7 +95,7 @@ class ArCameraBackgroundRenderer(
             createGlResources()
         } catch (e: Throwable) {
             degraded = true
-            controller.reportArFailure("the AR camera view could not start", e)
+            controller.reportArFailure("the tracking camera could not start", e)
         }
     }
 
@@ -125,7 +125,7 @@ class ArCameraBackgroundRenderer(
             controller.setDisplayGeometry(null, width, height)
         }.onFailure {
             degraded = true
-            controller.reportArFailure("the AR camera view could not be sized", it)
+            controller.reportArFailure("the tracking camera could not be sized", it)
         }
     }
 
@@ -149,7 +149,7 @@ class ArCameraBackgroundRenderer(
             onFrame(frame)
         } catch (e: Throwable) {
             degraded = true
-            controller.reportArFailure("the AR camera view stopped drawing", e)
+            controller.reportArFailure("the tracking camera stopped drawing", e)
         }
     }
 

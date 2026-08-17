@@ -104,6 +104,43 @@ struct D6Config {
 
   bool drop_zero_range_points = true;  // no-return samples are not geometry
 
+  // --- ROUND 7: per-point arrival time inside one byte chunk ---------------
+  //
+  // The A8 assembler interpolates a pose PER POINT and always did
+  // (pushbroom_assembler.cpp's resolve_()). What it was being handed was not
+  // per-point time: `Parser::feed(data, n, t_rx_ns)` stamps EVERY sample it
+  // decodes out of that call with the one `t_rx_ns` of the whole chunk, and
+  // this driver then passed a single `t_current_ns_` to `profile_sink` on top
+  // of that. Both headers here and in pushbroom_assembler.h claimed per-point
+  // time; neither the parser nor this driver ever produced it.
+  //
+  // On a phone that is not a rounding error. `D6SerialConnection` reads into a
+  // 4096-byte buffer, and 4096 bytes at 230400 8N1 is **178 ms of wire time**
+  // — nearly two full 10 Hz revolutions — collapsed onto one instant. Every
+  // point in that chunk resolves against ONE pose, so a walk at 1 m/s lays
+  // each chunk down as a rigid slab offset from its neighbour by up to 18 cm:
+  // walls come out shingled rather than flat, which is the owner's "not a
+  // stable scan with straight walls" and his "sections", exactly.
+  //
+  // The fix needs no new clock and no ABI: a UART delivers bytes at a KNOWN
+  // constant rate, so byte position inside the chunk IS time. `on_bytes` feeds
+  // the parser in slices of this many bytes, each stamped with its own
+  // back-dated arrival time (`t_chunk_end - remaining_bytes * byte_period`),
+  // and each point therefore carries the time of the slice that completed its
+  // packet, to within one slice.
+  //
+  // 64 bytes is ~2.8 ms at 230400 (~2.8 mm of rig travel at 1 m/s, an order of
+  // magnitude under the D6's own range noise) and is under two D6 packets, so
+  // the slicing costs a handful of extra `feed()` calls per chunk and nothing
+  // else — the parser is a streaming parser and has always buffered across
+  // calls. 0 restores the pre-ROUND-7 behaviour (one stamp per chunk).
+  std::uint32_t time_slice_bytes = 64;
+
+  // Bits per byte on the wire, for the back-dating above: 8N1 = 1 start + 8
+  // data + 1 stop. Named rather than hard-coded so a future 8E1/7-bit variant
+  // does not silently mis-date every point.
+  std::uint32_t wire_bits_per_byte = 10;
+
   // A8 pushbroom seam (see D6ProfileSink above). The Engine installs one of
   // these when SessionConfig::pushbroom is on; an app driving the assembler
   // itself may install its own.
@@ -254,6 +291,9 @@ class D6Driver final : public Driver {
   void on_bytes(ByteSpan bytes, TimePoint t);
   void on_point(const d6::Point& p);
   void flush_batch(std::int64_t t_ns);
+  // ROUND 7: see D6Config::time_slice_bytes.
+  void feed_time_sliced(ByteSpan bytes, std::int64_t t_chunk_end_ns);
+  std::int64_t byte_period_ns() const;
   void set_phase(D6Phase next, ScanError err);
   void scan_for_acks(ByteSpan bytes);
   void attempt_restart(TimePoint now);

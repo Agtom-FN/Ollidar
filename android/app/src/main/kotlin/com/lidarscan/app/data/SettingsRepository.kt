@@ -51,6 +51,12 @@ class SettingsRepository(private val context: Context) {
         val LAST_MID360_HOST_IP = stringPreferencesKey("last_mid360_host_ip")
         val LAST_MID360_SN = stringPreferencesKey("last_mid360_serial_number")
         val SCAN_SERIES = intPreferencesKey("scan_series_counter")
+
+        /** ROUND 7 (field bug 1): the D6 mount re-zero, so it outlives the Capture screen. */
+        val MOUNT_TRIM = stringPreferencesKey("mount_trim")
+
+        /** ROUND 7 (time-sync): the constant D6 transport latency, milliseconds. */
+        val D6_SENSOR_LATENCY_MS = intPreferencesKey("d6_sensor_latency_ms")
     }
 
     val settings: Flow<AppSettings> = context.settingsDataStore.data.map { prefs ->
@@ -79,6 +85,8 @@ class SettingsRepository(private val context: Context) {
             lastDetectedMid360HostIp = prefs[Keys.LAST_MID360_HOST_IP],
             lastDetectedMid360SerialNumber = prefs[Keys.LAST_MID360_SN],
             scanSeriesCounter = prefs[Keys.SCAN_SERIES] ?: 0,
+            d6SensorLatencyMs = prefs[Keys.D6_SENSOR_LATENCY_MS]
+                ?: com.lidarscan.core.capture.D6TimeSync.DEFAULT_SENSOR_LATENCY_MS,
         )
     }
 
@@ -126,6 +134,50 @@ class SettingsRepository(private val context: Context) {
 
     private fun presetKey(deviceProfileKey: String) =
         stringPreferencesKey("perf_preset::$deviceProfileKey")
+
+    /**
+     * ROUND 7 (field bug 1): the mount re-zero, persisted.
+     *
+     * The trim used to live only in `CaptureViewModel`'s own
+     * `MutableStateFlow`, i.e. in a `viewModel(key = "capture-new-false")`
+     * scoped to the Capture tab's `NavBackStackEntry` — so a trip to the
+     * Projects tab between two scans silently dropped 132° of mount rotation
+     * out of the pushbroom, which is exactly what the owner's log shows
+     * happening to `scan-009`. See
+     * [com.lidarscan.core.calib.StoredMountTrim].
+     *
+     * Not per device profile (unlike the performance preset): there is one
+     * bracket and one phone in the operator's hands, and a trim measured on it
+     * is about the clamp, not the hardware class. Unparseable JSON — an older
+     * shape, a truncated write — reads as "no trim" rather than throwing, so a
+     * bad row can never keep the Capture tab from opening.
+     */
+    suspend fun storedMountTrim(): com.lidarscan.core.calib.StoredMountTrim? {
+        val raw = context.settingsDataStore.data.first()[Keys.MOUNT_TRIM] ?: return null
+        return runCatching {
+            kotlinx.serialization.json.Json.decodeFromString<com.lidarscan.core.calib.StoredMountTrim>(raw)
+        }.getOrNull()
+    }
+
+    /** Persists (or, with `null`, forgets) the mount re-zero. */
+    suspend fun setStoredMountTrim(stored: com.lidarscan.core.calib.StoredMountTrim?) {
+        context.settingsDataStore.edit { prefs ->
+            if (stored == null) {
+                prefs.remove(Keys.MOUNT_TRIM)
+            } else {
+                prefs[Keys.MOUNT_TRIM] = kotlinx.serialization.json.Json.encodeToString(
+                    com.lidarscan.core.calib.StoredMountTrim.serializer(),
+                    stored,
+                )
+            }
+        }
+    }
+
+    /** ROUND 7: see [com.lidarscan.core.capture.D6TimeSync]. */
+    suspend fun setD6SensorLatencyMs(millis: Int) {
+        val clamped = com.lidarscan.core.capture.D6TimeSync.clampLatencyMs(millis)
+        context.settingsDataStore.edit { it[Keys.D6_SENSOR_LATENCY_MS] = clamped }
+    }
 
     suspend fun setUnits(units: Units) {
         context.settingsDataStore.edit { it[Keys.UNITS] = units.name }

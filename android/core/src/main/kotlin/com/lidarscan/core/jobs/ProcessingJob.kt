@@ -1,6 +1,7 @@
 package com.lidarscan.core.jobs
 
 import com.lidarscan.core.model.ExportFormat
+import com.lidarscan.core.model.SensorType
 
 /**
  * B6 — the processing-queue vocabulary, mirroring
@@ -78,21 +79,35 @@ data class ProcessingJob(
 }
 
 /** Tech Spec §3.8's three processing modes. */
+/**
+ * ROUND 7 (owner field item) — **the names say where the scan goes.**
+ *
+ * The owner tried to get `scan-008` off the phone, got *"No cloud to export"*,
+ * and concluded — correctly, from what the screen said — that getting a scan out
+ * of this app required a configured server. It never did: `EXTRACT_FOR_TRANSFER`
+ * has always packaged the whole project as a `.lscan.zip` with no server
+ * involved. It was called "Extract for transfer", sat third in a row next to
+ * "Cloud", and its only delivery route was a share sheet.
+ *
+ * So the two things a person actually wants to choose between are now named as
+ * such — **Save to phone** and **Send to cloud** — and "Local" is named for what
+ * it is (processing that happens here), not for where the file ends up.
+ */
 enum class ProcessingMode(val displayName: String, val summary: String) {
     LOCAL(
-        "Local",
+        "Process here",
         "Run the post pipeline on this phone, in a foreground service. No network, no upload — but it is the " +
-            "slowest option and the one that heats the device.",
+            "slowest option and the one that heats the device. Mid-360 captures only.",
     ),
     CLOUD(
-        "Cloud",
+        "Send to cloud",
         "Upload the .lscan as a resumable zip; a Linux worker runs the same engine CLI and the results come back " +
             "into the project. Needs a server URL and token in Settings.",
     ),
     EXTRACT_FOR_TRANSFER(
-        "Extract for transfer",
-        "Package the raw capture as a .lscan.zip and hand it to the share sheet. No server involved — the desktop " +
-            "app imports it, processes it, and exports a results bundle back.",
+        "Save to phone",
+        "Package the whole capture as a .lscan.zip and save it to Downloads — no server, no account, nothing to " +
+            "configure. The desktop app imports that zip directly. This is the way to get a scan off the phone.",
     ),
 }
 
@@ -142,12 +157,41 @@ enum class SyncQuality(val code: Int, val label: String) {
  */
 object ProcessingPolicy {
 
-    fun postProcess(hasRawStreams: Boolean): ActionGate =
-        if (hasRawStreams) {
-            ActionGate.allowed
-        } else {
-            ActionGate.blocked("Nothing recorded yet — capture first. Post-processing runs from the raw streams on disk, not from a live session.")
-        }
+    /**
+     * ROUND 7, item 4 — **this gate now knows which sensor it is gating.**
+     *
+     * `PostSlamPipeline` is a Mid-360 pipeline and says so in its own header:
+     * its decode loop counts `kLidarMid360` and `kImu` chunks and returns
+     * `kNotFound` when there are none (`engine/src/post/post_pipeline.cpp`). A
+     * COIN-D6 `.lscan` has neither — it holds raw UART bytes and camera frames
+     * — so tapping Post-process on a phone-D6 scan submitted a job that failed,
+     * and failed with the engine's bare `"not found"`, because `JobQueue`
+     * discards the pipeline's own explanatory message. An enabled button that
+     * produces a two-word error is worse than a disabled one that explains
+     * itself, and this file's own header ("every refusal has to name its own
+     * cause") already said so.
+     *
+     * The D6's registered cloud is produced **live**, by A8's pushbroom, from
+     * the ARCore trajectory — that is what the capture screen draws and what the
+     * project preview shows. There is no offline re-resolve today for one
+     * concrete, nameable reason: the pose stream is never written to the
+     * `.lscan` (`ChunkType::kPoseAr` is defined and mapped in `lscan.cpp` and
+     * has no writer anywhere), so the trajectory does not survive the session.
+     * Until it does, "post-process a D6 scan" has nothing to run on, and saying
+     * that is the honest gate. See android/NOTES.md ROUND 7 §4.
+     */
+    fun postProcess(hasRawStreams: Boolean, sensor: SensorType? = null): ActionGate = when {
+        !hasRawStreams -> ActionGate.blocked(
+            "Nothing recorded yet — capture first. Post-processing runs from the raw streams on disk, not from a live session.",
+        )
+        sensor == SensorType.COIN_D6 -> ActionGate.blocked(
+            "Post-processing is the Mid-360 LIO pipeline, and this is a COIN-D6 scan. A D6 cloud is built live " +
+                "by the pushbroom from the phone's own trajectory — what you saw while walking IS the registered " +
+                "result, and it is what Export writes. An offline re-run needs the ARCore pose stream saved " +
+                "inside the .lscan, which the engine cannot write yet.",
+        )
+        else -> ActionGate.allowed
+    }
 
     fun colorize(
         hasKeyframes: Boolean,
@@ -176,7 +220,15 @@ object ProcessingPolicy {
 
     fun export(hasProcessedCloud: Boolean, hasLiveCloud: Boolean): ActionGate = when {
         hasProcessedCloud || hasLiveCloud -> ActionGate.allowed
-        else -> ActionGate.blocked("No cloud to export. Post-process the capture first (or export the raw bundle for transfer instead).")
+        // ROUND 7: this refusal used to be a dead end that read as "you need a
+        // server". It is a refusal about POINT-CLOUD formats (PLY/LAS/PCD),
+        // which need a resolved cloud in memory — and it now names the door that
+        // is always open, because "Save to phone" needs none of that.
+        else -> ActionGate.blocked(
+            "No point cloud in memory to convert to PLY/LAS/PCD — that needs a post-process run first. " +
+                "To get this scan off the phone right now, use \"Save to phone\": it packages the whole " +
+                "capture as a .lscan.zip into Downloads, with no processing and no server.",
+        )
     }
 
     fun transferBundle(hasRawStreams: Boolean): ActionGate =

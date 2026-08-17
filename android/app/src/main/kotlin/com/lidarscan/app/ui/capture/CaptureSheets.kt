@@ -180,20 +180,29 @@ fun CaptureSettingsSheet(
                     hint = "how the cloud is framed",
                     readout = viewLabel(cameraMode),
                 )
+                // ── ROUND 7: THE AR OVERLAY IS ARCHIVED PER OWNER DIRECTIVE ──
+                //
+                // The overlay is gone from the UI; ARCore is not. Phone tracking
+                // is the whole third dimension of a D6 capture, so
+                // `ArPosePumpView` still runs `Session.update()` on every frame
+                // and still pushes every pose — nothing about the trajectory
+                // changed. What was removed is the *view* that painted the
+                // camera image behind the points, which the owner asked to shelve
+                // while the scan-quality work lands.
+                //
+                // [com.lidarscan.app.ar.ArOverlayView], [CameraMode.AR] and the
+                // ROUND 6 crash fixes (`ArSessionGate`) all stay compiled and
+                // tested — `MountCalibrationScreen` still uses the overlay, which
+                // is why deleting it was never the right move. The only thing
+                // that changed is that nothing on the Capture tab can select it.
+                // Revive by putting `CameraMode.AR` back in this list.
                 SegmentedPill(
                     options = listOf(
                         CameraMode.ORBIT to "3D orbit",
-                        CameraMode.AR to "AR overlay",
+                        CameraMode.FOLLOW to "Follow",
                     ),
-                    selected = if (cameraMode == CameraMode.AR) CameraMode.AR else CameraMode.ORBIT,
-                    onSelect = { mode ->
-                        // A dead control is worse than an absent one, and the
-                        // sheet has no room to hide a half of a two-half row —
-                        // so AR stays visible and simply refuses when there is
-                        // no ARCore session behind it. The read-out below says
-                        // why (`off`).
-                        if (mode != CameraMode.AR || arAvailable) onCameraModeChange(mode)
-                    },
+                    selected = if (cameraMode == CameraMode.FOLLOW) CameraMode.FOLLOW else CameraMode.ORBIT,
+                    onSelect = onCameraModeChange,
                     height = ScanDims.SegmentTall,
                     modifier = Modifier.testTag("captureViewRow"),
                 )
@@ -208,7 +217,10 @@ fun CaptureSettingsSheet(
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 18.dp),
             ) {
-                SheetSection("AR & Camera")
+                // ROUND 7 (owner directive): the phone + D6 IS the 3D lidar, not "an AR
+                // app with a lidar". Camera keyframes are a COLORIZATION feature and
+                // stay; the section is named for what it does.
+                SheetSection("Tracking & camera")
 
                 SheetSwitchRow(
                     title = "Camera keyframes",
@@ -236,8 +248,8 @@ fun CaptureSettingsSheet(
                 Spacer(Modifier.height(12.dp))
 
                 SheetRowLabel(
-                    label = "AR tracking",
-                    hint = "ARCore · read-only",
+                    label = "Scanner tracking",
+                    hint = "phone-tracked · read-only",
                     readout = arTrackingLabel,
                     readoutColor = when {
                         !arAvailable -> InkFaint
@@ -465,8 +477,8 @@ fun DiagnosticsSheet(
                 DiagRow("Checksum pass rate", device.checksum, valueColor = device.checksumColor)
                 DiagRow("Packet loss", device.packetLoss)
 
-                SheetSection("AR + camera")
-                DiagRow("AR tracking", ar.tracking, valueColor = ar.trackingColor)
+                SheetSection("Tracking + camera")
+                DiagRow("Scanner tracking", ar.tracking, valueColor = ar.trackingColor)
                 DiagRow("Keyframes written", ar.keyframes, testTag = "diagKeyframes")
                 DiagRow("Tracking-loss episodes", ar.trackingLossEpisodes)
                 DiagRow("Skipped (turning too fast)", ar.skippedTurning)
@@ -541,8 +553,11 @@ data class ArDiagnostics(
 )
 
 private fun viewLabel(mode: CameraMode) = when (mode) {
-    CameraMode.AR -> "AR overlay"
-    else -> "3D orbit"
+    // ROUND 7: archived, not deleted — see the View row above. Unreachable from
+    // the product; the label exists so the `when` stays exhaustive.
+    CameraMode.AR -> "archived"
+    CameraMode.FOLLOW -> "Follow"
+    CameraMode.ORBIT -> "3D orbit"
 }
 
 private fun colorModeLabel(mode: ColorMode) = when (mode) {

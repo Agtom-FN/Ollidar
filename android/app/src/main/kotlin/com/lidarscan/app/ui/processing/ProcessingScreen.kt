@@ -218,6 +218,7 @@ private fun SectionTitle(text: String) {
 
 @Composable
 private fun LocalActions(state: ProcessingUiState, vm: ProcessingViewModel) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         GatedAction(
             icon = Icons.Filled.ViewInAr,
@@ -250,7 +251,7 @@ private fun LocalActions(state: ProcessingUiState, vm: ProcessingViewModel) {
                 Hint(it, color = SemWarn)
             }
             Spacer(Modifier.height(10.dp))
-            GateFooter(state.exportGate) { vm.export() }
+            GateFooter(state.exportGate) { vm.export(context) }
         }
     }
 }
@@ -309,21 +310,30 @@ private fun CloudActions(state: ProcessingUiState, vm: ProcessingViewModel, onOp
 @Composable
 private fun TransferActions(state: ProcessingUiState, onRun: (Boolean) -> Unit) {
     ScanCard {
-        TileHead(Icons.Filled.Inventory2, "Transfer bundle")
+        TileHead(Icons.Filled.Inventory2, "Save this scan to the phone")
         Spacer(Modifier.height(8.dp))
         Hint(
-            "Packages the whole project directory — manifest, raw streams, camera frames and any processed " +
-                "results — as a single .lscan.zip and hands it to the share sheet. The desktop app imports it, " +
-                "processes it, and exports a results bundle back. No server is involved.",
+            "Packages the whole project — manifest, raw streams, camera frames and any processed results — as " +
+                "one .lscan.zip and saves it to Downloads/LidarScan. No server, no account, nothing to " +
+                "configure. That zip is what the desktop app imports.",
             color = InkFaint,
         )
         Spacer(Modifier.height(12.dp))
         if (!state.transferGate.enabled) {
             Hint(state.transferGate.reason.orEmpty(), color = SemBad)
         } else {
+            // ROUND 7: saving is the primary action and the share sheet is the
+            // extra, not the other way round. A share sheet is a hand-off with
+            // no result callback, and making it the only route is how the
+            // owner's export "went nowhere".
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                PrimaryPill(text = "Package and share", height = 46.dp, onClick = { onRun(true) })
-                SecondaryPill(text = "Package only", height = 46.dp, onClick = { onRun(false) })
+                PrimaryPill(
+                    text = "Save to Downloads",
+                    height = 46.dp,
+                    onClick = { onRun(false) },
+                    modifier = Modifier.testTag("saveBundleButton"),
+                )
+                SecondaryPill(text = "Save + share…", height = 46.dp, onClick = { onRun(true) })
             }
         }
     }

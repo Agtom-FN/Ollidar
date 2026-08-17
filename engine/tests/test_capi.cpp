@@ -213,7 +213,21 @@ TEST_CASE("capi/pushbroom_world_points_cross_the_abi_on_the_slam_map_stream") {
   CHECK(st.points_out == 81);
   CHECK(st.points_pending == 0);
   CHECK(st.flagged_tracking_lost == 0);
-  CHECK(st.t_first_ns == t);
+  // ROUND 7: `t` is the arrival stamp of the whole byte chunk, i.e. the time
+  // its LAST byte landed. Points are now back-dated from their own byte
+  // position at the known baud (D6Config::time_slice_bytes), so the first
+  // return in the chunk is stamped up to one chunk's wire duration earlier
+  // than the last one — which is the entire point of the change: before it,
+  // every return in a chunk resolved against the same pose and a walking
+  // capture came out shingled. The invariant that still holds, and is the one
+  // worth asserting, is that no point claims a time in the future of the
+  // transport that carried it, and none is older than the chunk itself.
+  const double kByteNs = 10.0 * 1e9 / 230400.0;
+  const std::int64_t chunk_wire_ns =
+      static_cast<std::int64_t>(kByteNs * static_cast<double>(bytes.size())) + 1;
+  CHECK(st.t_first_ns <= t);
+  CHECK(st.t_first_ns >= t - chunk_wire_ns);
+  CHECK(st.t_last_ns == t);
 
   // The assembled cloud is reachable through the ordinary page API — no new
   // accessor, because it is an ordinary stream in the ordinary store.

@@ -118,6 +118,15 @@ import kotlinx.coroutines.flow.first
  * path passes an id and records into (or replays from) a project that already
  * exists — the only remaining caller that does.
  */
+/**
+ * ROUND 7, owner directive — the AR overlay is archived out of the product.
+ *
+ * Flipping this to `false` restores the camera-passthrough capture view; the
+ * `CameraMode.AR` option also has to go back into `CaptureSheets`' View row for
+ * it to be reachable. Everything else about the AR path is intact.
+ */
+private const val AR_OVERLAY_ARCHIVED = true
+
 @Composable
 fun CaptureRoute(
     container: AppContainer,
@@ -239,6 +248,11 @@ fun CaptureRoute(
                     persistPreset = { preset ->
                         container.settingsRepository.setPerformancePreset(container.deviceProfileKey, preset)
                     },
+                    // ROUND 7 (field bug 1): the mount re-zero now outlives this
+                    // ViewModel, this navigation and this app process.
+                    loadStoredMountTrim = { container.settingsRepository.storedMountTrim() },
+                    persistMountTrim = { stored -> container.settingsRepository.setStoredMountTrim(stored) },
+                    appRunId = container.appRunId,
                 )
             }
         },
@@ -291,6 +305,10 @@ fun CaptureRoute(
     val lastSavedProject by viewModel.lastSavedProject.collectAsStateWithLifecycle()
     val mountTrim by viewModel.mountTrim.collectAsStateWithLifecycle()
     val mountTrimNote by viewModel.mountTrimNote.collectAsStateWithLifecycle()
+    // ── ROUND 7 ─────────────────────────────────────────────────────────────
+    val mountTrimProvenance by viewModel.mountTrimProvenance.collectAsStateWithLifecycle()
+    val noDataAlert by viewModel.noDataAlert.collectAsStateWithLifecycle()
+    val sectionHint by viewModel.sectionHint.collectAsStateWithLifecycle()
 
     // ROUND 6 (owner item 19): the AR path degraded. Fall back to the 3D-orbit
     // view rather than leaving the operator staring at a black overlay — the
@@ -490,6 +508,10 @@ fun CaptureRoute(
         lastSavedProject = lastSavedProject,
         mountTrim = mountTrim,
         mountTrimNote = mountTrimNote,
+        mountTrimProvenance = mountTrimProvenance,
+        noDataAlert = noDataAlert,
+        onDismissNoDataAlert = viewModel::dismissNoDataAlert,
+        sectionHint = sectionHint,
         onSetMountReference = viewModel::setMountReference,
         onClearMountReference = viewModel::clearMountReference,
         onDismissMountTrimNote = viewModel::dismissMountTrimNote,
@@ -628,6 +650,13 @@ fun CaptureScreen(
     /** Item 23: this session's mount trim, or null. */
     mountTrim: com.lidarscan.core.calib.MountTrim? = null,
     mountTrimNote: String? = null,
+    /** ROUND 7 (field bug 1): where the trim in force came from, and how old it is. */
+    mountTrimProvenance: com.lidarscan.core.calib.MountTrimProvenance? = null,
+    /** ROUND 7 (field bug 2): non-null while a running capture is receiving nothing. */
+    noDataAlert: String? = null,
+    onDismissNoDataAlert: () -> Unit = {},
+    /** ROUND 7 (item 3): non-null once ARCore's frame has jumped and the scan is in sections. */
+    sectionHint: String? = null,
     onSetMountReference: () -> Unit = {},
     onClearMountReference: () -> Unit = {},
     onDismissMountTrimNote: () -> Unit = {},
@@ -779,6 +808,19 @@ fun CaptureScreen(
                         if (saveError != null) {
                             SaveErrorBanner(saveError, onDismissSaveError)
                         }
+                        // ROUND 7 (field bug 2): the scan is running and nothing
+                        // is arriving. This lives OUTSIDE the collapsible part of
+                        // the strip on purpose — it has to be readable at the
+                        // exact moment the rest of the pre-capture UI is gone,
+                        // which is while recording.
+                        if (noDataAlert != null) {
+                            LoudBanner(
+                                title = "NO SENSOR DATA",
+                                message = noDataAlert,
+                                onDismiss = onDismissNoDataAlert,
+                                testTag = "noDataBanner",
+                            )
+                        }
                         // ROUND 6 (owner item 22): the three chips. Above the
                         // scrolling strip and present during a recording too —
                         // switching mid-walk is a live-view decision, and the
@@ -835,6 +877,7 @@ fun CaptureScreen(
                                 onManualMid360Connect = onManualMid360Connect,
                                 onOpenMountCalibration = onOpenMountCalibration,
                                 mountTrim = mountTrim,
+                                mountTrimProvenance = mountTrimProvenance,
                                 nowMillis = nowMillis,
                                 onSetMountReference = onSetMountReference,
                                 onClearMountReference = onClearMountReference,
@@ -874,7 +917,7 @@ fun CaptureScreen(
                         // keeps running.
                         if (arErrorMessage != null) {
                             Hint(
-                                "AR unavailable — $arErrorMessage. The 3D view and the recording are unaffected.",
+                                "Phone tracking degraded — $arErrorMessage. The recording is unaffected; a COIN-D6 needs tracking to build 3D, so stop and start again if this persists.",
                                 color = SemWarn,
                                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
                                     .testTag("arUnavailableNote"),
@@ -883,6 +926,19 @@ fun CaptureScreen(
                         // ROUND 6 (owner item 21): the live page store filled and
                         // the map stopped growing. Says which half of the app it
                         // costs, because the answer is "the preview, not the scan".
+                        // ROUND 7 (item 3): a tracking jump split the scan. Not a
+                        // banner — the capture is still good and still recording
+                        // — but it must be visible while the operator is still in
+                        // the room and can walk the seam again.
+                        if (sectionHint != null) {
+                            Hint(
+                                sectionHint,
+                                color = SemWarn,
+                                modifier = Modifier
+                                    .padding(horizontal = 14.dp, vertical = 2.dp)
+                                    .testTag("sectionHint"),
+                            )
+                        }
                         if (liveMapFullNote != null) {
                             Hint(
                                 liveMapFullNote,
@@ -1108,7 +1164,21 @@ private fun PresetChipRow(
  * capture can be rescued even when the metadata could not be written.
  */
 @Composable
-private fun SaveErrorBanner(message: String, onDismiss: () -> Unit) {
+private fun SaveErrorBanner(message: String, onDismiss: () -> Unit) =
+    LoudBanner("SCAN NOT SAVED", message, onDismiss, "saveErrorBanner")
+
+/**
+ * The one shape on this screen that is allowed to shout: a red-bordered block
+ * at the top of the capture body, not a `Hint` and not a toast, that stays
+ * until it is tapped.
+ *
+ * ROUND 6 introduced it for "the capture did not save". ROUND 7 gives it a
+ * second job — "the capture is running and receiving nothing" — because those
+ * are the two failures that used to be silent, and silence is what cost the
+ * owner two field sessions.
+ */
+@Composable
+private fun LoudBanner(title: String, message: String, onDismiss: () -> Unit, testTag: String) {
     val shape = RoundedCornerShape(ScanDims.TileRadius)
     Column(
         Modifier
@@ -1118,10 +1188,10 @@ private fun SaveErrorBanner(message: String, onDismiss: () -> Unit) {
             .border(1.dp, SemBad, shape)
             .clickable(onClick = onDismiss)
             .padding(12.dp)
-            .testTag("saveErrorBanner"),
+            .testTag(testTag),
     ) {
         Text(
-            "SCAN NOT SAVED",
+            title,
             style = MonoLabel,
             color = SemBad,
         )
@@ -1173,6 +1243,8 @@ private fun PreCaptureStrip(
     onOpenMountCalibration: (() -> Unit)?,
     /** ROUND 6 (item 23): this session's mount trim, or null when the rig has not been re-zeroed. */
     mountTrim: com.lidarscan.core.calib.MountTrim? = null,
+    /** ROUND 7: the trim's own sentence — age, and whether it survived an app restart. */
+    mountTrimProvenance: com.lidarscan.core.calib.MountTrimProvenance? = null,
     nowMillis: Long = 0L,
     onSetMountReference: () -> Unit = {},
     onClearMountReference: () -> Unit = {},
@@ -1257,10 +1329,19 @@ private fun PreCaptureStrip(
                     "Hold the rig still in the pose you will walk with, then tap — the D6's angle on the " +
                         "phone is measured from the phone's own attitude and applied to this scan."
                 } else {
-                    "Mount trim %.1f° · set %s · travels with the project, so post-processing uses the same one."
-                        .format(mountTrim.magnitudeDeg, mountTrim.ageLabel(nowMillis))
+                    // ROUND 7: age AND provenance. A trim restored across an app
+                    // restart is still applied — losing it silently is the bug
+                    // this round fixed — but it is not the same claim as one set
+                    // on this screen a minute ago, and the sentence says which.
+                    mountTrimProvenance?.label
+                        ?: "Mount trim %.1f° · set %s · travels with the project."
+                            .format(mountTrim.magnitudeDeg, mountTrim.ageLabel(nowMillis))
                 },
-                color = if (mountTrim == null) InkFaint else ScanTeal,
+                color = when {
+                    mountTrim == null -> InkFaint
+                    mountTrimProvenance?.warn == true -> SemWarn
+                    else -> ScanTeal
+                },
                 modifier = Modifier.testTag("mountTrimAge"),
             )
 
@@ -1522,7 +1603,29 @@ private fun CaptureViewport(
         // the AR path stacks a translucent Filament surface over an ARCore
         // camera GLSurfaceView, and the free-orbit path is B4's single opaque
         // surface unchanged.
-        if (cameraMode == CameraMode.AR && arAvailable) {
+        //
+        // ── ROUND 7, OWNER DIRECTIVE: ARCHIVED ──────────────────────────────
+        //
+        // "The AR function archive not only from UI, work it like the 3d lidar."
+        //
+        // The phone + COIN-D6 is a 3D lidar, not an AR app that happens to have
+        // a lidar on the back: connect, watch the map build in the viewport,
+        // record, get a project — the same shape as a Mid-360, with no AR
+        // vocabulary and no camera-passthrough view anywhere in it. So this
+        // branch is switched off at [AR_OVERLAY_ARCHIVED] rather than deleted:
+        // `ArOverlayView`, `ArSessionGate` and the ROUND 6 crash fixes are all
+        // still compiled and still used by the mount-calibration wizard (which
+        // genuinely needs to see the board through the camera), and reviving
+        // the capture overlay is this one constant plus the `CameraMode.AR`
+        // entry in `CaptureSheets`' View row.
+        //
+        // ARCore itself is untouched and must stay that way: it is the entire
+        // third dimension of a D6 scan. `ArPosePumpView` still drives
+        // `Session.update()` on every frame, every pose still reaches
+        // `scan_engine_push_pose`, and camera keyframes still record for
+        // colorization — none of that is an AR *feature*, it is the scanner's
+        // tracking and the scanner's colour.
+        if (!AR_OVERLAY_ARCHIVED && cameraMode == CameraMode.AR && arAvailable) {
             arOverlay(Modifier.fillMaxSize())
         } else if (connected && source != null) {
             PointCloudView(

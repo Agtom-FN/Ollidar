@@ -200,12 +200,12 @@ class CaptureArController(
         val trackingHint: String?
             get() = when {
                 tracking -> null
-                failureReason == TrackingFailureReason.INSUFFICIENT_LIGHT -> "Too dark for AR tracking — add light"
+                failureReason == TrackingFailureReason.INSUFFICIENT_LIGHT -> "Too dark to track — add light"
                 failureReason == TrackingFailureReason.EXCESSIVE_MOTION -> "Moving too fast — slow down"
                 failureReason == TrackingFailureReason.INSUFFICIENT_FEATURES -> "Not enough texture in view — point at something with detail"
                 failureReason == TrackingFailureReason.CAMERA_UNAVAILABLE -> "Camera unavailable — another app may be using it"
-                failureReason == TrackingFailureReason.BAD_STATE -> "AR tracking is recovering…"
-                else -> "AR is initialising…"
+                failureReason == TrackingFailureReason.BAD_STATE -> "Tracking is recovering…"
+                else -> "Tracking is initialising…"
             }
     }
 
@@ -214,6 +214,21 @@ class CaptureArController(
 
     /** The pose stream, also consumed by the wizard's hold-still check and B8's motion gate. */
     val motion = RigMotionTracker()
+
+    /**
+     * ROUND 7, item 3: the section-break detector, fed from the same pose stream
+     * as [motion].
+     *
+     * Lives on the controller rather than in the ViewModel because this is the
+     * one place every ARCore pose passes through, and a break missed here is a
+     * seam nobody can find afterwards. Reset by the ViewModel at each Start —
+     * sections belong to a capture, not to the app's lifetime.
+     */
+    val sections = com.lidarscan.core.capture.PoseSectionTracker()
+
+    /** Set by the ViewModel: called on the AR thread for each detected discontinuity. */
+    @Volatile
+    var onSectionBreak: ((com.lidarscan.core.capture.PoseSectionBreak) -> Unit)? = null
 
     @Volatile
     var session: Session? = null
@@ -356,7 +371,7 @@ class CaptureArController(
             // of a Compose LaunchedEffect and kill the app; now the AR path
             // degrades to an inline message and the 3D-orbit view keeps working.
             gate.onPaused()
-            reportArFailure("could not start the AR camera", e)
+            reportArFailure("could not start the tracking camera", e)
             _status.value = _status.value.copy(sessionRunning = false)
             Result.failure(e)
         }
@@ -435,7 +450,7 @@ class CaptureArController(
         if (gate.currentOwner !== owner.gated()) return
         val s = session ?: return
         runCatching { s.setCameraTextureName(textureId) }
-            .onFailure { reportArFailure("could not bind the AR camera texture", it) }
+            .onFailure { reportArFailure("could not bind the tracking camera texture", it) }
     }
 
     /**
@@ -474,7 +489,7 @@ class CaptureArController(
             // DeadlineExceededException, a driver's own IllegalStateException.
             // The contract of this method is now that it NEVER throws onto the
             // render thread, whatever ARCore does.
-            reportArFailure("the AR camera stopped", e)
+            reportArFailure("the tracking camera stopped", e)
             return null
         }
         latestFrame = frame
@@ -482,10 +497,10 @@ class CaptureArController(
         // calibration detector). One of them throwing must degrade AR, not kill
         // the app — same rule, one layer up.
         runCatching { publishPose(frame) }
-            .onFailure { reportArFailure("AR pose publishing failed", it) }
+            .onFailure { reportArFailure("pose publishing failed", it) }
         for (listener in frameListeners) {
             runCatching { listener(frame) }
-                .onFailure { reportArFailure("an AR frame consumer failed", it) }
+                .onFailure { reportArFailure("a frame consumer failed", it) }
         }
         return frame
     }
@@ -514,7 +529,11 @@ class CaptureArController(
         val orientation = Quat(
             pose.qx().toDouble(), pose.qy().toDouble(), pose.qz().toDouble(), pose.qw().toDouble(),
         )
-        motion.add(PoseSample(timestamp, position, orientation, tracking))
+        val sample = PoseSample(timestamp, position, orientation, tracking)
+        motion.add(sample)
+        // ROUND 7: a relocalization moves ARCore's world frame under the
+        // pushbroom. Record it here, where every pose passes exactly once.
+        sections.add(sample)?.let { br -> runCatching { onSectionBreak?.invoke(br) } }
 
         val previousTracking = wasTracking
         wasTracking = tracking

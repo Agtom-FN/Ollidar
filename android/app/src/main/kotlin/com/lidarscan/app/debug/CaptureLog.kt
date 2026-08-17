@@ -153,5 +153,13 @@ class CaptureLog(context: Context) {
         const val TAG_AR = "ar"
         const val TAG_PUSHBROOM = "pushbroom"
         const val TAG_STORE = "store"
+
+        /**
+         * ROUND 7: every user-triggered file operation, with its destination.
+         * The owner's exported scan-008 bundle "went nowhere" and the log had
+         * nothing to say about it, which is the half of the failure that made it
+         * unreportable.
+         */
+        const val TAG_EXPORT = "export"
     }
 }

@@ -161,6 +161,117 @@ data class MountTrim(
     }
 }
 
+/**
+ * ROUND 7, field bug 1 — **a trim that survives the screen it was taken on.**
+ *
+ * The owner's own capture log:
+ *
+ * ```
+ * 22:53:04 [ar]        mount re-zero captured: magnitude=132.44deg spread=0.47deg
+ * 22:53:09 [pushbroom] extrinsic applied: source=nominal trim=132.81deg
+ * 22:54:06 [pushbroom] extrinsic applied: source=nominal trim=none      ← 57 s later
+ * ```
+ *
+ * Three good re-zeros, one 216 k-point scan on the trim, and then the very next
+ * capture ran on the **bare CAD nominal** — 132° of unmodelled mount rotation
+ * straight into every resolved point, which is a scan of walls that cannot be
+ * straight in any frame. Nothing had gone wrong with the measurement: the trim
+ * lived in one `MutableStateFlow` inside `CaptureViewModel`, which is
+ * `viewModel(key = "capture-new-false")` on the Capture tab's own
+ * `NavBackStackEntry`. Walking to Projects to look at the scan you just took
+ * and coming back is enough to clear it, with no message anywhere.
+ *
+ * The owner's expectation is the physical one: **re-zero when the mount
+ * shifts**, not before every capture. So the trim is persisted, and the two
+ * facts that decide how much to trust a restored one travel with it: when it was
+ * taken ([MountTrim.capturedAtEpochMillis]) and which app run took it
+ * ([appRunId]). A trim from THIS run is the one the operator set minutes ago; a
+ * trim from a previous run may predate the phone being put in a bag, so it is
+ * still applied — losing it silently is what this fixes — but the panel says so.
+ */
+@Serializable
+data class StoredMountTrim(
+    val trim: MountTrim,
+    /**
+     * The app process run that captured this trim. Compared against the current
+     * run's id (a fresh random string per `AppContainer`) to tell "set a moment
+     * ago, on this screen" from "restored across an app restart".
+     */
+    val appRunId: String = "",
+)
+
+/** What the capture panel says about the trim in force, and whether it is a caution. */
+data class MountTrimProvenance(
+    val trim: MountTrim?,
+    /** True when the trim was captured in an earlier app run — the app has restarted since. */
+    val fromPreviousRun: Boolean,
+    /** True when the trim is older than [MountTrimProvenances.STALE_AFTER_MILLIS]. */
+    val stale: Boolean,
+    /** How old the trim was when this was described, in milliseconds. */
+    val ageMillis: Long,
+    /** One sentence for the panel, verbatim. */
+    val label: String,
+    /** True when the sentence is a caution rather than a confirmation. */
+    val warn: Boolean,
+) {
+    /** What `applyMountExtrinsic` writes into the capture log, so the next field report arrives with provenance. */
+    val logSuffix: String
+        get() = if (trim == null) {
+            "trim=none"
+        } else {
+            "trim=%.2fdeg trimAgeMs=%d trimSource=%s".format(
+                trim.magnitudeDeg,
+                ageMillis,
+                if (fromPreviousRun) "restored-previous-run" else "this-run",
+            )
+        }
+}
+
+object MountTrimProvenances {
+
+    /**
+     * Past this age a restored trim gets a caution rather than a confirmation.
+     * Twelve hours is "you have not scanned since yesterday" — long enough that
+     * a mount clamped by hand has plausibly been off the phone and back on,
+     * short enough that a morning of scanning never nags.
+     */
+    const val STALE_AFTER_MILLIS = 12L * 60L * 60L * 1000L
+
+    fun describe(stored: StoredMountTrim?, currentAppRunId: String, nowMillis: Long): MountTrimProvenance {
+        val trim = stored?.trim
+            ?: return MountTrimProvenance(
+                trim = null,
+                fromPreviousRun = false,
+                stale = false,
+                ageMillis = 0L,
+                label = "No mount reference — the pushbroom is running on the bracket's CAD nominal. " +
+                    "Hold the rig the way you will carry it and tap Set mount reference.",
+                warn = false,
+            )
+        val fromPreviousRun = stored.appRunId != currentAppRunId
+        val ageMillis = trim.ageMillis(nowMillis)
+        val stale = ageMillis >= STALE_AFTER_MILLIS
+        val age = trim.ageLabel(nowMillis)
+        val magnitude = "%.1f°".format(trim.magnitudeDeg)
+        val label = when {
+            stale ->
+                "Mount trim $magnitude · set $age — that is old. Re-zero if the D6 has been off the phone since."
+            fromPreviousRun ->
+                "Mount trim $magnitude · set $age, restored from your last session. " +
+                    "Re-zero only if the mount has shifted."
+            else -> "Mount trim $magnitude · set $age · travels with the project"
+        }
+        return MountTrimProvenance(
+            trim = trim,
+            fromPreviousRun = fromPreviousRun,
+            stale = stale,
+            ageMillis = ageMillis,
+            label = label,
+            warn = stale,
+        )
+    }
+}
+
 /** Why a re-zero attempt did not produce a trim. Each case is a sentence the panel can show verbatim. */
 enum class MountTrimRejection(val message: String) {
     NO_POSES("No phone tracking yet — point the camera at something with detail and try again."),

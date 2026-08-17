@@ -112,6 +112,23 @@ data class ProjectManifest(
      * recovered project's *metadata* deserves less trust than its points.
      */
     val recovered: Boolean = false,
+    /**
+     * ROUND 7, item 3: the ARCore tracking discontinuities observed during this
+     * capture, in the engine's clock.
+     *
+     * A phone-tracked D6 scan is one rigid cloud only for as long as ARCore's
+     * world frame holds still. A relocalization moves that frame as a step, and
+     * everything resolved on each side of the step sits in a different frame —
+     * which is what "sections" looks like on screen. Recording the seam times is
+     * the one thing that makes them fixable later: without them, post-processing
+     * has a cloud with an unexplained offset in the middle and no reason to
+     * suspect it; with them, the two halves are two clouds with a known boundary,
+     * i.e. exactly A13's merge problem.
+     *
+     * Empty for a scan that never lost the frame, which is the normal case.
+     * See [com.lidarscan.core.capture.PoseSectionBreak].
+     */
+    val sectionBreaks: List<com.lidarscan.core.capture.PoseSectionBreak> = emptyList(),
 ) {
     /** The project's own capture defaults, or the profile's if it predates B5. */
     fun effectiveCaptureDefaults(): CaptureDefaults =

@@ -61,11 +61,11 @@ enum class ArAvailability {
  * different stories about one device.
  */
 fun ArAvailability.message(): String = when (this) {
-    ArAvailability.CHECKING -> "Checking AR support…"
-    ArAvailability.READY -> "AR ready"
-    ArAvailability.NEEDS_INSTALL -> "Google Play Services for AR needs to be installed or updated"
-    ArAvailability.UNSUPPORTED -> "This device does not support ARCore, so the AR overlay and the D6 pushbroom trajectory are unavailable"
-    ArAvailability.UNKNOWN -> "Could not check AR support — check the network and try again"
+    ArAvailability.CHECKING -> "Checking phone tracking support…"
+    ArAvailability.READY -> "Phone tracking ready"
+    ArAvailability.NEEDS_INSTALL -> "Google Play Services for AR needs to be installed or updated — it is what supplies the phone's motion tracking"
+    ArAvailability.UNSUPPORTED -> "This phone cannot track its own motion (no ARCore), so a COIN-D6 cannot be scanned in 3D on it"
+    ArAvailability.UNKNOWN -> "Could not check phone-tracking support — check the network and try again"
 }
 
 class ArInstaller {

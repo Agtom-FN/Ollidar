@@ -32,6 +32,22 @@ class D6UsbConnectionRegistry(context: Context) {
     private var permissionContinuation: ((Boolean) -> Unit)? = null
     private var receiverRegistered = false
 
+    /**
+     * ROUND 7 (time-sync): the constant transport latency applied to every open
+     * connection, and to every one opened afterwards. Held here rather than
+     * passed at [open] because the Settings screen can change it mid-session and
+     * a D6 that is already streaming should pick it up on the next chunk, not on
+     * the next reconnect. See [com.lidarscan.core.capture.D6TimeSync].
+     */
+    @Volatile
+    private var sensorLatencyMs: Int = com.lidarscan.core.capture.D6TimeSync.DEFAULT_SENSOR_LATENCY_MS
+
+    fun setSensorLatencyMillis(millis: Int) {
+        val clamped = com.lidarscan.core.capture.D6TimeSync.clampLatencyMs(millis)
+        sensorLatencyMs = clamped
+        openConnections.values.forEach { it.setSensorLatencyMillis(clamped) }
+    }
+
     private val permissionReceiver = object : BroadcastReceiver() {
         override fun onReceive(receiverContext: Context, intent: Intent) {
             if (intent.action != ACTION_USB_PERMISSION) return
@@ -81,11 +97,28 @@ class D6UsbConnectionRegistry(context: Context) {
         port.setDTR(false)
 
         val wrapped = D6SerialConnection(driver.device.deviceName, port)
+        wrapped.setSensorLatencyMillis(sensorLatencyMs)
         openConnections[driver.device.deviceName] = wrapped
         return wrapped
     }
 
     fun get(devicePath: String): D6SerialConnection? = openConnections[devicePath]
+
+    /**
+     * ROUND 7: registers an already-constructed connection under [devicePath].
+     *
+     * The one seam the transport-re-arm regression test needs. `RealEngineBridge`
+     * looks a connection up here by path and refuses a path this registry has no
+     * entry for, so a test that wants to exercise
+     * **connect → start → stop → start** against the real engine — which is the
+     * exact sequence that recorded nothing in the field — has no other way in.
+     * Production code never calls it; [open] is the only production path.
+     */
+    @androidx.annotation.VisibleForTesting
+    fun register(connection: D6SerialConnection) {
+        connection.setSensorLatencyMillis(sensorLatencyMs)
+        openConnections[connection.devicePath] = connection
+    }
 
     fun close(devicePath: String) {
         openConnections.remove(devicePath)?.close()

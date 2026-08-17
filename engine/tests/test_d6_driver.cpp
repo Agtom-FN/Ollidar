@@ -373,3 +373,123 @@ TEST_CASE("d6driver/stop_resets_restart_state_and_is_idempotent") {
   CHECK(driver.snapshot().phase == D6Phase::kStarting);
   CHECK(driver.snapshot().restart_attempts == 0);
 }
+
+// --- ROUND 7: per-point time inside one byte chunk --------------------------
+//
+// The field symptom this pins down is "the scan is not stable, the walls are
+// not straight, it comes out in sections". A8's assembler interpolates a pose
+// per point and always did — what it was handed was one timestamp per
+// `push_serial_bytes` chunk, so a whole chunk of returns resolved against a
+// single pose and the walk laid them down as a rigid slab. On the phone a
+// chunk is 4096 bytes = 178 ms of 230400-baud wire time = ~1.8 D6 revolutions,
+// which at 1 m/s is up to 18 cm of shingling per chunk.
+//
+// The two tests below are a matched pair: the same bytes, the same driver, the
+// only difference being D6Config::time_slice_bytes. The second is the
+// falsifiable control — it reproduces the old behaviour and asserts the smear
+// is there, so a regression that quietly disables the slicing fails loudly
+// instead of passing both ways.
+namespace {
+
+struct ProfileCapture {
+  std::vector<std::int64_t> times;
+  static void sink(float, float, std::uint8_t, std::uint8_t, std::int64_t t_engine_ns, void* user) {
+    static_cast<ProfileCapture*>(user)->times.push_back(t_engine_ns);
+  }
+};
+
+// One chunk's worth of well-formed packets, ~`bytes_wanted` long.
+std::vector<std::uint8_t> chunk_of_packets(std::size_t bytes_wanted) {
+  std::vector<std::uint8_t> out;
+  double angle = 0.0;
+  while (out.size() < bytes_wanted) {
+    d6test::PacketSpec sp;
+    sp.first_angle_deg = angle;
+    sp.last_angle_deg = angle + 9.0;
+    for (int k = 0; k < 10; ++k) sp.samples.push_back(d6test::Sample{1000, 100, false});
+    d6test::append(&out, d6test::build(sp));
+    angle += 10.0;
+    if (angle >= 360.0) angle -= 360.0;
+  }
+  return out;
+}
+
+}  // namespace
+
+TEST_CASE("d6driver/round7_points_in_one_chunk_carry_their_own_arrival_time") {
+  EventBus bus;
+  PageStore points;
+  ProfileCapture cap;
+
+  D6Config cfg;
+  cfg.send_start_stop_commands = false;
+  cfg.serial.baud = 230400;
+  cfg.profile_sink = &ProfileCapture::sink;
+  cfg.profile_sink_user_data = &cap;
+  // The default, named here because it is what the test is about.
+  cfg.time_slice_bytes = 64;
+
+  D6Driver driver(1, cfg, make_ctx(&bus, &points));
+  REQUIRE(driver.start().ok());
+
+  // A phone-sized read: 4096 bytes at 230400 8N1 is 177.8 ms of wire time.
+  const std::vector<std::uint8_t> chunk = chunk_of_packets(4096);
+  const std::int64_t t_chunk_end = 5'000'000'000LL;
+  REQUIRE(push(&driver, chunk, TimePoint{t_chunk_end}).ok());
+
+  REQUIRE(cap.times.size() > 100);
+
+  // 1. The stamps are NOT all the same instant any more.
+  const std::int64_t t_first = cap.times.front();
+  const std::int64_t t_last = cap.times.back();
+  CHECK(t_last > t_first);
+
+  // 2. They span the chunk's own wire duration, to within a slice. 10 bits per
+  //    byte at 230400 baud is 43.4 us; `chunk.size()` bytes is that times the
+  //    byte count, and the first slice's stamp is one slice in from the start.
+  const double byte_ns = 10.0 * 1e9 / 230400.0;
+  const double expected_span_ns = byte_ns * static_cast<double>(chunk.size());
+  const double slice_ns = byte_ns * 64.0;
+  const double observed_span_ns = static_cast<double>(t_last - t_first);
+  CHECK(observed_span_ns > expected_span_ns - 4.0 * slice_ns);
+  CHECK(observed_span_ns <= expected_span_ns);
+
+  // 3. Monotonic, and never later than the chunk's own arrival — a point that
+  //    claims a time in the future of its transport would make the assembler
+  //    wait for a pose that has already been superseded.
+  for (std::size_t i = 1; i < cap.times.size(); ++i) CHECK(cap.times[i] >= cap.times[i - 1]);
+  CHECK(t_last <= t_chunk_end);
+
+  // 4. The resolution that matters: consecutive points are separated by no
+  //    more than one slice, i.e. ~2.8 ms, i.e. ~2.8 mm of rig travel at 1 m/s.
+  std::int64_t worst_gap = 0;
+  for (std::size_t i = 1; i < cap.times.size(); ++i) {
+    worst_gap = std::max(worst_gap, cap.times[i] - cap.times[i - 1]);
+  }
+  CHECK(static_cast<double>(worst_gap) <= 1.05 * slice_ns);
+}
+
+TEST_CASE("d6driver/round7_control_one_stamp_per_chunk_smears_the_whole_read") {
+  EventBus bus;
+  PageStore points;
+  ProfileCapture cap;
+
+  D6Config cfg;
+  cfg.send_start_stop_commands = false;
+  cfg.serial.baud = 230400;
+  cfg.profile_sink = &ProfileCapture::sink;
+  cfg.profile_sink_user_data = &cap;
+  cfg.time_slice_bytes = 0;  // the pre-ROUND-7 behaviour, explicitly
+
+  D6Driver driver(2, cfg, make_ctx(&bus, &points));
+  REQUIRE(driver.start().ok());
+
+  const std::vector<std::uint8_t> chunk = chunk_of_packets(4096);
+  const std::int64_t t_chunk_end = 5'000'000'000LL;
+  REQUIRE(push(&driver, chunk, TimePoint{t_chunk_end}).ok());
+
+  REQUIRE(cap.times.size() > 100);
+  // Every single return in ~178 ms of wire time claims the same instant. This
+  // is the bug, asserted, so that turning the slicing off is a visible choice.
+  for (std::int64_t t : cap.times) CHECK(t == t_chunk_end);
+}

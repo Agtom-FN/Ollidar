@@ -262,7 +262,7 @@ private fun PrepareStep(
         Spacer(Modifier.height(16.dp))
         Text("Before you start", style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(8.dp))
-        PreconditionRow("AR tracking", state.arAvailability.canRunAr, state.arAvailability.message())
+        PreconditionRow("Phone tracking", state.arAvailability.canRunAr, state.arAvailability.message())
         PreconditionRow(
             "Lidar streaming",
             state.engineConnected,

@@ -88,6 +88,9 @@ class ProcessingViewModel(
     private val repo = container.processingRepository
     private var cloudCancelled = false
 
+    /** True once the operator has picked a mode themselves; stops [reload] re-defaulting it. */
+    private var modeChosenByOperator = false
+
     /** The latest DataStore snapshot, mirrored so the gate recomputation is not itself suspending. */
     private var appSettings = com.lidarscan.app.data.AppSettings()
 
@@ -110,8 +113,19 @@ class ProcessingViewModel(
     fun reload() {
         viewModelScope.launch {
             val project = withContext(Dispatchers.IO) { store.open(projectId) }
+            // ROUND 7 (owner field item): a COIN-D6 project opens on "Save to
+            // phone". Its Process path is refused (§6 — the post pipeline is
+            // Mid-360's) and the bundle is the only route off the phone, so
+            // landing the operator on a mode that cannot run and then on a
+            // refusal that mentions the cloud is how `scan-008` got stuck.
+            val defaultMode = if (project?.manifest?.sensor == com.lidarscan.core.model.SensorType.COIN_D6) {
+                ProcessingMode.EXTRACT_FOR_TRANSFER
+            } else {
+                _uiState.value.mode
+            }
             _uiState.value = _uiState.value.copy(
                 project = project,
+                mode = if (modeChosenByOperator) _uiState.value.mode else defaultMode,
                 exportFormat = project?.manifest?.effectiveCaptureDefaults()?.exportFormat ?: ExportFormat.PLY_BINARY,
                 engineAvailable = repo.isAvailable,
             )
@@ -151,7 +165,7 @@ class ProcessingViewModel(
                 hasRawStreams = hasRaw,
                 keyframeCount = keyframes,
                 syncQuality = sync,
-                postProcessGate = ProcessingPolicy.postProcess(hasRaw),
+                postProcessGate = ProcessingPolicy.postProcess(hasRaw, project.manifest.sensor),
                 colorizeGate = ProcessingPolicy.colorize(keyframes > 0, sync, allowPoor, repo.hasProcessedCloud(projectId)),
                 exportGate = ProcessingPolicy.export(repo.hasProcessedCloud(projectId), repo.totalPoints() > 0),
                 transferGate = ProcessingPolicy.transferBundle(hasRaw),
@@ -165,6 +179,7 @@ class ProcessingViewModel(
     }
 
     fun setMode(mode: ProcessingMode) {
+        modeChosenByOperator = true
         _uiState.value = _uiState.value.copy(mode = mode)
     }
 
@@ -206,7 +221,17 @@ class ProcessingViewModel(
         )
     }
 
-    fun export() {
+    /**
+     * ROUND 7 (owner field item: "I exported scan-008 and the file is nowhere").
+     *
+     * The job still writes into `<project>.lscan/exports/`, which is where the
+     * engine puts it and where the cloud path reads it from — but that directory
+     * is under `Android/data/`, which the system Files app has refused to browse
+     * since Android 11. So the export is now **followed to completion** and
+     * copied into `Downloads/LidarScan/`, and the operator is told the
+     * destination by name. See [com.lidarscan.app.share.DownloadsExporter].
+     */
+    fun export(context: Context) {
         val p = _uiState.value.project ?: return
         viewModelScope.launch {
             val format = _uiState.value.exportFormat
@@ -218,39 +243,113 @@ class ProcessingViewModel(
             // in the wrong place, which is worse than an honest placeholder.
             val g = p.manifest.georef
             val epsg = if (g?.converged == true && g.epsg != 0) "EPSG:${g.epsg}" else ""
-            report(repo.submitExport(projectId, format, out, "", epsg), "Export queued -> ${out.name}")
+            val submitted = repo.submitExport(projectId, format, out, "", epsg)
+            if (submitted.isFailure) {
+                report(submitted, "")
+                return@launch
+            }
+            _uiState.value = _uiState.value.copy(message = "Exporting ${out.name}…")
+            awaitJobThenDeliver(context, submitted.getOrThrow(), out, share = false)
         }
     }
 
     fun transferBundle(context: Context, share: Boolean) {
         val p = _uiState.value.project ?: return
         viewModelScope.launch {
-            val out = File(File(p.directory, "exports").apply { mkdirs() }, "${exportBaseName(p.id)}.lscan.zip")
+            // ROUND 7: staged in the CACHE, not in `<project>/exports/`.
+            // `zip_export()` walks the project directory recursively and takes
+            // every regular file it finds — so a bundle written inside that
+            // directory gets swallowed by the NEXT export, and a project
+            // exported three times carries three nested copies of itself. The
+            // deliverable is the Downloads copy; this is scratch, and the OS may
+            // reclaim it.
+            val out = File(bundleStagingDir(), "${exportBaseName(p.id)}.lscan.zip")
             val r = repo.submitTransferExport(projectId, p.directory, out, includeResults = true)
             if (r.isFailure) {
                 report(r, "")
                 return@launch
             }
-            _uiState.value = _uiState.value.copy(
-                message = "Packaging ${p.manifest.name} as ${out.name}. The share sheet opens when it is done.",
-            )
-            if (share) awaitJobThenShare(context, r.getOrThrow(), out)
+            _uiState.value = _uiState.value.copy(message = "Packaging ${p.manifest.name} as ${out.name}…")
+            awaitJobThenDeliver(context, r.getOrThrow(), out, share)
         }
     }
 
-    private suspend fun awaitJobThenShare(context: Context, jobId: Long, file: File) {
+    /**
+     * ROUND 7 — **every user-triggered file operation ends in a visible success
+     * with a path, or a visible failure. There is no third outcome.**
+     *
+     * This replaces `awaitJobThenShare`, which had two silent exits: a share
+     * sheet is a hand-off with no result callback (dismiss it and the app has
+     * already forgotten), and on the plain Export path nothing was ever handed
+     * off at all — the file simply appeared somewhere no file manager can
+     * browse. Both are how the owner's scan-008 bundle "went nowhere".
+     *
+     * The order matters: the file is copied into `Downloads/LidarScan/` FIRST,
+     * so the artifact exists in a place the operator can reach whether or not
+     * they then pick anything from the share sheet.
+     */
+    private suspend fun awaitJobThenDeliver(context: Context, jobId: Long, file: File, share: Boolean) {
         while (true) {
             val job = repo.jobs.value.firstOrNull { it.id == jobId }
-            if (job != null && job.state.isTerminal) {
-                if (job.state == com.lidarscan.core.jobs.JobState.DONE && file.isFile) {
-                    ShareTargets.shareFile(context, file, "application/zip", "Send .lscan bundle")
-                } else {
-                    _uiState.value = _uiState.value.copy(message = job.statusText)
-                }
+            if (job == null || !job.state.isTerminal) {
+                kotlinx.coroutines.delay(400)
+                continue
+            }
+            if (job.state != com.lidarscan.core.jobs.JobState.DONE || !file.isFile) {
+                val why = job.statusText
+                _uiState.value = _uiState.value.copy(
+                    message = "Export failed ($why). Nothing was written to Downloads.",
+                )
+                log("export FAILED job=$jobId state=${job.state} file=${file.name} reason=$why")
                 return
             }
-            kotlinx.coroutines.delay(400)
+
+            val copied = withContext(Dispatchers.IO) {
+                com.lidarscan.app.share.DownloadsExporter.copyToDownloads(context, file)
+            }
+            copied.fold(
+                onSuccess = { where ->
+                    _uiState.value = _uiState.value.copy(
+                        message = "Exported to $where (${humanBytes(file.length())}).",
+                    )
+                    log("export OK job=$jobId ${file.name} -> $where bytes=${file.length()}")
+                    if (share) {
+                        ShareTargets.shareFile(context, file, ShareTargets.mimeFor(file), "Send ${file.name}")
+                        log("export share sheet opened for ${file.name}")
+                    }
+                },
+                onFailure = { e ->
+                    // The bytes DO exist — say where, even though that path is
+                    // not browsable, because adb and a desktop can still reach
+                    // it and a lost capture is worse than an ugly sentence.
+                    _uiState.value = _uiState.value.copy(
+                        message = "Export finished but could not be copied to Downloads " +
+                            "(${e.javaClass.simpleName}: ${e.message}). The file is on the phone at " +
+                            "${file.absolutePath} — use the share sheet or a USB cable to get it off.",
+                    )
+                    log("export COPY FAILED ${file.name}: ${e.javaClass.name}: ${e.message}")
+                    // Offer the hand-off anyway: it is the only remaining route.
+                    runCatching {
+                        ShareTargets.shareFile(context, file, ShareTargets.mimeFor(file), "Send ${file.name}")
+                    }
+                },
+            )
+            return
         }
+    }
+
+    /** Scratch space for `.lscan.zip` bundles — deliberately OUTSIDE the project directory. */
+    private fun bundleStagingDir(): File =
+        File(container.applicationContext.cacheDir, "bundles").apply { mkdirs() }
+
+    private fun log(line: String) {
+        runCatching { container.captureLog.log(com.lidarscan.app.debug.CaptureLog.TAG_EXPORT, line) }
+    }
+
+    private fun humanBytes(bytes: Long): String = when {
+        bytes >= 1L shl 30 -> "%.1f GB".format(bytes / (1L shl 30).toDouble())
+        bytes >= 1L shl 20 -> "%.1f MB".format(bytes / (1L shl 20).toDouble())
+        else -> "%d KB".format(bytes / 1024)
     }
 
     // --- D3: the cloud path ---------------------------------------------------
@@ -270,7 +369,8 @@ class ProcessingViewModel(
         cloudCancelled = false
         viewModelScope.launch {
             val cfgSettings = appSettings
-            val zip = File(File(p.directory, "exports").apply { mkdirs() }, "${exportBaseName(p.id)}-cloud.lscan.zip")
+            // ROUND 7: cache, not `<project>/exports/` — see transferBundle().
+            val zip = File(bundleStagingDir(), "${exportBaseName(p.id)}-cloud.lscan.zip")
             _uiState.value = _uiState.value.copy(
                 cloud = CloudUploadState(running = true, phase = "Packaging the capture…"),
             )
@@ -338,10 +438,31 @@ class ProcessingViewModel(
                 _uiState.value = _uiState.value.copy(cloud = _uiState.value.cloud.copy(running = false, error = cloudErrorText(e)))
                 return@launch
             }
+            // ROUND 7: the cloud result is a user-visible artifact too, and
+            // `processed/` is under Android/data — i.e. exactly as unreachable
+            // as the export bundle the owner could not find. Same rule: a path
+            // the operator can actually open, or a stated reason why not.
+            val delivered = withContext(Dispatchers.IO) {
+                com.lidarscan.app.share.DownloadsExporter.copyToDownloads(
+                    context = container.applicationContext,
+                    source = dest,
+                    fileName = "${exportBaseName(p.id)}-cloud-result.zip",
+                )
+            }
+            val where = delivered.getOrNull()
+            log(
+                "cloud result ${dest.name} bytes=$bytes -> " +
+                    (where ?: "COPY FAILED: ${delivered.exceptionOrNull()?.message}"),
+            )
             _uiState.value = _uiState.value.copy(
                 cloud = _uiState.value.cloud.copy(
                     running = false,
-                    phase = "Done — ${bytes / 1000} kB downloaded into processed/",
+                    phase = if (where != null) {
+                        "Done — ${bytes / 1000} kB. Saved to $where."
+                    } else {
+                        "Done — ${bytes / 1000} kB, but it could not be copied to Downloads. " +
+                            "It is on the phone at ${dest.absolutePath}."
+                    },
                     resultFile = dest,
                     serverState = finished.state,
                     serverProgress = 1f,

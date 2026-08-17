@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -19,6 +20,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -52,11 +54,13 @@ import com.lidarscan.app.ui.components.SecondaryPill
 import com.lidarscan.app.ui.components.SegmentedPill
 import com.lidarscan.app.ui.theme.DisplayFontFamily
 import com.lidarscan.app.ui.theme.Ember
+import com.lidarscan.app.ui.theme.Ink
 import com.lidarscan.app.ui.theme.InkFaint
 import com.lidarscan.app.ui.theme.MonoLabel
 import com.lidarscan.app.ui.theme.MonoMeta
 import com.lidarscan.core.model.CaptureDefaults
 import com.lidarscan.core.model.WorkflowProfile
+import kotlin.math.roundToInt
 
 @Composable
 fun SettingsRoute(
@@ -74,6 +78,8 @@ fun SettingsRoute(
                     storageLocation = container.projectsRootDir.absolutePath,
                     captureLog = container.captureLog,
                     shareCacheDir = java.io.File(context.cacheDir, "shared"),
+                    onSensorLatencyApplied = container.d6UsbConnectionRegistry::setSensorLatencyMillis,
+                    downloadsContext = container.applicationContext,
                     shareFile = { file ->
                         com.lidarscan.app.share.ShareTargets.shareFile(
                             context,
@@ -91,6 +97,8 @@ fun SettingsRoute(
     // logging is genuinely happening rather than just naming a path.
     val captureLogLastLine by viewModel.captureLogLastLine.collectAsStateWithLifecycle()
     val captureLogSize = remember(captureLogLastLine) { viewModel.captureLogSizeBytes() }
+    // ROUND 7: the log export's own outcome — a path, or a reason.
+    val exportNote by viewModel.exportNote.collectAsStateWithLifecycle()
 
     SettingsScreen(
         settings = settings,
@@ -98,6 +106,8 @@ fun SettingsRoute(
         captureLogPath = viewModel.captureLogPath,
         captureLogSizeBytes = captureLogSize,
         captureLogLastLine = captureLogLastLine,
+        exportNote = exportNote,
+        onDismissExportNote = viewModel::dismissExportNote,
         onShareCaptureLog = viewModel::shareCaptureLog,
         onClearCaptureLog = viewModel::clearCaptureLog,
         nativeEngineAvailable = com.lidarscan.app.engine.ScanEngineNative.isAvailable,
@@ -106,6 +116,7 @@ fun SettingsRoute(
         onUseFakeEngineChange = viewModel::setUseFakeEngine,
         onCloudChange = viewModel::setCloud,
         onAllowPoorSyncChange = viewModel::setAllowPoorSyncColorize,
+        onD6SensorLatencyChange = viewModel::setD6SensorLatencyMs,
         onReplaySyntheticCapture = { viewModel.replaySyntheticCapture(onReplaySyntheticCapture) },
         onBack = onBack,
     )
@@ -134,6 +145,9 @@ fun SettingsScreen(
     captureLogPath: String = "",
     captureLogSizeBytes: Long = 0L,
     captureLogLastLine: String? = null,
+    /** ROUND 7: what the last log export actually did — a destination path, or why not. */
+    exportNote: String? = null,
+    onDismissExportNote: () -> Unit = {},
     onShareCaptureLog: () -> Unit = {},
     onClearCaptureLog: () -> Unit = {},
     nativeEngineAvailable: Boolean,
@@ -142,6 +156,7 @@ fun SettingsScreen(
     onUseFakeEngineChange: (Boolean) -> Unit,
     onCloudChange: (String, String) -> Unit = { _, _ -> },
     onAllowPoorSyncChange: (Boolean) -> Unit = {},
+    onD6SensorLatencyChange: (Int) -> Unit = {},
     onReplaySyntheticCapture: () -> Unit = {},
     onBack: () -> Unit,
 ) {
@@ -192,6 +207,10 @@ fun SettingsScreen(
 
             SettingsSection("Processing") {
                 ProcessingOptionsCard(settings.allowPoorSyncColorize, onAllowPoorSyncChange)
+            }
+
+            SettingsSection("Sensor timing (advanced)") {
+                D6TimingCard(settings.d6SensorLatencyMs, onD6SensorLatencyChange)
             }
 
             SettingsSection("Engine (developer)") {
@@ -252,6 +271,18 @@ fun SettingsScreen(
                             height = 46.dp,
                             onClick = onClearCaptureLog,
                             modifier = Modifier.weight(1f).testTag("clearCaptureLogButton"),
+                        )
+                    }
+                    // ROUND 7: no user-triggered file operation ends silently.
+                    if (exportNote != null) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            exportNote,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Ink,
+                            modifier = Modifier
+                                .clickable(onClick = onDismissExportNote)
+                                .testTag("captureLogExportNote"),
                         )
                     }
                 }
@@ -438,6 +469,51 @@ private fun ProcessingOptionsCard(allowPoorSync: Boolean, onChange: (Boolean) ->
                 "quoting.",
             checked = allowPoorSync,
             onCheckedChange = onChange,
+        )
+    }
+}
+
+/**
+ * ROUND 7 — the one D6 timing number that cannot be derived, exposed.
+ *
+ * Everything else about the D6's clock is now handled without asking: the app
+ * stamps each USB read with `elapsedRealtimeNanos()` (the same CLOCK_BOOTTIME
+ * the engine and ARCore both use, so there is nothing to convert), and the
+ * engine back-dates every return inside that read from its byte position at a
+ * known baud. What is left is a constant transport delay, and a constant delay
+ * translates the whole cloud along the walk and bends corners while turning.
+ *
+ * See [com.lidarscan.core.capture.D6TimeSync] for the derivation of the
+ * default. The row shows what the number MEANS in centimetres, because "2 ms"
+ * is not a quantity anyone can judge and "2 mm at walking pace" is.
+ */
+@Composable
+private fun D6TimingCard(latencyMs: Int, onChange: (Int) -> Unit) {
+    ScanCard {
+        CardTitle("COIN-D6 sensor latency")
+        Text(
+            com.lidarscan.core.capture.D6TimeSync.describe(latencyMs),
+            style = MaterialTheme.typography.bodyMedium,
+            color = Ink,
+            modifier = Modifier.testTag("d6SensorLatencyValue"),
+        )
+        Spacer(Modifier.height(8.dp))
+        Slider(
+            value = latencyMs.toFloat(),
+            onValueChange = { onChange(it.roundToInt()) },
+            valueRange = com.lidarscan.core.capture.D6TimeSync.MIN_SENSOR_LATENCY_MS.toFloat()..
+                com.lidarscan.core.capture.D6TimeSync.MAX_SENSOR_LATENCY_MS.toFloat(),
+            modifier = Modifier.testTag("d6SensorLatencySlider"),
+        )
+        Text(
+            "The constant delay between a byte reaching the D6 cable and this phone reading its clock. " +
+                "The default (" +
+                "${com.lidarscan.core.capture.D6TimeSync.DEFAULT_SENSOR_LATENCY_MS} ms) is derived from " +
+                "one USB bulk frame plus one thread wake-up, not measured on your phone — if walls land " +
+                "consistently in front of or behind where they are, this is the knob. Applies to the next " +
+                "chunk of data, no reconnect needed.",
+            style = MaterialTheme.typography.bodySmall,
+            color = InkFaint,
         )
     }
 }

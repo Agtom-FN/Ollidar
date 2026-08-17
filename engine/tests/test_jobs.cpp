@@ -1343,3 +1343,82 @@ TEST_CASE("jobs/colorize_wiring_connects_A4_and_A7_to_A11") {
   std::error_code ec;
   fs::remove_all(dir, ec);
 }
+
+// ===========================================================================
+// ROUND 7 — the phone's "Save to phone" bundle must be importable, and must not
+// swallow itself.
+//
+// The owner could not get scan-008 off the phone: the only export route the UI
+// offered refused with "No cloud to export", and the one that would have worked
+// wrote its zip INTO the directory it was zipping. Both are fixed on the
+// Android side; this pins the two format-level facts the app now depends on.
+// ===========================================================================
+
+TEST_CASE("transfer/round7_a_bundle_carries_the_apps_own_project_json") {
+  const std::string project = make_temp_dir("r7_app_src");
+  const std::string dest = make_temp_dir("r7_app_dst");
+  TempDirGuard g1(project), g2(dest);
+  write_minimal_lscan(project);
+
+  // ROUND 6 moved the app's own metadata to `project.json` so the engine's
+  // `manifest.json` could not destroy it. A bundle that dropped it would arrive
+  // on the desktop with no name, no sensor and no mount trim — i.e. exactly the
+  // data-loss ROUND 6 fixed, reintroduced by the transfer path.
+  {
+    std::ofstream app_manifest(project + "/project.json");
+    app_manifest << R"({"name":"Scan-008-2026-08-17-2253","sensor":"COIN_D6"})";
+  }
+  fs::create_directories(project + "/streams/frames");
+  {
+    std::ofstream kf(project + "/streams/frames/000001.jpg");
+    kf << "not really a jpeg, but a real file";
+  }
+
+  const std::string zip_path = project + "-Scan-008.lscan.zip";
+  TransferExportParams params;
+  params.project_dir = project;
+  params.zip_path = zip_path;
+  REQUIRE(run_transfer_export(params, [](float) {}, [] { return false; }).ok());
+
+  const ImportValidationReport report = import_and_validate(zip_path, dest);
+  CHECK(report.zip_import_ok);
+  CHECK(report.sane());
+  CHECK(fs::exists(dest + "/project.json"));
+  CHECK(fs::exists(dest + "/streams/frames/000001.jpg"));
+}
+
+TEST_CASE("transfer/round7_a_bundle_written_inside_the_project_swallows_itself") {
+  // `zip_export()` takes every regular file under the project directory
+  // (src/record/zip.cpp's recursive_directory_iterator, no filter). That is the
+  // right behaviour for a "package everything" bundle and it means the CALLER
+  // must not stage the zip inside the directory: export twice and the second
+  // bundle contains the first. The Android app used to write into
+  // `<project>/exports/`; as of ROUND 7 it stages in the app cache instead.
+  // This test is the reason why, written down.
+  const std::string project = make_temp_dir("r7_nest_src");
+  const std::string dest = make_temp_dir("r7_nest_dst");
+  TempDirGuard g1(project), g2(dest);
+  write_minimal_lscan(project);
+
+  fs::create_directories(project + "/exports");
+  const std::string inside = project + "/exports/first.lscan.zip";
+  TransferExportParams first;
+  first.project_dir = project;
+  first.zip_path = inside;
+  REQUIRE(run_transfer_export(first, [](float) {}, [] { return false; }).ok());
+  REQUIRE(fs::exists(inside));
+
+  const std::string second_path = project + "-second.lscan.zip";
+  TransferExportParams second;
+  second.project_dir = project;
+  second.zip_path = second_path;
+  REQUIRE(run_transfer_export(second, [](float) {}, [] { return false; }).ok());
+
+  const ImportValidationReport report = import_and_validate(second_path, dest);
+  CHECK(report.zip_import_ok);
+  // The nested bundle is there, which is the growth the app now avoids by
+  // staging outside the project. If this ever stops being true — i.e. if
+  // zip_export learns to skip its own output — the Android staging directory
+  // can move back and this test is the place that says so.
+  CHECK(fs::exists(dest + "/exports/first.lscan.zip"));
+}

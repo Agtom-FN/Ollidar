@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.filterIsInstance
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
@@ -171,6 +172,16 @@ class CaptureViewModel(
     private val loadPersistedPreset: suspend () -> com.lidarscan.core.capture.PerformancePreset? = { null },
     /** ROUND 6 (owner item 22): persists the operator's preset choice against this device profile. */
     private val persistPreset: suspend (com.lidarscan.core.capture.PerformancePreset) -> Unit = {},
+    /**
+     * ROUND 7 (field bug 1): the mount re-zero the app last stored, if any. Read
+     * once in `init` so a trim set before a trip to the Projects tab — or before
+     * an app restart — is still in force at the next Start.
+     */
+    private val loadStoredMountTrim: suspend () -> com.lidarscan.core.calib.StoredMountTrim? = { null },
+    /** ROUND 7: persists (or, with null, forgets) the mount re-zero. */
+    private val persistMountTrim: suspend (com.lidarscan.core.calib.StoredMountTrim?) -> Unit = {},
+    /** ROUND 7: this app process's id, so a restored trim can be told apart from one set on this screen. */
+    private val appRunId: String = "",
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<CaptureUiState>(CaptureUiState.Loading)
@@ -790,6 +801,127 @@ class CaptureViewModel(
     private val _liveMapFullNote = MutableStateFlow<String?>(null)
     val liveMapFullNote: StateFlow<String?> = _liveMapFullNote.asStateFlow()
 
+    /**
+     * ROUND 7 (field bug 2) — **a recording that is receiving nothing says so,
+     * out loud, while it is still running.**
+     *
+     * The owner's log:
+     *
+     * ```
+     * 22:53:40 [seal] sealed OK id=scan-008 … points=216653 elapsedMs=30543
+     * 22:54:06 [session] start: project=scan-009 … sensor=COIN_D6
+     * 22:54:16 [seal] sealed OK id=scan-009 … points=0 elapsedMs=0
+     * ```
+     *
+     * A ten-second walk that recorded nothing at all, reported as `sealed OK`,
+     * with a green Stop button and a session-summary sheet the whole way. The
+     * cause was `RealEngineBridge`'s own transport latch (see its `startCapture`
+     * — the first Stop turned the D6 reader's forwarding off and only the Pause
+     * button ever turned it back on), and that specific bug is fixed. This is
+     * the part that makes the *class* of bug impossible to ship silently again:
+     * whatever the reason, a capture past [NO_DATA_GRACE_MS] with zero points is
+     * a red banner naming what the transport is actually doing, and a line in
+     * the capture log with the same numbers.
+     *
+     * Deliberately driven by the same `CaptureStats` and `DeviceHealth` the
+     * screen already shows, so it cannot disagree with them, and cleared the
+     * instant the first point lands.
+     */
+    private val _noDataAlert = MutableStateFlow<String?>(null)
+    val noDataAlert: StateFlow<String?> = _noDataAlert.asStateFlow()
+
+    /**
+     * ROUND 7, item 3: how many contiguous sections this capture is in.
+     *
+     * 1 for a scan that never lost ARCore's frame, which is the normal case and
+     * shows nothing on screen. Above 1 the capture panel says so inline, because
+     * a seam is something the operator can act on while still in the room
+     * ("walk that stretch again with more texture in view") and cannot act on at
+     * all once the phone is back in a pocket.
+     */
+    private val _sectionCount = MutableStateFlow(1)
+    val sectionCount: StateFlow<Int> = _sectionCount.asStateFlow()
+
+    val sectionHint: StateFlow<String?> = _sectionCount
+        .map { com.lidarscan.core.capture.sectionHint(it) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /** Wall-clock start of the running capture, for the no-data watchdog. 0 when not recording. */
+    private var recordingStartedAtMillis = 0L
+
+    /** True once this session has warned; one log line per session, not one per tick. */
+    private var noDataLogged = false
+
+    // Declared ABOVE its first use on purpose: ROUND 6 lost an app launch to a
+    // property that `init {}` dereferenced before its initializer had run.
+    private var noDataWatchJob: kotlinx.coroutines.Job? = null
+
+    private fun startNoDataWatchdog() {
+        noDataWatchJob?.cancel()
+        noDataLogged = false
+        _noDataAlert.value = null
+        recordingStartedAtMillis = clock()
+        noDataWatchJob = viewModelScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(NO_DATA_TICK_MS)
+                val state = engineBridge.captureState.value
+                if (state != CaptureState.RECORDING) {
+                    // A pause is not a fault: the operator asked for silence.
+                    if (state != CaptureState.PAUSED) _noDataAlert.value = null
+                    continue
+                }
+                if (_stats.value.pointsCaptured > 0L) {
+                    _noDataAlert.value = null
+                    continue
+                }
+                val elapsed = clock() - recordingStartedAtMillis
+                if (elapsed < NO_DATA_GRACE_MS) continue
+
+                val health = engineBridge.deviceHealth.value
+                val bytes = health?.bytesIn ?: 0L
+                val ok = health?.packetsOk ?: 0L
+                val bad = health?.packetsBad ?: 0L
+                val seconds = elapsed / 1000
+                val message = when {
+                    bytes == 0L ->
+                        "NO DATA — ${seconds}s into this scan and the ${_sensor.value.displayName} has sent " +
+                            "0 bytes. Nothing is being recorded. Stop, re-seat the USB-C cable, and start again."
+                    ok == 0L ->
+                        "NO DATA — ${seconds}s in: $bytes bytes arrived but not one valid packet " +
+                            "($bad rejected). The cable is alive and the data is not the sensor's. " +
+                            "Stop and start again; if it repeats, the baud or the cable is wrong."
+                    else ->
+                        "NO POINTS — ${seconds}s in: $ok packets decoded but no points reached the scan. " +
+                            "Stop and start again, and send the capture log from Settings."
+                }
+                // The LOG first, then the screen. The log is the evidence the
+                // next field report arrives with, and a UI collector resuming
+                // on the state change must never be able to observe the alert
+                // before the record of it exists.
+                if (!noDataLogged) {
+                    noDataLogged = true
+                    logEvent(
+                        LOG_TAG_SESSION,
+                        "NO DATA after ${elapsed}ms: bytesIn=$bytes packetsOk=$ok packetsBad=$bad " +
+                            "pointsOut=${health?.pointsOut ?: 0} state=$state sensor=${_sensor.value}",
+                    )
+                }
+                _noDataAlert.value = message
+            }
+        }
+    }
+
+    private fun stopNoDataWatchdog() {
+        noDataWatchJob?.cancel()
+        noDataWatchJob = null
+        _noDataAlert.value = null
+        recordingStartedAtMillis = 0L
+    }
+
+    fun dismissNoDataAlert() {
+        _noDataAlert.value = null
+    }
+
     // --- ROUND 6 (owner item 23): the one-tap mount re-zero -------------------
 
     /**
@@ -797,8 +929,38 @@ class CaptureViewModel(
      * for THIS scan, composed on top of `BracketNominals.cadNominal(COIN_D6)`.
      * Null until the operator taps "Set mount reference".
      */
-    private val _mountTrim = MutableStateFlow<com.lidarscan.core.calib.MountTrim?>(null)
-    val mountTrim: StateFlow<com.lidarscan.core.calib.MountTrim?> = _mountTrim.asStateFlow()
+    private val _storedMountTrim = MutableStateFlow<com.lidarscan.core.calib.StoredMountTrim?>(null)
+
+    /**
+     * ROUND 7 (field bug 1): the trim in force, whatever screen it was taken on.
+     *
+     * Backed by [_storedMountTrim], which is loaded from DataStore in `init` and
+     * written on every capture/clear — so the trim now survives the Capture
+     * tab's own ViewModel, a navigation to Projects and back, a process death
+     * and a cold start, exactly as the owner expects ("re-zero when the mount
+     * shifts, not before every capture").
+     */
+    val mountTrim: StateFlow<com.lidarscan.core.calib.MountTrim?> =
+        _storedMountTrim.map { it?.trim }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /**
+     * ROUND 7: the trim's own sentence — magnitude, age and where it came from —
+     * recomputed on a slow tick so "just now" becomes "3 min ago" without the
+     * operator touching anything.
+     */
+    private val _mountTrimProvenance = MutableStateFlow(
+        com.lidarscan.core.calib.MountTrimProvenances.describe(null, appRunId, clock()),
+    )
+    val mountTrimProvenance: StateFlow<com.lidarscan.core.calib.MountTrimProvenance> =
+        _mountTrimProvenance.asStateFlow()
+
+    private fun refreshMountTrimProvenance() {
+        _mountTrimProvenance.value = com.lidarscan.core.calib.MountTrimProvenances.describe(
+            stored = _storedMountTrim.value,
+            currentAppRunId = appRunId,
+            nowMillis = clock(),
+        )
+    }
 
     /** The last re-zero's outcome as one sentence — the confirmation or the refusal. */
     private val _mountTrimNote = MutableStateFlow<String?>(null)
@@ -835,7 +997,14 @@ class CaptureViewModel(
                 logEvent(LOG_TAG_AR, "mount re-zero refused: ${result.reason.name}")
             }
             is com.lidarscan.core.calib.MountTrimResult.Captured -> {
-                _mountTrim.value = result.trim
+                val stored = com.lidarscan.core.calib.StoredMountTrim(result.trim, appRunId)
+                _storedMountTrim.value = stored
+                refreshMountTrimProvenance()
+                // ROUND 7: to disk, immediately. The 0.3.0 version wrote the
+                // trim only into the manifest of a project that was already
+                // recording — which on the Capture tab, where a re-zero is
+                // taken BEFORE Start, is no project at all.
+                viewModelScope.launch { runCatching { persistMountTrim(stored) } }
                 _mountTrimNote.value =
                     "Mount reference set — %.1f° from the bracket nominal, held to %.2f° over %d samples."
                         .format(result.trim.magnitudeDeg, result.trim.spreadDeg, result.trim.sampleCount)
@@ -857,7 +1026,9 @@ class CaptureViewModel(
 
     /** Drops the session trim, going back to the bare CAD nominal. */
     fun clearMountReference() {
-        _mountTrim.value = null
+        _storedMountTrim.value = null
+        refreshMountTrimProvenance()
+        viewModelScope.launch { runCatching { persistMountTrim(null) } }
         _mountTrimNote.value = "Mount reference cleared — back to the bracket's CAD nominal."
         applyMountExtrinsicNow()
     }
@@ -1014,6 +1185,43 @@ class CaptureViewModel(
     private var lastStatsSamplePoints = 0L
 
     init {
+        // ROUND 7 (field bug 1): restore the mount re-zero FIRST, before any
+        // project loads and long before a Start can reach applyMountExtrinsic.
+        //
+        // The owner's log has three good re-zeros at 22:53, a 216 k-point scan
+        // that used one of them, and then `trim=none` on the very next capture
+        // 57 s later — because the trim lived in this ViewModel and this
+        // ViewModel is `viewModel(key = "capture-new-false")` on the Capture
+        // tab's own NavBackStackEntry. Looking at the scan you just took was
+        // enough to throw away 132 degrees of mount rotation, silently.
+        viewModelScope.launch {
+            val stored = runCatching { loadStoredMountTrim() }.getOrNull()
+            if (stored != null) _storedMountTrim.value = stored
+            refreshMountTrimProvenance()
+            if (stored != null) {
+                val p = _mountTrimProvenance.value
+                logEvent(
+                    LOG_TAG_AR,
+                    "mount trim restored: ${p.logSuffix} warn=${p.warn}",
+                )
+                // A trim carried across an app restart is applied, not
+                // discarded — but the operator is told, because a phone that
+                // has been in a bag since the last scan may have a mount that
+                // has moved. "Re-zero when the mount shifts, not before every
+                // capture" is the owner's own rule; this is the exception to it
+                // being stated rather than guessed at.
+                if (p.fromPreviousRun) _mountTrimNote.value = p.label
+            }
+        }
+        // "just now" has to become "3 min ago" on its own, or the age the panel
+        // shows is only ever the age at the moment the screen opened.
+        viewModelScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(TRIM_AGE_TICK_MS)
+                refreshMountTrimProvenance()
+            }
+        }
+
         viewModelScope.launch(Dispatchers.IO) {
             // ROUND 5: no project id is the Capture tab's normal state — there is
             // nothing to open, and Start is what creates one (item 9). The name
@@ -1237,6 +1445,24 @@ class CaptureViewModel(
                 return@launch
             }
             sealPending.set(true)
+            // ROUND 7 (field bug 2): from here on, a scan that receives nothing
+            // has two seconds before it has to say so.
+            startNoDataWatchdog()
+            // ROUND 7 (item 3): sections belong to a capture. A break detected
+            // while framing the preview is not this scan's seam.
+            arController?.let { controller ->
+                controller.sections.reset()
+                _sectionCount.value = 1
+                controller.onSectionBreak = { br ->
+                    _sectionCount.value = controller.sections.sectionCount()
+                    logEvent(
+                        LOG_TAG_AR,
+                        "SECTION BREAK #${controller.sections.sectionCount() - 1} " +
+                            "reason=${br.reason} jump=%.3fm/%.2fdeg gapMs=${br.gapMillis} t=${br.tMonoNs}"
+                                .format(br.positionJumpM, br.rotationJumpDeg),
+                    )
+                }
+            }
             startArPipelines(project)
             startPhoneGeorefIfNeeded(project)
         }
@@ -1450,7 +1676,8 @@ class CaptureViewModel(
             ?.let { com.lidarscan.core.calib.Mat4(it.cameraFromLidar.copyOf()) }
             ?.takeIf { it.isRigid(1e-4) }
         val nominalMatrix = com.lidarscan.core.calib.BracketNominals.cadNominal(sensor)
-        val trim = _mountTrim.value?.takeIf { it.sensor == sensor }
+        val provenance = _mountTrimProvenance.value
+        val trim = provenance.trim?.takeIf { it.sensor == sensor }
         val matrix = measuredMatrix
             ?: trim?.composedWith(nominalMatrix)
             ?: nominalMatrix
@@ -1471,7 +1698,7 @@ class CaptureViewModel(
             logEvent(
                 LOG_TAG_PUSHBROOM,
                 "extrinsic applied: source=${if (usingNominal) "nominal" else "measured"} " +
-                    "trim=${trim?.let { "%.2fdeg".format(it.magnitudeDeg) } ?: "none"} " +
+                    "${if (trim != null) provenance.logSuffix else "trim=none"} " +
                     "pushbroomEnabled=$enabled",
             )
         } else {
@@ -1553,6 +1780,10 @@ class CaptureViewModel(
 
     private suspend fun sealAndStopLocked() {
         val finalStats = _stats.value
+        val noDataVerdict = _noDataAlert.value
+        stopNoDataWatchdog()
+        val sectionBreaks = arController?.sections?.breaks().orEmpty()
+        arController?.onSectionBreak = null
         // ROUND 5.2: the phone-GNSS fallback belongs to the session, so it stops
         // with it — before the engine handle goes away, since the recorder pushes
         // into that handle.
@@ -1637,7 +1868,10 @@ class CaptureViewModel(
                     displayParams = displayParams.value,
                     // ROUND 6 (item 23): the trim the pushbroom actually ran on,
                     // so post-processing uses the same one.
-                    mountTrim = _mountTrim.value ?: manifest.mountTrim,
+                    mountTrim = _storedMountTrim.value?.trim ?: manifest.mountTrim,
+                    // ROUND 7 (item 3): the seams, so the post pipeline has the
+                    // one fact that makes them alignable rather than mysterious.
+                    sectionBreaks = sectionBreaks,
                 )
             }
         }
@@ -1662,8 +1896,27 @@ class CaptureViewModel(
                 LOG_TAG_SEAL,
                 "sealed OK id=$activeId name=\"${verified.manifest.name}\" " +
                     "points=${finalStats.pointsCaptured} elapsedMs=${finalStats.elapsedMillis} " +
-                    "listable=true dir=${verified.directory.absolutePath}",
+                    "listable=true sections=${sectionBreaks.size + 1} " +
+                    "dir=${verified.directory.absolutePath}" +
+                    // ROUND 7: a zero-point seal is never again just "OK". The
+                    // owner's scan-009 line said `sealed OK … points=0
+                    // elapsedMs=0` and that was the entire record of a capture
+                    // that recorded nothing.
+                    if (finalStats.pointsCaptured == 0L) {
+                        " NO-DATA=true reason=\"${noDataVerdict ?: "no sensor packets reached this session"}\""
+                    } else {
+                        ""
+                    },
             )
+        }
+        if (finalStats.pointsCaptured == 0L && !isReplay) {
+            // ROUND 7: the scan is saved and it is empty, and the operator has
+            // to hear that from the app rather than from the Projects list two
+            // days later. The watchdog is stopped by now, so nothing clears it.
+            _noDataAlert.value =
+                "THIS SCAN RECORDED NO POINTS. ${noDataVerdict ?: "No sensor packets reached the session."} " +
+                    "The project was saved so the evidence is not lost — but there is nothing in it. " +
+                    "Re-seat the USB-C cable and scan again."
         }
         pushbroomEnabled = false
         _pushbroomActive.value = false
@@ -1838,5 +2091,23 @@ class CaptureViewModel(
          * steps of slowing down — a hint that lingers becomes wallpaper.
          */
         const val MOTION_HINT_LINGER_MS = 2_500L
+
+        /** ROUND 7 (field bug 1): how often the trim's age label is recomputed. */
+        const val TRIM_AGE_TICK_MS = 15_000L
+
+        /**
+         * ROUND 7 (field bug 2): how long a recording may produce **nothing**
+         * before the screen says so.
+         *
+         * A COIN-D6 at 10 Hz with ~1000 returns a revolution produces its first
+         * `POINTS_AVAILABLE` event within a few hundred milliseconds of the
+         * spin-up command being ACKed. Two seconds is well past that and still
+         * inside the window where the operator has not yet started walking, so
+         * the warning arrives before the scan is wasted rather than after it.
+         */
+        const val NO_DATA_GRACE_MS = 2_000L
+
+        /** How often the no-data watchdog re-checks. */
+        const val NO_DATA_TICK_MS = 500L
     }
 }

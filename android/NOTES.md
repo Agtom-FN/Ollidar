@@ -3477,6 +3477,114 @@ pre-capture strip squeezed the live viewport to a sliver — the one thing round
 says must always be on screen. The strip is now capped at 46 % of the screen and
 scrolls internally.
 
+### 7b. THE SECOND VANISHING ARTIFACT — export went nowhere
+
+Owner, same week: *"I exported scan-008 (sealed OK, 216,653 pts, listable) and
+the file is nowhere — not in Downloads, no error."*
+
+**The owner's next attempt named the actual wall:** the app answered
+**"No cloud to export."** So the story is worse than "the file went somewhere
+unbrowsable" — for a phone-D6 project there was, in practice, *no local export
+at all*:
+
+* **Export (PLY/LAS/PCD)** is gated on `hasProcessedCloud || hasLiveCloud`. On a
+  D6 project both are false after the capture session ends (the pushbroom cloud
+  lives only in the live `PageStore`, §6) and Post-process is refused (§6 again),
+  so that gate can never open. Its refusal text mentioned the cloud and read as
+  *"you need a server"*.
+* **Extract for transfer** — the one path that always worked, needs no server,
+  and produces exactly the `.lscan.zip` the desktop imports — was called
+  "Extract for transfer", sat third in a row next to "Cloud", and its only
+  delivery route was a share sheet.
+
+**Fixed by making the local path the primary one and naming it in plain words:**
+
+* The mode chooser now reads **"Save to phone" / "Send to cloud" / "Process
+  here"**. `EXTRACT_FOR_TRANSFER`'s own summary says it: *"no server, no
+  account, nothing to configure. The desktop app imports that zip directly.
+  This is the way to get a scan off the phone."*
+* **A COIN-D6 project opens on "Save to phone"** — landing the operator on a
+  mode that cannot run, and then on a refusal that mentions the cloud, is
+  exactly how `scan-008` got stuck. An explicit mode pick sticks.
+* The card's primary button is **"Save to Downloads"**; "Save + share…" is the
+  secondary. A share sheet is an extra, never the delivery mechanism.
+* The point-cloud Export refusal now names the open door instead of being a dead
+  end: *"No point cloud in memory to convert to PLY/LAS/PCD… To get this scan
+  off the phone right now, use 'Save to phone'."*
+
+**And a second bug found while wiring it: the bundle used to swallow itself.**
+`zip_export()` walks the project directory recursively and takes **every**
+regular file (`src/record/zip.cpp` — no filter, which is right for a
+package-everything bundle). The app staged its `.lscan.zip` in
+`<project>/exports/`, i.e. *inside* the directory being zipped — so a second
+export bundled the first, a third bundled both, and a 200 MB capture exported
+three times ships nested copies of itself. Bundles now stage in the app's cache
+directory, outside the project; the deliverable is the Downloads copy.
+`engine/tests/test_jobs.cpp` pins both facts —
+`round7_a_bundle_carries_the_apps_own_project_json` (the ROUND 6 `project.json`
+and the camera frames survive `zip_export → zip_import → import_and_validate`
+with `sane() == true`, so a bundle does not arrive on the desktop nameless) and
+`round7_a_bundle_written_inside_the_project_swallows_itself`, which demonstrates
+the nesting and says in its comment why the staging directory moved.
+
+**And where the bytes went even when it did run.** Every export this app
+produced was written to `<project>.lscan/exports/<name>`, i.e. under
+`/storage/emulated/0/Android/data/com.lidarscan.app.debug/files/…`. That is
+app-specific external storage, and **since Android 11 the system Files app
+refuses to browse `Android/data/` at all.** The bytes were exactly where the app
+said they were and no human with a file manager could reach them. The
+`.lscan.zip` path then opened a share sheet — `startActivity(chooser)`, which
+returns immediately and has **no result callback**, so dismissing it (or picking
+a target that fails) left the app having already forgotten the whole thing. The
+plain Export path (PLY/LAS/DXF) did not even do that: it said *"Export queued ->
+name"* and never mentioned the file again.
+
+Three silent exits on two buttons. Combined with ROUND 6's vanished captures and
+ROUND 7 §3's `points=0` seal, that is the class:
+**a user-triggered operation that ends in neither a visible success with a path
+nor a visible failure.** The rule now, written down in `DownloadsExporter`'s
+header: there is no third outcome.
+
+**Fixed:**
+
+* **`app/share/DownloadsExporter.kt`** copies a finished export into
+  `Downloads/LidarScan/` through `MediaStore`. `MediaStore`, not
+  `Environment.getExternalStoragePublicDirectory` — the latter needs
+  `WRITE_EXTERNAL_STORAGE`, which is not granted on API 29+ and which this app
+  deliberately does not request; a `MediaStore.Downloads` row the app inserts
+  itself needs **no permission at all**, which is why this works on a
+  scoped-storage phone with nothing added to the manifest. `IS_PENDING` is set
+  while copying and cleared at the end, so a multi-gigabyte bundle is never
+  visible half-written, and a failed copy deletes its own pending row rather
+  than leaving a ghost.
+* **`ProcessingViewModel.awaitJobThenDeliver`** replaces `awaitJobThenShare` and
+  now runs on **both** export paths. It waits for the job, copies to Downloads
+  **first** (so the artifact is reachable whether or not the operator picks
+  anything from the share sheet), then reports
+  *"Exported to Downloads/LidarScan/Scan-008.lscan.zip (184.2 MB)."* — or, on a
+  copy failure, names the on-phone path and offers the share sheet as the only
+  remaining route. Every branch writes an `[export]` line to `capture.log`.
+* The **cloud result download** got the same treatment: `processed/` is exactly
+  as unreachable as `exports/`, so a finished cloud job now says where it put
+  the result.
+* **Settings → Export log** likewise: it used to `?: return` on a staging
+  failure and hand off to a share sheet that reports nothing — on the one button
+  whose entire purpose is producing evidence. It now says
+  *"Capture log saved to Downloads/LidarScan/capture-….log."* or why not.
+* `CaptureLog.TAG_EXPORT` is new, so the next report about a missing file
+  arrives with the destination attached.
+
+**Proof.** `app/androidTest/…/DownloadsExporterTest.kt` — on the device, against
+a real `MediaStore`, because this is precisely the code that compiles fine and
+does nothing on a phone. It writes a 400 KB payload (big enough to cross the copy
+buffer more than once — a truncating copy is what a 12-byte fixture would hide),
+**reads the bytes back out through the provider** rather than trusting the
+insert, asserts the `RELATIVE_PATH` really is `Downloads/LidarScan`, asserts the
+returned display path is what the UI will show, asserts a missing source fails
+loudly with a non-blank message, and asserts a second export of the same name
+does not overwrite the first (MediaStore de-duplicates, which is what
+re-exporting should do). It cleans up after itself.
+
 ### 8. Files
 
 New (`:core`): `capture/ScanAutoName.kt`, `capture/CaptureAutoConnect.kt`,
@@ -4406,3 +4514,488 @@ native engine on device**, which is as close as this environment gets. The two
 that would repay a bench hour first are (a) enabling the AR overlay on a Pixel
 and confirming the inline error path rather than a crash, and (b) a D6 walk with
 the mount reference set, watching the chip go `BUILDING MAP…` → `LIVE MAP · 3D`.
+
+## ROUND 7 — SCAN QUALITY: straight walls
+
+Scope: `android/**` plus **three additive `engine/**` changes** (§1 — the seam
+that was genuinely missing; the engine suite is green at 526 cases). Triggered
+by the owner declaring this the core purpose of the app — *"when i walk through
+the room its not given a stable scan with straight walls"* — plus a real capture
+log from a Pixel 8 Pro + COIN-D6 session (`~/Downloads/lidarscan-capture-log.txt`)
+that contains two proven bugs. VERSION 0.3.0 → **0.4.0** (versionCode 40000).
+
+Verdicts first.
+
+| # | Item | Verdict |
+| --- | --- | --- |
+| 1 | Walls bend / "sections" — per-point pose pairing | **Root cause found in the D6 driver, fixed, proven twice** (engine + `:core`, independently) |
+| 2 | Trim lost between captures (`trim=none` on scan-009) | **Root cause found, fixed, regression-pinned** |
+| 3 | Second capture of one connect recorded nothing (`points=0 elapsedMs=0`) | **Root cause found, fixed, pinned on the emulator against the real engine** — plus a watchdog that makes the whole class loud |
+| 4 | Time-sync / clock domains | **Audited: no domain bug.** One residual constant term, now measured out or exposed |
+| 5 | ARCore relocalization → visible slab seams | **Detected, recorded, surfaced.** Alignment in post is the documented next step |
+| 6 | Post-process path for a phone D6 | **Audited: it does not exist and cannot yet.** Gate made honest; the exact missing engine seam is named in §7 |
+| 7 | Archive AR (owner directive, extended mid-task) | **Done.** ARCore survives as the invisible pose engine; the product has no AR in it |
+
+---
+
+### 1. WHY THE WALLS BENT — one timestamp for 178 ms of returns
+
+This is the whole of the scan-quality complaint, and it was not where five
+rounds of notes assumed it was.
+
+**A8 was never the problem.** `pushbroom_assembler.cpp`'s `resolve_()` pops one
+`ProfilePoint` at a time and calls `poses_->sample_at(p.t_mono_ns)` for **each
+one**; `ExternalPoseSource::sample_at()` does a binary search for the bracketing
+pair, LERPs position and shortest-arc SLERPs orientation. Per-point pose
+interpolation has been correct since A8 landed.
+
+**The per-point *timestamps* feeding it were fiction.** Two headers claim them —
+`pushbroom_assembler.h`'s property #1 ("Per-point time, not per-packet time")
+and `d6_driver.cpp`'s own comment ("a revolution spans 100 ms = 10 cm of rig
+travel at walking pace, which is why this is a per-point callback") — and
+neither the parser nor the driver ever produced one:
+
+```cpp
+// d6_parser.cpp:227, inside the per-sample loop of emit_packet()
+pt.t_rx_ns = t_rx_ns;          // the same value for every sample in the packet
+// d6_driver.cpp:166 / :190
+void D6Driver::on_bytes(ByteSpan bytes, TimePoint t) { t_current_ns_ = t.nanos; ... }
+parser_.feed(bytes.data(), bytes.size(), t.nanos);
+// d6_driver.cpp:382 — and the A8 sink did not even use p.t_rx_ns
+cfg_.profile_sink(..., t_current_ns_, ...);
+```
+
+Everything decoded out of one `push_serial_bytes` call claimed one instant. On
+the phone that call is `D6SerialConnection`'s 4096-byte read, and **4096 bytes at
+230400 8N1 is 177.8 ms of wire time — 1.8 full 10 Hz revolutions.** At 1 m/s
+every chunk is laid down as one rigid slab, offset from its neighbour by up to
+18 cm. That is shingled walls and it is "sections", exactly, and it is worse
+while turning because the *rotation* is smeared too.
+
+**The fix needs no new clock and no ABI.** A UART delivers bytes at a known
+constant rate, so byte position inside a chunk *is* time. `D6Driver::on_bytes`
+now feeds the parser in slices of `D6Config::time_slice_bytes` (default **64**,
+~2.8 ms at 230400), each stamped `t_chunk_end − remaining_bytes × byte_period`,
+and the A8 sink passes the **point's own** `p.t_rx_ns` instead of the driver's
+"time of the current chunk". Residual smear: one slice, i.e. **2.8 mm of rig
+travel at 1 m/s**, an order of magnitude under the D6's own range noise.
+`time_slice_bytes = 0` restores the old behaviour and is reachable on purpose
+(a replay handing over a whole file is not a fixed-rate UART).
+
+Engine files touched, all additive: `include/scanengine/drivers/d6/d6_driver.h`
+(`time_slice_bytes`, `wire_bits_per_byte`, two private methods),
+`src/drivers/d6/d6_driver.cpp` (`feed_time_sliced`, `byte_period_ns`, the sink's
+timestamp). No C ABI change; no struct grew.
+
+#### The proof, twice, independently
+
+**(a) `engine/tests/test_pushbroom.cpp` — the walking-gait wall test, against
+the real assembler.** Walk 4 s at 1 m/s past a flat wall with a realistic gait
+(±2 cm lateral sway and ±3 cm bob at 2 Hz, ±3° yaw and ±1.7° roll per step),
+ARCore poses at 30 Hz, the D6 at 10 Hz × 360 returns, ray-cast ranges taken at
+each return's TRUE time, resolved through the real `ExternalPoseSource` and the
+real `D6PushbroomAssembler`, then fitted to a best-fit plane (best-fit, not the
+known wall: a constant offset is a *latency* symptom, not a bending one, and must
+not be allowed to masquerade as one). Three arms, same stimulus, only the
+timestamps differ:
+
+| pairing | plane-fit RMS |
+| --- | --- |
+| **per-point** (what ships now) | **0.041 cm** |
+| one pose per 100 ms revolution | 0.59 cm |
+| one pose per 178 ms USB read (what the phone did) | **2.38 cm** |
+
+Asserted: per-point < 2 cm **and** < 0.4 cm; the 178 ms chunk arm **> 2 cm** —
+the falsifiable control, so a change that quietly disables the slicing fails
+loudly instead of passing both ways; and `rms_rev > 4 × rms_point`.
+
+**(b) `core/…/calib/D6WalkingGaitPlanarityTest.kt` — the same experiment, Android
+side, through the production `BracketNominals.cadNominal(COIN_D6)` matrix** and a
+from-scratch reimplementation of A8 §3.1/§3.4 (`world_from_lidar =
+world_from_phone(t) · phone_from_lidar`, LERP + shortest-arc SLERP). Two
+independently written implementations, agreeing to the third decimal:
+**0.0416 cm per-point vs 0.5805 cm per-revolution.** The control asserts the
+per-revolution arm is > 4× worse.
+
+**(c) `engine/tests/test_d6_driver.cpp` — the mechanism itself.** A 4096-byte
+chunk at 230400, and the stamps the A8 sink receives must span the chunk's own
+wire duration, be monotonic, never claim a time later than the chunk's arrival,
+and be no more than one slice apart. Its matched control sets
+`time_slice_bytes = 0` and asserts every return claims the *same* instant —
+the bug, written down.
+
+One existing assertion changed as a consequence and is called out here rather
+than quietly edited: `test_capi.cpp`'s
+`pushbroom_world_points_cross_the_abi_on_the_slam_map_stream` asserted
+`st.t_first_ns == t`, which was only true when every point in a chunk shared one
+stamp. It now asserts the invariant that survives — `t_first_ns` is inside the
+chunk's own wire window and `t_last_ns == t`.
+
+### 2. THE TRIM WAS LOST BETWEEN CAPTURES — field bug 1
+
+From the owner's log, three good re-zeros and then, 57 seconds later:
+
+```
+22:53:04 [ar]        mount re-zero captured: magnitude=132.44deg spread=0.47deg samples=37
+22:53:09 [pushbroom] extrinsic applied: source=nominal trim=132.81deg   ← scan-008, 216,653 pts
+22:54:06 [pushbroom] extrinsic applied: source=nominal trim=none        ← scan-009
+```
+
+**132° of unmodelled mount rotation went straight into every point of the next
+scan.** Nothing had gone wrong with the measurement (spread 0.47°, 37 samples,
+the MOVING gate refusing four attempts before accepting — that machinery works).
+The trim lived in one `MutableStateFlow` inside `CaptureViewModel`, which is
+`viewModel(key = "capture-new-false")` on the Capture tab's own
+`NavBackStackEntry`. **Walking to Projects to look at the scan you just took, and
+back, clears it** — silently, with the panel then showing "Set mount reference"
+as if none had ever been taken. ROUND 6 persisted the trim into the *project
+manifest*, which on the Capture tab is written at the moment a project exists —
+and a re-zero is taken *before* Start, when there is none.
+
+**Fixed** by making the trim what the owner already assumed it was: a property of
+the rig, not of a screen.
+
+* `core/calib/MountTrim.kt` gains `StoredMountTrim` (the trim plus the app run
+  that captured it) and `MountTrimProvenances.describe()`, which turns
+  trim + run-id + now into the panel's sentence and the log's suffix.
+* `SettingsRepository.storedMountTrim()` / `setStoredMountTrim()` persist it in
+  DataStore — device-level, not per device profile: there is one bracket and one
+  phone in the operator's hands. Unparseable JSON reads as "no trim" rather than
+  throwing, so a bad row can never keep the Capture tab from opening.
+* `CaptureViewModel` loads it in `init` **before** anything else, applies it, and
+  writes it on every capture and clear. A trim from a previous app run is
+  **still applied** — losing it silently is the bug — and the panel says
+  *"restored from your last session. Re-zero only if the mount has shifted."*
+  Past 12 h it becomes a caution in `SemWarn`, not a refusal.
+* The age label re-computes on a 15 s tick, so "just now" becomes "3 min ago"
+  without the operator touching anything.
+* The capture log now carries provenance:
+  `extrinsic applied: source=nominal trim=132.81deg trimAgeMs=57000 trimSource=this-run`.
+  The next field report arrives with the answer attached.
+
+**Proof.** `core/…/calib/MountTrimProvenanceTest.kt` (7 tests: this-run vs
+restored vs stale, the exact stale boundary, and a JSON round-trip — because a
+shape change that silently stopped decoding puts us straight back in the field
+bug). `app/…/ui/capture/CaptureRound7FieldBugsTest.kt` drives the real
+`CaptureViewModel` across a **ViewModel rebuild over the same store**, which is
+precisely what navigating away and back is, and asserts the trim is still 132.81°
+— and that `Clear` reaches the store rather than just the flow.
+
+### 3. THE SECOND CAPTURE RECORDED NOTHING — field bug 2
+
+```
+22:53:40 [seal] sealed OK id=scan-008 … points=216653 elapsedMs=30543
+22:54:06 [session] start: project=scan-009 … sensor=COIN_D6
+22:54:16 [seal] sealed OK id=scan-009 … points=0 elapsedMs=0
+```
+
+**Root cause: `RealEngineBridge` latched its own transport off and never
+re-armed it.** The C ABI has no pause/resume, so a D6 pause is implemented one
+layer down — the reader thread keeps the port open and stops forwarding bytes
+into `push_serial_bytes`. `stopCapture()` calls `pauseForwarding()` too (correct:
+Stop should close the tap), and **only `resumeCapture()`, i.e. the Pause button,
+ever opened it again.** So the first Stop of a connect session set
+`forwarding = false` for the rest of that connect. The second Start created a
+healthy `.lscan`, ran `scan_engine_start()`, got `SCAN_OK` — and received not one
+byte. Zero packets → zero `POINTS_AVAILABLE` → `CaptureStats` never fires →
+`points=0 elapsedMs=0`, sealed as OK, with a green Stop button the whole way.
+
+Neither hardware-free path could ever have caught it: `ReplayEngineBridge` has no
+serial connection at all and `FakeEngineBridge` has no transport. It is the
+real-USB path's own state.
+
+**Fixed:** `RealEngineBridge.startCapture()` re-arms the connection before
+starting the session. One line, with the full autopsy above it in the file.
+
+**And the class of bug is now impossible to ship silently.** A recording past
+2 s with zero points raises a red `NO SENSOR DATA` banner **during the
+capture** — outside the collapsible pre-capture strip, so it is readable at
+exactly the moment the rest of that UI is gone — and names which half of the
+chain failed, from `DeviceHealth`:
+
+* `bytesIn == 0` → *"NO DATA — 4s into this scan and the COIN-D6 has sent 0
+  bytes… re-seat the USB-C cable"*
+* bytes but `packetsOk == 0` → *"98304 bytes arrived but not one valid packet
+  (41 rejected). The cable is alive and the data is not the sensor's."*
+* packets but no points → *"…send the capture log from Settings."*
+
+The log line is written **before** the banner (the record must exist before the
+UI can show the state), and a zero-point seal is never again just `sealed OK`:
+it carries `NO-DATA=true reason="…"`, and the banner persists after the stop
+reading *"THIS SCAN RECORDED NO POINTS… The project was saved so the evidence is
+not lost."*
+
+**Proof.** `CaptureRound7FieldBugsTest` (JVM): a bridge that starts and stops
+successfully and delivers nothing must produce the alert *while*
+`captureState == RECORDING`, with the numbers in the log and `NO-DATA=true` in
+the seal; a bytes-but-no-packets variant must say something different; and a
+healthy `FakeEngineBridge` capture must stay quiet for 3.5 s.
+**`app/androidTest/…/D6TransportReArmTest.kt` (emulator, real native engine)** is
+the one that pins the actual bug: a `UsbSerialPort` that is a byte source rather
+than a device, registered through `D6UsbConnectionRegistry.register()` (a new
+`@VisibleForTesting` seam — `RealEngineBridge` looks connections up by path and
+there is no other way in), then the genuine
+**connect → start → stop → start** sequence against a genuine `scan_engine*`,
+asserting that after the second Start `connection.isForwarding` is true *and*
+that reads are genuinely still happening. Against the pre-ROUND-7 bridge its last
+assertion fails. A second test pins pause/resume; a third pins that chunk stamps
+are `elapsedRealtimeNanos`-shaped, monotonic and shifted by the latency knob.
+
+### 4. TIME SYNC — audited, no domain bug, one constant term
+
+Checked end to end rather than assumed:
+
+* **ARCore** `Frame.getTimestamp()` — nanoseconds in the `SystemClock.elapsedRealtimeNanos()`
+  base, i.e. `CLOCK_BOOTTIME`.
+* **The engine** — `timesync/clock.h` calls `clock_gettime(CLOCK_BOOTTIME)`
+  *directly* on Android, specifically because bionic backs `steady_clock` with
+  `CLOCK_MONOTONIC`, which stops during suspend. **Same domain, no conversion.**
+* **A4's min-delay estimator is deliberately not on this path.**
+  `TimeSync::stream_has_device_clock()` returns `false` for `kLidarD6` and
+  `kPoseAr` and `true` for `kLidarMid360`/`kImu`/`kGnss`. The D6 has no device
+  clock to estimate an offset against; ARCore is already in the engine's domain.
+  That is correct, not a gap — the Mid-360 driver is the only caller of `add_pair`
+  and that is right.
+
+So there was no clock-domain bug. What there **was**: the app passed `t_mono_ns = 0`
+("engine, stamp it on arrival"), so the stamp was taken *after* the reader thread
+had copied 4 KB, crossed into native code and taken a lock — a function of how
+busy the phone was. `D6SerialConnection` now samples
+`SystemClock.elapsedRealtimeNanos()` as the first act after `read()` returns and
+passes it explicitly.
+
+The **variable** error — a chunk taking up to 178 ms to arrive and being handed
+over at once — is removed exactly by §1's per-byte back-dating. What remains is a
+genuinely constant transport delay, and a constant delay is not harmless: at
+1 m/s, 20 ms translates the whole cloud 2 cm along the walk and bends corners in
+proportion to turn rate. It is exposed as **Settings → Sensor timing (advanced) →
+COIN-D6 sensor latency**, applied live to the open connection (next chunk, no
+reconnect), with the row printing what the number *means*
+(*"2 ms — shifts the cloud 0.2 cm along a 1 m/s walk"*).
+
+**How the default was chosen (2 ms), stated honestly because no D6 exists here:**
+by construction, from the two knowable terms — one full-speed USB bulk frame
+(the CH340 is a bulk device; the last byte waits at most one 1 ms frame) plus one
+reader-thread wake-up. ~2 ms, which is 2 mm at walking pace: an order of
+magnitude under the sensor's own range noise, i.e. not a number worth arguing
+about. It is a setting anyway, because that derivation assumes a healthy USB
+stack and an unthrottled phone, and one afternoon with a plumb line and a
+corridor beats any amount of reasoning. Range is −50…+50 ms; **negative is legal
+on purpose** — if ARCore's pose stamps turn out to lag their exposure, the
+correction goes the other way. `core/capture/D6TimeSync.kt` holds the derivation
+and the arithmetic; `D6TimeSyncTest` pins the scale claims (4096 bytes ≈ 178 ms;
+a 64-byte slice ≈ 2.8 ms ≈ under 4 mm at 1 m/s).
+
+### 5. "SECTIONS" — ARCore relocalization, detected and recorded
+
+Origin-at-capture-start is by design and is not the complaint. The other half is:
+**ARCore's world frame is not fixed.** After a tracking loss, relocalization
+corrects accumulated drift as a *step*, not a drift, and the pushbroom composes
+`world_from_phone(t)` with no way to know that "world" just moved. Everything
+resolved before the jump is in the old frame, everything after in the new one —
+two slabs, offset by exactly the correction, seam wherever tracking hiccupped.
+
+`core/capture/PoseSections.kt` (`PoseSectionTracker`, `PoseSectionBreak`) consumes
+the same `PoseSample` stream the keyframe recorder and the mount re-zero already
+read, and fires on two independent signals:
+
+1. **Tracking regained** — measured against the last sample that was *actually
+   tracking*, not the last sample seen (the poses reported during a loss are the
+   tracker's own guesses and comparing to them measures nothing).
+2. **A kinematically impossible step while tracking** — > 6 m/s or > 400°/s
+   between consecutive poses. This catches the silent case: ARCore correcting
+   drift **without ever reporting a loss**, which is the seam nobody can account
+   for afterwards. Guarded by an 8 ms dt floor, because two poses 1 ms apart
+   imply 30 m/s from ordinary VIO jitter.
+
+Both thresholds are deliberately generous: a false seam costs a line in the
+manifest, a missed one costs a bent room. Wired into `CaptureArController` (the
+one place every pose passes exactly once), reset at each Start, surfaced inline
+while walking — *"Tracking jumped — this scan is now in 3 sections… walking the
+seam again with good texture in view helps"* — logged
+(`SECTION BREAK #1 reason=TRACKING_REGAINED jump=0.412m/3.10deg gapMs=2100`), and
+written into the manifest as `ProjectManifest.sectionBreaks` plus
+`sections=N` on the seal line.
+
+**Proof.** `core/…/capture/PoseSectionsTest.kt` — 9 tests. The two that matter
+most are the negative ones: a clean 10 s walk with ±5 mm of VIO jitter and 2 Hz
+gait must be **one** section, and a brisk deliberate 150°/s turn must not split
+it either.
+
+**What is NOT done, and why:** *aligning* the sections. A13's merge is exactly
+this machinery one level up (two clouds, a rigid transform, ICP refinement) but
+it is C++-only with **no C ABI** (A13-merge.md §9 item 3 says so), it takes
+in-memory `SessionInput`s rather than `.lscan` directories, and — decisively —
+§6 below: a D6 capture's cloud does not survive the session at all, so there is
+nothing on disk to align. Detection and recording land now; the alignment step is
+blocked behind the same seam §7 names, and this note is the handoff.
+
+### 6. POST-PROCESSING A PHONE D6 — it does not exist, and now it says so
+
+Traced the whole path. Tapping **Post-process** submits
+`ScanEngineNative.nativeProcSubmitPostProcess` → `JobKind::kPostProcess` →
+`PostSlamPipeline::run(lscan_dir)`. That pipeline is **Mid-360-only by
+construction** — its decode loop counts `kLidarMid360`/`kImu` chunks and returns
+`kNotFound` when there are none (`post_pipeline.cpp:254`). A D6 `.lscan` has
+neither. There is no D6 branch anywhere in `processing_engine.cpp`,
+`ProcessingRepository` or `ProcessingViewModel`.
+
+So on a phone-D6 project the button was **enabled** (the gate only checked "is
+there anything in `streams/`") and the job failed — and failed with the bare
+string `"not found"`, because `JobQueue` discards the pipeline's own explanatory
+message. An enabled button that produces a two-word error is worse than a
+disabled one that explains itself, and `ProcessingJob.kt`'s own header already
+said so ("every refusal has to name its own cause").
+
+`ProcessingPolicy.postProcess` now takes the sensor and refuses a D6 project with
+the truth: post-processing is the Mid-360 LIO pipeline; a D6 cloud is built
+**live** by the pushbroom from the phone's trajectory, so what you saw while
+walking *is* the registered result and is what Export writes; an offline re-run
+needs the pose stream inside the `.lscan`, which the engine cannot write yet.
+Three tests in `ProcessingPolicyTest`.
+
+**The one concrete thing that blocks a real D6 post pipeline** — and it is small,
+which is why it is worth naming precisely: `ChunkType::kPoseAr` is **defined**
+(`lscan.h:76`) and **mapped** (`lscan.cpp:142`) and has **no writer anywhere**.
+`Engine::push_pose` feeds the interpolator and the event bus and never touches
+the recorder. So a "record-always" D6 capture stores the raw UART bytes but not
+the trajectory, and the assembled cloud exists only in the live `PageStore` and
+dies with the session. A8-pushbroom.md §7.4 already asks for this: *"A pose
+stream chunk type for `StreamId::kPoseAr` would also let a replayed `.lscan`
+re-assemble without the app — the assembler is already replay-clean, it just
+needs the poses to come back off disk."* With that one writer, a D6 post job is:
+replay `kD6Raw` through `push_serial_bytes` (which `ReplaySource` already does),
+replay `kPoseAr` through `push_pose`, `set_mount_extrinsics` from
+`manifest.mountTrim` (already persisted), `pushbroom_enable` — and §5's section
+breaks become A13's inputs. Deliberately **not** attempted this round: it is an
+engine feature, not a seam, and this round's engine budget went to the bug that
+was bending the walls.
+
+### 7. AR, ARCHIVED — the phone + D6 *is* the 3D lidar
+
+Owner directive, extended mid-round: *"The AR function archive not only from UI,
+work it like the 3d lidar."* The mental model is the deliverable: this is not an
+AR app with a lidar on the back.
+
+* **The AR overlay is out of the product.** The View row in the Capture-settings
+  sheet now offers `3D orbit / Follow`; the overlay branch in `CaptureViewport`
+  is switched off at one named constant, `AR_OVERLAY_ARCHIVED`. Nothing is
+  deleted — `ArOverlayView`, `ArSessionGate` and every ROUND 6 crash fix stay
+  compiled, tested and in use by the mount-calibration wizard, which genuinely
+  needs to see the board through the camera. Reviving is that constant plus the
+  `CameraMode.AR` entry in the View row.
+* **ARCore is untouched, because it is the third dimension.** `ArPosePumpView`
+  still drives `Session.update()` every frame, every pose still reaches
+  `scan_engine_push_pose`, and **camera keyframes still record** — colorization
+  is a product feature, not an AR one.
+* **"AR" is gone from the user-facing vocabulary of the capture flow.**
+  `AR & Camera` → `Tracking & camera`; `AR tracking` → `Scanner tracking`;
+  *"AR unavailable — …"* → *"Phone tracking degraded — … a COIN-D6 needs tracking
+  to build 3D"*; *"Too dark for AR tracking"* → *"Too dark to track"*;
+  `ArAvailability`'s sentences now talk about the phone tracking its own motion.
+  The one deliberate survivor is the literal product name in
+  *"Google Play Services for AR needs to be installed"*, because that is what the
+  user has to go and install.
+* **The D6's live view already IS the 3D map view** as of ROUND 6 item 3 —
+  `liveMapRequested = liveMapEnabled && (liveSlam || pushbroomActive)`, drawing
+  `SCAN_STREAM_SLAM_MAP`, with the chip going `RAW · COIN-D6` → `BUILDING MAP…`
+  → `LIVE MAP · 3D`. Same shape as the Mid-360 flow, which is the point.
+
+### 8. Files
+
+**Engine (additive):** `include/scanengine/drivers/d6/d6_driver.h`,
+`src/drivers/d6/d6_driver.cpp`, `tests/test_d6_driver.cpp` (+2 cases),
+`tests/test_pushbroom.cpp` (+1 three-arm case), `tests/test_jobs.cpp` (+2 bundle
+round-trip cases, §7b), `tests/test_capi.cpp` (one assertion updated, §1). No
+engine *source* change for §7b — the bundle format is already
+`zip_export`/`zip_import`, unchanged, which is the point.
+
+**New (`:core`):** `capture/D6TimeSync.kt`, `capture/PoseSections.kt`
+(+ `test/…/capture/D6TimeSyncTest.kt`, `test/…/capture/PoseSectionsTest.kt`,
+`test/…/calib/MountTrimProvenanceTest.kt`,
+`test/…/calib/D6WalkingGaitPlanarityTest.kt`).
+**Changed (`:core`):** `calib/MountTrim.kt` (`StoredMountTrim`,
+`MountTrimProvenance(s)`), `model/ProjectManifest.kt` (`sectionBreaks`),
+`jobs/ProcessingJob.kt` (sensor-aware post gate, `ProcessingMode` renamed to
+"Save to phone"/"Send to cloud"/"Process here", the export refusal now names the
+local path, + its tests).
+
+**New (`:app`):** `share/DownloadsExporter.kt`,
+`test/…/ui/capture/CaptureRound7FieldBugsTest.kt`,
+`androidTest/…/D6TransportReArmTest.kt`,
+`androidTest/…/DownloadsExporterTest.kt`.
+**Changed (`:app`):** `engine/RealEngineBridge.kt` (the re-arm),
+`usb/D6SerialConnection.kt` (explicit BOOTTIME stamps, latency, `isForwarding`),
+`usb/D6UsbConnectionRegistry.kt` (latency fan-out, `register`),
+`data/Settings{Models,Repository}.kt`, `di/AppContainer.kt` (`appRunId`, latency),
+`ui/capture/{CaptureViewModel,CaptureScreen,CaptureSheets}.kt`,
+`ui/settings/{SettingsScreen,SettingsViewModel}.kt`,
+`ar/{CaptureArController,ArCameraBackgroundRenderer,ArAvailability}.kt`,
+`ui/calib/MountCalibrationScreen.kt`,
+`ui/processing/{ProcessingViewModel,ProcessingScreen}.kt`, `debug/CaptureLog.kt`.
+
+### 9. Engine seams this round needed
+
+1. **No `kPoseAr` writer** (§6). The single blocker for offline D6 re-assembly,
+   for section alignment, and for "replay == capture" being true of a D6 cloud
+   rather than only of its bytes.
+2. **`JobQueue` discards the pipeline's own error message** (`job_queue.cpp:132`
+   reduces everything to `error_str(status.error())`). *"post: '<dir>' holds no
+   Mid-360 point/IMU chunks"* is a sentence an operator could act on;
+   `"not found"` is not.
+3. **The post-processed cloud is never written back to disk** — it lives in an
+   in-process `PageStore`, so Colorize/Export silently re-gate to blocked after
+   an app restart. A7-post.md §8 item 2 (`stream_of(kPointsXyzRgba) → kUnknown`)
+   is the same gap from the other side.
+4. **No C ABI for A13 merge** (A13-merge.md §9 item 3), which is what §5's
+   section alignment would use.
+5. Everything ROUND 6 §7 and ROUND 5 §9 listed still stands (page-store
+   eviction, `pushbroom_drain()`, the `manifest.json` reserved-name list, the
+   fix-shaped GNSS ingest, the 0.5 px display clamp).
+
+### 10. Verification
+
+```
+$ cmake --build engine/build/a16 --target scanengine_tests
+$ ./engine/build/a16/scanengine_tests          # 529 cases, 0 failures (7 skipped)
+$ ctest --test-dir engine/build/a16 -LE "sim|sim-rtk"   # 5/5 passed
+$ ./gradlew :core:test                         # 370 tests, 0 failures (5 skipped, pre-existing)
+$ ./gradlew :app:testDebugUnitTest             # 36 tests, 0 failures
+$ ./gradlew :app:assembleDebug                 # BUILD SUCCESSFUL
+$ ./gradlew :app:connectedDebugAndroidTest     # b4_test AVD, API 34 — 12 tests, 0 failures (was 6)
+```
+
+* **`:core:test` — 370** (was 343). New: `D6WalkingGaitPlanarityTest` (2),
+  `PoseSectionsTest` (9), `MountTrimProvenanceTest` (6), `D6TimeSyncTest` (6),
+  `ProcessingPolicyTest` (+3).
+* **`:app:testDebugUnitTest` — 36** (was 31). New: `CaptureRound7FieldBugsTest`
+  (5) — the two field bugs, driven through the real `CaptureViewModel`.
+* **Engine — 529 cases** (was 526), **0 failures.** New: the three-arm gait test,
+  the two per-point-time driver tests (each with its own falsifiable control),
+  and the two bundle round-trip tests.
+* **Emulator — 12/12** (was 6). New: `D6TransportReArmTest` (3 — the transport
+  re-arm against the real native engine, pause/resume, and the BOOTTIME chunk
+  stamps) and `DownloadsExporterTest` (3 — the Downloads writer against a real
+  `MediaStore`).
+
+### 11. Explicitly NOT verified
+
+No D6, no Mid-360, no ARCore device. So the numbers above are synthetic
+geometry and state-machine proofs, not field measurements. The three things a
+bench hour would settle, in order:
+
+1. **The real planarity.** The owner's exported scan-008 is the right input:
+   re-resolving it (or simply looking at its walls in Review after this build)
+   against the 2 cm bar is the only measurement that closes §1 on real returns
+   rather than on a gait model.
+2. **The sensor latency** (§4). Two ms is derived, not measured. A corridor and
+   a plumb line settle it in minutes, and the setting exists for exactly that.
+3. **A second capture in one connect** (§3) actually recording, on the cable that
+   produced `scan-009`.
+4. **An export landing in Downloads** (§7b) on the owner's own phone — the
+   emulator proves the writer, not that a Pixel's Files app shows it where
+   expected.
+
+The mount-bracket question ROUND 5 AUDIT §4 flagged — whether the physical
+bracket matches `cadNominal`'s premise — is now much less load-bearing than it
+was, because the re-zero measures the difference and (as of §2) keeps it.

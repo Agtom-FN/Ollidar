@@ -187,7 +187,12 @@ void D6Driver::on_bytes(ByteSpan bytes, TimePoint t) {
                   desired == 0 ? "vendor" : "spec");
   }
 
-  parser_.feed(bytes.data(), bytes.size(), static_cast<std::uint64_t>(t.nanos));
+  // ROUND 7: feed in byte slices, each with its own back-dated arrival time,
+  // so a point's timestamp reflects when its bytes actually came off the wire
+  // rather than when the last byte of a possibly-178 ms chunk did. See
+  // D6Config::time_slice_bytes for why this is the whole of the "walls are not
+  // straight" fix on the timing side.
+  feed_time_sliced(bytes, t.nanos);
   flush_batch(t.nanos);
 
   const d6::Stats st = parser_.stats();
@@ -378,8 +383,14 @@ void D6Driver::on_point(const d6::Point& p) {
   // rig travel at walking pace), which is why this is a per-point callback
   // rather than a per-batch one.
   if (cfg_.profile_sink != nullptr) {
+    // ROUND 7: the POINT's own stamp, not the driver's "time of the current
+    // chunk". With D6Config::time_slice_bytes these differ by up to a whole
+    // chunk (178 ms on the phone's 4 KB reads), and the difference is the
+    // per-revolution shingling the assembler was blamed for.
+    const std::int64_t t_point = static_cast<std::int64_t>(p.t_rx_ns);
     cfg_.profile_sink(p.angle_deg, static_cast<float>(p.distance_mm) * 0.001f, p.intensity,
-                      p.high_reflectivity ? std::uint8_t{1} : std::uint8_t{0}, t_current_ns_,
+                      p.high_reflectivity ? std::uint8_t{1} : std::uint8_t{0},
+                      t_point != 0 ? t_point : t_current_ns_,
                       cfg_.profile_sink_user_data);
   }
 
@@ -400,6 +411,42 @@ void D6Driver::on_point(const d6::Point& p) {
   batch_.push_back(v);
   ++points_in_rotation_;
   if (batch_.size() >= cfg_.max_batch_points) flush_batch(t_current_ns_);
+}
+
+std::int64_t D6Driver::byte_period_ns() const {
+  const std::uint32_t baud = cfg_.serial.baud;
+  const std::uint32_t bits = cfg_.wire_bits_per_byte;
+  if (baud == 0 || bits == 0) return 0;
+  return static_cast<std::int64_t>(bits) * 1'000'000'000LL / static_cast<std::int64_t>(baud);
+}
+
+void D6Driver::feed_time_sliced(ByteSpan bytes, std::int64_t t_chunk_end_ns) {
+  const std::size_t n = bytes.size();
+  const std::int64_t byte_ns = byte_period_ns();
+  const std::size_t slice = cfg_.time_slice_bytes;
+
+  // Legacy path: one stamp for the whole chunk. Kept reachable (slice == 0, or
+  // an unknown baud) so a transport that is not a fixed-rate UART — a replay
+  // that hands over a whole file, a test that pushes one packet — is not
+  // back-dated by a byte rate that does not describe it.
+  if (n == 0 || slice == 0 || byte_ns <= 0 || n <= slice) {
+    t_current_ns_ = t_chunk_end_ns;
+    parser_.feed(bytes.data(), n, static_cast<std::uint64_t>(t_chunk_end_ns));
+    return;
+  }
+
+  for (std::size_t off = 0; off < n; off += slice) {
+    const std::size_t end = (off + slice < n) ? off + slice : n;
+    // The time byte `end - 1` arrived, given that byte `n - 1` arrived at
+    // t_chunk_end_ns and the wire runs at a constant byte rate.
+    const std::int64_t t_slice =
+        t_chunk_end_ns - static_cast<std::int64_t>(n - end) * byte_ns;
+    t_current_ns_ = t_slice;
+    parser_.feed(bytes.data() + off, end - off, static_cast<std::uint64_t>(t_slice));
+  }
+  // Leave the driver's notion of "now" at the chunk's own arrival, so the
+  // watchdog/health bookkeeping below is unchanged by the slicing.
+  t_current_ns_ = t_chunk_end_ns;
 }
 
 void D6Driver::flush_batch(std::int64_t t_ns) {

@@ -780,3 +780,271 @@ TEST_CASE("pushbroom/rejects_a_non_rigid_extrinsic_and_bounds_the_pending_queue"
   CHECK(a.pending() == 100);
   CHECK(a.stats().dropped_overflow == 150);
 }
+
+// ===========================================================================
+// ROUND 7 — the walking-gait wall test
+//
+// Every other case in this file uses a trajectory chosen so the interpolator
+// is EXACT (constant velocity, constant yaw rate), which is right for proving
+// the frame algebra and useless for the question the owner is actually asking:
+// "when I walk through the room it is not a stable scan with straight walls."
+//
+// A person walking is not a constant-velocity rig. They sway laterally and bob
+// vertically at about 2 Hz, and the phone yaws a degree or two with each step.
+// The claim under test is therefore the field claim: **a flat wall, scanned
+// while walking past it at 1 m/s with realistic gait, comes back flat** — and
+// the falsifiable half is that it does NOT come back flat if all the returns
+// of one revolution are paired with a single pose, which is exactly what the
+// D6 path was doing before this round (see
+// d6driver/round7_control_one_stamp_per_chunk_smears_the_whole_read).
+//
+// Nothing here is bespoke geometry: it drives the real ExternalPoseSource and
+// the real D6PushbroomAssembler through their real entry points. Only the
+// stimulus is synthetic.
+// ===========================================================================
+namespace {
+
+// A walking operator, phone held in front, D6 clamped to its back.
+struct GaitTrajectory {
+  double speed = 1.0;          // m/s along world +x
+  double step_hz = 2.0;        // both sway components, per the field brief
+  double lateral_amp = 0.020;  // +/- 2 cm of side-to-side sway
+  double vertical_amp = 0.030; // +/- 3 cm of bob
+  // Trunk/hand yaw over a step is the biggest of the four for a scanner on a
+  // 1-3 m lever arm: gait studies put trunk rotation at a few degrees per
+  // step, and a hand-held phone adds to that rather than damping it. +/- 3 deg
+  // is a walk, not a stumble; the "straight walls" claim has to survive it.
+  double yaw_amp = 0.052;      // +/- 3.0 deg
+  double roll_amp = 0.030;     // +/- 1.7 deg
+
+  void position_at(double t, double out[3]) const {
+    const double w = 2.0 * kPi * step_hz;
+    out[0] = speed * t;
+    out[1] = lateral_amp * std::sin(w * t);
+    out[2] = 1.35 + vertical_amp * std::sin(w * t + 0.9);
+  }
+  Quat orientation_at(double t) const {
+    const double w = 2.0 * kPi * step_hz;
+    const Quat yaw = axis_angle(0, 0, 1, yaw_amp * std::sin(w * t + 0.4));
+    const Quat roll = axis_angle(1, 0, 0, roll_amp * std::sin(w * t + 2.1));
+    return qmul(yaw, roll);
+  }
+};
+
+Pose gait_pose(std::int64_t t_ns, const GaitTrajectory& g) {
+  const double t = static_cast<double>(t_ns) * 1e-9;
+  Pose p;
+  p.t_mono_ns = t_ns;
+  g.position_at(t, p.position);
+  const Quat q = g.orientation_at(t);
+  p.orientation[0] = q.x;
+  p.orientation[1] = q.y;
+  p.orientation[2] = q.z;
+  p.orientation[3] = q.w;
+  p.source = StreamId::kPoseAr;
+  p.quality = PoseQuality::kGood;
+  p.tracking_lost = 0;
+  return p;
+}
+
+// The owner's mount: D6 flat on the BACK of the phone with the scan fan
+// VERTICAL and across the direction of travel. In lidar coordinates the fan is
+// the xy plane (p = d*sin(theta), d*cos(theta), 0), so the mount must send
+// lidar +x -> world +y (across), lidar +y -> world +z (up), lidar +z -> world
+// +x (forward, the spin axis, along the walk).
+void pushbroom_mount(double m[16], Quat* q_out) {
+  const double R[9] = {0, 0, 1,
+                       1, 0, 0,
+                       0, 1, 0};
+  const double t[3] = {0.0, 0.0, 0.0};
+  se3::mat4_from_rt(R, t, m);
+  double q[4];
+  se3::matrix_to_quat(R, q);
+  *q_out = Quat{q[0], q[1], q[2], q[3]};
+}
+
+// Range to a wall at y = wall_y, for a fan return at `angle_deg` taken from
+// the true pose at `t`. Returns < 0 when the ray misses (or hits behind, or
+// out of the D6's range).
+double range_to_wall(const GaitTrajectory& g, const Quat& q_mount, double wall_y, double t,
+                     double angle_deg) {
+  const double a = angle_deg * kPi / 180.0;
+  const double dir_l[3] = {std::sin(a), std::cos(a), 0.0};
+  double dir_p[3];
+  qrot(q_mount, dir_l, dir_p);
+  double dir_w[3];
+  qrot(g.orientation_at(t), dir_p, dir_w);
+  double pos[3];
+  g.position_at(t, pos);
+  if (std::fabs(dir_w[1]) < 1e-6) return -1.0;
+  const double d = (wall_y - pos[1]) / dir_w[1];
+  if (d < 0.4 || d > 8.0) return -1.0;
+  // Keep the wall a wall: floor at 0, ceiling at 2.9 m, and the returns that
+  // would land outside that are the floor/ceiling of a real room, not the wall.
+  const double z = pos[2] + d * dir_w[2];
+  if (z < 0.05 || z > 2.9) return -1.0;
+  return d;
+}
+
+// RMS distance of the points to their own best-fit plane y = a + b*x + c*z.
+// A best-fit plane rather than the known wall so a constant bias (which is a
+// time-offset symptom, not a bending one) does not masquerade as bending;
+// tilt and bow both show up in the residual, which is what "straight walls"
+// means to the eye.
+double plane_fit_rms(const std::vector<PointVertex>& pts) {
+  const std::size_t n = pts.size();
+  double S[3][4] = {};
+  for (const auto& p : pts) {
+    const double b[3] = {1.0, static_cast<double>(p.x), static_cast<double>(p.z)};
+    for (int i = 0; i < 3; ++i) {
+      for (int j = 0; j < 3; ++j) S[i][j] += b[i] * b[j];
+      S[i][3] += b[i] * static_cast<double>(p.y);
+    }
+  }
+  for (int c = 0; c < 3; ++c) {  // Gaussian elimination with partial pivoting
+    int piv = c;
+    for (int r = c + 1; r < 3; ++r) {
+      if (std::fabs(S[r][c]) > std::fabs(S[piv][c])) piv = r;
+    }
+    for (int j = 0; j < 4; ++j) std::swap(S[c][j], S[piv][j]);
+    const double d = S[c][c];
+    if (std::fabs(d) < 1e-12) return 1e9;
+    for (int j = c; j < 4; ++j) S[c][j] /= d;
+    for (int r = 0; r < 3; ++r) {
+      if (r == c) continue;
+      const double f = S[r][c];
+      for (int j = c; j < 4; ++j) S[r][j] -= f * S[c][j];
+    }
+  }
+  const double a = S[0][3], b = S[1][3], c = S[2][3];
+  double sum = 0.0;
+  for (const auto& p : pts) {
+    const double resid = static_cast<double>(p.y) - (a + b * static_cast<double>(p.x) +
+                                                     c * static_cast<double>(p.z));
+    sum += resid * resid;
+  }
+  // y = a + b x + c z  =>  the plane normal is (-b, 1, -c) / |.|, so a vertical
+  // residual is a perpendicular distance once divided by that norm.
+  const double norm = std::sqrt(1.0 + b * b + c * c);
+  return std::sqrt(sum / static_cast<double>(n)) / norm;
+}
+
+// How the returns are timestamped on their way into the assembler.
+//   kPerPoint   — the truth, and what ROUND 7's driver change now produces.
+//   kPerRev     — one stamp per 100 ms revolution (the brief's control).
+//   kPerChunk   — one stamp per 178 ms USB read, which is what the phone
+//                 actually did: 4096 bytes at 230400 8N1, spanning 1.8
+//                 revolutions, every return in it claiming the same instant.
+enum class Pairing { kPerPoint, kPerRev, kPerChunk };
+
+// Walks 4 s past a wall and returns the resolved cloud.
+std::vector<PointVertex> walk_past_a_wall(Pairing pairing, std::size_t* out_kept) {
+  constexpr std::int64_t kChunkNs = 177'778'000LL;  // 4096 bytes at 230400 8N1
+  constexpr double kWallY = 1.5;
+  constexpr int kRevolutions = 40;                  // 4 s at 10 Hz
+  constexpr int kReturnsPerRev = 360;               // the D6's ~1 deg resolution
+  constexpr std::int64_t kRevNs = 100'000'000LL;    // 10 Hz
+  constexpr std::int64_t kPoseNs = 33'333'333LL;    // ARCore at ~30 Hz
+  constexpr std::int64_t kT0 = 1'000'000'000LL;
+
+  const GaitTrajectory g;
+  double mount[16];
+  Quat q_mount;
+  pushbroom_mount(mount, &q_mount);
+
+  ExternalPoseSource poses;
+  // Poses cover the whole walk with a margin either side, so nothing is
+  // dropped for want of a bracket.
+  for (std::int64_t t = kT0 - 2 * kPoseNs;
+       t <= kT0 + kRevolutions * kRevNs + 2 * kPoseNs; t += kPoseNs) {
+    REQUIRE(poses.push_pose(gait_pose(t, g)).ok());
+  }
+
+  PageStore store;
+  D6PushbroomAssembler a(&store);
+  REQUIRE(a.set_mount_extrinsics(mount).ok());
+  a.set_pose_source(&poses);
+
+  std::size_t kept = 0;
+  for (int rev = 0; rev < kRevolutions; ++rev) {
+    const std::int64_t t_rev = kT0 + static_cast<std::int64_t>(rev) * kRevNs;
+    std::vector<ProfilePoint> prof;
+    for (int i = 0; i < kReturnsPerRev; ++i) {
+      const std::int64_t t_pt = t_rev + kRevNs * i / kReturnsPerRev;
+      const double angle = 360.0 * i / kReturnsPerRev;
+      // The RANGE is always measured at the point's true time — that is
+      // physics, and it is the same in both arms. Only the timestamp handed to
+      // the assembler differs.
+      const double d = range_to_wall(g, q_mount, kWallY, static_cast<double>(t_pt) * 1e-9, angle);
+      if (d < 0) continue;
+      ProfilePoint p;
+      switch (pairing) {
+        case Pairing::kPerPoint: p.t_mono_ns = t_pt; break;
+        case Pairing::kPerRev:   p.t_mono_ns = t_rev; break;
+        // Stamp-on-arrival semantics: the whole read is dated when its LAST
+        // byte landed, so a point is dated at the END of the chunk holding it.
+        case Pairing::kPerChunk:
+          p.t_mono_ns = ((t_pt / kChunkNs) + 1) * kChunkNs;
+          break;
+      }
+      p.angle_deg = static_cast<float>(angle);
+      p.range_m = static_cast<float>(d);
+      p.intensity = 120;
+      p.high_reflectivity = 0;
+      prof.push_back(p);
+      ++kept;
+    }
+    if (!prof.empty()) {
+      REQUIRE(a.push_profile(Span<const ProfilePoint>(prof.data(), prof.size())).ok());
+    }
+  }
+  REQUIRE(a.flush().ok());
+  CHECK(a.stats().dropped_no_pose == 0);
+  if (out_kept != nullptr) *out_kept = kept;
+  return read_all(store);
+}
+
+}  // namespace
+
+TEST_CASE("pushbroom/round7_a_walked_wall_is_planar_with_per_point_pose_pairing") {
+  std::size_t kept_pt = 0, kept_rev = 0, kept_chunk = 0;
+  const auto pts_point = walk_past_a_wall(Pairing::kPerPoint, &kept_pt);
+  const auto pts_rev = walk_past_a_wall(Pairing::kPerRev, &kept_rev);
+  const auto pts_chunk = walk_past_a_wall(Pairing::kPerChunk, &kept_chunk);
+
+  // Same stimulus in all three arms — only the timestamps differ.
+  REQUIRE(kept_pt > 2000);
+  REQUIRE(kept_rev == kept_pt);
+  REQUIRE(kept_chunk == kept_pt);
+  REQUIRE(pts_point.size() == kept_pt);
+
+  const double rms_point = plane_fit_rms(pts_point);
+  const double rms_rev = plane_fit_rms(pts_rev);
+  const double rms_chunk = plane_fit_rms(pts_chunk);
+  MESSAGE("plane-fit RMS -- per-point " << rms_point * 100.0 << " cm, per-revolution "
+                                        << rms_rev * 100.0 << " cm, per-178ms-chunk "
+                                        << rms_chunk * 100.0 << " cm");
+
+  // 1. The field bar: a wall you would call straight. What is left here is the
+  //    interpolator's own modelling error against a 2 Hz sinusoid sampled at
+  //    30 Hz — sub-millimetre. The 2 cm is the owner's tolerance, not the
+  //    algorithm's, and pinning the tighter number is what catches a
+  //    regression before a field session does.
+  CHECK(rms_point < 0.02);
+  CHECK(rms_point < 0.004);
+
+  // 2. THE FALSIFIABLE CONTROL. Same wall, same ranges, same assembler, same
+  //    poses — timestamps collapsed to one per 178 ms USB read, which is
+  //    literally what the phone was doing before this round — and the wall
+  //    stops being a wall. If this ever drops under the bar, the pairing fix
+  //    has become untestable and this file is lying about proving anything.
+  CHECK(rms_chunk > 0.02);
+
+  // 3. The brief's own control, one pose per 10 Hz revolution: milder than the
+  //    chunk case (a revolution is 100 ms, not 178) but unambiguously worse
+  //    than per-point pairing. Asserted as a ratio rather than an absolute so
+  //    it stays meaningful if the gait model is ever made more or less
+  //    aggressive.
+  CHECK(rms_rev > 4.0 * rms_point);
+  CHECK(rms_chunk > rms_rev);
+}

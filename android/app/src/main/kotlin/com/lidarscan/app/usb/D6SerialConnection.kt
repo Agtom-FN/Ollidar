@@ -29,6 +29,36 @@ class D6SerialConnection(
     private val forwarding = AtomicBoolean(true)
     private val onBytes = AtomicReference<((ByteBuffer, Int, Long) -> Unit)?>(null)
 
+    /**
+     * ROUND 7: the constant transport latency to subtract from each chunk's
+     * arrival stamp, in nanoseconds. See [setSensorLatencyMillis].
+     */
+    private val sensorLatencyNs = java.util.concurrent.atomic.AtomicLong(0L)
+
+    /** True while bytes are being forwarded into the engine — the pause/resume latch, readable. */
+    val isForwarding: Boolean get() = forwarding.get()
+
+    /**
+     * ROUND 7 (time-sync): the constant delay between a byte reaching the
+     * CH340's FIFO and this thread reading the clock, in milliseconds.
+     *
+     * The **variable** part of the delay — a chunk of bytes taking up to 178 ms
+     * to arrive and then being handed over all at once — is not corrected here:
+     * it is corrected exactly, in the engine, by back-dating each byte from the
+     * known baud rate (`D6Config::time_slice_bytes`). What is left is a
+     * genuinely constant offset, and a constant offset is a rigid translation
+     * of the whole cloud along the walk: 20 ms at 1 m/s is 2 cm, and it bends
+     * corners because the *rotation* is also read 20 ms late.
+     *
+     * There is no way to measure this without the hardware, so the default is
+     * derived rather than invented — see
+     * [com.lidarscan.core.capture.D6TimeSync.DEFAULT_SENSOR_LATENCY_MS] — and it
+     * is a setting because a field measurement beats any derivation.
+     */
+    fun setSensorLatencyMillis(millis: Int) {
+        sensorLatencyNs.set(millis.toLong() * 1_000_000L)
+    }
+
     /** The engine's write-command callback target (D6 start/stop bytes, `AA 55 F0 0F` etc.). */
     fun write(data: ByteArray): Int = try {
         port.write(data, WRITE_TIMEOUT_MS)
@@ -51,11 +81,25 @@ class D6SerialConnection(
                 } catch (e: IOException) {
                     break // device gone — D6ConnectController's onDeviceLost() path handles the state transition
                 }
+                // ROUND 7: sample the clock the instant `read` returns, before
+                // the copy and before the JNI hop.
+                //
+                // This used to pass 0, i.e. "engine, stamp it on arrival" —
+                // which meant the stamp was taken after this thread had copied
+                // 4 KB, crossed into native code and taken a lock, and it made
+                // the chunk's arrival time a function of how busy the phone
+                // was. `SystemClock.elapsedRealtimeNanos()` is CLOCK_BOOTTIME,
+                // which is exactly the clock the engine's own `SteadyClock`
+                // reads on Android AND the clock ARCore's `Frame.getTimestamp()`
+                // is in — one domain, no conversion, nothing to get wrong (the
+                // A4 min-delay estimator is deliberately not on this path:
+                // `TimeSync::stream_has_device_clock(kLidarD6)` is false because
+                // the D6 has no device clock to estimate an offset against).
+                val tArrivalNs = android.os.SystemClock.elapsedRealtimeNanos() - sensorLatencyNs.get()
                 if (n > 0 && forwarding.get()) {
                     direct.clear()
                     direct.put(readBuf, 0, n)
-                    // t_mono_ns = 0 => "stamp on arrival" (scanengine_c.h's push_serial_bytes contract).
-                    onBytes.get()?.invoke(direct, n, 0L)
+                    onBytes.get()?.invoke(direct, n, tArrivalNs)
                 }
             }
         }, "d6-usb-reader-$devicePath")

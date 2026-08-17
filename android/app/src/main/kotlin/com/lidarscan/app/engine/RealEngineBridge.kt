@@ -249,6 +249,33 @@ class RealEngineBridge(
             // B5: `profile` is now the PROJECT's, not the hardcoded
             // "quickscan" B2 had to pass — see EngineBridge.startCapture's
             // KDoc and CaptureDefaults.engineProfileString().
+            //
+            // ── ROUND 7 (field bug: "scan-009 sealed points=0 elapsedMs=0") ──
+            // **Re-arm the transport before the session starts.**
+            //
+            // [pauseCapture] and [stopCapture] both implement their half of the
+            // session by telling the D6 reader thread to stop forwarding bytes
+            // into `push_serial_bytes` — the C ABI has no pause/resume, so that
+            // is where a pause lives. Only [resumeCapture] ever turned
+            // forwarding back ON, and it is reachable only from the Pause
+            // button.
+            //
+            // So the FIRST Stop of a connect session latched `forwarding =
+            // false` on the open [com.lidarscan.app.usb.D6SerialConnection] and
+            // nothing ever cleared it: the second Start created a healthy
+            // `.lscan`, started a healthy engine session, got `SCAN_OK` back —
+            // and then received **not one byte** for the rest of the connect,
+            // because the reader thread was still dropping every chunk. Zero
+            // packets means zero POINTS_AVAILABLE events, which means
+            // `CaptureStats` never fires, which is exactly the field log's
+            // `sealed OK … points=0 elapsedMs=0` two minutes after a
+            // 216,653-point scan on the same cable.
+            //
+            // Neither hardware-free path could see it: `ReplayEngineBridge` has
+            // no serial connection and `FakeEngineBridge` has no transport at
+            // all. It is real-USB state, and it is now re-armed on every start
+            // rather than only on a Pause→Resume.
+            activeConnection()?.resumeForwarding()
             val err = ScanEngineNative.nativeStartSession(
                 engineHandle, projectDirectory, profile, true, liveSlam,
             )

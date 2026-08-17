@@ -44,6 +44,15 @@ class AppContainer(context: Context) {
 
     private val appContext = context.applicationContext
 
+    /**
+     * ROUND 7: the application context, for the one class that needs it outside
+     * a composition — [com.lidarscan.app.share.DownloadsExporter], which writes
+     * finished exports into the shared Downloads collection. Exposed rather than
+     * threaded through every ViewModel constructor because it is the same single
+     * application context those ViewModels would be handed anyway.
+     */
+    val applicationContext: Context get() = appContext
+
     private val containerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     /**
@@ -106,6 +115,22 @@ class AppContainer(context: Context) {
      * inherit a preset chosen for stronger hardware.
      */
     val deviceProfileKey: String = "${android.os.Build.MANUFACTURER}/${android.os.Build.MODEL}/$deviceTier"
+
+    /**
+     * ROUND 7 (field bug 1): a fresh id for this app process.
+     *
+     * The persisted mount trim carries the run id it was captured in
+     * ([com.lidarscan.core.calib.StoredMountTrim]), so the capture panel can
+     * tell "you set this two minutes ago on this screen" from "this came back
+     * across an app restart" — the first is a confirmation, the second is worth
+     * a sentence, and neither is a reason to throw the trim away, which is what
+     * 0.3.0 did.
+     *
+     * A random id rather than a boot timestamp: a process can be killed and
+     * restarted inside one boot (exactly what a walkthrough with the screen off
+     * invites), and that is a restart the operator should hear about.
+     */
+    val appRunId: String = java.util.UUID.randomUUID().toString()
 
     /** D6 USB device discovery, permission flow and open-connection registry (B2). */
     val d6UsbConnectionRegistry = D6UsbConnectionRegistry(appContext)
@@ -174,7 +199,12 @@ class AppContainer(context: Context) {
      * the Settings screen says so.
      */
     val engineBridge: EngineBridge = run {
-        val persistedUseFake = runBlocking { settingsRepository.settings.first().useFakeEngine }
+        val persisted = runBlocking { settingsRepository.settings.first() }
+        // ROUND 7 (time-sync): the D6 transport latency is a property of this
+        // phone's USB stack, so it is applied to the registry before any
+        // connection can be opened rather than at connect time.
+        d6UsbConnectionRegistry.setSensorLatencyMillis(persisted.d6SensorLatencyMs)
+        val persistedUseFake = persisted.useFakeEngine
         val forceFake = BuildConfig.FORCE_FAKE_ENGINE || persistedUseFake
         val bridge: EngineBridge = if (!forceFake && ScanEngineNative.isAvailable) {
             RealEngineBridge(d6UsbConnectionRegistry, containerScope, livePageStoreSizing)

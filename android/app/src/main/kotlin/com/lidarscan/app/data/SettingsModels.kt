@@ -87,4 +87,14 @@ data class AppSettings(
      * actually exists.
      */
     val scanSeriesCounter: Int = 0,
+    /**
+     * ROUND 7 (time-sync): the constant transport delay subtracted from every
+     * D6 byte-chunk arrival stamp, in milliseconds.
+     *
+     * Device-level, like [ntrip] and [useFakeEngine]: it describes a phone's USB
+     * stack and a cable, not a project. See
+     * [com.lidarscan.core.capture.D6TimeSync] for the whole derivation,
+     * including why the default is 2 and why it is a setting at all.
+     */
+    val d6SensorLatencyMs: Int = com.lidarscan.core.capture.D6TimeSync.DEFAULT_SENSOR_LATENCY_MS,
 )
