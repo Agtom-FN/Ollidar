@@ -147,3 +147,11 @@ Verified headless via CDP: **207 assertions green** — 46 round-4, plus round-1
 Diagnostics row and then to the resolver itself). Zero console errors, zero uncaught exceptions,
 **90 distinct actions audited** across every screen × Capture settings open / Diagnostics open /
 both closed × keyframes on / off. Screenshots: `redesign-exports/fix-r4-*.png`.
+
+## 2026-08-17 — round 4 (field-driven)
+5. **Auto-detection required** (owner, after real-hardware GUI session): the apps must
+   auto-detect device settings — Mid-360 via broadcast heartbeat (lidar IP/SN/persisted
+   host revealed; proven manually in the field session), D6 via serial protocol probe,
+   UM982 via port+baud sweep. Manual IP entry defeated the GUI on first contact.
+6. **Single-instance guard** (desktop): a leftover instance holding UDP ports makes the
+   next launch's SDK init fail with an opaque I/O error.
