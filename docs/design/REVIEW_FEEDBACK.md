@@ -180,3 +180,5 @@ both closed × keyframes on / off. Screenshots: `redesign-exports/fix-r4-*.png`.
     and are saved with the project as its default view.
 15. Processing & Merge TABS removed; features fold into Projects: 1 selected → Process +
     Export beside preview; 2+ selected → Merge unlocks. Same engines, fewer tabs.
+
+**Round 5 + 5.1 APPROVED by owner 2026-08-17 ("good to go") — items 7–15 are the build contract for the capture-flow redesign.**
