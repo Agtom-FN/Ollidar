@@ -17,6 +17,7 @@ import com.lidarscan.app.engine.ReplayEngineBridge
 import com.lidarscan.app.engine.ScanEngineNative
 import com.lidarscan.app.merge.MergeRepository
 import com.lidarscan.app.net.EthernetMonitor
+import com.lidarscan.app.net.UdpMid360Detector
 import com.lidarscan.app.processing.ProcessingRepository
 import com.lidarscan.app.rtk.RtkManager
 import com.lidarscan.app.usb.D6UsbConnectionRegistry
@@ -71,6 +72,15 @@ class AppContainer(context: Context) {
      * while the user is in the projects list.
      */
     val ethernetMonitor = EthernetMonitor(appContext)
+
+    /**
+     * AUTO-DETECT: listens for the Mid-360's own heartbeat broadcast (port
+     * 56201) so the connect wizard's first step can find a device with no
+     * addresses typed in yet. A supplier lambda (not `ethernetMonitor.state
+     * .value.network` captured once) because the Ethernet `Network` can
+     * appear after this container is built — see `UdpMid360Detector`'s doc.
+     */
+    val mid360HeartbeatDetector = UdpMid360Detector { ethernetMonitor.state.value.network }
 
     init {
         // B3: MUST run before any Mid-360 device is added. The engine's SDK2

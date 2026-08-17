@@ -205,7 +205,9 @@ TEST_CASE("engine/create_starts_idle_and_reports_a_version") {
   // 5: INT-FINAL's Android capture seam (scan_device_config's Mid-360 half
   //    grew the backend, the two pre-bound fds, the ports and the filter) plus
   //    scan_engine_set_crs() and scan_engine_mid360_stats().
-  CHECK(kEngineAbiVersion == 5);
+  // 6: A16's discovery surface (scan_discover_mid360, scan_host_check, the two
+  //    serial probes, scan_enumerate_serial) and the single-instance guard.
+  CHECK(kEngineAbiVersion == 6);
 }
 
 TEST_CASE("engine/session_transitions_are_enforced_and_announced") {

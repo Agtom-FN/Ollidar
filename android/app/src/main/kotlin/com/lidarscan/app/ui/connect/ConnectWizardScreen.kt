@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
@@ -62,11 +63,13 @@ fun ConnectWizardRoute(
     val drivers by viewModel.drivers.collectAsStateWithLifecycle()
     val wizardState by viewModel.wizardState.collectAsStateWithLifecycle()
     val health by viewModel.deviceHealth.collectAsStateWithLifecycle()
+    val autoProbingDevicePath by viewModel.autoProbingDevicePath.collectAsStateWithLifecycle()
 
     ConnectWizardScreen(
         drivers = drivers,
         wizardState = wizardState,
         health = health,
+        autoProbingDevicePath = autoProbingDevicePath,
         onRefresh = viewModel::refreshDevices,
         onConnect = viewModel::connect,
         onRetry = viewModel::retry,
@@ -92,6 +95,11 @@ fun ConnectWizardScreen(
     // than growing a tab. Defaulted so existing call sites/tests do not have
     // to change.
     onOpenMid360: () -> Unit = {},
+    // AUTO-DETECT: the device path currently being auto-probed for the D6
+    // `AA 55` signature (null when nothing is being probed) — see
+    // `ConnectWizardViewModel`'s class doc. Defaulted so existing call sites
+    // do not have to change.
+    autoProbingDevicePath: String? = null,
 ) {
     Scaffold(
         topBar = {
@@ -137,7 +145,12 @@ fun ConnectWizardScreen(
                     FailedCard(wizardState) { onRetry(wizardState.devicePath) }
                 }
                 ConnectWizardState.NoDevice -> {
-                    DeviceList(drivers = drivers, onRefresh = onRefresh, onConnect = onConnect)
+                    DeviceList(
+                        drivers = drivers,
+                        onRefresh = onRefresh,
+                        onConnect = onConnect,
+                        autoProbingDevicePath = autoProbingDevicePath,
+                    )
                 }
             }
         }
@@ -149,6 +162,7 @@ private fun DeviceList(
     drivers: List<UsbSerialDriver>,
     onRefresh: () -> Unit,
     onConnect: (UsbSerialDriver) -> Unit,
+    autoProbingDevicePath: String? = null,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -166,8 +180,8 @@ private fun DeviceList(
                 Text("No serial device found.", style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "Plug in the D6 over USB-C OTG (CH340 adapter) and tap Rescan, " +
-                        "or attaching it will bring you back here automatically.",
+                    "Plug in the D6 over USB-C OTG (CH340 adapter) — it will be checked and connected " +
+                        "automatically if it is recognised, or tap Rescan.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -176,7 +190,11 @@ private fun DeviceList(
     } else {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             drivers.forEach { driver ->
-                Card(modifier = Modifier.fillMaxWidth(), onClick = { onConnect(driver) }) {
+                val probing = driver.device.deviceName == autoProbingDevicePath
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = { if (!probing) onConnect(driver) },
+                ) {
                     Row(
                         modifier = Modifier.padding(16.dp).fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -186,12 +204,20 @@ private fun DeviceList(
                         Column(Modifier.weight(1f).padding(start = 12.dp)) {
                             Text(driver.device.deviceName, style = MaterialTheme.typography.bodyMedium)
                             Text(
-                                "VID ${driver.device.vendorId} / PID ${driver.device.productId}",
+                                if (probing) {
+                                    "Checking for a D6 signature…"
+                                } else {
+                                    "VID ${driver.device.vendorId} / PID ${driver.device.productId}"
+                                },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        Button(onClick = { onConnect(driver) }) { Text("Connect") }
+                        if (probing) {
+                            CircularProgressIndicator(Modifier.height(20.dp).width(20.dp))
+                        } else {
+                            Button(onClick = { onConnect(driver) }) { Text("Connect") }
+                        }
                     }
                 }
             }
@@ -206,7 +232,7 @@ private fun ConnectedCard(devicePath: String, onDone: () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Color(0xFF2E7D32))
                 Spacer(Modifier.height(0.dp))
-                Text("  Connected — $devicePath", style = MaterialTheme.typography.titleMedium)
+                Text("  COIN-D6 detected — $devicePath", style = MaterialTheme.typography.titleMedium)
             }
             Spacer(Modifier.height(12.dp))
             Button(onClick = onDone, modifier = Modifier.fillMaxWidth()) { Text("Go to Capture") }

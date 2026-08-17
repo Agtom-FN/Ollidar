@@ -56,4 +56,19 @@ data class AppSettings(
      * a per-job choice.
      */
     val allowPoorSyncColorize: Boolean = false,
+    /**
+     * AUTO-DETECT (capture defaults): the addresses of the last Mid-360
+     * successfully identified by the connect wizard's auto-detect step —
+     * device-level, not per-project, matching how [ntrip] and
+     * [useFakeEngine] are scoped. A fresh Mid-360 connect wizard (no
+     * per-project `manifest.json` value yet — see
+     * `com.lidarscan.app.ui.connect.Mid360ConnectViewModel`) prefers these
+     * over the bare `192.168.1.100`/`192.168.1.5` factory-default constants
+     * in [com.lidarscan.core.net.Mid360Settings] whenever they are set: a
+     * rig that has been auto-detected once is far more likely to still be
+     * wired the same way than to match the factory default.
+     */
+    val lastDetectedMid360LidarIp: String? = null,
+    val lastDetectedMid360HostIp: String? = null,
+    val lastDetectedMid360SerialNumber: String? = null,
 )

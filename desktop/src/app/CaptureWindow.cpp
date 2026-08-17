@@ -1,11 +1,14 @@
 #include "app/CaptureWindow.h"
 
 #include <QCheckBox>
+#include <QClipboard>
 #include <QComboBox>
 #include <QDateTime>
+#include <QDialog>
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QGroupBox>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -15,14 +18,18 @@
 #include <QSerialPort>
 #include <QSerialPortInfo>
 #include <QSettings>
+#include <QShowEvent>
 #include <QSpinBox>
+#include <QStyle>
 #include <QSysInfo>
 #include <QTabWidget>
+#include <QThread>
 #include <QTimer>
 #include <QVBoxLayout>
 
 #include <algorithm>
 
+#include "app/DeviceDiscovery.h"
 #include "app/EngineHost.h"
 #include "ui/RecordCluster.h"
 #include "ui/Theme.h"
@@ -42,6 +49,15 @@ QString kPassStyle() {
 }
 QString kFailStyle() {
   return QString("color:%1;font-weight:600;").arg(theme::css(theme::bad()));
+}
+
+// A dynamic property change (tone=good/warn/bad, the ember accent, …) needs
+// an explicit re-polish once the widget has already been shown once — QSS
+// property selectors are matched at polish time (RecordCluster.cpp already
+// established this pattern for the badge/accent properties this file reuses).
+void repolish(QWidget* w) {
+  w->style()->unpolish(w);
+  w->style()->polish(w);
 }
 
 QString humanBytesLocal(quint64 b) {
@@ -83,7 +99,22 @@ CaptureWindow::~CaptureWindow() {
 void CaptureWindow::setProjectDir(const QString& dir) {
   project_dir_ = dir;
   if (project_edit_) project_edit_->setText(dir);
+  // A different project may have different "never configured" status; let
+  // showEvent() re-decide whether the silent auto-run applies to it.
+  auto_detect_prompted_for_project_ = false;
   loadMid360Settings();
+}
+
+void CaptureWindow::showEvent(QShowEvent* event) {
+  QDialog::showEvent(event);
+  // Silent, once per project, and only when nothing has ever been saved for
+  // it — see had_saved_mid360_settings_'s comment in the header. Never fires
+  // mid-capture (phase_ != kIdle) or while a pass is already running.
+  if (!auto_detect_prompted_for_project_ && phase_ == Phase::kIdle &&
+      !had_saved_mid360_settings_ && !discovery_in_flight_) {
+    auto_detect_prompted_for_project_ = true;
+    startDiscovery(/*silent=*/true);
+  }
 }
 
 void CaptureWindow::buildUi() {
@@ -109,6 +140,12 @@ void CaptureWindow::buildUi() {
     ch340_hint_->setWordWrap(true);
     ch340_hint_->setStyleSheet(QString("color:%1;").arg(theme::css(theme::good())));
     f->addRow(ch340_hint_);
+
+    d6_auto_tag_ = new QLabel("auto-detected");
+    d6_auto_tag_->setProperty("badge", true);
+    d6_auto_tag_->setProperty("tone", "ember");
+    d6_auto_tag_->setVisible(false);
+    f->addRow(d6_auto_tag_);
 
     baud_ = new QSpinBox();
     baud_->setRange(9600, 3000000);
@@ -173,6 +210,46 @@ void CaptureWindow::buildUi() {
     f->addRow(mid_hint_);
     tabs_->addTab(w, "Livox Mid-360 (Ethernet)");
   }
+
+  // --- RTK / UM982 tab ---
+  //
+  // Auto-detect prefill only (see the field comment on um982_port_ in the
+  // header): there is no engine-side wiring on this desktop capture path yet
+  // that opens a GNSS serial port the way openDeviceForTab() opens D6/Mid-360
+  // — GnssSource (engine/include/scanengine/gnss/gnss_source.h) is fed NMEA
+  // bytes already in hand, it does not own a port. This tab exists so
+  // ProbeSerialUm982()'s port+baud+has_heading hit (docs/design/
+  // REVIEW_FEEDBACK.md round 4 item 5: "UM982 via port+baud sweep") has
+  // somewhere honest to land instead of being silently dropped, and so a
+  // manual auto-detect run confirms what the field session already found by
+  // hand (captures/FIELD_SESSION_2026-08-17.md: /dev/cu.usbserial-21140 @
+  // 230400, GPTHS present -> dual-antenna heading enabled).
+  {
+    auto* w = new QWidget();
+    auto* f = new QFormLayout(w);
+    um982_port_ = new QComboBox();
+    um982_port_->setEditable(true);  // the port may not be enumerated yet (probe result only)
+    f->addRow("Serial port", um982_port_);
+    um982_baud_ = new QSpinBox();
+    um982_baud_->setRange(4800, 921600);
+    um982_baud_->setValue(115200);  // Unicore factory default; the field unit needed 230400
+    f->addRow("Baud", um982_baud_);
+    um982_heading_ = new QLabel("Dual-antenna heading: unknown (run Auto-detect)");
+    um982_heading_->setWordWrap(true);
+    f->addRow(um982_heading_);
+    um982_hint_ = new QLabel(
+        "Not yet wired into Record/Test below — this tab only holds what "
+        "Auto-detect finds (port, baud, whether the firmware reports a dual-"
+        "antenna heading solution) so it is not lost. See NOTES.md.");
+    um982_hint_->setWordWrap(true);
+    um982_hint_->setProperty("role", "hint");
+    f->addRow(um982_hint_);
+    tabs_->addTab(w, "RTK (UM982)");
+  }
+
+  // Prominent, above every per-sensor tab (owner, field session: "Manual IP
+  // entry defeated the GUI on first contact" — this is the fix).
+  buildAutoDetectSection(v);
 
   v->addWidget(tabs_);
 
@@ -267,12 +344,20 @@ void CaptureWindow::buildUi() {
   v->addWidget(record_cluster_);
 
   // Switching transport re-gates Start: a self-test result for the D6 says
-  // nothing about the Mid-360 link and vice versa.
+  // nothing about the Mid-360 link and vice versa. Index 2 (RTK/UM982) has no
+  // Test/Record wiring at all (see the RTK tab's own comment in buildUi()),
+  // so the whole cluster is disabled rather than gated there.
   connect(tabs_, &QTabWidget::currentChanged, this, [this](int idx) {
     if (phase_ != Phase::kIdle) return;
     last_self_test_failed_ = false;
     self_test_passed_ = false;
-    record_cluster_->setTransportIsD6(idx == 0);
+    const bool capturable = idx != 2;
+    record_cluster_->setEnabled(capturable);
+    record_cluster_->setToolTip(
+        capturable ? QString()
+                   : "RTK/UM982 capture is not wired into this window yet — "
+                     "Auto-detect only fills in the port/baud above.");
+    if (capturable) record_cluster_->setTransportIsD6(idx == 0);
     updateRecordCluster();
   });
 
@@ -462,6 +547,10 @@ void CaptureWindow::accumulateRecorderStats() {
 
 void CaptureWindow::onTestDevice() {
   if (phase_ != Phase::kIdle) return;
+  if (tabs_->currentIndex() == 2) {
+    log("RTK/UM982 capture is not wired into this window yet — see the RTK tab's hint");
+    return;
+  }
   if (!host_ || !host_->ok()) {
     log("engine unavailable");
     return;
@@ -751,6 +840,10 @@ void CaptureWindow::loadMid360Settings() {
   QString key = project_dir_;
   key.replace('/', '_').replace('\\', '_').replace(':', '_');
   s.beginGroup("mid360/" + key);
+  // "Never configured" (the silent auto-run's gate, see showEvent()) means
+  // this project has no saved Mid-360 host IP at all — i.e. host_ip_/
+  // lidar_ip_ below are about to stay at their hard-coded placeholder text.
+  had_saved_mid360_settings_ = s.contains("hostIp");
   host_ip_->setText(s.value("hostIp", host_ip_->text()).toString());
   lidar_ip_->setText(s.value("lidarIp", lidar_ip_->text()).toString());
   point_port_->setValue(s.value("pointPort", point_port_->value()).toInt());
@@ -788,6 +881,337 @@ void CaptureWindow::triggerRecordForCli(const QString& projectDir) {
 void CaptureWindow::triggerPauseResumeForCli() { onPauseResume(); }
 
 void CaptureWindow::triggerStopForCli() { onStop(); }
+
+void CaptureWindow::triggerAutoDetectForCli() { onAutoDetectClicked(); }
+
+// --- Auto-detect ------------------------------------------------------------
+//
+// docs/design/REVIEW_FEEDBACK.md, 2026-08-17 round 4 item 5 (the owner, after
+// the first real-hardware GUI session): "the apps must auto-detect device
+// settings — Mid-360 via broadcast heartbeat (lidar IP/SN/persisted host
+// revealed; proven manually in the field session), D6 via serial protocol
+// probe, UM982 via port+baud sweep. Manual IP entry defeated the GUI on first
+// contact." captures/FIELD_SESSION_2026-08-17.md is that field session; its
+// numbers (SN MCP7K0034759, fw 35010108, lidar 192.168.1.159, persisted host
+// 192.168.1.5, UM982 on /dev/cu.usbserial-21140 @ 230400 with GPTHS present)
+// are exactly the shape of the beacon/probe data this section renders.
+
+void CaptureWindow::buildAutoDetectSection(QVBoxLayout* v) {
+  auto_detect_btn_ = new QPushButton("Auto-detect devices");
+  auto_detect_btn_->setProperty("accent", "ember");
+  auto_detect_btn_->setCursor(Qt::PointingHandCursor);
+  auto_detect_btn_->setMinimumHeight(40);
+  auto_detect_btn_->setToolTip(
+      "Listens for a Mid-360's heartbeat and sweeps serial ports for a D6 or a "
+      "UM982 (~6 s). Fills in whatever it finds; anything it does not see is "
+      "reported with a likely cause.");
+  connect(auto_detect_btn_, &QPushButton::clicked, this, &CaptureWindow::onAutoDetectClicked);
+  v->addWidget(auto_detect_btn_);
+
+  // Persistent summary panel — stays after the (transient, manual-run-only)
+  // progress dialog closes, and is what the silent on-open run's result
+  // shows up as (there being no dialog for that path at all).
+  auto_detect_panel_ = new QWidget();
+  auto* pv = new QVBoxLayout(auto_detect_panel_);
+  pv->setContentsMargins(2, 4, 2, 10);
+  pv->setSpacing(3);
+
+  auto_detect_mid360_line_ = new QLabel();
+  auto_detect_mid360_line_->setWordWrap(true);
+  pv->addWidget(auto_detect_mid360_line_);
+
+  auto_detect_fix_line_ = new QLabel();
+  auto_detect_fix_line_->setWordWrap(true);
+  auto_detect_fix_line_->setTextFormat(Qt::PlainText);
+  auto_detect_fix_line_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  auto_detect_fix_line_->setVisible(false);
+  pv->addWidget(auto_detect_fix_line_);
+
+  auto_detect_copy_btn_ = new QPushButton("Copy fix command");
+  auto_detect_copy_btn_->setVisible(false);
+  auto_detect_copy_btn_->setCursor(Qt::PointingHandCursor);
+  connect(auto_detect_copy_btn_, &QPushButton::clicked, this, [this] {
+    QGuiApplication::clipboard()->setText(auto_detect_copy_payload_);
+    log("copied to clipboard: " + auto_detect_copy_payload_);
+  });
+  pv->addWidget(auto_detect_copy_btn_, 0, Qt::AlignLeft);
+
+  auto_detect_d6_line_ = new QLabel();
+  auto_detect_d6_line_->setWordWrap(true);
+  pv->addWidget(auto_detect_d6_line_);
+
+  auto_detect_um982_line_ = new QLabel();
+  auto_detect_um982_line_->setWordWrap(true);
+  pv->addWidget(auto_detect_um982_line_);
+
+  auto_detect_panel_->setVisible(false);  // nothing to show before the first pass
+  v->addWidget(auto_detect_panel_);
+}
+
+void CaptureWindow::onAutoDetectClicked() {
+  if (discovery_in_flight_) return;
+  startDiscovery(/*silent=*/false);
+}
+
+void CaptureWindow::startDiscovery(bool silent) {
+  if (discovery_in_flight_) return;
+  discovery_in_flight_ = true;
+  auto_detect_btn_->setEnabled(false);
+
+  if (!silent) {
+    auto_detect_progress_ = new QDialog(this);
+    auto_detect_progress_->setWindowTitle("Auto-detect devices");
+    auto_detect_progress_->setModal(true);
+    auto_detect_progress_->setMinimumWidth(380);
+    auto* dv = new QVBoxLayout(auto_detect_progress_);
+    auto_detect_progress_label_ = new QLabel("Listening for Mid-360 heartbeat…");
+    auto_detect_progress_label_->setWordWrap(true);
+    auto* bar = new QProgressBar(auto_detect_progress_);
+    bar->setRange(0, 0);  // indeterminate: the two phases run for different real time
+    dv->addWidget(auto_detect_progress_label_);
+    dv->addWidget(bar);
+    auto_detect_progress_->show();
+  }
+
+  // Mid-360 heartbeat is ~1 Hz (spikes/s2-mid360-sim REPORT.md); 3 s gives it
+  // several windows. discovery.h's ProbeSerialD6/Um982 spend `per_port_ms`
+  // PER ENUMERATED PORT, trying each in turn until one identifies, so the
+  // serial phase's total time scales with how many serial devices this
+  // machine has — 700 ms keeps a typical 2-4-port machine near the "~6 s"
+  // total the task asks for (3 s + up to ~2.8 s D6 + up to ~2.8 s UM982 in
+  // the worst no-match case); a machine with many more ports will simply
+  // take longer, which the indeterminate progress bar tolerates fine.
+  // NO parent on the QThread — deliberately. A parented child gets
+  // synchronously `delete`d by Qt's normal ownership teardown the moment
+  // CaptureWindow (parented under MainWindow) is destroyed, which for a
+  // QThread whose run() is still blocking in a scanengine::discovery call is
+  // exactly "Destroyed while thread is still running" -> abort(). Measured,
+  // not theoretical: an early version of this code parented the thread to
+  // `this` and reliably crashed on quit whenever a second discovery pass was
+  // still in flight (--auto-detect-selftest against a live source races the
+  // silent on-open pass into a second, explicit one — see main.cpp's evidence
+  // hook — and a 6 s --quit-after can land mid-pass). Leaving it unparented
+  // means the only thing CaptureWindow's destruction touches is the `this`-
+  // context lambda below, which Qt auto-disconnects on destruction, same as
+  // any other signal/slot connection — the thread and worker are on their
+  // own self-contained cleanup chain (next comment) and simply finish
+  // unobserved if nobody is left to hear about it.
+  auto* thread = new QThread();
+  discovery_thread_ = thread;
+  auto* worker = new DiscoveryWorker(3000, 700);
+  worker->moveToThread(thread);
+  connect(thread, &QThread::started, worker, &DiscoveryWorker::run);
+  connect(worker, &DiscoveryWorker::phase, this, [this](const QString& label) {
+    if (auto_detect_progress_label_) auto_detect_progress_label_->setText(label);
+  });
+  connect(worker, &DiscoveryWorker::finished, this,
+          [this, silent](DiscoveryResult r) { handleDiscoveryFinished(r, silent); });
+  // The canonical Qt moveToThread cleanup chain: run() finishing asks the
+  // thread to quit, and each object is deleted once IT stops needing to
+  // exist, from the thread it lives in. This chain does not depend on
+  // CaptureWindow at all (unlike the lambda above, which is connected with
+  // `this` as context and so is automatically dropped if CaptureWindow is
+  // destroyed first), so a discovery pass in flight at app shutdown cleans
+  // itself up rather than being blocked on or leaked.
+  connect(worker, &DiscoveryWorker::finished, thread, &QThread::quit);
+  connect(worker, &DiscoveryWorker::finished, worker, &QObject::deleteLater);
+  connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+  thread->start();
+}
+
+void CaptureWindow::handleDiscoveryFinished(const DiscoveryResult& r, bool silent) {
+  discovery_in_flight_ = false;
+  if (discovery_thread_) discovery_thread_ = nullptr;  // it is finishing itself off; see startDiscovery()
+  if (auto_detect_btn_) auto_detect_btn_->setEnabled(true);
+  if (auto_detect_progress_) {
+    auto_detect_progress_->close();
+    auto_detect_progress_->deleteLater();
+    auto_detect_progress_ = nullptr;
+    auto_detect_progress_label_ = nullptr;
+  }
+
+  applyMid360Result(r, silent);
+  applyD6Result(r, silent);
+  applyUm982Result(r, silent);
+  if (auto_detect_panel_) auto_detect_panel_->setVisible(true);
+
+  log(QString("auto-detect%1: Mid-360 %2, D6 %3, UM982 %4")
+          .arg(silent ? " (silent, on open)" : "")
+          .arg(r.mid360.found ? "found" : "not seen")
+          .arg(r.d6.found ? "found" : "not seen")
+          .arg(r.um982.found ? "found" : "not seen"));
+  Q_EMIT autoDetectFinished(r.mid360.found, r.d6.found, r.um982.found);
+}
+
+void CaptureWindow::applyMid360Result(const DiscoveryResult& r, bool silent) {
+  const auto& m = r.mid360;
+  auto_detect_fix_line_->setVisible(false);
+  auto_detect_copy_btn_->setVisible(false);
+  auto_detect_copy_payload_.clear();
+
+  if (!m.found) {
+    const QString why = r.mid360_error.isEmpty() ? QStringLiteral("no heartbeat heard")
+                                                  : r.mid360_error;
+    auto_detect_mid360_line_->setText(
+        QString("Mid-360: not seen (%1) — check power, the Ethernet cable, and that this "
+                "Mac has an address on the lidar's network.")
+            .arg(why));
+    auto_detect_mid360_line_->setProperty("tone", "warn");
+    repolish(auto_detect_mid360_line_);
+    return;
+  }
+
+  // Confirmation line — SN + firmware — is shown whenever a beacon was
+  // heard, silent run or not: it is informational, never a field write.
+  auto_detect_mid360_line_->setText(
+      QString("Found Mid-360 SN %1, fw %2, at %3.").arg(m.sn, m.fw_version, m.lidar_ip));
+  auto_detect_mid360_line_->setProperty("tone", "good");
+  repolish(auto_detect_mid360_line_);
+
+  // Prefill guard: on a silent (auto-run-on-open) pass, a field already
+  // holding something other than the hard-coded placeholder is left alone —
+  // "never overwrite user-entered values". The manual button always fills in
+  // what it found; that is the point of clicking it.
+  const bool lidar_ip_is_default = lidar_ip_->text().trimmed() == "192.168.1.100";
+  const bool host_ip_is_default = host_ip_->text().trimmed() == "192.168.1.5";
+  if (!silent || lidar_ip_is_default) lidar_ip_->setText(m.lidar_ip);
+
+  // discovery.h's CheckHostReachability() always sets suggested_host_ip to
+  // the beacon's OWN persisted_host_ip when the beacon carried one — a
+  // locally-held address is only ever suggested as a NEW host to configure
+  // the lidar with, for a beacon that carried no persisted host at all (a
+  // factory-fresh/reset device). So the meaningful branch is not "which
+  // address to use" (there is only ever one candidate value once a persisted
+  // host exists) but "does this Mac already hold it" — everything else is
+  // the fix for when it does not.
+  if (m.host_ip_is_local) {
+    // Ready: this Mac already holds the address the lidar streams to (or, if
+    // the beacon carried no persisted host, whatever address discovery
+    // resolved as the one to configure it with). Nothing to fix.
+    if (!silent || host_ip_is_default) {
+      host_ip_->setText(m.persisted_host_ip.isEmpty() ? m.suggested_host_ip : m.persisted_host_ip);
+    }
+  } else if (m.persisted_host_ip.isEmpty() && !m.suggested_host_ip.isEmpty()) {
+    // A factory-fresh lidar with no host configured yet — genuinely a
+    // DIFFERENT address than "persisted" (there is none), and connecting
+    // really will push a fresh host-IP config into the device.
+    if (!silent || host_ip_is_default) host_ip_->setText(m.suggested_host_ip);
+    QString note = QString("lidar has no host address configured yet; using %1 — the "
+                           "first connect will configure it")
+                       .arg(m.suggested_host_ip);
+    auto_detect_fix_line_->setText(note);
+    auto_detect_fix_line_->setToolTip(m.host_check_note);
+    auto_detect_fix_line_->setProperty("tone", "warn");
+    repolish(auto_detect_fix_line_);
+    auto_detect_fix_line_->setVisible(true);
+  } else if (!m.persisted_host_ip.isEmpty()) {
+    // A persisted host exists and this Mac does not hold it — the
+    // field-session case (captures/FIELD_SESSION_2026-08-17.md: a host-only
+    // route plus an interface alias were both needed before the SDK would
+    // talk to a real Mid-360). host_ip_ still gets the persisted value
+    // (that IS what the driver needs to declare) — the alias below is what
+    // makes that value real on this machine. suggested_interface is set
+    // whenever a local address already sits on the lidar's subnet
+    // (on_lidar_subnet); otherwise <if> stays literal — guessing which
+    // physical interface the lidar is wired to would be worse than asking.
+    if (!silent || host_ip_is_default) host_ip_->setText(m.persisted_host_ip);
+    const QString iface = m.suggested_interface.isEmpty() ? QStringLiteral("<if>")
+                                                            : m.suggested_interface;
+    auto_detect_copy_payload_ =
+        QString("sudo ifconfig %1 alias %2 255.255.255.255").arg(iface, m.persisted_host_ip);
+    auto_detect_fix_line_->setText(
+        QString("this Mac needs an address on the lidar's network — e.g. `%1`")
+            .arg(auto_detect_copy_payload_));
+    auto_detect_fix_line_->setToolTip(m.host_check_note);
+    auto_detect_fix_line_->setProperty("tone", "bad");
+    repolish(auto_detect_fix_line_);
+    auto_detect_fix_line_->setVisible(true);
+    auto_detect_copy_btn_->setVisible(true);
+  } else {
+    // Nothing to work with at all: no persisted host on the beacon AND no
+    // local address on the lidar's subnet either — there is no concrete
+    // command to offer (no target IP, no interface), so this falls back to
+    // the engine's own operator-facing sentence rather than a hand-built
+    // one that would have nothing to substitute in.
+    auto_detect_fix_line_->setText(
+        m.host_check_note.isEmpty()
+            ? QStringLiteral("this Mac has no address on the lidar's network and the lidar "
+                             "has no host configured either — connect this Mac to the "
+                             "lidar's network and run Auto-detect again")
+            : m.host_check_note);
+    auto_detect_fix_line_->setProperty("tone", "bad");
+    repolish(auto_detect_fix_line_);
+    auto_detect_fix_line_->setVisible(true);
+  }
+}
+
+void CaptureWindow::applyD6Result(const DiscoveryResult& r, bool silent) {
+  const auto& d = r.d6;
+  if (!d.found) {
+    auto_detect_d6_line_->setText(
+        "COIN-D6: not seen — check power, the CH340 cable, and that no other app "
+        "(Livox Viewer, a serial monitor) already has the port open.");
+    auto_detect_d6_line_->setProperty("tone", "warn");
+    repolish(auto_detect_d6_line_);
+    return;
+  }
+  auto_detect_d6_line_->setText(
+      QString("COIN-D6: found on %1 (%2 valid packets seen).").arg(d.port).arg(d.packets_ok));
+  auto_detect_d6_line_->setProperty("tone", "good");
+  repolish(auto_detect_d6_line_);
+
+  const bool port_unselected = port_->currentData().toString().isEmpty();
+  if (!silent || port_unselected) {
+    int idx = port_->findData(d.port);
+    if (idx < 0) {
+      // refreshPorts() runs on its own 2 s timer and may not have enumerated
+      // this port under this exact name yet — add it so it is selectable now
+      // rather than waiting for the next tick.
+      port_->addItem(d.port, d.port);
+      idx = port_->count() - 1;
+    }
+    port_->setCurrentIndex(idx);
+    if (d6_auto_tag_) d6_auto_tag_->setVisible(true);
+  }
+}
+
+void CaptureWindow::applyUm982Result(const DiscoveryResult& r, bool silent) {
+  const auto& u = r.um982;
+  if (!u.found) {
+    auto_detect_um982_line_->setText(
+        "UM982: not seen — check power and the USB-serial cable. A probe hit only "
+        "needs the receiver to talk NMEA, not a satellite fix, so this is not "
+        "about sky visibility.");
+    auto_detect_um982_line_->setProperty("tone", "warn");
+    repolish(auto_detect_um982_line_);
+    if (um982_heading_) um982_heading_->setText("Dual-antenna heading: unknown (run Auto-detect)");
+    return;
+  }
+  auto_detect_um982_line_->setText(
+      QString("UM982: found on %1 @ %2 baud, %3 heading (%4 valid sentences seen).")
+          .arg(u.port)
+          .arg(u.baud)
+          .arg(u.has_heading ? "dual-antenna" : "single-antenna, no")
+          .arg(u.sentences_ok));
+  auto_detect_um982_line_->setProperty("tone", "good");
+  repolish(auto_detect_um982_line_);
+
+  const bool port_unselected = um982_port_->currentText().trimmed().isEmpty();
+  if (!silent || port_unselected) {
+    const int idx = um982_port_->findData(u.port);
+    if (idx >= 0) {
+      um982_port_->setCurrentIndex(idx);
+    } else {
+      um982_port_->addItem(u.port, u.port);
+      um982_port_->setCurrentIndex(um982_port_->count() - 1);
+    }
+    um982_baud_->setValue(u.baud);
+  }
+  if (um982_heading_) {
+    um982_heading_->setText(QString("Dual-antenna heading: %1")
+                                 .arg(u.has_heading ? "yes (GPTHS sentence present)" : "no"));
+  }
+}
 
 void CaptureWindow::log(const QString& s) {
   if (!log_) return;

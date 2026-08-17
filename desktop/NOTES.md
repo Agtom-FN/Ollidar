@@ -2536,3 +2536,287 @@ tabbed, which their `show()`/`raise()` calls handle unchanged).
   reasoned, not tested with a simulator.
 * **No unit tests, still** (§7). The redesign is verified end to end like the
   rest of `desktop/`.
+
+## 16. Auto-detect devices + single-instance guard
+
+`docs/design/REVIEW_FEEDBACK.md`'s 2026-08-17 "round 4 (field-driven)" entry, verbatim: "the
+apps must auto-detect device settings — Mid-360 via broadcast heartbeat (lidar IP/SN/persisted
+host revealed; proven manually in the field session), D6 via serial protocol probe, UM982 via
+port+baud sweep. Manual IP entry defeated the GUI on first contact" plus "a leftover instance
+holding UDP ports makes the next launch's SDK init fail with an opaque I/O error" — both drawn
+straight from `captures/FIELD_SESSION_2026-08-17.md`, the first real-hardware session. A16 (a
+different, concurrent workstream) landed the engine half —
+`engine/include/scanengine/discovery/discovery.h` and
+`engine/include/scanengine/core/instance_guard.h` — partway through this task; everything below
+was written against the contract this task was given up front and then adapted, once, to the
+real headers when they landed (§16.4 says exactly what changed and why).
+
+New files: `src/app/DeviceDiscovery.{h,cpp}` (the adapter), `scripts/replay_mid360_heartbeat.py`,
+`scripts/serial_probe_fakes.py`, `scripts/probe_fake_selftest.cpp` (verification tooling, not
+part of the app — see §16.5). Modified: `src/app/CaptureWindow.{h,cpp}` (the button, the summary
+panel, the new RTK tab, the silent on-open run), `src/main.cpp` (the instance guard, two CLI
+evidence hooks), `CMakeLists.txt` (one new source file).
+
+### 16.1 The UX flow
+
+**The button.** "Auto-detect devices" — `QPushButton`, `accent="ember"`, prominent and
+full-width, sits **above** the three device tabs (D6 / Mid-360 / RTK), which is the whole of the
+owner's "manual IP entry defeated the GUI on first contact" complaint answered directly: it is
+the first thing in the window, not a menu item or a per-tab button three clicks deep.
+
+**Running it.** A click moves a `DiscoveryWorker` (`app/DeviceDiscovery.h`) onto a throwaway
+`QThread` via the standard Qt moveToThread pattern (`started -> run`, `finished -> handler`,
+plus the self-cleanup chain — see §16.3 for why this needs its own paragraph). A small modal
+`QDialog` shows one line of status text plus an indeterminate `QProgressBar`; the worker emits
+`phase(QString)` once before each stage, so the dialog says **"Listening for Mid-360
+heartbeat…"** then **"Probing serial ports…"** against what is actually happening rather than a
+canned timer. Budget: 3 s for the Mid-360 listen (the beacon is ~1 Hz, so this is several
+windows) + 700 ms per **enumerated serial port** for each of the D6/UM982 sweeps (`discovery.h`'s
+`ProbeSerialD6`/`ProbeSerialUm982` spend `per_port_ms` per port, trying each until one
+identifies) — near the task's "~6 s" on a typical 2-4-port machine; a machine with many more
+serial devices simply takes longer, which the indeterminate bar tolerates.
+
+**The results panel** persists under the button after the dialog closes (this is also exactly
+what the *silent* on-open run — no dialog at all — shows up as):
+
+* **Mid-360 found** → "Found Mid-360 SN `<sn>`, fw `<fw>`, at `<lidar ip>`." in green, lidar IP
+  field filled. Host IP has three cases, driven off `CheckHostReachability()`'s real fields —
+  see §16.4 for why this is a three-way split on `host_ip_is_local` and NOT the original
+  "always try a local candidate first" shape the task was drafted against:
+  1. `host_ip_is_local` → the persisted host IP is filled in as-is, no fix line (ready).
+  2. beacon carried **no** persisted host at all (factory-fresh/reset lidar) →
+     `suggested_host_ip` is genuinely a *different*, locally-held address; the info line reads
+     "lidar has no host address configured yet; using `<suggested>` — the first connect will
+     configure it".
+  3. a persisted host exists and this Mac does not hold it → the task's literal wording, host
+     IP filled with the persisted value regardless (that IS what the driver needs to declare):
+     "this Mac needs an address on the lidar's network — e.g. `` `sudo ifconfig <if> alias
+     <persisted host> 255.255.255.255` ``", `<if>` replaced by `CheckHostReachability()`'s own
+     `suggested_interface` when it named one, left literal otherwise — plus a **Copy fix
+     command** button that copies the exact same runnable line to the clipboard
+     (`QGuiApplication::clipboard()`).
+* **D6 found** → its port is selected in the picker (added to the combo first if
+  `refreshPorts()`'s own 2 s timer had not enumerated it yet under this exact name) and an
+  ember **auto-detected** badge appears next to the CH340 hint.
+* **UM982 found** → a new **RTK (UM982)** tab (§16.2) gets its port + baud filled in, and a
+  "Dual-antenna heading: yes (GPTHS sentence present) / no" line updates.
+* **Not found** → one honest line per sensor with a likely cause, exactly as asked: Mid-360
+  "not seen (no heartbeat heard) — check power, the Ethernet cable, and that this Mac has an
+  address on the lidar's network"; D6 "not seen — check power, the CH340 cable, and that no
+  other app (Livox Viewer, a serial monitor) already has the port open"; UM982 "not seen — check
+  power and the USB-serial cable. A probe hit only needs the receiver to talk NMEA, not a
+  satellite fix, so this is not about sky visibility."
+
+**Silent on-open run.** `CaptureWindow::showEvent()` fires it once per project, only when
+`had_saved_mid360_settings_` is false (no Mid-360 host/lidar IP has EVER been saved for this
+project's QSettings group — the closest available proxy for "never configured", since D6/UM982
+carry no persisted settings of their own to check). No dialog; every field-write above is
+individually guarded by `!silent || field_is_still_at_its_hard_coded_default`, so a value the
+user already typed (or a prior save already restored) is never touched — only the SN/fw
+confirmation and the "not seen" lines are unconditional, because those are informational, not a
+field write.
+
+### 16.2 The RTK (UM982) tab — auto-detect only, and says so
+
+A UM982 probe hit needs somewhere to land that is not silently dropped, so this task adds a
+third tab: port (editable combo — the probe hit may not be something `QSerialPortInfo` has
+enumerated by name yet), baud, and a "dual-antenna heading" readout. Its own hint label says
+plainly what it is: **"Not yet wired into Record/Test below — this tab only holds what
+Auto-detect finds… so it is not lost."** There is no engine-side wiring on the desktop capture
+path for a GNSS serial device the way `openDeviceForTab()` opens D6/Mid-360 — unlike those two,
+`GnssSource` (`engine/include/scanengine/gnss/gnss_source.h`) is fed NMEA bytes already in hand,
+it does not own a port to open/close, so there is no existing seam to plug an auto-detected
+UM982 into. Building that seam is out of scope for this task (auto-detect, not RTK capture) and
+is noted here as a real gap, not implied to be closed. Concretely: the RTK tab's `record_cluster_`
+is disabled with an explanatory tooltip whenever it is selected, and `onTestDevice()` refuses
+outright if the RTK tab is current (`tabs_->currentIndex() == 2`) — belt and suspenders, since
+disabling the cluster already prevents the click.
+
+### 16.3 The adapter, and two bugs the first real run found
+
+**`DeviceDiscovery.h/.cpp`** is the entire seam between Qt and `scanengine::discovery::*` —
+`CaptureWindow.cpp` never names an engine discovery type, only the plain `DiscoveryResult` /
+`Mid360Discovery` / `D6Discovery` / `Um982Discovery` structs. This was deliberate up front,
+because A16 was landing concurrently: the task said "code against it; if the header differs when
+you build, adapt to the real one," and it did differ in one substantive way (§16.4) — having the
+whole engine-facing surface in two files meant that adaptation touched nothing else.
+
+**Bug 1 — the instance guard crashed on every clean exit.** First version:
+`static scanengine::InstanceGuard g_instance_guard;` in `main()`, reasoning "the guard needs to
+live for the whole process." It does — but `static` was the wrong way to get that: a
+function-local static's destructor runs during the process's *static-destruction* sequence,
+strictly ordered only against OTHER function-local statics, in the reverse of their construction
+order. `instance_guard.cpp`'s own `Release()` path locks a function-local-static registry mutex
+(`registry_mutex()`), constructed lazily on first `Acquire()`/`Release()` call — i.e. AFTER
+`g_instance_guard` itself finished constructing. Reverse order therefore destroys the registry
+mutex FIRST and `g_instance_guard` SECOND, so `g_instance_guard`'s destructor called `Release()`
+against an already-destroyed mutex: `libc++abi: terminating due to uncaught exception of type
+std::__1::system_error: mutex lock failed: Invalid argument`, `abort()`, exit code 134, on every
+single normal `--quit-after` exit — this was not a corner case, it reproduced 100% of the time
+once actually run. Fixed by declaring it as a **plain automatic local** in `main()` instead — its
+own code comment explains why that already has the right lifetime: a stack variable is destroyed
+as part of `main()`'s own `return`, strictly BEFORE the static-destruction sequence that tears
+down `registry_mutex()` even begins. Verified clean across repeated runs after the fix (§16.5).
+
+**Bug 2 — a discovery pass in flight at shutdown could abort the whole app.** First version
+parented the worker's `QThread` to `this` (`new QThread(this)`), reasoning "it's a CaptureWindow
+resource, Qt should own it." `CaptureWindow` is itself parented under `MainWindow`, so app
+shutdown destroys it synchronously — and Qt's ordinary child-object teardown then calls `delete`
+on a `QThread` whose `run()` might still be blocked inside a `scanengine::discovery` call:
+`QThread: Destroyed while thread '' is still running`, `abort()`. Reproduced for real (not
+theoretically) by `--auto-detect-selftest`'s own evidence hook, which deliberately fires a
+second, explicit pass right after the first (silent-on-open) one finishes (§16.5) — a
+`--quit-after` short enough to land mid-second-pass hit this every time. Fixed by leaving the
+`QThread` **unparented** (`new QThread()`, no `this`): the worker/thread pair already has a
+complete, self-contained cleanup chain (`finished -> thread->quit()`, `finished ->
+worker->deleteLater()`, `thread::finished -> thread->deleteLater()`) that does not need
+`CaptureWindow` to be alive to complete correctly, and the ONE thing that DOES touch
+`CaptureWindow` — the `finished -> handleDiscoveryFinished` lambda — is connected with `this` as
+its context object, which Qt auto-disconnects the moment `CaptureWindow` is destroyed, same as
+any other signal/slot connection. Verified clean across `--quit-after` of 1/2/4/6 s, including
+values chosen specifically to land mid-pass (§16.5).
+
+Both bugs share a lesson worth stating plainly: neither was visible from reading the code, and
+both are exactly the class of bug that only running the real binary — not just building it —
+finds. This is also the reason §16.5 below runs the actual app repeatedly rather than treating a
+clean compile as the finish line.
+
+### 16.4 Where the shipped `discovery.h` differed from the task's contract
+
+The task described three Mid-360 host-IP cases: persisted-host-is-local (use it),
+local-candidate-on-subnet (use a DIFFERENT local address, "first connect will reconfigure it"),
+else the ifconfig-alias fix. The real, landed `CheckHostReachability()`
+(`engine/src/discovery/host_check.cpp`) does not shape it that way: **`suggested_host_ip` is
+always set to the beacon's own `persisted_host_ip` whenever the beacon carried one at all** — a
+genuinely different, locally-held address is only ever suggested for a beacon with **no**
+persisted host (a factory-fresh/reset device). Read literally, the task's middle case
+("`lidar expects host <persisted>; using <suggested>`") would have rendered a sentence that
+named the *same* IP twice, which is true but useless. §16.1's three-case list above is the
+adaptation: case 2 is the beacon-carried-no-persisted-host branch (where the two addresses
+really do differ), and case 3 folds the task's "local candidate on subnet" and "nothing
+reachable at all" scenarios together, because the real engine's fix is identical in both
+(alias the persisted host onto a local interface) — the only difference is whether
+`suggested_interface` names one already. This is also why `HostCheck::note` — a complete,
+pre-written operator-facing sentence the engine itself constructs — is attached as the fix
+line's tooltip rather than replacing the task's requested wording outright: the task was
+explicit about the phrasing it wanted ("the field session's exact case"), so that wording is
+what renders, with the engine's own (more detailed, per-case) sentence one hover away.
+
+Smaller adaptations: `Mid360Beacon::fw_version_text` (the raw `"35010108"` field) is preferred
+over the dotted `fw_version` (`"35.1.1.8"`) for display, because it is the exact string
+`captures/FIELD_SESSION_2026-08-17.md` quotes. `InstanceGuard` turned out to live in
+`scanengine/core/instance_guard.h`, not bundled into `discovery.h` as the task's summary implied,
+and to need an explicit `Acquire(InstanceGuardOptions)` call returning a `Status` rather than
+being ready-to-use from construction — a one-line difference, isolated entirely to `main.cpp`.
+
+### 16.5 Verification (2026-08-17, same host as §6: Apple M4, macOS 26.5.1)
+
+**Build.** `cmake --build build --clean-first`: exit 0, **zero warnings from any file under
+`desktop/src`** (`-Wall -Wextra`), 239 warnings total — same count §15.8 reported, all vendored
+Livox SDK2. The `LIDARSCAN_COMPILE_ONLY=ON` object-library path (the Windows/Linux CI legs) was
+reconfigured into a fresh `build-compileonly/` tree and built separately: exit 0, same 239
+SDK2-only warnings, zero from `desktop/src`.
+
+**Launch.** `./build/lidarscan --font-report --quit-after N` for N in {1, 2, 3}: exit 0 every
+time, fonts/engine/Filament all report healthy start-up — this is also where Bug 1 (§16.3) first
+showed up as a reliable crash and was fixed.
+
+**Mid-360, against a REAL captured heartbeat.** First tried the task's suggested primary path —
+`spikes/s2-mid360-sim`'s `mid360_sim` — and it does NOT work for this: run on loopback and
+pointed `--auto-detect-selftest` at it, `DiscoverMid360` reported **"0 lidar(s), 0 datagram(s),
+0 rejected."** This matches `spikes/s2-mid360-sim/REPORT.md`/`FOLLOWUP_NOTES.md` exactly:
+`mid360_sim`'s cmd-`0x0102` push-state (what would land on port 56201, where `discovery.h`
+listens — `kMid360PushPort`) is only sent AFTER a real SDK client has driven a `0x0100` host-IP
+handshake; the simulator's only genuinely UNSOLICITED broadcast is the discovery ACK on port
+56000 (REPORT.md §4c: "the simulator... announces unprompted... to the host's control port"),
+which is a different port than the one the beacon listener uses. So, per the task's own
+fallback instruction: `scripts/replay_mid360_heartbeat.py` re-sends the REAL 30 push-state
+datagrams captured in `captures/mid360_real_30s.livoxdump` (port 56201 of that file, verified by
+parsing the container's own port table) to `127.0.0.1:56201` at their original ~1 Hz cadence —
+byte-for-byte the same payloads `engine/src/discovery/mid360_beacon.cpp`'s own header comment
+names as its ground truth ("thirty 430-byte datagrams from SN ARMCP7K0034759"). Confirmed
+delivery integrity with a throwaway listener before touching the app (30/30 packets, 430 B each,
+byte-identical to the source file) — see the script's own header for the full real-vs-synthesized
+accounting.
+
+Ran the real app against the replayer via two new CLI hooks
+(`--auto-detect-selftest`/`--auto-detect-shot`, the same evidence-hook pattern every other C2/C3
+flow in this file uses):
+
+* `evidence/16-autodetect-mid360-found.png` — both the silent on-open pass AND a manual
+  button-triggered pass (the hook fires a second, explicit click after the first completes, to
+  exercise both paths in one run) found **"SN ARMCP7K0034759, fw 35010108, at 192.168.1.159"**
+  and rendered the task's literal fix wording with the real persisted host substituted in:
+  `` `sudo ifconfig <if> alias 192.168.1.5 255.255.255.255` `` (192.168.1.5 matches
+  `FIELD_SESSION_2026-08-17.md`'s persisted host exactly; `<if>` stays literal because this
+  sandbox has no interface on the lidar's subnet, which is the honest answer). Both log lines
+  ("auto-detect (silent, on open): …" then "auto-detect: …") are visible in the capture window's
+  own log pane in the screenshot.
+* `evidence/16-autodetect-progress-dialog.png` — a `screencapture` taken mid-flight (during the
+  second, manual pass) shows the live "Auto-detect devices" dialog — "Listening for Mid-360
+  heartbeat…", indeterminate bar — floating over the already-populated results panel from the
+  first pass.
+* `evidence/16-autodetect-nothing-found.png` — replayer stopped, re-ran against a fresh project:
+  all three sensors report "not seen" with their one-line causes, no fix line/copy button (none
+  applies), confirming the honest-failure path renders correctly and does not fabricate a
+  Mid-360 result when nothing answered.
+
+**D6 and UM982 probes — verified directly against real captured bytes, not deferred.**
+`scripts/serial_probe_fakes.py` opens a raw-mode BSD pty (Python's stdlib `pty` module, no
+external tool needed) and replays a REAL fixture into the master end: `captures/bench_d6_30s.bin`
+for D6, `captures/um982_30s.nmea` for UM982 (paced as 7-sentences-per-epoch bursts, matching the
+real capture's shape). `scripts/probe_fake_selftest.cpp` — a standalone tool, **not** part of the
+app build, linked directly against the built `libscanengine.a` — calls `ProbeSerialD6`/
+`ProbeSerialUm982` with an explicit one-entry port list pointing at the pty's slave path
+(bypassing `EnumerateSerialPorts()`, which on macOS only returns `/dev/cu.*` nodes and would
+never see a plain `openpty()` pty — this is exactly why the port list bypass was necessary, not
+a shortcut). Results:
+
+```
+ProbeSerialD6 HIT: port=/dev/ttys006 baud=230400 packets_ok=4 packets_bad_checksum=0 used_start_command=no
+ProbeSerialUm982 HIT: port=/dev/ttys006 baud=230400 has_heading=yes sentences_ok=7 sentences_bad=0
+```
+
+Both identified on the FIRST try, passively (D6 never needed the stage-2 start command — the
+fixture is already a mid-stream capture, exactly the common case §16.1's D6 hint text
+describes). The UM982 baud is 230400 — the field session's *actual* rate, not the documented
+115200 default (`kUm982BaudSweep`'s try-actual-rate-first ordering is what found it), and
+`has_heading=yes` because the real fixture's GPTHS sentence survived the replay — both facts
+match `captures/FIELD_SESSION_2026-08-17.md` exactly.
+
+**Single-instance guard.** Instance A launched and left running; instance B launched a second
+later — `evidence/16-instance-guard-dialog.png` is a real macOS screen capture of the result:
+instance A's MainWindow rendering normally in the background, instance B's dialog reading
+**"LidarScan is already running. another LidarScan is running (pid 24460)"** with an OK button.
+Instance B's own log is confirmed EMPTY up to that point — no `EngineHost`/`scanengine::Engine`
+creation line at all — proving the guard blocks before anything touches the engine, exactly as
+designed. Repeated with `--quit-after` of 1/2/4/6 s after the QThread fix (§16.3 Bug 2): exit 0
+every time, no abort, no `QThread: Destroyed while thread is still running`.
+
+### 16.6 Not verified / deferred
+
+* **Clicking OK on the "already running" dialog.** This sandbox's `osascript` UI-scripting has
+  no accessibility permission (`-1719`), and there is no other GUI-automation path available for
+  a native Qt dialog here (unlike the Filament viewport, which has its own screenshot API).
+  The dialog's appearance and the guard's before-the-engine blocking are both directly evidenced
+  (§16.5); the dismissal path itself is a single `return 1;` immediately following
+  `QMessageBox::critical()`'s synchronous return — the same shape the pre-existing "engine
+  unavailable" dialog earlier in `main()` already uses, unremarked, so this is not new risk.
+* **D6/UM982 "found" state in the live app UI** (auto-selected port + the ember "auto-detected"
+  tag / RTK tab prefill). The pty fakes (§16.5) prove `ProbeSerialD6`/`ProbeSerialUm982`
+  themselves correctly identify real captured device bytes; what is NOT re-verified with a
+  screenshot is `CaptureWindow::applyD6Result()`/`applyUm982Result()` wiring that hit into the
+  picker, because `EnumerateSerialPorts()` only returns `/dev/cu.*` nodes on macOS and this
+  sandbox cannot create a fake one (that needs a kext/IOKit driver, not available here). That
+  application code reuses the exact combo-box `findData`/`addItem`/`setCurrentIndex` pattern
+  already exercised end-to-end for the Mid-360 IP fields above, and was code-reviewed rather than
+  screenshotted.
+* **RTK/UM982 capture wiring** is explicitly out of scope and explicitly absent (§16.2) — the
+  tab only holds what auto-detect finds; there is no engine seam yet that opens a GNSS serial
+  port the way D6/Mid-360 are opened.
+* **Windows/Linux and HiDPI** screenshots of the new button/panel/tab were not taken — the
+  `LIDARSCAN_COMPILE_ONLY` path confirms the code compiles clean there (§16.5), but no
+  screenshot evidence exists for those platforms, matching this file's existing pattern for
+  new UI (§14.5/§15.9's blanket caveat).
+* **No unit tests** for `DeviceDiscovery.{h,cpp}` — consistent with the rest of `desktop/`
+  (§7), which is verified end-to-end against the real app rather than with a unit-test suite.

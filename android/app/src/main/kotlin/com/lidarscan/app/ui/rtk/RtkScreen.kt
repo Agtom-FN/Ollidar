@@ -99,6 +99,19 @@ fun RtkScreen(state: RtkUiState, vm: RtkViewModel, onBack: () -> Unit) {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Rover (Bluetooth SPP)", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        // Cosmetic note only: this link is Bluetooth SPP, which carries no baud
+                        // rate at the app layer, so there is no serial-port setting here to get
+                        // wrong. Worth saying anyway — a UM982 wired instead over USB serial
+                        // defaults to 115200 but is field-verified 230400-capable
+                        // (captures/FIELD_SESSION_2026-08-17.md), so "115200" alone is stale
+                        // guidance for that rover, not a fixed limit.
+                        "No baud rate to set here — SPP handles framing. A wired UM982 defaults to " +
+                            "115200 but is 230400-capable; USB-serial GNSS rovers are not wired into this " +
+                            "screen yet (see android/NOTES.md).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     when {
                         !state.bluetoothAvailable -> Text(
                             "This device has no Bluetooth adapter, so no rover can be attached.",

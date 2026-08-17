@@ -48,6 +48,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.lidarscan.app.engine.Mid360LinkState
 import com.lidarscan.app.net.StaticIpGuidance
 import com.lidarscan.app.ui.common.InfoChip
+import com.lidarscan.core.net.Mid360AutoDetectState
 import com.lidarscan.core.net.Mid360Field
 import com.lidarscan.core.net.Mid360SelfTest
 import com.lidarscan.core.net.Mid360Settings
@@ -119,24 +120,141 @@ fun Mid360ConnectScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            InterfaceCard(state, onUseInterfaceAddress = viewModel::useInterfaceAddress)
+            AutoDetectCard(state, viewModel)
 
-            StaticIpCard(
-                oem = state.oem,
-                onOpenSettings = {
-                    val opened = StaticIpGuidance.openSettings(context)
-                    if (opened == null) {
-                        // Nothing resolved — worth saying, it means Settings
-                        // genuinely has no such screen on this build.
+            if (state.showManualEntry) {
+                InterfaceCard(state, onUseInterfaceAddress = viewModel::useInterfaceAddress)
+
+                StaticIpCard(
+                    oem = state.oem,
+                    targetHostIp = state.autoDetectedHostIp,
+                    onOpenSettings = {
+                        val opened = StaticIpGuidance.openSettings(context)
+                        if (opened == null) {
+                            // Nothing resolved — worth saying, it means Settings
+                            // genuinely has no such screen on this build.
+                        }
+                    },
+                )
+
+                AddressesCard(state, viewModel)
+
+                SelfTestCard(state, viewModel, onContinueToCapture)
+
+                if (state.selfTestLog.isNotEmpty()) LogCard(state)
+            }
+        }
+    }
+}
+
+/**
+ * AUTO-DETECT: the wizard's first step and primary action — listens for the
+ * Mid-360's own heartbeat broadcast (no addresses need to be typed first)
+ * and, on success, prefills the lidar IP and compares the beacon's
+ * persisted host against this phone's Ethernet address. "Enter manually"
+ * is the escape hatch to the pre-existing address form at any point.
+ */
+@Composable
+private fun AutoDetectCard(state: Mid360ConnectUiState, viewModel: Mid360ConnectViewModel) {
+    val autoDetect = state.autoDetect
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.Cable, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Auto-detect", style = MaterialTheme.typography.titleMedium)
+            }
+
+            when (autoDetect.status) {
+                Mid360AutoDetectState.Status.IDLE -> {
+                    Text(
+                        "Listens for the Mid-360's own heartbeat broadcast — no addresses to type, and it " +
+                            "works even on a completely unconfigured device.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = viewModel::startAutoDetect) { Text("Auto-detect") }
+                        TextButton(onClick = viewModel::revealManualEntry) { Text("Enter manually") }
                     }
-                },
-            )
+                }
 
-            AddressesCard(state, viewModel)
+                Mid360AutoDetectState.Status.LISTENING -> {
+                    Text(
+                        "Listening for a heartbeat… (~${autoDetect.timeoutMs / 1000} s)",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    LinearProgressIndicator(progress = { autoDetect.progress }, modifier = Modifier.fillMaxWidth())
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = viewModel::cancelAutoDetect) { Text("Cancel") }
+                        TextButton(onClick = viewModel::revealManualEntry) { Text("Enter manually") }
+                    }
+                }
 
-            SelfTestCard(state, viewModel, onContinueToCapture)
+                Mid360AutoDetectState.Status.FOUND -> {
+                    val heartbeat = autoDetect.found
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Filled.CheckCircle,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            if (heartbeat != null) {
+                                "Found Mid-360 SN ${heartbeat.serialNumber} · fw ${heartbeat.firmwareVersion} " +
+                                    "at ${heartbeat.lidarIp}"
+                            } else {
+                                "Found a Mid-360"
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                    when (autoDetect.hostMatches) {
+                        true -> Text(
+                            "This phone's Ethernet address already matches the host the device is configured " +
+                                "to stream to — ready to run the self-test below.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        false -> Text(
+                            "This phone's Ethernet interface does not hold " +
+                                (heartbeat?.persistedHostIp ?: "the device's configured host IP") +
+                                " yet — see the static-IP guidance below for the exact address to set.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                        null -> Unit
+                    }
+                    OutlinedButton(onClick = viewModel::startAutoDetect) { Text("Re-detect") }
+                }
 
-            if (state.selfTestLog.isNotEmpty()) LogCard(state)
+                Mid360AutoDetectState.Status.TIMED_OUT -> {
+                    Text(
+                        "No Mid-360 heartbeat heard in ${autoDetect.timeoutMs / 1000} s. It only broadcasts on " +
+                            "the Ethernet link, once a second — check the adapter and power, or enter the " +
+                            "addresses manually if this is a known device.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = viewModel::startAutoDetect) { Text("Retry") }
+                        TextButton(onClick = viewModel::revealManualEntry) { Text("Enter manually") }
+                    }
+                }
+
+                Mid360AutoDetectState.Status.ERROR -> {
+                    Text(
+                        autoDetect.message ?: "Auto-detect failed.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = viewModel::startAutoDetect) { Text("Retry") }
+                        TextButton(onClick = viewModel::revealManualEntry) { Text("Enter manually") }
+                    }
+                }
+            }
         }
     }
 }
@@ -198,11 +316,11 @@ private fun InterfaceCard(state: Mid360ConnectUiState, onUseInterfaceAddress: ()
 }
 
 @Composable
-private fun StaticIpCard(oem: StaticIpGuidance.Oem, onOpenSettings: () -> Unit) {
+private fun StaticIpCard(oem: StaticIpGuidance.Oem, targetHostIp: String? = null, onOpenSettings: () -> Unit) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Static IP — ${oem.label}", style = MaterialTheme.typography.titleMedium)
-            StaticIpGuidance.steps(oem).forEachIndexed { index, step ->
+            StaticIpGuidance.steps(oem, targetHostIp = targetHostIp).forEachIndexed { index, step ->
                 Text("${index + 1}. $step", style = MaterialTheme.typography.bodyMedium)
             }
             Text(

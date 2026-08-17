@@ -35,6 +35,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -43,6 +44,7 @@
 #include "scanengine/color/colorizer.h"
 #include "scanengine/color/frames_idx.h"
 #include "scanengine/core/engine.h"
+#include "scanengine/discovery/discovery.h"
 #include "scanengine/drivers/mid360/mid360_packets.h"
 #include "scanengine/jobs/colorize_wiring.h"
 #include "scanengine/jobs/job_runner_adapter.h"
@@ -74,6 +76,7 @@ int usage() {
       "                                 [--allow-poor-sync] [--clock-offset <ns>]]\n"
       "  engine_cli --synth-lscan <dir> [seconds] [--frames N]\n"
       "  engine_cli --post-selftest [--quiet]\n"
+      "  engine_cli --discover [seconds] [--no-serial] [--no-lidar]\n"
       "  engine_cli --version\n"
       "\n"
       "--sync-quality is MANDATORY with --colorize and has no default: it is A4's\n"
@@ -894,6 +897,81 @@ int cmd_post_selftest(bool quiet) {
   return rc;
 }
 
+// --- A16: what hardware is on this machine's desk right now? ----------------
+//
+// The field-verification face of docs/A16-discovery.md, and the thing to run
+// FIRST at the start of a hardware session: it answers "is the lidar
+// broadcasting", "will it stream to this host", and "which /dev is which"
+// without a single hand-typed address. Exit 0 if anything was found.
+int cmd_discover(double seconds, bool do_lidar, bool do_serial) {
+  int found = 0;
+
+  if (do_lidar) {
+    const int timeout_ms = static_cast<int>(seconds * 1000.0);
+    std::printf("listening for Mid-360 heartbeats on udp/%u and udp/%u for %.1f s...\n",
+                static_cast<unsigned>(discovery::kMid360PushPort),
+                static_cast<unsigned>(discovery::kMid360PushPortAlt), seconds);
+    Result<std::vector<discovery::Mid360Beacon>> r = discovery::DiscoverMid360(timeout_ms);
+    if (!r.ok()) {
+      std::fprintf(stderr, "  discovery failed: %s (%s)\n", error_str(r.error()),
+                   last_error_message());
+    } else if (r.value().empty()) {
+      std::printf("  no Mid-360 is broadcasting. Check power and the ethernet link;\n"
+                  "  the lidar ignores ping, so its heartbeat is the only evidence.\n");
+    } else {
+      for (const discovery::Mid360Beacon& b : r.value()) {
+        ++found;
+        std::printf("\n  %s\n", b.describe().c_str());
+        std::printf("    sn %s   fw %s (%s, built %s)\n", b.sn.c_str(), b.fw_version_text.c_str(),
+                    b.fw_type.c_str(), b.build_time.c_str());
+        std::printf("    lidar %s/%s gw %s  mac %s\n", b.lidar_ip.c_str(), b.netmask.c_str(),
+                    b.gateway.c_str(), b.mac.c_str());
+        std::printf("    persisted host %s (points %u, imu %u)\n", b.persisted_host_ip.c_str(),
+                    b.persisted_point_port, b.persisted_imu_port);
+        std::printf("    heard on udp/%u from %s, %u beacon(s), crc %s%s\n", b.push_port_seen,
+                    b.source_ip.c_str(), b.beacons_seen, b.crc_ok ? "ok" : "UNVERIFIED",
+                    b.heuristic ? ", HEURISTIC PARSE" : "");
+        const discovery::HostCheck hc = discovery::CheckHostReachability(b);
+        std::printf("    %s\n", hc.note.c_str());
+      }
+    }
+  }
+
+  if (do_serial) {
+    const std::vector<std::string> ports = discovery::EnumerateSerialPorts();
+    std::printf("\n%zu serial port(s):\n", ports.size());
+    for (const std::string& p : ports) std::printf("    %s\n", p.c_str());
+    if (!ports.empty()) {
+      // The D6 first: it is the one that may need a start command, and
+      // identifying it removes it from the UM982 sweep's candidates.
+      std::optional<discovery::D6Probe> d6 = discovery::ProbeSerialD6(ports, 1200);
+      if (d6.has_value()) {
+        ++found;
+        std::printf("  COIN-D6 on %s @ %u (%u packets, %u bad checksum%s)\n", d6->port.c_str(),
+                    d6->baud, d6->packets_ok, d6->packets_bad_checksum,
+                    d6->used_start_command ? ", needed the start command" : ", already streaming");
+      } else {
+        std::printf("  no COIN-D6 found\n");
+      }
+      std::vector<std::string> rest;
+      for (const std::string& p : ports) {
+        if (!d6.has_value() || p != d6->port) rest.push_back(p);
+      }
+      std::optional<discovery::Um982Probe> um = discovery::ProbeSerialUm982(rest, 1500);
+      if (um.has_value()) {
+        ++found;
+        std::printf("  UM982 on %s @ %u (%u sentences, heading %s)\n", um->port.c_str(),
+                    um->baud, um->sentences_ok, um->has_heading ? "ENABLED" : "not seen");
+      } else {
+        std::printf("  no UM982 found\n");
+      }
+    }
+  }
+
+  std::printf("\ndiscovery: %d device(s) found\n", found);
+  return found > 0 ? kExitOk : kExitFailed;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -982,5 +1060,15 @@ int main(int argc, char** argv) {
     return cmd_synth_lscan(argv[2], seconds, frames);
   }
   if (cmd == "--post-selftest") return cmd_post_selftest(quiet);
+  if (cmd == "--discover") {
+    double seconds = (argc > 2 && argv[2][0] != '-') ? std::atof(argv[2]) : 4.0;
+    if (seconds <= 0.0) seconds = 4.0;
+    bool do_lidar = true, do_serial = true;
+    for (int i = 2; i < argc; ++i) {
+      if (std::strcmp(argv[i], "--no-serial") == 0) do_serial = false;
+      if (std::strcmp(argv[i], "--no-lidar") == 0) do_lidar = false;
+    }
+    return cmd_discover(seconds, do_lidar, do_serial);
+  }
   return usage();
 }

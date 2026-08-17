@@ -3012,3 +3012,258 @@ the Capture tab's project picker, Jobs, Settings, Review.
 - **No screenshot test / Paparazzi-style golden** was added. The mockup's own
   110-item checklist has no counterpart here, and the two-test emulator smoke
   suite is the only automated UI gate.
+
+## AUTO-DETECT — Mid-360 heartbeat + D6 signature auto-detect
+
+Owner task: add AUTO-DETECT to the device connect wizards. Scope was
+strictly `android/**` — `engine/**` was read-only, and a concurrent agent
+was landing engine discovery + C ABI v6 (`scan_discover_mid360`,
+`scan_host_check`, `scan_probe_d6`, `scan_enumerate_serial`) in that
+directory at the same time.
+
+### 0. ABI pin, and why this stayed on the Kotlin path even after v6 landed
+
+`SCAN_ABI_VERSION` in `engine/capi/scanengine_c.h` was **5** with none of
+`scan_discover_mid360`/`scan_host_check`/`scan_probe_d6`/
+`scan_enumerate_serial` present at the moment this task started (checked
+first, before writing anything). Per the brief's instruction to pin to the
+ABI as it stood at task start rather than race a concurrent edit, this task
+built both auto-detect paths in pure Kotlin:
+
+- **Mid-360**: a plain `DatagramSocket` heartbeat listener
+  (`UdpMid360Detector`) — this is the brief's stated *permanent* choice for
+  Mid-360 regardless of ABI ("Kotlin fallback is fine permanently for
+  Mid-360 (pure UDP)"), not a stopgap.
+- **D6**: a CH340-first-open + `AA 55`-signature read over the existing
+  usb-serial stack (`D6AutoProbe`), since B2's connect flow had no existing
+  auto-probe to reuse (checked this file first — B2's wizard is
+  tap-a-device-to-connect only).
+
+By the time `:app:assembleDebug` actually ran (after both this task's edits
+and the concurrent engine work were done), `SCAN_ABI_VERSION` had moved to
+**6** and `engine/src/discovery/serial_enum.cpp` etc. exist. **None of it is
+used here** — this task never edited `engine/**` or the JNI shim
+(`android/app/src/main/cpp/*.cpp`) to add new native entry points for the
+v6 discovery calls, by design (pinned scope, not an oversight). One
+transient build failure was observed and self-resolved: mid-way through,
+`engine/capi/scanengine_c.h`'s `SCAN_ABI_VERSION` and
+`engine/include/scanengine/core/engine.h`'s `kEngineAbiVersion` briefly
+disagreed (6 vs 5) while the other agent's edit was in flight — a plain
+`static_assert` failure in `scanengine_c.cpp`, nothing to do with anything
+in `android/**`. Waiting for the concurrent edit to finish (polling the two
+constants until they agreed again) and re-running `:app:assembleDebug` was
+enough; no `engine/**` file was touched to work around it.
+
+**Follow-up worth sizing separately**: `scan_discover_mid360`/
+`scan_probe_d6` now exist and would let both detectors move behind the JNI
+boundary instead of a raw socket / a speculative serial open. Both this
+task's seams — `com.lidarscan.core.net.Mid360Detector` and
+`com.lidarscan.app.usb.D6AutoProbe`'s `D6AutoProbeResult` — are narrow
+enough that a JNI-backed implementation could be swapped in later without
+touching either wizard's UI or state-machine code; the D6 wizard is D6-only
+already, but per the brief's guidance the Mid-360 path should stay on the
+Kotlin listener permanently even if that follow-up happens.
+
+### 1. Mid-360: the heartbeat, decoded from real hardware capture bytes
+
+The Mid-360 broadcasts a UDP "push message" (SDK2's `cmd_id` `0x0102`,
+`kCommandIDLidarPushMsg`) once a second from its own port 56200 to the LAN
+broadcast address, port **56201** (`kMid360HostPushMsgPort`) — receive-only,
+no handshake, works on a completely unconfigured device. The wire format
+was reverse-engineered against **real captured bytes**, not written from
+the SDK header alone:
+
+- `captures/mid360_real_30s.livoxdump` (a field-recorded 30 s capture, see
+  `captures/FIELD_SESSION_2026-08-17.md`) was parsed with the project's own
+  `.livoxdump` reader (`spikes/s2-mid360-sim/scripts/livoxdump.py`'s
+  documented container format) to pull the 30 raw records on port-table
+  index 3 (port 56201).
+- The vendored `Livox-SDK2` source
+  (`spikes/s2-mid360-sim/third_party/Livox-SDK2/`) gives the general
+  command-frame header (`sdk_core/comm/sdk_protocol.h`'s `SdkPacket`, 24
+  fixed bytes: `sof,version,length,seq_num,cmd_id,cmd_type,sender_type,
+  rsvd[6],crc16,crc32`) and the TLV entry shape
+  (`LivoxLidarKeyValueParam`: `u16 key, u16 length, value[length]`,
+  `include/livox_lidar_def.h`) — confirmed against the real bytes: `length`
+  (offset 2, LE) equals the UDP payload's own size and `cmd_id` (offset 8,
+  LE) is `0x0102` on every one of the 30 real records.
+- **The first TLV tag does not sit where the generic SDK push-message path
+  (`command_handler/parse_lidar_state_info.cpp`'s `key_num`+reserved
+  4-byte prefix) would put it** — computed that lands at offset 28; every
+  real record actually has it at offset 38. Rather than hard-code either
+  number, `Mid360HeartbeatParser` locates the TLV list by scanning a
+  bounded window for the one entry that's cheap to recognise unambiguously
+  — `key=0x0004` (`kKeyLidarIpCfg`), `length=12` — matching the brief's own
+  hint ("binary IPv4 fields — lidar IP first w/ ff ff ff 00 mask after
+  it"). This is robust to the exact header-size question being unresolved
+  (there may be a per-lidar addressing field the static analysis missed;
+  it doesn't matter which, since the parser never assumes the offset).
+- Fields pulled from the TLV list: `0x0004` → lidar IP/netmask/gateway,
+  `0x0006`/`0x0007` (`kKeyLidarPointDataHostIpCfg`/`kKeyLidarImuHostIpCfg`)
+  → **the persisted host IP** (`192.168.1.5` in the real capture — matches
+  `FIELD_SESSION_2026-08-17.md`'s own note about the required host alias),
+  `0x8000` (`kKeySn`) → serial number (real bytes are a 2-letter prefix +
+  serial, `"AR" + "MCP7K0034759"`, stripped by a regex), `0x8001`
+  (`kKeyProductInfo`) → the printable `"DevType:Mid-360 FmType:App
+  FmVer:35010108 BuildTime:..."` string.
+- Two real payloads (byte-for-byte, not synthesized) live in
+  `core/src/test/resources/mid360_heartbeat/` (for the fast JVM test) and
+  `app/src/androidTest/assets/mid360_heartbeat/` (for the instrumented
+  counterpart, exercising the real `AssetManager`/on-device byte path) —
+  both extracted from the same two capture records with a one-off Python
+  script (not committed; the two 430-byte `.bin` files are the artifact).
+
+`Mid360HeartbeatParser`, `Mid360Heartbeat`, `Mid360Detector` (the seam),
+`Mid360DetectionResult` and `withDetectedHeartbeat` live in `:core`
+(`com.lidarscan.core.net`, `Mid360Heartbeat.kt`) — plain Kotlin, no Android
+dependency, matching the module's existing convention. The real detector,
+`UdpMid360Detector` (`:app`, `com.lidarscan.app.net`), is exactly what the
+brief asked for: **a plain `DatagramSocket` bound `0.0.0.0:56201`**
+(`broadcast = true`, polled with a short `soTimeout` so cancellation and a
+`~5 s` overall deadline both work), optionally `Network.bindSocket`-bound to
+the Ethernet link when `EthernetMonitor` already has one (degrades cleanly
+to an unbound socket otherwise — auto-detect must not go permanently dark
+just because the adapter attached after the detector was constructed).
+
+`Mid360AutoDetectController` (`:core`) is the wizard-state machine —
+`IDLE → LISTENING → FOUND/TIMED_OUT/ERROR` — same split as B2's
+`D6ConnectController`: no Android dependency, JVM-tested against a fake
+`Mid360Detector` (`Mid360AutoDetectControllerTest`, 9 cases: idle start,
+found-with-matching-host, found-with-mismatched-host, no-local-address
+edge case, timeout, detector error, cancel-while-listening, reset, and
+re-starting cancelling an in-flight attempt).
+
+### 2. Mid-360 wizard UX
+
+`Mid360ConnectScreen`'s first card is now **`AutoDetectCard`** — "Auto-detect"
+is the primary button, "Enter manually" the escape hatch — and the
+pre-existing Interface/Static-IP/Addresses/self-test cards (all B3, unchanged
+otherwise) are gated behind `showManualEntry`, which flips true the moment
+either button is used or an auto-detect attempt resolves (found, timed out,
+or errored — all three still want the form visible for review/editing).
+
+- **On found**: shows `"Found Mid-360 SN <sn> · fw <fw> at <ip>"`, prefills
+  `lidarIp` from the beacon, and prefills `hostIp` to the beacon's
+  **persisted host** (`Mid360Settings.withDetectedHeartbeat`) — which
+  doubles as the mismatch signal, because it feeds straight into the
+  pre-existing `validateMid360Settings` (the AddressesCard already knows
+  how to say "this phone's Ethernet interface holds X, the host IP must be
+  one of them").
+- **Host comparison**: `Mid360AutoDetectController` compares the beacon's
+  persisted host against `EthernetMonitor`'s current addresses at the
+  moment of *finding*, not when auto-detect started (the adapter can pick
+  up an address mid-listen). Match → a plain "ready to run the self-test
+  below" line. Mismatch → `StaticIpGuidance.steps()` gained an optional
+  `targetHostIp` parameter; when set, the OEM guidance's last line becomes
+  "Set this phone's static IP to `<persistedHostIp>`/24 — the exact address
+  the Mid-360 is already configured to stream to" instead of the generic
+  per-OEM phrasing that never named a value. `StaticIpCard` threads
+  `state.autoDetectedHostIp` into it once a heartbeat has been seen.
+- **Manual entry** is unchanged underneath — same fields, same self-test,
+  same per-project save.
+
+### 3. Capture defaults — last-detected Mid-360 addresses (DataStore)
+
+`AppSettings` (`app/.../data/SettingsModels.kt`) gained
+`lastDetectedMid360LidarIp`/`HostIp`/`SerialNumber` (device-level, not
+per-project — same scope as `ntrip`/`useFakeEngine`), persisted by
+`SettingsRepository.setLastDetectedMid360`, called the moment
+`Mid360ConnectViewModel` sees a `FOUND` auto-detect result (never from a
+manually-typed address — only a heartbeat that was actually decoded).
+`Mid360ConnectViewModel`'s init now prefers these over the bare
+`Mid360Settings()` `192.168.1.100`/`192.168.1.5` constants whenever no
+per-project `manifest.json` value exists yet, before applying the existing
+Ethernet-interface-address override. A device that's been auto-detected
+once opens the wizard next time already pointed at it.
+
+### 4. D6 wizard: attach-time auto-probe
+
+`D6SignatureScanner` (`:core`, pure byte-array scan, 8 JVM tests) checks a
+freshly-read serial chunk for the D6's `AA 55` frame preamble (the same
+marker `D6SerialConnection`'s write-side doc already names for the D6's own
+start/stop command bytes), with a `carry`-byte parameter so a preamble
+split exactly across two USB reads is still caught. This — not a blind
+"any CH340 device is a D6" — matters because `NOTES.md`'s own §7 GNSS gap
+note already flags the ambiguity: a Unicore UM982 eval board enumerates as
+the *same* CH340 VID/PID class this app already declares for the D6.
+
+`D6AutoProbe` (`:app`, `com.lidarscan.app.usb`) does the orchestration:
+requests permission (if needed), opens the port, reads for a 1.5 s window
+(several D6 revolutions at the ~10 Hz rate `FIELD_SESSION_2026-08-17.md`
+recorded), and returns `Identified`/`NotIdentified`/`PermissionDenied`/
+`Error`. On `Identified` the already-open connection is handed straight to
+`D6ConnectController` (`connectAlreadyOpen` — no second `registry.open`,
+matching `D6SerialConnection.startReading`'s documented "safe to swap the
+callback later" contract, which is exactly what the engine's own
+`conn.startReading{...}` call does next). On `NotIdentified` the
+speculatively-opened connection is closed again, so a UM982 (or anything
+else) sitting on the wire isn't left held open on a guess.
+
+`ConnectWizardViewModel.refreshDevices()` now also drives
+`maybeAutoProbe()`: exactly one attached serial device and the wizard still
+at `NoDevice` → probe it; more than one device is left alone (ambiguous —
+a rig with both a D6 and a UM982 attached is exactly the case above) with
+the manual list and per-device "Connect" still there. The screen shows a
+small "Checking device signature…" spinner in place of that one device's
+Connect button while its probe is in flight (`autoProbingDevicePath`); on
+identification the wizard jumps straight from the device list to the
+health panel, now labelled **"COIN-D6 detected — `<devicePath>`"**. Manual
+tap-to-connect is untouched and still works at any point, including for a
+second device sitting in the same list.
+
+### 5. RTK screen — cosmetic 230400 note
+
+Android's RTK rover link is Bluetooth SPP only (`RtkRoverConnection`) —
+there is no serial baud setting on this screen to be wrong, so no functional
+change was needed or made. Added one line of copy to the rover card noting
+that a *wired* UM982 defaults to 115200 but is field-verified 230400-capable
+(`captures/FIELD_SESSION_2026-08-17.md`), and pointing at §7's existing
+USB-serial-GNSS gap note — the previous copy said nothing about baud at all,
+which read as silence rather than as "not applicable here."
+
+### 6. Tests + verification
+
+```
+$ ./gradlew :core:test :app:assembleDebug
+...
+BUILD SUCCESSFUL
+$ ./gradlew :app:connectedDebugAndroidTest   # b4_test AVD, booted -no-window
+...
+Starting 3 tests on b4_test(AVD) - 14
+Finished 3 tests on b4_test(AVD) - 14
+BUILD SUCCESSFUL
+```
+
+- **`:core:test` — 218 tests, 0 failures** (5 skipped, pre-existing and
+  unrelated). New: `Mid360HeartbeatParserTest` (7 — includes the two real
+  fixtures decoding to the exact field-session values: SN `MCP7K0034759`,
+  lidar IP `192.168.1.159`, persisted host `192.168.1.5`, plus
+  malformed-payload rejection cases), `Mid360AutoDetectControllerTest` (9),
+  `D6SignatureScannerTest` (8).
+- **`:app:assembleDebug` — succeeds**, native build included (this pulled
+  in the concurrent agent's `engine/src/discovery/*` alongside the
+  unrelated JNI shim this task already had — see §0 above for the one
+  transient ABI-mismatch failure and how it resolved without touching
+  `engine/**`).
+- **`:app:connectedDebugAndroidTest` — 3/3 green on `b4_test`** (API 34,
+  `google_apis`, arm64-v8a): the pre-existing `ReplayCaptureSmokeTest`'s 2
+  cases (unaffected — no route/tag in this task's diff touches the
+  Capture/Projects flow) plus the new
+  `Mid360HeartbeatFixtureAndroidTest`, which reads the same two real
+  payloads through Android's actual `AssetManager` off
+  `app/src/androidTest/assets/mid360_heartbeat/`. That test's first run
+  failed with `FileNotFoundException` — `ApplicationProvider
+  .getApplicationContext()` returns the **target app's** Context
+  (`com.lidarscan.app`), and `src/androidTest/assets/` packages into the
+  **test APK** (`com.lidarscan.app.test`); the fix was
+  `InstrumentationRegistry.getInstrumentation().context` (the test
+  package's own Context), left as a doc comment on the test so the next
+  androidTest asset doesn't repeat it.
+- **Not verified against real hardware in this task**: no D6/Mid-360 device
+  was attached to this environment, so `D6AutoProbe` and
+  `UdpMid360Detector` are verified by construction/unit test (`AA 55`
+  scanner, heartbeat parser against real captured bytes, wizard state
+  machine against fakes) but the actual `DatagramSocket.receive()`/
+  `UsbSerialPort.read()` runtime paths were not exercised live. That is the
+  same posture the rest of this file records for B2/B3's own USB/Ethernet
+  code.

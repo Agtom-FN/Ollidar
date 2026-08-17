@@ -2,6 +2,7 @@ package com.lidarscan.app.ui.connect
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.lidarscan.app.data.SettingsRepository
 import com.lidarscan.app.engine.Mid360LinkState
 import com.lidarscan.app.engine.NativeMid360Probe
 import com.lidarscan.app.engine.ScanEngineNative
@@ -9,17 +10,25 @@ import com.lidarscan.app.net.EthernetMonitor
 import com.lidarscan.app.net.EthernetState
 import com.lidarscan.app.net.NetworkBoundUdpSocket
 import com.lidarscan.app.net.StaticIpGuidance
+import com.lidarscan.core.net.Mid360AutoDetectController
+import com.lidarscan.core.net.Mid360AutoDetectState
+import com.lidarscan.core.net.Mid360Detector
 import com.lidarscan.core.net.Mid360Field
+import com.lidarscan.core.net.Mid360Heartbeat
 import com.lidarscan.core.net.Mid360SelfTest
 import com.lidarscan.core.net.Mid360Settings
 import com.lidarscan.core.net.Mid360Validation
 import com.lidarscan.core.net.validateMid360Settings
+import com.lidarscan.core.net.withDetectedHeartbeat
 import com.lidarscan.core.store.ProjectStore
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 
 /**
@@ -29,6 +38,14 @@ import kotlinx.coroutines.launch
  * timestamped log in the same dialog for the same reason: when a self-test
  * fails on a bench, the sequence of states is the diagnosis, and a single
  * "FAILED" label throws it away.
+ *
+ * AUTO-DETECT: [autoDetect] and [showManualEntry] drive the wizard's first
+ * step (`Mid360ConnectScreen`'s `AutoDetectCard`) — "Auto-detect" is the
+ * primary action; the rest of this state (Interface/Static-IP/Addresses/
+ * self-test cards, all pre-existing) only renders once [showManualEntry] is
+ * true, i.e. once the user has either tapped "Enter manually" or an
+ * auto-detect attempt has resolved (found, timed out, or errored — all
+ * three still want the manual form visible, pre-filled where possible).
  */
 data class Mid360ConnectUiState(
     val ethernet: EthernetState = EthernetState(),
@@ -41,6 +58,8 @@ data class Mid360ConnectUiState(
     val savedToProject: Boolean = false,
     val oem: StaticIpGuidance.Oem = StaticIpGuidance.detectOem(),
     val nativeAvailable: Boolean = ScanEngineNative.isAvailable,
+    val autoDetect: Mid360AutoDetectState = Mid360AutoDetectState(),
+    val showManualEntry: Boolean = false,
 ) {
     enum class Phase { IDLE, TESTING, READY, FAILED }
 
@@ -52,6 +71,14 @@ data class Mid360ConnectUiState(
 
     val linkState: Mid360LinkState
         get() = snapshot?.link ?: Mid360LinkState.DOWN
+
+    /**
+     * AUTO-DETECT: the target IP to name in the static-IP guidance, once
+     * known — the beacon's persisted host, not a generic default. Threaded
+     * into `StaticIpGuidance.steps(targetHostIp = ...)`.
+     */
+    val autoDetectedHostIp: String?
+        get() = autoDetect.found?.persistedHostIp
 }
 
 /**
@@ -82,10 +109,15 @@ class Mid360ConnectViewModel(
     private val ethernetMonitor: EthernetMonitor,
     private val projectStore: ProjectStore,
     private val projectId: String?,
+    private val settingsRepository: SettingsRepository,
+    detector: Mid360Detector,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(Mid360ConnectUiState())
     val uiState: StateFlow<Mid360ConnectUiState> = _uiState.asStateFlow()
+
+    /** AUTO-DETECT: pure `:core` state machine (JVM-tested against a fake) driving the wizard's first step. */
+    private val autoDetectController = Mid360AutoDetectController(detector, viewModelScope)
 
     private var probeHandle: Long = 0L
     private var pollJob: Job? = null
@@ -102,22 +134,74 @@ class Mid360ConnectViewModel(
         }
         // Per-project persistence (Tech Spec §3.1's "Save per project"). A
         // project that has been through the wizard before re-opens with the
-        // addresses that worked; a fresh one gets the 192.168.1.x defaults.
+        // addresses that worked; a fresh one falls back to AUTO-DETECT's
+        // last-successfully-identified device (SettingsRepository, device
+        // level — see AppSettings.lastDetectedMid360LidarIp), and only then
+        // to the bare 192.168.1.x factory-default constants.
         viewModelScope.launch {
             val stored = projectId?.let { projectStore.open(it)?.manifest?.mid360 }
             if (stored != null) {
                 _uiState.value = _uiState.value.copy(settings = stored, savedToProject = true).revalidated()
             } else {
-                // Pre-fill the host IP from the interface's real address when
-                // there is one — the default 192.168.1.5 is a guess, and a
-                // wrong host IP is the failure that produces no error at all.
-                val suggested = _uiState.value.ethernet.suggestedHostIp
-                if (suggested != null) {
-                    _uiState.value = _uiState.value
-                        .copy(settings = _uiState.value.settings.copy(hostIp = suggested))
-                        .revalidated()
+                val persisted = settingsRepository.settings.first()
+                val lastLidarIp = persisted.lastDetectedMid360LidarIp
+                val base = if (lastLidarIp != null) {
+                    Mid360Settings(
+                        lidarIp = lastLidarIp,
+                        hostIp = persisted.lastDetectedMid360HostIp ?: Mid360Settings.DEFAULT_HOST_IP,
+                    )
+                } else {
+                    Mid360Settings()
                 }
+                // Pre-fill the host IP from the interface's real address when
+                // there is one — a stale/default guess is a wrong host IP,
+                // and a wrong host IP is the failure that produces no error
+                // at all.
+                val suggested = _uiState.value.ethernet.suggestedHostIp
+                val settings = if (suggested != null) base.copy(hostIp = suggested) else base
+                _uiState.value = _uiState.value.copy(settings = settings).revalidated()
             }
+        }
+        // AUTO-DETECT: mirror the controller's own state into uiState, reveal
+        // the manual form once a listen has resolved (found, timed out, or
+        // errored — all three should let the operator see/edit the form),
+        // and prefill + persist addresses the moment a heartbeat is found.
+        autoDetectController.state.onEach { detectState ->
+            _uiState.value = _uiState.value.copy(
+                autoDetect = detectState,
+                showManualEntry = _uiState.value.showManualEntry ||
+                    detectState.status != Mid360AutoDetectState.Status.IDLE,
+            )
+            val heartbeat = detectState.found
+            if (detectState.status == Mid360AutoDetectState.Status.FOUND && heartbeat != null) {
+                applyDetectedHeartbeat(heartbeat)
+            }
+        }.launchIn(viewModelScope)
+    }
+
+    // --- AUTO-DETECT ---------------------------------------------------------
+
+    /** Primary action on the wizard's first step. Also used as "Re-detect" once a listen has resolved. */
+    fun startAutoDetect() {
+        autoDetectController.start { _uiState.value.ethernet.addresses }
+    }
+
+    fun cancelAutoDetect() = autoDetectController.cancel()
+
+    /** "Enter manually" — skips straight to the pre-existing address form, abandoning any in-flight listen. */
+    fun revealManualEntry() {
+        autoDetectController.reset()
+        _uiState.value = _uiState.value.copy(showManualEntry = true)
+    }
+
+    private fun applyDetectedHeartbeat(heartbeat: Mid360Heartbeat) {
+        updateSettings { it.withDetectedHeartbeat(heartbeat) }
+        viewModelScope.launch {
+            settingsRepository.setLastDetectedMid360(
+                lidarIp = heartbeat.lidarIp,
+                hostIp = heartbeat.persistedHostIp,
+                serialNumber = heartbeat.serialNumber,
+            )
         }
     }
 
@@ -362,6 +446,7 @@ class Mid360ConnectViewModel(
 
     override fun onCleared() {
         stopProbe()
+        autoDetectController.cancel()
         ethernetMonitor.stop()
         super.onCleared()
     }

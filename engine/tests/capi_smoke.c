@@ -596,6 +596,93 @@ int scan_capi_smoke_run(const uint8_t* d6_bytes, size_t d6_len) {
     scan_engine_destroy(e6);
   }
 
+  /* --- ABI 6 (A16): device auto-discovery --------------------------------
+   *
+   * None of this needs an engine, hardware, or a network — which is the
+   * property that makes it smoke-testable at all. What is asserted is that
+   * every new entry point is CALLABLE FROM C with the argument shapes JNI
+   * will use, that the two-call capacity protocol works, and that a machine
+   * with no lidar and no adapters gets answers rather than errors. */
+  {
+    scan_mid360_beacon beacons[2];
+    scan_host_check_result hc;
+    scan_serial_port ports[4];
+    scan_d6_probe d6p;
+    scan_um982_probe gnssp;
+    const char* bogus[2];
+    uint32_t found = 0xFFFFFFFFu;
+    int64_t holder = -1;
+    scan_error_t e;
+
+    /* Serial enumeration, capacity-0 form: how many are there? */
+    e = scan_enumerate_serial(NULL, 0, &found);
+    if (e != SCAN_OK && e != SCAN_ERR_CAPACITY_EXCEEDED) return 150;
+    if (found == 0xFFFFFFFFu) return 150;
+    /* ...then the real call. A machine with more than 4 ports reports
+     * SCAN_ERR_CAPACITY_EXCEEDED and still fills the array. */
+    memset(ports, 0, sizeof ports);
+    e = scan_enumerate_serial(ports, 4, &found);
+    if (e != SCAN_OK && e != SCAN_ERR_CAPACITY_EXCEEDED) return 151;
+    if (scan_enumerate_serial(NULL, 4, &found) != SCAN_ERR_INVALID_ARGUMENT) return 152;
+    if (scan_enumerate_serial(ports, 4, NULL) != SCAN_ERR_INVALID_ARGUMENT) return 153;
+
+    /* Discovery with a zero timeout: binds, finds nothing, returns. SCAN_ERR_BUSY
+     * is equally correct on a machine where Livox Viewer holds 56201. */
+    memset(beacons, 0, sizeof beacons);
+    found = 0xFFFFFFFFu;
+    e = scan_discover_mid360(0u, beacons, 2, &found);
+    if (e != SCAN_OK && e != SCAN_ERR_BUSY && e != SCAN_ERR_CAPACITY_EXCEEDED) return 154;
+    if (e == SCAN_OK && found != 0) return 155;
+    if (scan_discover_mid360(0u, beacons, 2, NULL) != SCAN_ERR_INVALID_ARGUMENT) return 156;
+
+    /* The host check, on the beacon the field session actually saw. The point
+     * of the assertion is that a machine WITHOUT 192.168.1.5 still gets a
+     * usable sentence — that is the whole feature. */
+    memset(&beacons[0], 0, sizeof beacons[0]);
+    strcpy(beacons[0].sn, "ARMCP7K0034759");
+    strcpy(beacons[0].lidar_ip, "192.168.1.159");
+    strcpy(beacons[0].netmask, "255.255.255.0");
+    strcpy(beacons[0].gateway, "192.168.1.1");
+    strcpy(beacons[0].persisted_host_ip, "192.168.1.5");
+    memset(&hc, 0, sizeof hc);
+    if (scan_host_check(&beacons[0], &hc) != SCAN_OK) return 157;
+    if (hc.note[0] == '\0') return 158;
+    if (strstr(hc.note, "192.168.1.5") == NULL) return 159;
+    if (hc.candidate_count > SCAN_HOST_CHECK_MAX_CANDIDATES) return 160;
+    if (scan_host_check(NULL, &hc) != SCAN_ERR_INVALID_ARGUMENT) return 161;
+    if (scan_host_check(&beacons[0], NULL) != SCAN_ERR_INVALID_ARGUMENT) return 162;
+
+    /* The probes. No ports offered, and one that cannot exist: both are
+     * SCAN_ERR_NOT_FOUND, not an I/O error — "that device is not here" is an
+     * answer a picker displays. */
+    memset(&d6p, 0, sizeof d6p);
+    memset(&gnssp, 0, sizeof gnssp);
+    if (scan_probe_d6(NULL, 0, 50u, &d6p) != SCAN_ERR_NOT_FOUND) return 163;
+    if (scan_probe_um982(NULL, 0, 50u, &gnssp) != SCAN_ERR_NOT_FOUND) return 164;
+    bogus[0] = "/dev/lidarscan-capi-smoke-not-a-port";
+    bogus[1] = "/dev/lidarscan-capi-smoke-not-a-port-either";
+    if (scan_probe_d6(bogus, 2, 50u, &d6p) != SCAN_ERR_NOT_FOUND) return 165;
+    if (scan_probe_um982(bogus, 2, 50u, &gnssp) != SCAN_ERR_NOT_FOUND) return 166;
+    if (scan_probe_d6(bogus, 2, 50u, NULL) != SCAN_ERR_INVALID_ARGUMENT) return 167;
+    if (scan_probe_um982(bogus, 2, 50u, NULL) != SCAN_ERR_INVALID_ARGUMENT) return 168;
+    bogus[0] = NULL;
+    if (scan_probe_d6(bogus, 2, 50u, &d6p) != SCAN_ERR_INVALID_ARGUMENT) return 169;
+
+    /* The single-instance guard. A dedicated app_id so this never fights a
+     * real LidarScan on the developer's machine. */
+    if (scan_current_process_id() <= 0) return 170;
+    e = scan_instance_acquire("lidarscan-capi-smoke", NULL, &holder);
+    if (e != SCAN_OK && e != SCAN_ERR_FILE) return 171;
+    if (e == SCAN_OK) {
+      if (holder != scan_current_process_id()) return 172;
+      /* Twice in one process is OK: this is a library being initialized
+       * twice, not a second LidarScan. */
+      if (scan_instance_acquire("lidarscan-capi-smoke", NULL, &holder) != SCAN_OK) return 173;
+      scan_instance_release();
+      scan_instance_release(); /* idempotent */
+    }
+  }
+
   return 0;
 }
 

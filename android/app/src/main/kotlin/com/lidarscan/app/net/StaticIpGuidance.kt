@@ -66,8 +66,27 @@ object StaticIpGuidance {
     /**
      * The steps to show. Written as short imperative lines because they are
      * read one-handed, standing up, with a lidar in the other hand.
+     *
+     * @param targetHostIp AUTO-DETECT: when a Mid-360 heartbeat has been
+     *   received and its persisted host IP does not match anything this
+     *   phone's Ethernet interface currently holds, the wizard passes that
+     *   exact address here so the last step names the **specific** value to
+     *   type into Settings — the address the lidar is already configured to
+     *   stream to — instead of the generic `192.168.1.5`-shaped hint the
+     *   per-OEM steps otherwise give. Null (the default) leaves the steps
+     *   unchanged.
      */
-    fun steps(oem: Oem = detectOem()): List<String> = when (oem) {
+    fun steps(oem: Oem = detectOem(), targetHostIp: String? = null): List<String> {
+        val base = rawSteps(oem)
+        return if (targetHostIp.isNullOrBlank()) {
+            base
+        } else {
+            base + "Set this phone's static IP to $targetHostIp/24 — the exact address the Mid-360 is " +
+                "already configured to stream to (read from its own heartbeat broadcast, not a guess)."
+        }
+    }
+
+    private fun rawSteps(oem: Oem): List<String> = when (oem) {
         Oem.PIXEL_AOSP -> listOf(
             "Plug the USB-C Ethernet adapter in first — the entry does not appear until an adapter is attached.",
             "Settings → Network & internet → Ethernet.",

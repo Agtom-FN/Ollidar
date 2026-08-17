@@ -103,14 +103,21 @@ class QPlainTextEdit;
 class QProgressBar;
 class QPushButton;
 class QSerialPort;
+class QShowEvent;
 class QSpinBox;
 class QTabWidget;
+class QThread;
 class QTimer;
+class QVBoxLayout;
 
 namespace lidarscan {
 
 class EngineHost;
 class RecordCluster;
+struct DiscoveryResult;  // app/DeviceDiscovery.h — kept out of this header on
+                          // purpose so CaptureWindow.h never names an engine
+                          // discovery type; see DeviceDiscovery.h's file
+                          // comment.
 
 class CaptureWindow : public QDialog {
   Q_OBJECT
@@ -132,6 +139,11 @@ class CaptureWindow : public QDialog {
   // Emitted once per self-test, pass or fail — this is what --mid360-selftest
   // (main.cpp) waits on for a headless CLI run against the S2 simulator.
   void selfTestFinished(bool passed, const QString& detail);
+  // Fires after every completed discovery pass — the manual "Auto-detect
+  // devices" button AND the silent on-open run alike — once the result has
+  // been applied to the UI (fields prefilled, summary text set). What
+  // --auto-detect-selftest (main.cpp) waits on for a headless run.
+  void autoDetectFinished(bool mid360Found, bool d6Found, bool um982Found);
 
   // --- CLI test hook (main.cpp's --mid360-selftest) ------------------------
   //
@@ -148,6 +160,11 @@ class CaptureWindow : public QDialog {
   // PAUSED state.
   void triggerPauseResumeForCli();
   void triggerStopForCli();
+  // Drives the SAME "Auto-detect devices" button a click would (worker
+  // thread, real discovery.h calls), then autoDetectFinished() fires once
+  // the result has been applied to the UI. Evidence hook for
+  // --auto-detect-selftest (main.cpp).
+  void triggerAutoDetectForCli();
 
  private:
   enum class Phase { kIdle, kTesting, kReady, kRecording, kPaused };
@@ -181,6 +198,29 @@ class CaptureWindow : public QDialog {
   void loadMid360Settings();
   void saveMid360Settings();
 
+  // --- Auto-detect (docs/design/REVIEW_FEEDBACK.md 2026-08-17 round 4 item
+  // 5) --------------------------------------------------------------------
+  //
+  // buildAutoDetectSection() builds the button + the persistent summary
+  // panel beneath it (SN/fw confirmation, per-sensor "not seen" causes, the
+  // host-IP fix line + its copy button). startDiscovery() moves a
+  // DiscoveryWorker (app/DeviceDiscovery.h) onto a throwaway QThread —
+  // `silent` distinguishes the manual button (progress dialog, overwrites
+  // every field with whatever this pass found) from the once-per-project
+  // auto-run on open (no dialog, prefill-only: a field already holding a
+  // non-default value is left alone). applyMid360Result/applyD6Result/
+  // applyUm982Result are shared by both paths and are individually
+  // overwrite-guarded so a silent run can safely fill in only the sensors
+  // that are still at their factory defaults.
+  void buildAutoDetectSection(QVBoxLayout* v);
+  void onAutoDetectClicked();
+  void startDiscovery(bool silent);
+  void handleDiscoveryFinished(const DiscoveryResult& r, bool silent);
+  void applyMid360Result(const DiscoveryResult& r, bool silent);
+  void applyD6Result(const DiscoveryResult& r, bool silent);
+  void applyUm982Result(const DiscoveryResult& r, bool silent);
+  void showEvent(QShowEvent* event) override;
+
   // Trampoline installed in D6Config::serial.write_fn so the driver can send
   // its own start/stop command frames.
   static scanengine::ScanError serialWrite(const std::uint8_t* data, std::size_t n, void* user);
@@ -209,6 +249,28 @@ class CaptureWindow : public QDialog {
   std::uint64_t cum_bytes_written_ = 0;
   std::uint64_t cum_chunks_written_ = 0;
 
+  // --- Auto-detect --------------------------------------------------------
+  QPushButton* auto_detect_btn_ = nullptr;
+  QWidget* auto_detect_panel_ = nullptr;   // hidden until the first pass returns
+  QLabel* auto_detect_mid360_line_ = nullptr;
+  QLabel* auto_detect_d6_line_ = nullptr;
+  QLabel* auto_detect_um982_line_ = nullptr;
+  QLabel* auto_detect_fix_line_ = nullptr;       // the ifconfig-alias remedy, when shown
+  QPushButton* auto_detect_copy_btn_ = nullptr;
+  QString auto_detect_copy_payload_;
+  QDialog* auto_detect_progress_ = nullptr;      // manual-run-only; null while idle
+  QLabel* auto_detect_progress_label_ = nullptr;
+  QThread* discovery_thread_ = nullptr;
+  bool discovery_in_flight_ = false;
+  // Reset in setProjectDir(): the silent on-open auto-run fires at most once
+  // per project per time this window is shown, not once per process.
+  bool auto_detect_prompted_for_project_ = false;
+  // Set by loadMid360Settings(): true once THIS project has ever had a
+  // Mid-360 host/lidar IP saved. "Never-configured" for the silent auto-run
+  // gate means this is false — a fresh project, still on the hard-coded
+  // placeholder addresses below.
+  bool had_saved_mid360_settings_ = false;
+
   QTabWidget* tabs_ = nullptr;
 
   // D6
@@ -217,6 +279,7 @@ class CaptureWindow : public QDialog {
   QCheckBox* send_commands_ = nullptr;
   QLabel* port_hint_ = nullptr;
   QLabel* ch340_hint_ = nullptr;
+  QLabel* d6_auto_tag_ = nullptr;   // "auto-detected" tag, shown after a hit
 
   // Mid-360
   QLineEdit* host_ip_ = nullptr;
@@ -225,6 +288,16 @@ class CaptureWindow : public QDialog {
   QSpinBox* imu_port_ = nullptr;
   QSpinBox* cmd_port_ = nullptr;
   QLabel* mid_hint_ = nullptr;
+
+  // RTK (UM982) — auto-detect prefill only in this build; there is no
+  // engine-side GNSS serial wiring on the desktop capture path yet (unlike
+  // D6/Mid-360, GnssSource takes pushed NMEA bytes, not a device this window
+  // opens/closes — see NOTES.md). The tab exists so a UM982 auto-detect hit
+  // has somewhere honest to land instead of being silently dropped.
+  QComboBox* um982_port_ = nullptr;
+  QSpinBox* um982_baud_ = nullptr;
+  QLabel* um982_heading_ = nullptr;   // "dual-antenna heading: yes/no/unknown"
+  QLabel* um982_hint_ = nullptr;
 
   // session
   QLineEdit* project_edit_ = nullptr;

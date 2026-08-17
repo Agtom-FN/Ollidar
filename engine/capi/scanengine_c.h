@@ -93,7 +93,24 @@ extern "C" {
  * scan_device_config changed layout, so per DESIGN.md §6 item 9 this and
  * scanengine::kEngineAbiVersion move together. Every OTHER struct, every
  * function signature and every enum value from ABI 4 is unchanged. */
-#define SCAN_ABI_VERSION 5u
+/* 5 -> 6 (A16): device auto-discovery and the single-instance guard. The
+ * owner requirement from the first real-hardware session, verbatim: manual
+ * IP/port entry defeats the GUI.
+ *   * scan_discover_mid360() + scan_mid360_beacon — the 1 Hz broadcast
+ *     heartbeat, parsed: SN, firmware, the lidar's own IP/mask/gateway and
+ *     the HOST IP it has persisted and will stream to.
+ *   * scan_host_check() + scan_host_check_result — "the lidar expects
+ *     192.168.1.5 and this machine is not 192.168.1.5", which is the exact
+ *     way the field session's first Mid-360 session failed.
+ *   * scan_probe_d6() / scan_probe_um982() + their result structs — identify
+ *     a serial device by its WIRE SIGNATURE, never by its /dev name.
+ *   * scan_enumerate_serial() + scan_serial_port.
+ *   * scan_instance_acquire() / scan_instance_release() — the advisory
+ *     single-instance lock (owner round-4 item 6).
+ * Every addition is a NEW symbol or a NEW struct: no existing struct layout,
+ * function signature or enum value from ABI 5 changed. An ABI-5 consumer
+ * relinks against this header unmodified. */
+#define SCAN_ABI_VERSION 6u
 
 /* --- errors: mirror of scanengine::ScanError --------------------------- */
 typedef int32_t scan_error_t;
@@ -1265,6 +1282,130 @@ typedef struct scan_clock_sweep_result {
 SCAN_API scan_error_t scan_clock_sweep_estimate(const scan_rate_sample* camera, uint32_t n_camera,
                                                 const scan_rate_sample* lidar, uint32_t n_lidar,
                                                 scan_clock_sweep_result* out);
+
+/* --- device auto-discovery (A16), ABI 6 -----------------------------------
+ *
+ * The mirror of discovery/discovery.h. Nothing here needs an engine handle:
+ * discovery runs BEFORE there is a session to configure, which is the whole
+ * point. Every one of these calls BLOCKS for up to the timeout it is given —
+ * call them from a worker, never from a UI thread.
+ *
+ * Convention 4 does not apply to these structs: they carry FIXED CHAR ARRAYS,
+ * copied by value, so a JNI caller can hold them past the next engine call. A
+ * string longer than its array is truncated, never overflowed. */
+
+/* Where the Mid-360 broadcasts its heartbeat. Mirrored from
+ * discovery::kMid360PushPort and static_asserted against it. */
+#define SCAN_MID360_PUSH_PORT 56201u
+#define SCAN_MID360_PUSH_PORT_ALT 56200u
+
+typedef struct scan_mid360_beacon {
+  char sn[32];              /* "ARMCP7K0034759" */
+  char dev_type[32];        /* "Mid-360" */
+  char fw_version[32];      /* "35.1.1.8" */
+  char fw_version_text[32]; /* "35010108", the firmware's own spelling */
+  char build_time[32];
+  char mac[24];
+  char lidar_ip[16];
+  char netmask[16];
+  char gateway[16];
+  /* The address the lidar HAS PERSISTED and will stream to. Feed it to
+   * scan_host_check() before doing anything else with it. */
+  char persisted_host_ip[16];
+  char source_ip[16];  /* who sent the datagram */
+  uint16_t persisted_point_port;
+  uint16_t persisted_imu_port;
+  uint16_t push_port_seen; /* the local port it arrived on */
+  uint16_t key_count;
+  int64_t t_last_seen_ns;
+  uint32_t beacons_seen;
+  uint8_t crc_ok;    /* header CRC16 and payload CRC32 both verified */
+  uint8_t heuristic; /* recovered by the fallback scan, treat as advisory */
+} scan_mid360_beacon;
+
+/* Listen for `timeout_ms` and write at most `capacity` records, dedup'd by
+ * serial number. *out_count is always the TRUE number found, so a truncated
+ * call (SCAN_ERR_CAPACITY_EXCEEDED) can be retried with a bigger array — the
+ * same contract as scan_ntrip_fetch_sourcetable.
+ *
+ * SCAN_OK with *out_count == 0 means "nothing is broadcasting", which is an
+ * answer, not an error. SCAN_ERR_BUSY means the listen port could not be
+ * bound at all — another LidarScan, or Livox Viewer, is holding it. */
+SCAN_API scan_error_t scan_discover_mid360(uint32_t timeout_ms, scan_mid360_beacon* out,
+                                           uint32_t capacity, uint32_t* out_count);
+
+#define SCAN_HOST_CHECK_MAX_CANDIDATES 8
+
+typedef struct scan_host_check_result {
+  uint8_t host_ip_is_local;  /* this machine holds the persisted host address */
+  uint8_t on_lidar_subnet;   /* ...or at least is on the lidar's subnet */
+  uint32_t candidate_count;  /* how many of `candidates` are filled */
+  char candidates[SCAN_HOST_CHECK_MAX_CANDIDATES][16];
+  char suggested_host_ip[16];
+  char suggested_interface[64];
+  char note[512]; /* one operator-readable sentence; always non-empty */
+} scan_host_check_result;
+
+/* Enumerates this machine's interfaces and compares. Never fails because the
+ * answer is bad news — a machine on the wrong network gets SCAN_OK and a note
+ * that says so. */
+SCAN_API scan_error_t scan_host_check(const scan_mid360_beacon* beacon,
+                                      scan_host_check_result* out);
+
+typedef struct scan_serial_port {
+  char path[256]; /* "/dev/cu.usbserial-21130", "COM7" */
+} scan_serial_port;
+
+/* Never fails: a machine with no serial ports reports zero of them.
+ * SCAN_ERR_CAPACITY_EXCEEDED if `capacity` was too small; *out_count is the
+ * true total either way. */
+SCAN_API scan_error_t scan_enumerate_serial(scan_serial_port* out, uint32_t capacity,
+                                            uint32_t* out_count);
+
+typedef struct scan_d6_probe {
+  char port[256];
+  uint32_t baud; /* always 230400 — the D6 has one rate */
+  uint32_t packets_ok;
+  uint32_t packets_bad_checksum;
+  uint8_t used_start_command; /* the probe had to ask; see discovery.h */
+} scan_d6_probe;
+
+typedef struct scan_um982_probe {
+  char port[256];
+  uint32_t baud; /* whatever the sweep found — 230400 on the real unit */
+  uint32_t sentences_ok;
+  uint32_t sentences_bad;
+  uint8_t has_heading; /* a dual-antenna heading sentence was seen */
+} scan_um982_probe;
+
+/* Probe each of `n_ports` paths for `per_port_ms` and report the FIRST match.
+ * SCAN_ERR_NOT_FOUND means none of them is that device — a normal answer, and
+ * the reason these do not return SCAN_ERR_IO for an unopenable port. A port
+ * that is busy is skipped silently.
+ *
+ * scan_probe_d6 may WRITE the D6's 4-byte start command to a port that stayed
+ * silent AND did not look like a text protocol, and always writes the stop
+ * command afterwards. scan_probe_um982 never writes. */
+SCAN_API scan_error_t scan_probe_d6(const char* const* ports, uint32_t n_ports,
+                                    uint32_t per_port_ms, scan_d6_probe* out);
+SCAN_API scan_error_t scan_probe_um982(const char* const* ports, uint32_t n_ports,
+                                       uint32_t per_port_ms, scan_um982_probe* out);
+
+/* --- single-instance guard (A16, owner round-4 item 6), ABI 6 --------------
+ *
+ * PROCESS-GLOBAL, like the log callback: one claim per process, released by
+ * scan_instance_release() or by process exit. `app_id` may be NULL for the
+ * default ("lidarscan"); `lock_path` may be NULL to derive it from app_id in
+ * the temp directory.
+ *
+ * SCAN_ERR_BUSY means another LidarScan holds it; *out_holder_pid (optional)
+ * is that process, and scan_engine_last_error() is the sentence to show:
+ * "another LidarScan is running (pid 4242)". Calling acquire twice in one
+ * process is SCAN_OK — see instance_guard.h on why that is not a violation. */
+SCAN_API scan_error_t scan_instance_acquire(const char* app_id, const char* lock_path,
+                                            int64_t* out_holder_pid);
+SCAN_API void scan_instance_release(void);
+SCAN_API int64_t scan_current_process_id(void);
 
 /* Logging is process-global, not per engine. */
 SCAN_API void scan_engine_set_log_callback(scan_log_cb cb, void* user_data, int32_t min_level);

@@ -60,6 +60,7 @@
 #include "render/ViewportWindow.h"
 #include "ui/InspectorCard.h"
 #include "ui/Theme.h"
+#include "scanengine/core/instance_guard.h"  // scanengine::InstanceGuard — see the check below
 #include "scanengine/export/exporter.h"
 #include "scanengine/jobs/job_queue.h"
 #include "scanengine/poses/se3.h"
@@ -77,6 +78,45 @@ int main(int argc, char** argv) {
   // shows up as clipped labels in exactly the places that were laid out
   // first. (ui/Theme.h; this call is the whole of the theme's public API.)
   lidarscan::theme::install(app);
+
+  // --- Single-instance guard --------------------------------------------
+  //
+  // docs/design/REVIEW_FEEDBACK.md, 2026-08-17 round 4 item 6 (owner, field
+  // session): "a leftover instance holding UDP ports makes the next launch's
+  // SDK init fail with an opaque I/O error" — captures/FIELD_SESSION_2026-
+  // 08-17.md logs exactly this: "a first attempt left a port-holding
+  // process; later runs failed SdkInit until killed". scanengine::
+  // InstanceGuard (engine/include/scanengine/core/instance_guard.h, A16)
+  // claims an advisory process-wide lock before anything below touches the
+  // engine (EngineHost's Mid-360 driver is what actually opens the fixed UDP
+  // ports, once a device is added from CaptureWindow) — if a prior instance
+  // still holds it, this one says so plainly and exits instead of
+  // reproducing that opaque SDK failure a second time. A plain local, NOT
+  // `static`: declared directly in main()'s own scope, an ordinary automatic
+  // variable already lives for the whole of `app.exec()` below and is
+  // destroyed only once main() returns — which is everything the header
+  // comment ("keep it alive for the process") actually needs. A `static`
+  // here was tried first and crashed at exit ("mutex lock failed: Invalid
+  // argument"): a function-local static's destructor runs during the
+  // process's static-destruction sequence, AFTER other function-local
+  // statics it might depend on (instance_guard.cpp's own registry mutex,
+  // also a function-local static, guards the release path) may already have
+  // been destroyed — the classic static destruction-order fiasco. A plain
+  // stack local sidesteps it entirely: it is destroyed during main()'s own
+  // return, strictly before any static-destruction sequence begins.
+  scanengine::InstanceGuard g_instance_guard;
+  const scanengine::Status guard_status = g_instance_guard.Acquire();
+  if (!guard_status.ok()) {
+    // last_error_message() carries the operator-facing sentence the guard's
+    // own header promises ("another LidarScan is running (pid 4242)");
+    // guard_status.message() is only the generic per-ScanError string, kept
+    // as a fallback in case a future guard failure mode does not set it.
+    QString detail = QString::fromUtf8(scanengine::last_error_message());
+    if (detail.isEmpty()) detail = QString::fromUtf8(guard_status.message());
+    QMessageBox::critical(nullptr, "LidarScan",
+                          QString("LidarScan is already running.\n\n%1").arg(detail));
+    return 1;
+  }
 
   QCommandLineParser parser;
   parser.setApplicationDescription("LidarScan desktop — capture + workstation");
@@ -118,6 +158,20 @@ int main(int argc, char** argv) {
       "(engine add_device + start, first-data-or-timeout) against a device already "
       "listening at LIDAR_IP, e.g. the S2 simulator on loopback",
       "spec");
+  QCommandLineOption optAutoDetectSelftest(
+      "auto-detect-selftest",
+      "Evidence hook: open the capture window and click 'Auto-detect devices' "
+      "programmatically — real scanengine::discovery calls on a worker thread, same "
+      "path the button drives, against whatever is reachable (e.g. the heartbeat "
+      "replayer script for the S2 simulator, or real hardware). Prints what each "
+      "sensor's pass found and exits 0 either way — 'nothing seen' is a valid, "
+      "reported outcome, not a failure of this hook. Combine with --shot to capture "
+      "the summary panel.");
+  QCommandLineOption optAutoDetectShot(
+      "auto-detect-shot",
+      "With --auto-detect-selftest: QWidget::grab() the capture window (button + summary "
+      "panel) to PATH once autoDetectFinished() fires",
+      "path");
   QCommandLineOption optMid360RecordInto(
       "mid360-record-into",
       "With --mid360-selftest: on a PASSED self-test, also Record into this NEW "
@@ -216,6 +270,8 @@ int main(int argc, char** argv) {
   parser.addOption(optExportDelay);
   parser.addOption(optMeasureSelftest);
   parser.addOption(optMid360Selftest);
+  parser.addOption(optAutoDetectSelftest);
+  parser.addOption(optAutoDetectShot);
   parser.addOption(optMid360RecordInto);
   parser.addOption(optBuildSynthMid360);
   parser.addOption(optPostE2e);
@@ -693,6 +749,50 @@ int main(int argc, char** argv) {
                          });
                        });
                      });
+  }
+
+  // Auto-detect evidence hook: exercises the SAME button (RecordCluster's
+  // sibling, "Auto-detect devices") a user would click, over the real
+  // DeviceDiscovery worker thread and real scanengine::discovery calls — no
+  // fake transport, matching every other *-selftest hook in this file. Runs
+  // BEFORE --mid360-selftest below, deliberately: they both use CaptureWindow
+  // but neither drives the record cluster, so ordering between them does not
+  // matter for correctness, only for readability of the log.
+  if (parser.isSet(optAutoDetectSelftest)) {
+    lidarscan::CaptureWindow* cap = win.captureWindow();
+    if (!projectDir.isEmpty()) cap->setProjectDir(projectDir);
+    cap->show();
+    cap->raise();
+    // showEvent() below may ALSO fire the silent on-open pass (if this
+    // project has never had Mid-360 settings saved) racing this hook's own
+    // explicit trigger a few lines down — CaptureWindow's own
+    // discovery_in_flight_ guard makes whichever one loses the race a
+    // harmless no-op. So this hook does not just fire once: it fires the
+    // explicit button click again after the FIRST pass (silent or not)
+    // completes, guaranteeing at least one manual (dialog-shown, always-
+    // overwrite) pass is exercised regardless of how the race went.
+    const QString shotPath = parser.value(optAutoDetectShot);
+    auto* firedManualFollowup = new bool(false);
+    QObject::connect(cap, &lidarscan::CaptureWindow::autoDetectFinished, &app,
+                     [cap, shotPath, firedManualFollowup](bool mid360Found, bool d6Found,
+                                                          bool um982Found) {
+                       std::fprintf(stderr,
+                                    "[lidarscan] auto-detect-selftest: Mid-360 %s, D6 %s, "
+                                    "UM982 %s\n",
+                                    mid360Found ? "FOUND" : "not seen",
+                                    d6Found ? "FOUND" : "not seen",
+                                    um982Found ? "FOUND" : "not seen");
+                       if (!*firedManualFollowup) {
+                         *firedManualFollowup = true;
+                         QTimer::singleShot(200, cap, [cap] { cap->triggerAutoDetectForCli(); });
+                       }
+                       if (shotPath.isEmpty()) return;
+                       QDir().mkpath(QFileInfo(shotPath).absolutePath());
+                       const bool ok = cap->grab().save(shotPath);
+                       std::fprintf(stderr, "[lidarscan] auto-detect-shot: %s -> %s\n",
+                                    ok ? "OK" : "FAILED", shotPath.toUtf8().constData());
+                     });
+    QTimer::singleShot(500, cap, [cap] { cap->triggerAutoDetectForCli(); });
   }
 
   if (parser.isSet(optMid360Selftest)) {

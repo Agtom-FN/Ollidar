@@ -45,6 +45,9 @@ class SettingsRepository(private val context: Context) {
         val NTRIP_V1_FALLBACK = booleanPreferencesKey("ntrip_allow_v1_fallback")
         val NTRIP_GGA_INTERVAL_MS = intPreferencesKey("ntrip_gga_interval_ms")
         val NTRIP_AUTO_RECONNECT = booleanPreferencesKey("ntrip_auto_reconnect")
+        val LAST_MID360_LIDAR_IP = stringPreferencesKey("last_mid360_lidar_ip")
+        val LAST_MID360_HOST_IP = stringPreferencesKey("last_mid360_host_ip")
+        val LAST_MID360_SN = stringPreferencesKey("last_mid360_serial_number")
     }
 
     val settings: Flow<AppSettings> = context.settingsDataStore.data.map { prefs ->
@@ -69,6 +72,9 @@ class SettingsRepository(private val context: Context) {
                 ggaIntervalMs = prefs[Keys.NTRIP_GGA_INTERVAL_MS] ?: 10_000,
                 autoReconnect = prefs[Keys.NTRIP_AUTO_RECONNECT] ?: true,
             ),
+            lastDetectedMid360LidarIp = prefs[Keys.LAST_MID360_LIDAR_IP],
+            lastDetectedMid360HostIp = prefs[Keys.LAST_MID360_HOST_IP],
+            lastDetectedMid360SerialNumber = prefs[Keys.LAST_MID360_SN],
         )
     }
 
@@ -93,6 +99,15 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setAllowPoorSyncColorize(allow: Boolean) {
         context.settingsDataStore.edit { it[Keys.ALLOW_POOR_SYNC] = allow }
+    }
+
+    /** AUTO-DETECT: called once a Mid-360 heartbeat has actually been decoded — never from a manually-typed address. */
+    suspend fun setLastDetectedMid360(lidarIp: String, hostIp: String, serialNumber: String) {
+        context.settingsDataStore.edit {
+            it[Keys.LAST_MID360_LIDAR_IP] = lidarIp
+            it[Keys.LAST_MID360_HOST_IP] = hostIp
+            it[Keys.LAST_MID360_SN] = serialNumber
+        }
     }
 
     suspend fun setNtrip(s: NtripSettings) {

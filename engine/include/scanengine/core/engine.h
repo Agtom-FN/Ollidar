@@ -73,7 +73,12 @@ class JobQueue;
 //             point filter, the decimation budget and the SDK config path
 //             (android/NOTES.md §8 findings 1, 2 and 4), and
 //             scan_engine_set_crs() landed (docs/INT29-wiring.md §7 item 5).
-inline constexpr std::uint32_t kEngineAbiVersion = 5;
+// 6 (A16): device auto-discovery (scan_discover_mid360, scan_host_check,
+//             scan_probe_d6, scan_probe_um982, scan_enumerate_serial) and the
+//             single-instance guard (scan_instance_acquire/release). All new
+//             symbols and new structs — no ABI-5 layout changed, so an ABI-5
+//             consumer relinks unmodified. docs/A16-discovery.md.
+inline constexpr std::uint32_t kEngineAbiVersion = 6;
 const char* engine_version_string();  // "scanengine 0.1.0 (<clock backend>)"
 
 struct EngineConfig {

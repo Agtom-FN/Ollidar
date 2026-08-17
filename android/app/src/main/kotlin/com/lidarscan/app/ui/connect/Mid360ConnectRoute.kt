@@ -30,6 +30,8 @@ fun Mid360ConnectRoute(
                     ethernetMonitor = container.ethernetMonitor,
                     projectStore = container.projectStore,
                     projectId = projectId,
+                    settingsRepository = container.settingsRepository,
+                    detector = container.mid360HeartbeatDetector,
                 )
             }
         },

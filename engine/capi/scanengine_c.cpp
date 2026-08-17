@@ -9,6 +9,7 @@
 #include <cstring>
 #include <memory>
 #include <new>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -19,6 +20,8 @@
 #include "scanengine/color/colorizer.h"
 #include "scanengine/color/frames_idx.h"
 #include "scanengine/core/engine.h"
+#include "scanengine/core/instance_guard.h"
+#include "scanengine/discovery/discovery.h"
 #include "scanengine/jobs/job_types.h"
 #include "scanengine/slam/pushbroom/mount_calibration.h"
 
@@ -199,6 +202,24 @@ static_assert(sizeof(scan_point_vertex) == sizeof(PointVertex),
               "scan_point_vertex must match PointVertex (16 B, S3-proven layout)");
 static_assert(sizeof(scan_point_vertex) == 16, "scan_point_vertex must be 16 bytes");
 static_assert(SCAN_ABI_VERSION == kEngineAbiVersion, "ABI version mismatch");
+
+// --- ABI 6: A16 discovery ----------------------------------------------------
+//
+// The discovery mirrors carry no enums, so the drift that matters here is
+// NUMERIC: a C consumer that binds SCAN_MID360_PUSH_PORT itself (an Android
+// app with a pre-bound socket does exactly that — android/NOTES.md §8 finding
+// 1) must not end up on a different port from the engine's own listener.
+static_assert(SCAN_MID360_PUSH_PORT == discovery::kMid360PushPort,
+              "C ABI drifted from discovery::kMid360PushPort");
+static_assert(SCAN_MID360_PUSH_PORT_ALT == discovery::kMid360PushPortAlt,
+              "C ABI drifted from discovery::kMid360PushPortAlt");
+// The C mirrors are fixed-size buffers over std::strings. These bounds are
+// the contract "a real value is never truncated": an IPv4 text is at most 15
+// characters, a Livox SN 14, a MAC 17, and the note is built into a 512-byte
+// buffer on the C++ side.
+static_assert(sizeof(scan_mid360_beacon{}.lidar_ip) >= 16, "IPv4 text needs 16 bytes");
+static_assert(sizeof(scan_mid360_beacon{}.sn) >= 24, "a Livox SN must fit untruncated");
+static_assert(sizeof(scan_host_check_result{}.note) >= 512, "the note must fit untruncated");
 
 namespace {
 
@@ -548,6 +569,35 @@ namespace capi_test {
 void convert_event_for_test(const Event& in, scan_event* out) { convert_event(in, out); }
 }  // namespace capi_test
 }  // namespace scanengine
+
+namespace {
+
+// --- ABI 6 helpers (A16) ----------------------------------------------------
+
+// The two serial probes take the same C-side argument shape, so the
+// conversion of (char**, count) into a vector<string> lives once.
+Status collect_ports(const char* const* ports, std::uint32_t n_ports,
+                     std::vector<std::string>* out) {
+  if (ports == nullptr && n_ports != 0) {
+    return set_last_error(ScanError::kInvalidArgument, "null port array");
+  }
+  for (std::uint32_t i = 0; i < n_ports; ++i) {
+    if (ports[i] == nullptr) {
+      return set_last_error(ScanError::kInvalidArgument, "port %u is null", i);
+    }
+    out->emplace_back(ports[i]);
+  }
+  return kOkStatus;
+}
+
+// The C surface's single guard. Function-local static: constructed on first
+// use, destroyed (and so released) at process exit even if the app forgets.
+InstanceGuard& capi_instance_guard() {
+  static InstanceGuard g;
+  return g;
+}
+
+}  // namespace
 
 // Every entry point goes through this: no exception may cross the ABI.
 #define SCAN_GUARD_BEGIN try {
@@ -1515,5 +1565,185 @@ void scan_engine_set_log_callback(scan_log_cb cb, void* user_data, int32_t min_l
   s_sink = {cb, user_data};
   set_log_sink(&Trampoline::call, &s_sink);
 }
+
+// --- device auto-discovery (A16), ABI 6 --------------------------------------
+
+scan_error_t scan_discover_mid360(uint32_t timeout_ms, scan_mid360_beacon* out,
+                                  uint32_t capacity, uint32_t* out_count) {
+  SCAN_GUARD_BEGIN
+  if (out_count == nullptr || (out == nullptr && capacity != 0)) {
+    return fail(ScanError::kInvalidArgument, "null argument");
+  }
+  *out_count = 0;
+  discovery::DiscoverOptions opt;
+  opt.timeout_ms = static_cast<int>(timeout_ms > 600000u ? 600000u : timeout_ms);
+  Result<std::vector<discovery::Mid360Beacon>> r = discovery::DiscoverMid360(opt);
+  if (!r.ok()) return to_c(r.status());
+
+  const std::vector<discovery::Mid360Beacon>& found = r.value();
+  *out_count = static_cast<std::uint32_t>(found.size());
+  const std::uint32_t n = std::min<std::uint32_t>(capacity, *out_count);
+  for (std::uint32_t i = 0; i < n; ++i) {
+    const discovery::Mid360Beacon& b = found[i];
+    scan_mid360_beacon& d = out[i];
+    std::memset(&d, 0, sizeof(d));
+    copy_str(d.sn, sizeof(d.sn), b.sn);
+    copy_str(d.dev_type, sizeof(d.dev_type), b.dev_type);
+    copy_str(d.fw_version, sizeof(d.fw_version), b.fw_version);
+    copy_str(d.fw_version_text, sizeof(d.fw_version_text), b.fw_version_text);
+    copy_str(d.build_time, sizeof(d.build_time), b.build_time);
+    copy_str(d.mac, sizeof(d.mac), b.mac);
+    copy_str(d.lidar_ip, sizeof(d.lidar_ip), b.lidar_ip);
+    copy_str(d.netmask, sizeof(d.netmask), b.netmask);
+    copy_str(d.gateway, sizeof(d.gateway), b.gateway);
+    copy_str(d.persisted_host_ip, sizeof(d.persisted_host_ip), b.persisted_host_ip);
+    copy_str(d.source_ip, sizeof(d.source_ip), b.source_ip);
+    d.persisted_point_port = b.persisted_point_port;
+    d.persisted_imu_port = b.persisted_imu_port;
+    d.push_port_seen = b.push_port_seen;
+    d.key_count = static_cast<std::uint16_t>(b.key_count);
+    d.t_last_seen_ns = b.t_last_seen_ns;
+    d.beacons_seen = b.beacons_seen;
+    d.crc_ok = b.crc_ok ? 1 : 0;
+    d.heuristic = b.heuristic ? 1 : 0;
+  }
+  if (n < *out_count) {
+    return to_c(set_last_error(ScanError::kCapacityExceeded, "%u of %u lidars written", n,
+                               *out_count));
+  }
+  return SCAN_OK;
+  SCAN_GUARD_END
+}
+
+scan_error_t scan_host_check(const scan_mid360_beacon* beacon, scan_host_check_result* out) {
+  SCAN_GUARD_BEGIN
+  if (beacon == nullptr || out == nullptr) {
+    return fail(ScanError::kInvalidArgument, "null argument");
+  }
+  // Only the four fields the check reads cross back over. Rebuilding the C++
+  // struct field by field rather than reinterpret_cast'ing keeps the two
+  // layouts free to diverge (convention 6's spirit for structs).
+  discovery::Mid360Beacon b;
+  b.lidar_ip = beacon->lidar_ip;
+  b.netmask = beacon->netmask;
+  b.gateway = beacon->gateway;
+  b.persisted_host_ip = beacon->persisted_host_ip;
+
+  const discovery::HostCheck hc = discovery::CheckHostReachability(b);
+  std::memset(out, 0, sizeof(*out));
+  out->host_ip_is_local = hc.host_ip_is_local ? 1 : 0;
+  out->on_lidar_subnet = hc.on_lidar_subnet ? 1 : 0;
+  const std::uint32_t n = std::min<std::uint32_t>(
+      SCAN_HOST_CHECK_MAX_CANDIDATES, static_cast<std::uint32_t>(hc.local_candidates.size()));
+  for (std::uint32_t i = 0; i < n; ++i) {
+    copy_str(out->candidates[i], sizeof(out->candidates[i]), hc.local_candidates[i]);
+  }
+  out->candidate_count = n;
+  copy_str(out->suggested_host_ip, sizeof(out->suggested_host_ip), hc.suggested_host_ip);
+  copy_str(out->suggested_interface, sizeof(out->suggested_interface), hc.suggested_interface);
+  copy_str(out->note, sizeof(out->note), hc.note);
+  return SCAN_OK;
+  SCAN_GUARD_END
+}
+
+scan_error_t scan_enumerate_serial(scan_serial_port* out, uint32_t capacity,
+                                   uint32_t* out_count) {
+  SCAN_GUARD_BEGIN
+  if (out_count == nullptr || (out == nullptr && capacity != 0)) {
+    return fail(ScanError::kInvalidArgument, "null argument");
+  }
+  const std::vector<std::string> ports = discovery::EnumerateSerialPorts();
+  *out_count = static_cast<std::uint32_t>(ports.size());
+  const std::uint32_t n = std::min<std::uint32_t>(capacity, *out_count);
+  for (std::uint32_t i = 0; i < n; ++i) {
+    std::memset(&out[i], 0, sizeof(out[i]));
+    copy_str(out[i].path, sizeof(out[i].path), ports[i]);
+  }
+  if (n < *out_count) {
+    return to_c(set_last_error(ScanError::kCapacityExceeded, "%u of %u ports written", n,
+                               *out_count));
+  }
+  return SCAN_OK;
+  SCAN_GUARD_END
+}
+
+scan_error_t scan_probe_d6(const char* const* ports, uint32_t n_ports, uint32_t per_port_ms,
+                           scan_d6_probe* out) {
+  SCAN_GUARD_BEGIN
+  if (out == nullptr) return fail(ScanError::kInvalidArgument, "null argument");
+  std::vector<std::string> paths;
+  const Status s = collect_ports(ports, n_ports, &paths);
+  if (!s.ok()) return to_c(s);
+
+  std::optional<discovery::D6Probe> p =
+      discovery::ProbeSerialD6(paths, static_cast<int>(per_port_ms));
+  if (!p.has_value()) {
+    std::memset(out, 0, sizeof(*out));
+    return to_c(set_last_error(ScanError::kNotFound, "no COIN-D6 on %u port(s)", n_ports));
+  }
+  std::memset(out, 0, sizeof(*out));
+  copy_str(out->port, sizeof(out->port), p->port);
+  out->baud = p->baud;
+  out->packets_ok = p->packets_ok;
+  out->packets_bad_checksum = p->packets_bad_checksum;
+  out->used_start_command = p->used_start_command ? 1 : 0;
+  return SCAN_OK;
+  SCAN_GUARD_END
+}
+
+scan_error_t scan_probe_um982(const char* const* ports, uint32_t n_ports, uint32_t per_port_ms,
+                              scan_um982_probe* out) {
+  SCAN_GUARD_BEGIN
+  if (out == nullptr) return fail(ScanError::kInvalidArgument, "null argument");
+  std::vector<std::string> paths;
+  const Status s = collect_ports(ports, n_ports, &paths);
+  if (!s.ok()) return to_c(s);
+
+  std::optional<discovery::Um982Probe> p =
+      discovery::ProbeSerialUm982(paths, static_cast<int>(per_port_ms));
+  if (!p.has_value()) {
+    std::memset(out, 0, sizeof(*out));
+    return to_c(set_last_error(ScanError::kNotFound, "no UM982 on %u port(s)", n_ports));
+  }
+  std::memset(out, 0, sizeof(*out));
+  copy_str(out->port, sizeof(out->port), p->port);
+  out->baud = p->baud;
+  out->sentences_ok = p->sentences_ok;
+  out->sentences_bad = p->sentences_bad;
+  out->has_heading = p->has_heading ? 1 : 0;
+  return SCAN_OK;
+  SCAN_GUARD_END
+}
+
+// --- single-instance guard (A16), ABI 6 --------------------------------------
+//
+// The C surface is process-global where the C++ one is RAII, because there is
+// no handle a JNI caller could keep alive across a JNI_OnLoad boundary without
+// inventing an owner. The guard itself is a function-local static, so it is
+// constructed on first use and released either by scan_instance_release() or
+// by static destruction at process exit.
+scan_error_t scan_instance_acquire(const char* app_id, const char* lock_path,
+                                   int64_t* out_holder_pid) {
+  SCAN_GUARD_BEGIN
+  InstanceGuardOptions opt;
+  if (app_id != nullptr && app_id[0] != '\0') opt.app_id = app_id;
+  if (lock_path != nullptr && lock_path[0] != '\0') opt.lock_path = lock_path;
+  InstanceGuard& g = capi_instance_guard();
+  const Status s = g.Acquire(opt);
+  if (out_holder_pid != nullptr) *out_holder_pid = g.holder_pid();
+  return to_c(s);
+  SCAN_GUARD_END
+}
+
+void scan_instance_release(void) {
+  try {
+    capi_instance_guard().Release();
+  } catch (...) {
+    // Release() cannot throw; the catch exists so this stays noexcept-shaped
+    // like every other void entry point.
+  }
+}
+
+int64_t scan_current_process_id(void) { return CurrentProcessId(); }
 
 }  // extern "C"
