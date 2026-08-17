@@ -159,3 +159,15 @@ for the same modes). Hardware re-verification pending.
 - Android relevance: 24-page phone cap hits the same dead-end sooner => likely the
   "barely mapping" symptom on the Pixel; insight relayed to the round-6 Android agent.
 - Process rule adopted: no tests on kc-m4 while the owner is using it.
+
+## v0.3.0 SHIPPED (2026-08-18 00:53)
+- Android LidarScan-0.3.0-300.apk: data-loss fix (manifest collision + RECOVERY of lost
+  captures), AR crash-proofing, D6 live map actually drawn + tiered budgets, presets,
+  mount re-zero, capture log. 343+31 unit, 6/6 device.
+- Desktop/engine LidarScan-0.3.0-universal.dmg: live-view freeze fixed for good — THREE
+  mechanisms (no-eviction dead-end; per-stream page interleaving wasting 99.6% of the
+  store — "64M" store really held ~283k pts, filled during preview; LOD budget keeping
+  oldest pages). A/B falsifiable proofs in verify_round5.sh. ABI v7 additive. Record-root
+  persistence fixed 4-deep. Engine 524 cases / 2,281,393 assertions green.
+- DMG staged at /tmp/LidarScan-0.3.0-universal.dmg on kc-m4 (NOT installed — owner's app
+  instance running; per the no-collision rule, install deferred to owner signal).
