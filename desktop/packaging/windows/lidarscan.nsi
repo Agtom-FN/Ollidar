@@ -21,13 +21,22 @@
 ;;   LidarScan-<version>-x64-setup.exe
 ;;
 ;; Build:
-;;   makensis /DVERSION=0.1.0 /DSTAGE_DIR=staging lidarscan.nsi
+;;   makensis /DVERSION=0.2.1 /DSTAGE_DIR=staging lidarscan.nsi   (or omit /DVERSION
+;;   to take it from the repo-root VERSION file)
 ;; ---------------------------------------------------------------------------
 
 Unicode true
 
+; Owner rule (2026-08-17): the version comes from the repo-root VERSION file.
+; /DVERSION on the makensis command line still wins (CI passes CMake's
+; LIDARSCAN_VERSION, which is read from that same file); this is the fallback for
+; a hand-run build, and it reads the file rather than freezing a literal that
+; would quietly ship the wrong number.
 !ifndef VERSION
-  !define VERSION "0.1.0"
+  !searchparse /file "..\..\..\VERSION" "" VERSION ""
+!endif
+!ifndef VERSION
+  !define VERSION "0.0.0"
 !endif
 !ifndef STAGE_DIR
   !define STAGE_DIR "staging"

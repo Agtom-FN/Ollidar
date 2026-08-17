@@ -1,0 +1,1462 @@
+=== 1. the whole capture flow: inline auto-detect -> auto-arm -> live preview ===
+===    -> display params -> Start with an EMPTY name -> sealed -> Projects  ===
+$ /Users/admin/lidarscan/desktop/build/lidarscan --capture-flow-demo /Users/admin/lidarscan/desktop/evidence/18 --mid360-selftest 127.000.000.001:127.0.0.1 --quit-after 34
+[scanengine][info][instance] single-instance lock held: /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/lidarscan-lidarscan.lock (pid 88600)
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[lidarscan] mid360-selftest: chained behind --capture-flow-demo's inline auto-detect pass
+[scanengine][info][discovery] discovery finished: 0 lidar(s), 0 datagram(s), 0 rejected
+[scanengine][info][discovery] discovery finished: 0 lidar(s), 0 datagram(s), 0 rejected
+[scanengine][info][discovery] discovery finished: 0 lidar(s), 0 datagram(s), 0 rejected
+[lidarscan][capture] auto-detect (on open): Mid-360 not seen, D6 not seen (phone-only), UM982 not seen
+[lidarscan] capture-flow-demo: inline auto-detect done (Mid-360 not seen, D6 not seen, UM982 not seen) — arming
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] live SLAM on: map -> slam-map (inline)
+[scanengine][info][engine] starting -> running
+[scanengine][info][engine] added device 1 (livox-mid360)
+[scanengine][info][mid360] device 1: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_1_0.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 1: idle -> starting
+[scanengine][info][mid360] device 1: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[lidarscan][capture] Mid-360 127.0.0.1 -> host 127.000.000.001, device #1 — live preview (not recording)
+[lidarscan][capture] display sleep inhibited — macOS: IOKit PreventUserIdleDisplaySleep assertion held
+[scanengine][info][mid360] device 1: connected (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] handle 16777343: configured (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] device 1: starting -> streaming
+[lidarscan][capture] live preview up: first packet after 1.55 s
+[lidarscan] mid360-selftest PASSED — first packet after 1.55 s
+[lidarscan] capture-flow-demo: arm LIVE — first packet after 1.55 s
+[scanengine][info][lio] initialized: |a|=9.8069 m/s^2, bg=(0.01657 0.01687 0.02615) rad/s
+[lidarscan] capture-flow-demo: live controls — refresh 12 fps (viewport cap 12) then 24 fps (viewport cap 24), point size 2.50 px (A14 model)
+[lidarscan][capture] live odometry is drifting: the IMU reads the rig as stationary (|a| dev 0.007 m/s², gyro 0.032 rad/s) while the SLAM pose implies 0.28 m/s (pose quality 3, sigma 0.001 m). The walk hint reports 0; recording is unaffected — every raw byte is still written.
+[lidarscan] capture-flow-demo: PREVIEW shot -> /Users/admin/lidarscan/desktop/evidence/18-preview.png (+ -window.png)
+[lidarscan] capture-flow-demo: TRAIL shot -> /Users/admin/lidarscan/desktop/evidence/18-trail.png | synthetic 41-vertex path | ember pixels 0 -> 2263 | mean |delta| 1.9242 over 1.50% of the frame — TRAIL DRAWN
+[scanengine][info][engine] running -> stopping
+[scanengine][info][mid360] device 1: streaming -> stopping
+[scanengine][info][mid360] device 1: SDK2 torn down
+[scanengine][info][mid360] device 1: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] live SLAM on: map -> slam-map (inline)
+[scanengine][info][record] file writer open at '/Users/admin/lidarscan/desktop/evidence/round5-cycles-drop/Scan-047 2026-08-17 22-21.lscan'
+[scanengine][info][mid360] device 1: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_1_1.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 1: idle -> starting
+[scanengine][info][mid360] device 1: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[scanengine][info][engine] starting -> running
+[scanengine][info][record] opened stream file '/Users/admin/lidarscan/desktop/evidence/round5-cycles-drop/Scan-047 2026-08-17 22-21.lscan/streams/lidar.bin' (stream=lidar-mid360)
+[scanengine][info][mid360] device 1: starting -> streaming
+[scanengine][info][record] opened stream file '/Users/admin/lidarscan/desktop/evidence/round5-cycles-drop/Scan-047 2026-08-17 22-21.lscan/streams/imu.bin' (stream=imu)
+[lidarscan][capture] recording started -> /Users/admin/lidarscan/desktop/evidence/round5-cycles-drop/Scan-047 2026-08-17 22-21.lscan  (auto-named)
+[lidarscan] capture-flow-demo: Start pressed with an EMPTY name -> /Users/admin/lidarscan/desktop/evidence/round5-cycles-drop/Scan-047 2026-08-17 22-21.lscan
+[scanengine][info][lio] initialized: |a|=9.8059 m/s^2, bg=(-0.00905 0.00113 0.02604) rad/s
+[scanengine][info][mid360] device 1: connected (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] handle 16777343: configured (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[lidarscan] capture-flow-demo: RECORDING shot -> /Users/admin/lidarscan/desktop/evidence/18-recording.png (+ -window.png)
+[scanengine][info][engine] running -> stopping
+[scanengine][info][mid360] device 1: streaming -> stopping
+[scanengine][info][mid360] device 1: SDK2 torn down
+[scanengine][info][mid360] device 1: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] live SLAM on: map -> slam-map (inline)
+[scanengine][info][mid360] device 1: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_1_2.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 1: idle -> starting
+[scanengine][info][mid360] device 1: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[scanengine][info][engine] starting -> running
+[scanengine][info][mid360] device 1: starting -> streaming
+[lidarscan][capture] Sealed Scan-047 2026-08-17 22-21.lscan — 2.7 s recording · 6096 chunks / 7.5 MB written · 103373 points decoded since Start (device counters also include any paused time) · 0 drops (device) / 0 dropped (store)
+[scanengine][info][lio] initialized: |a|=9.8017 m/s^2, bg=(-0.01619 -0.01552 0.02613) rad/s
+[lidarscan][capture] sensor data resumed 0.52 s after Stop restarted the sensor
+[lidarscan] capture-flow-demo: sealed /Users/admin/lidarscan/desktop/evidence/round5-cycles-drop/Scan-047 2026-08-17 22-21.lscan — valid=yes, 6096 chunks, 7707600 bytes, 2.67 s, sealed=true, profile quickscan
+[lidarscan] capture-flow-demo:   stream lidar (Mid-360 packets): 5562 chunks
+[lidarscan] capture-flow-demo:   stream imu: 534 chunks
+[lidarscan] capture-flow-demo: in the library: yes · previewed as the open project: yes
+[lidarscan] capture-flow-demo: display params saved with the project: yes (/Users/admin/lidarscan/desktop/evidence/round5-cycles-drop/Scan-047 2026-08-17 22-21.lscan/processed/display_params.json)
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[lidarscan] capture-flow-demo: PROJECTS shot -> /Users/admin/lidarscan/desktop/evidence/18-projects.png (+ -window.png)
+[lidarscan] refresh governor: 24 -> 15 fps (down) — delivered 14.8 fps against a 24 fps cap, frame cpu p95 0.16 ms of a 41.7 ms budget
+[lidarscan][capture] live refresh governor downshift -> 15 fps (delivered 14.8 fps against a 24 fps cap, frame cpu p95 0.16 ms of a 41.7 ms budget); recording untouched
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][info][mid360] device 1: connected (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] handle 16777343: configured (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 1133 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7430 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 384 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 998 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7526 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 538 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 826 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 806 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 902 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 615 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[lidarscan] refresh governor: 15 -> 24 fps (recovering) — sustained 14.4 fps at cpu p95 0.18 ms of a 66.7 ms budget — recovering toward the 24 fps you asked for
+[lidarscan][capture] live refresh governor recovery -> 24 fps (sustained 14.4 fps at cpu p95 0.18 ms of a 66.7 ms budget — recovering toward the 24 fps you asked for); recording untouched
+[scanengine][warn][cloud] page store full (64 pages): dropped 7316 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 691 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7469 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 730 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7296 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 77 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 826 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 307 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 1094 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 461 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7507 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][info][mid360] device 1: streaming -> stopping
+[scanengine][info][mid360] device 1: SDK2 torn down
+[scanengine][warn][cloud] page store full (64 pages): dropped 7354 points
+[scanengine][info][mid360] device 1: stopping -> idle
+[scanengine][info][engine] running -> stopping
+[scanengine][info][engine] stopping -> idle
+[lidarscan][capture] live preview stopped — shutdown
+FEngine (64 bits) created at 0x915076000 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+=== 2. headless CI hooks: --mid360-selftest + --mid360-record-into ===
+$ /Users/admin/lidarscan/desktop/build/lidarscan --mid360-selftest 127.000.000.001:127.0.0.1 --mid360-record-into /Users/admin/lidarscan/desktop/evidence/round5-record.lscan --quit-after 15
+[scanengine][info][instance] single-instance lock held: /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/lidarscan-lidarscan.lock (pid 88733)
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] live SLAM on: map -> slam-map (inline)
+[scanengine][info][engine] starting -> running
+[scanengine][info][engine] added device 1 (livox-mid360)
+[scanengine][info][mid360] device 1: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_1_0.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 1: idle -> starting
+[scanengine][info][mid360] device 1: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[lidarscan][capture] Mid-360 127.0.0.1 -> host 127.000.000.001, device #1 — live preview (not recording)
+[lidarscan][capture] display sleep inhibited — macOS: IOKit PreventUserIdleDisplaySleep assertion held
+[scanengine][info][mid360] device 1: connected (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] handle 16777343: configured (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] device 1: starting -> streaming
+[lidarscan][capture] live preview up: first packet after 2.15 s
+[lidarscan] mid360-selftest PASSED — first packet after 2.15 s
+[scanengine][info][engine] running -> stopping
+[scanengine][info][mid360] device 1: streaming -> stopping
+[scanengine][info][mid360] device 1: SDK2 torn down
+[scanengine][info][mid360] device 1: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] live SLAM on: map -> slam-map (inline)
+[scanengine][info][record] file writer open at '/Users/admin/lidarscan/desktop/evidence/round5-record.lscan'
+[scanengine][info][mid360] device 1: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_1_1.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 1: idle -> starting
+[scanengine][info][mid360] device 1: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[scanengine][info][engine] starting -> running
+[scanengine][info][record] opened stream file '/Users/admin/lidarscan/desktop/evidence/round5-record.lscan/streams/lidar.bin' (stream=lidar-mid360)
+[scanengine][info][mid360] device 1: starting -> streaming
+[lidarscan][capture] recording started -> /Users/admin/lidarscan/desktop/evidence/round5-record.lscan
+[scanengine][info][record] opened stream file '/Users/admin/lidarscan/desktop/evidence/round5-record.lscan/streams/imu.bin' (stream=imu)
+[lidarscan] mid360-selftest: recording into /Users/admin/lidarscan/desktop/evidence/round5-record.lscan for 3 s
+[scanengine][info][lio] initialized: |a|=9.8065 m/s^2, bg=(0.01230 0.01475 0.02583) rad/s
+[scanengine][info][mid360] device 1: connected (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] handle 16777343: configured (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[lidarscan][capture] live odometry is drifting: the IMU reads the rig as stationary (|a| dev 0.008 m/s², gyro 0.028 rad/s) while the SLAM pose implies 0.29 m/s (pose quality 3, sigma 0.001 m). The walk hint reports 0; recording is unaffected — every raw byte is still written.
+[scanengine][info][engine] running -> stopping
+[scanengine][info][mid360] device 1: streaming -> stopping
+[scanengine][info][mid360] device 1: SDK2 torn down
+[scanengine][info][mid360] device 1: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] live SLAM on: map -> slam-map (inline)
+[scanengine][info][mid360] device 1: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_1_2.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 1: idle -> starting
+[scanengine][info][mid360] device 1: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[scanengine][info][engine] starting -> running
+[scanengine][info][mid360] device 1: starting -> streaming
+[lidarscan][capture] Sealed round5-record.lscan — 3.2 s recording · 7202 chunks / 8.8 MB written · 121632 points decoded since Start (device counters also include any paused time) · 0 drops (device) / 0 dropped (store)
+[scanengine][info][lio] initialized: |a|=9.8058 m/s^2, bg=(-0.01660 -0.00753 0.02614) rad/s
+[lidarscan] mid360-selftest: recorded project — 7203 chunks, 9107220 bytes, 3.15 s span, sealed=true
+[lidarscan]   stream lidar (Mid-360 packets): 6572 chunks, 9069360 bytes
+[lidarscan]   stream imu: 631 chunks, 37860 bytes
+[lidarscan] refresh governor: 24 -> 15 fps (down) — delivered 14.1 fps against a 24 fps cap, frame cpu p95 0.18 ms of a 41.7 ms budget
+[lidarscan][capture] live refresh governor downshift -> 15 fps (delivered 14.1 fps against a 24 fps cap, frame cpu p95 0.18 ms of a 41.7 ms budget); recording untouched
+[scanengine][info][mid360] device 1: connected (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] handle 16777343: configured (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 538 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 787 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][info][mid360] device 1: streaming -> stopping
+[scanengine][info][mid360] device 1: SDK2 torn down
+[scanengine][warn][cloud] page store full (64 pages): dropped 5165 points
+[scanengine][info][mid360] device 1: stopping -> idle
+[scanengine][info][engine] running -> stopping
+[scanengine][info][engine] stopping -> idle
+[lidarscan][capture] live preview stopped — shutdown
+FEngine (64 bits) created at 0x80ba24000 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+=== 3. discovery <-> device serialization, both directions (NOTES §16.7/§17.2) ===
+$ /Users/admin/lidarscan/desktop/build/lidarscan --auto-detect-cancel-selftest --mid360-selftest 127.000.000.001:127.0.0.1 --quit-after 14
+[scanengine][info][instance] single-instance lock held: /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/lidarscan-lidarscan.lock (pid 88806)
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[lidarscan][capture] auto-detect (on open) suppressed — a device-arming CLI hook owns this run and needs UDP 56201
+[lidarscan] auto-detect-cancel-selftest: starting a discovery pass, then arming the device 400 ms into it
+[scanengine][info][discovery] discovery finished: 0 lidar(s), 0 datagram(s), 0 rejected
+[lidarscan][capture] auto-detect canceled so live preview can have UDP 56201 — port released
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] live SLAM on: map -> slam-map (inline)
+[scanengine][info][engine] starting -> running
+[scanengine][info][engine] added device 1 (livox-mid360)
+[scanengine][info][mid360] device 1: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_1_0.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 1: idle -> starting
+[scanengine][info][mid360] device 1: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[lidarscan][capture] Mid-360 127.0.0.1 -> host 127.000.000.001, device #1 — live preview (not recording)
+[lidarscan][capture] display sleep inhibited — macOS: IOKit PreventUserIdleDisplaySleep assertion held
+[lidarscan][capture] auto-detect: canceled before completion — nothing applied
+[scanengine][info][mid360] device 1: connected (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] handle 16777343: configured (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] device 1: starting -> streaming
+[lidarscan][capture] live preview up: first packet after 2.12 s
+[lidarscan] mid360-selftest PASSED — first packet after 2.12 s
+[scanengine][info][lio] initialized: |a|=9.8069 m/s^2, bg=(0.01657 0.01687 0.02615) rad/s
+[lidarscan] auto-detect-cancel-selftest: clicking Auto-detect with the device armed — the preview must step aside, not overlap
+[scanengine][info][mid360] device 1: streaming -> stopping
+[scanengine][info][mid360] device 1: SDK2 torn down
+[scanengine][info][mid360] device 1: stopping -> idle
+[scanengine][info][engine] running -> stopping
+[scanengine][info][engine] stopping -> idle
+[lidarscan][capture] live preview stopped — auto-detect needs UDP 56201
+[scanengine][info][discovery] found Mid-360 3GGDJ6K00100001
+[scanengine][info][discovery] discovery finished: 1 lidar(s), 1 datagram(s), 0 rejected
+[lidarscan][capture] auto-detect: Mid-360 found, D6 not seen (phone-only), UM982 not seen
+FEngine (64 bits) created at 0x920ddf000 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+=== 4. inline auto-detect against the REAL captured heartbeat ===
+$ /Users/admin/lidarscan/desktop/build/lidarscan --auto-detect-selftest --auto-detect-shot /Users/admin/lidarscan/desktop/evidence/18-autodetect-inline.png --quit-after 14
+[scanengine][info][instance] single-instance lock held: /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/lidarscan-lidarscan.lock (pid 88874)
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[scanengine][info][discovery] found Mid-360 ARMCP7K0034759 at 192.168.1.159 fw 35010108, expects host 192.168.1.5
+[scanengine][info][discovery] discovery finished: 1 lidar(s), 1 datagram(s), 0 rejected
+[lidarscan][capture] auto-detect (on open): Mid-360 found, D6 not seen (phone-only), UM982 not seen
+[lidarscan] auto-detect-selftest: Mid-360 FOUND, D6 not seen, UM982 not seen
+[lidarscan] auto-detect-shot: OK -> /Users/admin/lidarscan/desktop/evidence/18-autodetect-inline.png
+[scanengine][info][discovery] found Mid-360 ARMCP7K0034759 at 192.168.1.159 fw 35010108, expects host 192.168.1.5
+[scanengine][info][discovery] discovery finished: 1 lidar(s), 1 datagram(s), 0 rejected
+[lidarscan][capture] auto-detect: Mid-360 found, D6 not seen (phone-only), UM982 not seen
+[lidarscan] auto-detect-selftest: Mid-360 FOUND, D6 not seen, UM982 not seen
+[lidarscan] auto-detect-shot: OK -> /Users/admin/lidarscan/desktop/evidence/18-autodetect-inline.png
+FEngine (64 bits) created at 0xb86ddf000 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+=== 5. item 17: the live refresh cap downshifts under load, capture unaffected ===
+$ /Users/admin/lidarscan/desktop/build/lidarscan --mid360-selftest 127.000.000.001:127.0.0.1 --workspace capture --live-refresh 60 --resize-storm 12 --shot /Users/admin/lidarscan/desktop/evidence/18-refresh-downshift.png --shot-delay 14 --quit-after 18
+[scanengine][info][instance] single-instance lock held: /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/lidarscan-lidarscan.lock (pid 88924)
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[lidarscan] live-refresh: panel 60 fps, viewport cap 60 fps
+[scanengine][info][discovery] discovery finished: 0 lidar(s), 0 datagram(s), 0 rejected
+[lidarscan][capture] auto-detect canceled so live preview can have UDP 56201 — port released
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] live SLAM on: map -> slam-map (inline)
+[scanengine][info][engine] starting -> running
+[scanengine][info][engine] added device 1 (livox-mid360)
+[scanengine][info][mid360] device 1: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_1_0.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 1: idle -> starting
+[scanengine][info][mid360] device 1: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[lidarscan][capture] Mid-360 127.0.0.1 -> host 127.000.000.001, device #1 — live preview (not recording)
+[lidarscan][capture] display sleep inhibited — macOS: IOKit PreventUserIdleDisplaySleep assertion held
+[lidarscan][capture] auto-detect (on open): canceled before completion — nothing applied
+[scanengine][info][mid360] device 1: connected (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] handle 16777343: configured (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] device 1: starting -> streaming
+[lidarscan] refresh governor: 60 -> 48 fps (down) — delivered 40.3 fps against a 60 fps cap, frame cpu p95 0.27 ms of a 16.7 ms budget
+[lidarscan][capture] live refresh governor downshift -> 48 fps (delivered 40.3 fps against a 60 fps cap, frame cpu p95 0.27 ms of a 16.7 ms budget); recording untouched
+[lidarscan][capture] live preview up: first packet after 1.80 s
+[lidarscan] mid360-selftest PASSED — first packet after 1.80 s
+[scanengine][info][lio] initialized: |a|=9.8069 m/s^2, bg=(0.01657 0.01687 0.02615) rad/s
+[lidarscan][capture] live odometry is drifting: the IMU reads the rig as stationary (|a| dev 0.007 m/s², gyro 0.033 rad/s) while the SLAM pose implies 0.29 m/s (pose quality 3, sigma 0.001 m). The walk hint reports 0; recording is unaffected — every raw byte is still written.
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 864 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 1209 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[lidarscan] resize storm: 12.0 s, 1339 resize events -> 659 swapchain recreates, still rendering at 31.8 fps (cpu p95 0.21 ms)
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 346 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7815 points
+[lidarscan] screenshot OK -> /Users/admin/lidarscan/desktop/evidence/18-refresh-downshift.png | 297035 pts / 64 pages | 31.5 fps | cpu p95 0.21 ms | gpu p95 2.52 ms | 1160x641 px dpr 1.00 | swapchains 660
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7546 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 250 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7239 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[lidarscan] refresh governor: 48 -> 30 fps (down) — delivered 29.7 fps against a 48 fps cap, frame cpu p95 0.19 ms of a 20.8 ms budget
+[lidarscan][capture] live refresh governor downshift -> 30 fps (delivered 29.7 fps against a 48 fps cap, frame cpu p95 0.19 ms of a 20.8 ms budget); recording untouched
+[scanengine][info][mid360] device 1: streaming -> stopping
+[scanengine][info][mid360] device 1: SDK2 torn down
+[scanengine][warn][cloud] page store full (64 pages): dropped 5050 points
+[scanengine][info][mid360] device 1: stopping -> idle
+[scanengine][info][engine] running -> stopping
+[scanengine][info][engine] stopping -> idle
+[lidarscan][capture] live preview stopped — shutdown
+FEngine (64 bits) created at 0xa84dbb000 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+=== 5b. ROUND-5 FIELD BUGS (NOTES §17.9-17.11) ===
+===     A: a gait-free source must read 0.00 m/s for a whole minute      ===
+===     B: the refresh governor recovers instead of ratcheting to 5 fps  ===
+===     C: N record cycles on ONE connect, and re-arm across link drops  ===
+$ /Users/admin/lidarscan/desktop/build/lidarscan --walk-speed-selftest
+[lidarscan] walk-speed-selftest: stationary 60 s (1.5 cm jitter)    PASS — peak 0.000 m/s, hint fired 0x
+[lidarscan] walk-speed-selftest: walking 1.4 m/s                    PASS — measured 1.403 m/s
+[lidarscan] walk-speed-selftest: brisk 2.2 m/s trips the hint       PASS — measured 2.200 m/s
+[lidarscan] walk-speed-selftest: LIO frame reset after 40 m walk    PASS — peak after reset 0.000 m/s, 1 discontinuity/ies
+[lidarscan] walk-speed-selftest: coalesced 1 ms polls               PASS — peak 0.000 m/s, 57 sub-floor samples rejected
+[lidarscan] walk-speed-selftest: stalled stream (repeated poses)    PASS — held 1.000 m/s, 50 repeats ignored
+[lidarscan] walk-speed-selftest: IMU gate: parked rig is STILL      PASS — |a| dev 0.0071 m/s², gyro 0.0025 rad/s
+[lidarscan] walk-speed-selftest: IMU gate: walking rig is NOT still PASS — |a| dev 1.0606 m/s², gyro 0.2227 rad/s
+[lidarscan] walk-speed-selftest: IMU gate: gentle walk is NOT still PASS — |a| dev 0.3993 m/s², gyro 0.1106 rad/s
+[lidarscan] walk-speed-selftest: IMU gate: no samples is UNKNOWN    PASS — valid=0 still=0
+[lidarscan] walk-speed-selftest: PASS (0 failure(s))
+$ /Users/admin/lidarscan/desktop/build/lidarscan --mid360-selftest 127.000.000.001:127.0.0.1 --walk-soak 60 --quit-after 80
+[scanengine][info][instance] single-instance lock held: /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/lidarscan-lidarscan.lock (pid 89025)
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] live SLAM on: map -> slam-map (inline)
+[scanengine][info][engine] starting -> running
+[scanengine][info][engine] added device 1 (livox-mid360)
+[scanengine][info][mid360] device 1: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_1_0.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 1: idle -> starting
+[scanengine][info][mid360] device 1: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[lidarscan][capture] Mid-360 127.0.0.1 -> host 127.000.000.001, device #1 — live preview (not recording)
+[lidarscan][capture] display sleep inhibited — macOS: IOKit PreventUserIdleDisplaySleep assertion held
+[scanengine][info][mid360] device 1: connected (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] handle 16777343: configured (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] device 1: starting -> streaming
+[lidarscan][capture] live preview up: first packet after 2.23 s
+[lidarscan] mid360-selftest PASSED — first packet after 2.23 s
+[lidarscan] walk-soak: armed — watching the walk hint for 60 s against a gait-free source (nobody is carrying it)
+[scanengine][info][lio] initialized: |a|=9.8069 m/s^2, bg=(0.01657 0.01687 0.02615) rad/s
+[lidarscan][capture] live odometry is drifting: the IMU reads the rig as stationary (|a| dev 0.007 m/s², gyro 0.032 rad/s) while the SLAM pose implies 0.28 m/s (pose quality 3, sigma 0.001 m). The walk hint reports 0; recording is unaffected — every raw byte is still written.
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 1113 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8064 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 845 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8064 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7853 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7335 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7661 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 864 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7603 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7756 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7930 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 76 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 212 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 460 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8141 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 134 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7584 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7277 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7814 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8160 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 441 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 365 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8160 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7258 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 979 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7795 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7603 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 153 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7968 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8196 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8203 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8193 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 77 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8197 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 154 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7834 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 1056 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7468 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8102 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 442 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7257 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7411 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7718 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 154 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7930 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7930 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8006 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 134 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 250 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7257 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 461 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 173 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 153 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 1114 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7680 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 403 points
+[lidarscan] walk-soak: 60 s, 598 measured samples, peak 0.000 m/s, 0 non-zero, hint fired 0x, 0 pose-frame reset(s) — PASS
+[scanengine][info][mid360] device 1: streaming -> stopping
+[scanengine][info][mid360] device 1: SDK2 torn down
+[scanengine][warn][cloud] page store full (64 pages): dropped 4377 points
+[scanengine][info][mid360] device 1: stopping -> idle
+[scanengine][info][engine] running -> stopping
+[scanengine][info][engine] stopping -> idle
+[lidarscan][capture] live preview stopped — shutdown
+FEngine (64 bits) created at 0x8eae03000 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+$ /Users/admin/lidarscan/desktop/build/lidarscan --mid360-selftest 127.000.000.001:127.0.0.1 --record-cycles 4 --record-cycles-dir /Users/admin/lidarscan/desktop/evidence/round5-cycles --quit-after 55
+[scanengine][info][instance] single-instance lock held: /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/lidarscan-lidarscan.lock (pid 89216)
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] live SLAM on: map -> slam-map (inline)
+[scanengine][info][engine] starting -> running
+[scanengine][info][engine] added device 1 (livox-mid360)
+[scanengine][info][mid360] device 1: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_1_0.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 1: idle -> starting
+[scanengine][info][mid360] device 1: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[lidarscan][capture] Mid-360 127.0.0.1 -> host 127.000.000.001, device #1 — live preview (not recording)
+[lidarscan][capture] display sleep inhibited — macOS: IOKit PreventUserIdleDisplaySleep assertion held
+[scanengine][info][mid360] device 1: connected (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] handle 16777343: configured (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] device 1: starting -> streaming
+[lidarscan][capture] live preview up: first packet after 2.23 s
+[lidarscan] mid360-selftest PASSED — first packet after 2.23 s
+[lidarscan] record-cycles: armed; running 4 record cycles on this ONE connect
+[scanengine][info][engine] running -> stopping
+[scanengine][info][mid360] device 1: streaming -> stopping
+[scanengine][info][mid360] device 1: SDK2 torn down
+[scanengine][info][mid360] device 1: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] live SLAM on: map -> slam-map (inline)
+[scanengine][info][record] file writer open at '/Users/admin/lidarscan/desktop/evidence/round5-cycles/Scan-048 2026-08-17 22-25.lscan'
+[scanengine][info][mid360] device 1: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_1_1.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 1: idle -> starting
+[scanengine][info][mid360] device 1: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[scanengine][info][engine] starting -> running
+[scanengine][info][record] opened stream file '/Users/admin/lidarscan/desktop/evidence/round5-cycles/Scan-048 2026-08-17 22-25.lscan/streams/lidar.bin' (stream=lidar-mid360)
+[scanengine][info][mid360] device 1: starting -> streaming
+[scanengine][info][record] opened stream file '/Users/admin/lidarscan/desktop/evidence/round5-cycles/Scan-048 2026-08-17 22-25.lscan/streams/imu.bin' (stream=imu)
+[lidarscan][capture] recording started -> /Users/admin/lidarscan/desktop/evidence/round5-cycles/Scan-048 2026-08-17 22-25.lscan  (auto-named)
+[lidarscan] record-cycles: cycle 1/4 -> /Users/admin/lidarscan/desktop/evidence/round5-cycles/Scan-048 2026-08-17 22-25.lscan (2.0 s)
+[scanengine][info][lio] initialized: |a|=9.8067 m/s^2, bg=(0.01186 0.01446 0.02583) rad/s
+[scanengine][info][mid360] device 1: connected (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] handle 16777343: configured (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][engine] running -> stopping
+[scanengine][info][mid360] device 1: streaming -> stopping
+[scanengine][info][mid360] device 1: SDK2 torn down
+[scanengine][info][mid360] device 1: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] live SLAM on: map -> slam-map (inline)
+[scanengine][info][mid360] device 1: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_1_2.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 1: idle -> starting
+[scanengine][info][mid360] device 1: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[scanengine][info][engine] starting -> running
+[scanengine][info][mid360] device 1: starting -> streaming
+[lidarscan][capture] Sealed Scan-048 2026-08-17 22-25.lscan — 2.0 s recording · 4524 chunks / 5.5 MB written · 76205 points decoded since Start (device counters also include any paused time) · 0 drops (device) / 0 dropped (store)
+[scanengine][info][lio] initialized: |a|=9.8063 m/s^2, bg=(-0.00419 0.00470 0.02604) rad/s
+[lidarscan] record-cycles: cycle 1 -> 4524 chunks, 5719080 bytes, 1.98 s, sealed=true
+[scanengine][info][engine] running -> stopping
+[scanengine][info][mid360] device 1: streaming -> stopping
+[scanengine][info][mid360] device 1: SDK2 torn down
+[scanengine][info][mid360] device 1: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] live SLAM on: map -> slam-map (inline)
+[scanengine][info][record] file writer open at '/Users/admin/lidarscan/desktop/evidence/round5-cycles/Scan-049 2026-08-17 22-25.lscan'
+[scanengine][info][mid360] device 1: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_1_3.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 1: idle -> starting
+[scanengine][info][mid360] device 1: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[scanengine][info][engine] starting -> running
+[scanengine][info][record] opened stream file '/Users/admin/lidarscan/desktop/evidence/round5-cycles/Scan-049 2026-08-17 22-25.lscan/streams/lidar.bin' (stream=lidar-mid360)
+[scanengine][info][mid360] device 1: starting -> streaming
+[lidarscan][capture] recording started -> /Users/admin/lidarscan/desktop/evidence/round5-cycles/Scan-049 2026-08-17 22-25.lscan  (auto-named)
+[scanengine][info][record] opened stream file '/Users/admin/lidarscan/desktop/evidence/round5-cycles/Scan-049 2026-08-17 22-25.lscan/streams/imu.bin' (stream=imu)
+[lidarscan] record-cycles: cycle 2/4 -> /Users/admin/lidarscan/desktop/evidence/round5-cycles/Scan-049 2026-08-17 22-25.lscan (2.0 s)
+[scanengine][info][lio] initialized: |a|=9.8053 m/s^2, bg=(-0.01695 -0.00830 0.02609) rad/s
+[lidarscan] refresh governor: 60 -> 48 fps (down) — delivered 35.7 fps against a 60 fps cap, frame cpu p95 0.13 ms of a 16.7 ms budget
+[lidarscan][capture] live refresh governor downshift -> 48 fps (delivered 35.7 fps against a 60 fps cap, frame cpu p95 0.13 ms of a 16.7 ms budget); recording untouched
+[scanengine][info][mid360] device 1: connected (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] handle 16777343: configured (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][engine] running -> stopping
+[scanengine][info][mid360] device 1: streaming -> stopping
+[scanengine][info][mid360] device 1: SDK2 torn down
+[scanengine][info][mid360] device 1: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] live SLAM on: map -> slam-map (inline)
+[scanengine][info][mid360] device 1: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_1_4.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 1: idle -> starting
+[scanengine][info][mid360] device 1: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[scanengine][info][engine] starting -> running
+[scanengine][info][mid360] device 1: starting -> streaming
+[lidarscan][capture] Sealed Scan-049 2026-08-17 22-25.lscan — 1.9 s recording · 4344 chunks / 5.3 MB written · 71866 points decoded since Start (device counters also include any paused time) · 0 drops (device) / 0 dropped (store)
+[scanengine][info][lio] initialized: |a|=9.8047 m/s^2, bg=(-0.01383 -0.01675 0.02599) rad/s
+[lidarscan] record-cycles: cycle 2 -> 4344 chunks, 5491800 bytes, 1.90 s, sealed=true
+[scanengine][info][engine] running -> stopping
+[scanengine][info][mid360] device 1: streaming -> stopping
+[scanengine][info][mid360] device 1: SDK2 torn down
+[scanengine][info][mid360] device 1: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] live SLAM on: map -> slam-map (inline)
+[scanengine][info][record] file writer open at '/Users/admin/lidarscan/desktop/evidence/round5-cycles/Scan-050 2026-08-17 22-25.lscan'
+[scanengine][info][mid360] device 1: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_1_5.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 1: idle -> starting
+[scanengine][info][mid360] device 1: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[scanengine][info][engine] starting -> running
+[scanengine][info][record] opened stream file '/Users/admin/lidarscan/desktop/evidence/round5-cycles/Scan-050 2026-08-17 22-25.lscan/streams/lidar.bin' (stream=lidar-mid360)
+[scanengine][info][mid360] device 1: starting -> streaming
+[lidarscan][capture] recording started -> /Users/admin/lidarscan/desktop/evidence/round5-cycles/Scan-050 2026-08-17 22-25.lscan  (auto-named)
+[lidarscan] record-cycles: cycle 3/4 -> /Users/admin/lidarscan/desktop/evidence/round5-cycles/Scan-050 2026-08-17 22-25.lscan (2.0 s)
+[scanengine][info][record] opened stream file '/Users/admin/lidarscan/desktop/evidence/round5-cycles/Scan-050 2026-08-17 22-25.lscan/streams/imu.bin' (stream=imu)
+[lidarscan] refresh governor: 48 -> 30 fps (down) — delivered 15.6 fps against a 48 fps cap, frame cpu p95 0.16 ms of a 20.8 ms budget
+[lidarscan][capture] live refresh governor downshift -> 30 fps (delivered 15.6 fps against a 48 fps cap, frame cpu p95 0.16 ms of a 20.8 ms budget); recording untouched
+[scanengine][info][lio] initialized: |a|=9.8051 m/s^2, bg=(0.00264 -0.01494 0.02549) rad/s
+[scanengine][info][mid360] device 1: connected (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] handle 16777343: configured (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][engine] running -> stopping
+[scanengine][info][mid360] device 1: streaming -> stopping
+[scanengine][info][mid360] device 1: SDK2 torn down
+[scanengine][info][mid360] device 1: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] live SLAM on: map -> slam-map (inline)
+[scanengine][info][mid360] device 1: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_1_6.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 1: idle -> starting
+[scanengine][info][mid360] device 1: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[scanengine][info][engine] starting -> running
+[scanengine][info][mid360] device 1: starting -> streaming
+[lidarscan][capture] Sealed Scan-050 2026-08-17 22-25.lscan — 2.0 s recording · 4609 chunks / 5.6 MB written · 77703 points decoded since Start (device counters also include any paused time) · 0 drops (device) / 0 dropped (store)
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][info][lio] initialized: |a|=9.8040 m/s^2, bg=(0.01802 0.00221 0.02599) rad/s
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[lidarscan] record-cycles: cycle 3 -> 4609 chunks, 5827140 bytes, 2.02 s, sealed=true
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 5011 points
+[scanengine][info][engine] running -> stopping
+[scanengine][info][mid360] device 1: streaming -> stopping
+[scanengine][info][mid360] device 1: SDK2 torn down
+[scanengine][warn][cloud] page store full (64 pages): dropped 3763 points
+[scanengine][info][mid360] device 1: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] live SLAM on: map -> slam-map (inline)
+[scanengine][info][record] file writer open at '/Users/admin/lidarscan/desktop/evidence/round5-cycles/Scan-051 2026-08-17 22-25.lscan'
+[scanengine][info][mid360] device 1: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_1_7.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 1: idle -> starting
+[scanengine][info][mid360] device 1: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[scanengine][info][engine] starting -> running
+[scanengine][info][record] opened stream file '/Users/admin/lidarscan/desktop/evidence/round5-cycles/Scan-051 2026-08-17 22-25.lscan/streams/lidar.bin' (stream=lidar-mid360)
+[scanengine][info][mid360] device 1: starting -> streaming
+[scanengine][info][record] opened stream file '/Users/admin/lidarscan/desktop/evidence/round5-cycles/Scan-051 2026-08-17 22-25.lscan/streams/imu.bin' (stream=imu)
+[lidarscan][capture] recording started -> /Users/admin/lidarscan/desktop/evidence/round5-cycles/Scan-051 2026-08-17 22-25.lscan  (auto-named)
+[lidarscan] record-cycles: cycle 4/4 -> /Users/admin/lidarscan/desktop/evidence/round5-cycles/Scan-051 2026-08-17 22-25.lscan (2.0 s)
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][info][lio] initialized: |a|=9.8039 m/s^2, bg=(0.00904 0.01378 0.02565) rad/s
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[lidarscan] refresh governor: 30 -> 24 fps (down) — delivered 17.1 fps against a 30 fps cap, frame cpu p95 0.18 ms of a 33.3 ms budget
+[lidarscan][capture] live refresh governor downshift -> 24 fps (delivered 17.1 fps against a 30 fps cap, frame cpu p95 0.18 ms of a 33.3 ms budget); recording untouched
+[scanengine][warn][cloud] page store full (64 pages): dropped 3821 points
+[scanengine][info][mid360] device 1: connected (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] handle 16777343: configured (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][info][engine] running -> stopping
+[scanengine][info][mid360] device 1: streaming -> stopping
+[scanengine][info][mid360] device 1: SDK2 torn down
+[scanengine][warn][cloud] page store full (64 pages): dropped 6797 points
+[scanengine][info][mid360] device 1: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] live SLAM on: map -> slam-map (inline)
+[scanengine][info][mid360] device 1: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_1_8.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 1: idle -> starting
+[scanengine][info][mid360] device 1: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[scanengine][info][engine] starting -> running
+[scanengine][info][mid360] device 1: starting -> streaming
+[lidarscan][capture] Sealed Scan-051 2026-08-17 22-25.lscan — 1.9 s recording · 4350 chunks / 5.3 MB written · 0 points decoded since Start (device counters also include any paused time) · 69408 drops (device) / 110976 dropped (store)
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][info][lio] initialized: |a|=9.8058 m/s^2, bg=(-0.00818 0.01723 0.02559) rad/s
+[lidarscan] record-cycles: cycle 4 -> 4350 chunks, 5500080 bytes, 1.90 s, sealed=true
+[lidarscan] record-cycles: cycle 1 OK (4524 chunks)
+[lidarscan] record-cycles: cycle 2 OK (4344 chunks)
+[lidarscan] record-cycles: cycle 3 OK (4609 chunks)
+[lidarscan] record-cycles: cycle 4 OK (4350 chunks)
+[lidarscan] record-cycles: 4/4 cycles recorded — PASS
+[scanengine][info][mid360] device 1: streaming -> stopping
+[scanengine][info][mid360] device 1: SDK2 torn down
+[scanengine][warn][cloud] page store full (64 pages): dropped 7488 points
+[scanengine][info][mid360] device 1: stopping -> idle
+[scanengine][info][engine] running -> stopping
+[scanengine][info][engine] stopping -> idle
+[lidarscan][capture] live preview stopped — shutdown
+FEngine (64 bits) created at 0xab16e8000 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+$ /Users/admin/lidarscan/desktop/build/lidarscan --mid360-selftest 127.000.000.001:127.0.0.1 --record-cycles 4 --record-cycle-seconds 12 --record-cycles-dir /Users/admin/lidarscan/desktop/evidence/round5-cycles-drop --quit-after 75
+[scanengine][info][instance] single-instance lock held: /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/lidarscan-lidarscan.lock (pid 89677)
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] live SLAM on: map -> slam-map (inline)
+[scanengine][info][engine] starting -> running
+[scanengine][info][engine] added device 1 (livox-mid360)
+[scanengine][info][mid360] device 1: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_1_0.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 1: idle -> starting
+[scanengine][info][mid360] device 1: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[lidarscan][capture] Mid-360 127.0.0.1 -> host 127.000.000.001, device #1 — live preview (not recording)
+[lidarscan][capture] display sleep inhibited — macOS: IOKit PreventUserIdleDisplaySleep assertion held
+[scanengine][info][mid360] device 1: connected (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] handle 16777343: configured (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] device 1: starting -> streaming
+[lidarscan][capture] live preview up: first packet after 2.21 s
+[lidarscan] mid360-selftest PASSED — first packet after 2.21 s
+[lidarscan] record-cycles: armed; running 4 record cycles on this ONE connect
+[scanengine][info][engine] running -> stopping
+[scanengine][info][mid360] device 1: streaming -> stopping
+[scanengine][info][mid360] device 1: SDK2 torn down
+[scanengine][info][mid360] device 1: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] live SLAM on: map -> slam-map (inline)
+[scanengine][info][record] file writer open at '/Users/admin/lidarscan/desktop/evidence/round5-cycles-drop/Scan-052 2026-08-17 22-26.lscan'
+[scanengine][info][mid360] device 1: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_1_1.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 1: idle -> starting
+[scanengine][info][mid360] device 1: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[scanengine][info][engine] starting -> running
+[scanengine][info][record] opened stream file '/Users/admin/lidarscan/desktop/evidence/round5-cycles-drop/Scan-052 2026-08-17 22-26.lscan/streams/lidar.bin' (stream=lidar-mid360)
+[scanengine][info][mid360] device 1: starting -> streaming
+[lidarscan][capture] recording started -> /Users/admin/lidarscan/desktop/evidence/round5-cycles-drop/Scan-052 2026-08-17 22-26.lscan  (auto-named)
+[lidarscan] record-cycles: cycle 1/4 -> /Users/admin/lidarscan/desktop/evidence/round5-cycles-drop/Scan-052 2026-08-17 22-26.lscan (12.0 s)
+[scanengine][info][record] opened stream file '/Users/admin/lidarscan/desktop/evidence/round5-cycles-drop/Scan-052 2026-08-17 22-26.lscan/streams/imu.bin' (stream=imu)
+[scanengine][info][lio] initialized: |a|=9.8066 m/s^2, bg=(0.01238 0.01494 0.02578) rad/s
+[lidarscan] refresh governor: 60 -> 48 fps (down) — delivered 43.9 fps against a 60 fps cap, frame cpu p95 0.14 ms of a 16.7 ms budget
+[lidarscan][capture] live refresh governor downshift -> 48 fps (delivered 43.9 fps against a 60 fps cap, frame cpu p95 0.14 ms of a 16.7 ms budget); recording untouched
+[scanengine][info][mid360] device 1: connected (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] handle 16777343: configured (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[lidarscan][capture] live odometry is drifting: the IMU reads the rig as stationary (|a| dev 0.008 m/s², gyro 0.028 rad/s) while the SLAM pose implies 0.28 m/s (pose quality 3, sigma 0.001 m). The walk hint reports 0; recording is unaffected — every raw byte is still written.
+[lidarscan] refresh governor: 48 -> 30 fps (down) — delivered 29.3 fps against a 48 fps cap, frame cpu p95 0.13 ms of a 20.8 ms budget
+[lidarscan][capture] live refresh governor downshift -> 30 fps (delivered 29.3 fps against a 48 fps cap, frame cpu p95 0.13 ms of a 20.8 ms budget); recording untouched
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7564 points
+[scanengine][warn][mid360] device 1: DATA WATCHDOG tripped — no point packet for 1.03 s (trip #1). udp_cnt cannot see this; forcing a full SDK re-init in 5.0 s if it stays silent.
+[scanengine][info][mid360] device 1: streaming -> degraded device not responding
+[scanengine][info][engine] running -> stopping
+[scanengine][info][mid360] device 1: degraded -> stopping
+[scanengine][info][mid360] device 1: SDK2 torn down
+[scanengine][info][mid360] device 1: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] live SLAM on: map -> slam-map (inline)
+[scanengine][info][mid360] device 1: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_1_2.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 1: idle -> starting
+[scanengine][info][mid360] device 1: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[scanengine][info][engine] starting -> running
+[lidarscan][capture] Sealed Scan-052 2026-08-17 22-26.lscan — 11.8 s recording · 16243 chunks / 19.9 MB written · 268781 points decoded since Start (device counters also include any paused time) · 15763 drops (device) / 15763 dropped (store)
+[lidarscan] record-cycles: cycle 1 -> 16243 chunks, 20536980 bytes, 7.11 s, sealed=true
+[scanengine][info][engine] running -> stopping
+[scanengine][info][mid360] device 1: starting -> stopping
+[scanengine][info][mid360] device 1: SDK2 torn down
+[scanengine][info][mid360] device 1: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] live SLAM on: map -> slam-map (inline)
+[scanengine][info][record] file writer open at '/Users/admin/lidarscan/desktop/evidence/round5-cycles-drop/Scan-053 2026-08-17 22-26.lscan'
+[scanengine][info][mid360] device 1: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_1_3.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 1: idle -> starting
+[scanengine][info][mid360] device 1: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[scanengine][info][engine] starting -> running
+[lidarscan][capture] recording started -> /Users/admin/lidarscan/desktop/evidence/round5-cycles-drop/Scan-053 2026-08-17 22-26.lscan  (auto-named)
+[lidarscan] record-cycles: cycle 2/4 -> /Users/admin/lidarscan/desktop/evidence/round5-cycles-drop/Scan-053 2026-08-17 22-26.lscan (12.0 s)
+[scanengine][info][mid360] device 1: starting -> stopping
+[scanengine][info][mid360] device 1: SDK2 torn down
+[scanengine][info][mid360] device 1: stopping -> idle
+[scanengine][info][engine] added device 2 (livox-mid360)
+[scanengine][info][mid360] device 2: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_2_4.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 2: idle -> starting
+[scanengine][info][mid360] device 2: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[lidarscan][capture] no sensor data for 6.0 s after Start restarted the sensor — re-armed the Mid-360 in place (attempt 1); the recording stayed open
+[scanengine][info][record] opened stream file '/Users/admin/lidarscan/desktop/evidence/round5-cycles-drop/Scan-053 2026-08-17 22-26.lscan/streams/lidar.bin' (stream=lidar-mid360)
+[scanengine][warn][timesync] stream lidar-mid360: stream-gap, step 14336 ms, offset 1781031032144788 -> 1781031032264208 ns; re-converging
+[scanengine][info][mid360] device 2: starting -> streaming
+[scanengine][info][record] opened stream file '/Users/admin/lidarscan/desktop/evidence/round5-cycles-drop/Scan-053 2026-08-17 22-26.lscan/streams/imu.bin' (stream=imu)
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][info][lio] initialized: |a|=9.8060 m/s^2, bg=(0.00038 -0.01048 0.02590) rad/s
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 4800 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][info][mid360] device 2: connected (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] handle 16777343: configured (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7680 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7642 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][info][engine] running -> stopping
+[scanengine][info][mid360] device 2: streaming -> stopping
+[scanengine][info][mid360] device 2: SDK2 torn down
+[scanengine][warn][cloud] page store full (64 pages): dropped 6451 points
+[scanengine][info][mid360] device 2: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] live SLAM on: map -> slam-map (inline)
+[scanengine][info][mid360] device 2: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_2_5.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 2: idle -> starting
+[scanengine][info][mid360] device 2: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[scanengine][info][engine] starting -> running
+[scanengine][info][mid360] device 2: starting -> streaming
+[lidarscan][capture] Sealed Scan-053 2026-08-17 22-26.lscan — 11.5 s recording · 7601 chunks / 9.3 MB written · 0 points decoded since Start (device counters also include any paused time) · 126701 drops (device) / 142464 dropped (store)
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][info][lio] initialized: |a|=9.8076 m/s^2, bg=(0.01584 -0.01424 0.02657) rad/s
+[lidarscan] record-cycles: cycle 2 -> 7601 chunks, 9610260 bytes, 3.33 s, sealed=true
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][info][engine] running -> stopping
+[scanengine][info][mid360] device 2: streaming -> stopping
+[scanengine][info][mid360] device 2: SDK2 torn down
+[scanengine][warn][cloud] page store full (64 pages): dropped 3859 points
+[scanengine][info][mid360] device 2: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] live SLAM on: map -> slam-map (inline)
+[scanengine][info][record] file writer open at '/Users/admin/lidarscan/desktop/evidence/round5-cycles-drop/Scan-054 2026-08-17 22-26.lscan'
+[scanengine][info][mid360] device 2: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_2_6.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 2: idle -> starting
+[scanengine][info][mid360] device 2: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[scanengine][info][engine] starting -> running
+[scanengine][info][record] opened stream file '/Users/admin/lidarscan/desktop/evidence/round5-cycles-drop/Scan-054 2026-08-17 22-26.lscan/streams/lidar.bin' (stream=lidar-mid360)
+[scanengine][info][mid360] device 2: starting -> streaming
+[scanengine][info][record] opened stream file '/Users/admin/lidarscan/desktop/evidence/round5-cycles-drop/Scan-054 2026-08-17 22-26.lscan/streams/imu.bin' (stream=imu)
+[lidarscan][capture] recording started -> /Users/admin/lidarscan/desktop/evidence/round5-cycles-drop/Scan-054 2026-08-17 22-26.lscan  (auto-named)
+[lidarscan] record-cycles: cycle 3/4 -> /Users/admin/lidarscan/desktop/evidence/round5-cycles-drop/Scan-054 2026-08-17 22-26.lscan (12.0 s)
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][info][lio] initialized: |a|=9.8098 m/s^2, bg=(0.01034 -0.00926 0.02642) rad/s
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 3859 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][info][mid360] device 2: connected (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] handle 16777343: configured (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 557 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 826 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7239 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7795 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7238 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 116 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 1939 points
+[scanengine][warn][mid360] device 2: DATA WATCHDOG tripped — no point packet for 1.04 s (trip #1). udp_cnt cannot see this; forcing a full SDK re-init in 5.0 s if it stays silent.
+[scanengine][info][mid360] device 2: streaming -> degraded device not responding
+[scanengine][warn][mid360] device 2: FORCING full SDK re-init (attempt #1) — the SDK never re-configures a device it has already seen, so a power-cycled unit will not come back on its own
+[scanengine][info][engine] running -> stopping
+[scanengine][info][mid360] device 2: degraded -> stopping
+[scanengine][info][mid360] device 2: SDK2 torn down
+[scanengine][info][mid360] device 2: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_2_7.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 2: SDK2 torn down
+[scanengine][info][mid360] device 2: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] live SLAM on: map -> slam-map (inline)
+[scanengine][info][mid360] device 2: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_2_8.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 2: idle -> starting
+[scanengine][info][mid360] device 2: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[scanengine][info][engine] starting -> running
+[lidarscan][capture] Sealed Scan-054 2026-08-17 22-26.lscan — 12.2 s recording · 16196 chunks / 19.8 MB written · 0 points decoded since Start (device counters also include any paused time) · 283719 drops (device) / 469287 dropped (store)
+[lidarscan] record-cycles: cycle 3 -> 16196 chunks, 20477400 bytes, 7.09 s, sealed=true
+[scanengine][info][engine] running -> stopping
+[scanengine][info][mid360] device 2: starting -> stopping
+[scanengine][info][mid360] device 2: SDK2 torn down
+[scanengine][info][mid360] device 2: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] live SLAM on: map -> slam-map (inline)
+[scanengine][info][record] file writer open at '/Users/admin/lidarscan/desktop/evidence/round5-cycles-drop/Scan-055 2026-08-17 22-27.lscan'
+[scanengine][info][mid360] device 2: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_2_9.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 2: idle -> starting
+[scanengine][info][mid360] device 2: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[scanengine][info][engine] starting -> running
+[lidarscan][capture] recording started -> /Users/admin/lidarscan/desktop/evidence/round5-cycles-drop/Scan-055 2026-08-17 22-27.lscan  (auto-named)
+[lidarscan] record-cycles: cycle 4/4 -> /Users/admin/lidarscan/desktop/evidence/round5-cycles-drop/Scan-055 2026-08-17 22-27.lscan (12.0 s)
+[lidarscan] refresh governor: 30 -> 24 fps (down) — delivered 22.4 fps against a 30 fps cap, frame cpu p95 0.18 ms of a 33.3 ms budget
+[lidarscan][capture] live refresh governor downshift -> 24 fps (delivered 22.4 fps against a 30 fps cap, frame cpu p95 0.18 ms of a 33.3 ms budget); recording untouched
+[scanengine][info][record] opened stream file '/Users/admin/lidarscan/desktop/evidence/round5-cycles-drop/Scan-055 2026-08-17 22-27.lscan/streams/lidar.bin' (stream=lidar-mid360)
+[scanengine][warn][timesync] stream lidar-mid360: stream-gap, step 14332 ms, offset 1781031032147069 -> 1781031032463416 ns; re-converging
+[scanengine][info][mid360] device 2: starting -> streaming
+[scanengine][info][record] opened stream file '/Users/admin/lidarscan/desktop/evidence/round5-cycles-drop/Scan-055 2026-08-17 22-27.lscan/streams/imu.bin' (stream=imu)
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][info][lio] initialized: |a|=9.8038 m/s^2, bg=(0.00620 0.01346 0.02694) rad/s
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 5491 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7641 points
+[scanengine][info][mid360] device 2: connected (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][info][mid360] handle 16777343: configured (sn=3GGDJ6K00100001 ip=127.0.0.1)
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7430 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7507 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 7968 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][info][engine] running -> stopping
+[scanengine][info][mid360] device 2: streaming -> stopping
+[scanengine][info][mid360] device 2: SDK2 torn down
+[scanengine][warn][cloud] page store full (64 pages): dropped 5088 points
+[scanengine][info][mid360] device 2: stopping -> idle
+[scanengine][info][engine] stopping -> idle
+[scanengine][info][engine] idle -> starting
+[scanengine][info][engine] live SLAM on: map -> slam-map (inline)
+[scanengine][info][mid360] device 2: SDK2 up (config /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/scanengine_mid360_2_10.json), waiting for 127.0.0.1
+[scanengine][info][mid360] device 2: idle -> starting
+[scanengine][info][mid360] device 2: started, backend=sdk2 lidar=127.0.0.1 host=127.000.000.001 point:56301 imu:56401 (decimation 1/5, filter: no-return=1 tag-mask=0x0C)
+[scanengine][info][engine] starting -> running
+[scanengine][info][mid360] device 2: starting -> streaming
+[lidarscan][capture] Sealed Scan-055 2026-08-17 22-27.lscan — 11.9 s recording · 13112 chunks / 16.1 MB written · 0 points decoded since Start (device counters also include any paused time) · 224602 drops (device) / 693889 dropped (store)
+[scanengine][warn][cloud] page store full (64 pages): dropped 8199 points
+[scanengine][warn][cloud] page store full (64 pages): dropped 8198 points
+[scanengine][info][lio] initialized: |a|=9.8050 m/s^2, bg=(-0.00309 -0.00045 0.02618) rad/s
+[lidarscan] record-cycles: cycle 4 -> 13112 chunks, 16577880 bytes, 5.74 s, sealed=true
+[lidarscan] record-cycles: cycle 1 OK (16243 chunks)
+[lidarscan] record-cycles: cycle 2 OK (7601 chunks)
+[lidarscan] record-cycles: cycle 3 OK (16196 chunks)
+[lidarscan] record-cycles: cycle 4 OK (13112 chunks)
+[lidarscan] record-cycles: 4/4 cycles recorded — PASS
+[scanengine][info][mid360] device 2: streaming -> stopping
+[scanengine][info][mid360] device 2: SDK2 torn down
+[scanengine][warn][cloud] page store full (64 pages): dropped 7527 points
+[scanengine][info][mid360] device 2: stopping -> idle
+[scanengine][info][engine] running -> stopping
+[scanengine][info][engine] stopping -> idle
+[lidarscan][capture] live preview stopped — shutdown
+FEngine (64 bits) created at 0xaaf6b8000 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+=== 6. item 4 (5.1): Process / Export / Merge folded into the Projects tab ===
+$ /Users/admin/lidarscan/desktop/build/lidarscan --projects-actions-demo /Users/admin/lidarscan/desktop/evidence/18-projects-actions --quit-after 18
+[scanengine][info][instance] single-instance lock held: /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/lidarscan-lidarscan.lock (pid 89852)
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[lidarscan] projects-actions-demo: selected 1 — 1 selected · Process enabled · Export enabled · Merge disabled ("Merge selected…") · panel: none
+[lidarscan] projects-actions-demo: Process… — 1 selected · Process enabled · Export enabled · Merge disabled ("Merge selected…") · panel: processing
+[lidarscan] projects-actions-demo: selected 2 — 2 selected · Process disabled · Export disabled · Merge enabled ("Merge 2 selected…") · panel: processing
+[lidarscan] merge: could not add /Users/admin/lidarscan/desktop/evidence/round5-cycles-drop/Scan-055 2026-08-17 22-27.lscan: this project has no D6 raw chunks. record/replay.h only forwards ChunkType::kD6Raw today, so a Mid-360-only project cannot be decoded back into a merge session yet (A3/A10 need an analogous Engine push entry point first — see engine/docs/A5-lscan.md §4/§8, same gate MainWindow::startReplay() already enforces for the ordinary replay path).
+[lidarscan] merge: could not add /Users/admin/lidarscan/desktop/evidence/round5-cycles-drop/Scan-054 2026-08-17 22-26.lscan: this project has no D6 raw chunks. record/replay.h only forwards ChunkType::kD6Raw today, so a Mid-360-only project cannot be decoded back into a merge session yet (A3/A10 need an analogous Engine push entry point first — see engine/docs/A5-lscan.md §4/§8, same gate MainWindow::startReplay() already enforces for the ordinary replay path).
+[lidarscan] projects-actions-demo: Merge selected… — 2 selected · Process disabled · Export disabled · Merge enabled ("Merge 2 selected…") · panel: merge
+[lidarscan] projects-actions-demo: merge workbench holds 0 sessions
+FEngine (64 bits) created at 0xc5342c000 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+=== 6b. app version comes from the repo-root VERSION file (NOTES §18) ===
+repo VERSION file: 0.2.1
+$ /Users/admin/lidarscan/desktop/build/lidarscan --version
+[scanengine][info][instance] single-instance lock held: /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/lidarscan-lidarscan.lock (pid 89904)
+LidarScan Desktop 0.2.1 (build 201)
+=== 7. no regressions in the other workstreams' hooks ===
+$ /Users/admin/lidarscan/desktop/build/lidarscan --workspace projects --quit-after 2
+[scanengine][info][instance] single-instance lock held: /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/lidarscan-lidarscan.lock (pid 89910)
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+FEngine (64 bits) created at 0xbe5434000 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+$ /Users/admin/lidarscan/desktop/build/lidarscan --workspace capture --quit-after 2
+[scanengine][info][instance] single-instance lock held: /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/lidarscan-lidarscan.lock (pid 89920)
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[scanengine][info][discovery] discovery finished: 0 lidar(s), 0 datagram(s), 0 rejected
+[scanengine][info][discovery] discovery finished: 0 lidar(s), 0 datagram(s), 0 rejected
+FEngine (64 bits) created at 0xae8de7000 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+$ /Users/admin/lidarscan/desktop/build/lidarscan --workspace review --quit-after 2
+[scanengine][info][instance] single-instance lock held: /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/lidarscan-lidarscan.lock (pid 89933)
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+FEngine (64 bits) created at 0xc50ddf000 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+$ /Users/admin/lidarscan/desktop/build/lidarscan --workspace plan --quit-after 2
+[scanengine][info][instance] single-instance lock held: /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/lidarscan-lidarscan.lock (pid 89944)
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+FEngine (64 bits) created at 0xc64ddf000 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+$ /Users/admin/lidarscan/desktop/build/lidarscan --workspace merge --quit-after 2
+[scanengine][info][instance] single-instance lock held: /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/lidarscan-lidarscan.lock (pid 89953)
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+FEngine (64 bits) created at 0xb778a8000 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+$ /Users/admin/lidarscan/desktop/build/lidarscan --workspace jobs --quit-after 2
+[scanengine][info][instance] single-instance lock held: /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/lidarscan-lidarscan.lock (pid 89962)
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+FEngine (64 bits) created at 0xacd4ec000 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+$ /Users/admin/lidarscan/desktop/build/lidarscan --post-e2e /Users/admin/lidarscan/desktop/evidence/c4-synth-mid360.lscan --quit-after 25
+[scanengine][info][instance] single-instance lock held: /var/folders/67/_n7jspjn69s9z0l0v2g6ycbh0000gn/T/lidarscan-lidarscan.lock (pid 89975)
+[scanengine][info][engine] scanengine 0.1.0 (clock: mach_absolute_time) created for 'LidarScan Desktop' (pages: 64 × 1048576 pts)
+[lidarscan] scanengine 0.1.0 (clock: mach_absolute_time)
+[lidarscan] post-e2e: job #1 submitted for /Users/admin/lidarscan/desktop/evidence/c4-synth-mid360.lscan
+[scanengine][info][lio] initialized: |a|=9.8589 m/s^2, bg=(0.00356 0.00388 0.00421) rad/s
+QObject::disconnect: wildcard call disconnects from destroyed signal of QPushButton::cancel
+QObject::disconnect: wildcard call disconnects from destroyed signal of QPushButton::load
+[lidarscan] post-e2e: job #1 running — 0% (opening recording) 
+[lidarscan] post-e2e: job #1 running — 75% (pose-graph optimization) 
+[lidarscan] post-e2e: job #1 done — 100% (done) 
+[lidarscan] post-e2e: DONE — 83228 points in the result cloud
+[lidarscan] post-e2e: result loaded into the viewport
+FEngine (64 bits) created at 0x929056000 (threading is enabled)
+FEngine resolved backend: Metal
+Selected physical device 'Apple M4'
+Supported GPU families: 
+  MTLGPUFamilyCommon3
+  MTLGPUFamilyApple7
+  MTLGPUFamilyMac2
+Features:
+  readWriteTextureSupport: true
+Backend feature level: 3
+FEngine feature level: 1
+verification complete — see /Users/admin/lidarscan/desktop/evidence

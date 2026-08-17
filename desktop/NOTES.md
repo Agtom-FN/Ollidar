@@ -3151,6 +3151,18 @@ refused outright. `--auto-detect-cancel-selftest`'s second half therefore prints
   the shipped widgets), `--projects-actions-demo PREFIX` (the folded Projects
   actions), `--live-refresh FPS` (set the live cap through the real slider).
 * No D6-capture-specific CLI hook existed, so none was removed.
+* **Added by the field-bug pass (§17.8-17.11)**:
+  * `--walk-speed-selftest` — the `WalkSpeedEstimator` + `MotionGate` unit test.
+    No Qt object, no engine, no display, no instance lock: it runs before
+    `QApplication` is even constructed, so it works in CI and while the real app
+    is open. Exits 8 on any failure.
+  * `--walk-soak S` (with `--mid360-selftest`) — watches the panel's own walk
+    hint for S seconds against the armed device and exits 9 if the "ease off"
+    hint fires or any non-zero speed is reported.
+  * `--record-cycles N` (+ `--record-cycles-dir`, `--record-cycle-seconds`) —
+    N back-to-back Start/Stop cycles on ONE arm through the shipped Start
+    button, per-cycle chunk counts, exit 7 if any cycle is empty. This is the
+    hook to run against real hardware to close field bug C in the field.
 
 ### 17.4 Items 17-18: the refresh cap and the walkthrough
 
@@ -3302,7 +3314,8 @@ the folded `Process…` button's own path with real data.
 
 ### 17.6 Engine seams that were missing (worked around, not edited)
 
-`engine/**` was read-only for this task. Five things it does not offer:
+`engine/**` was read-only for this task. Five things it does not offer (three
+more were found by the field bugs a day later — §17.12 continues this list):
 
 1. **No bulk read of the LIO pose ring.** `LioPoseSource` exposes `latest()`,
    `size()`, `pose_at()` and `trajectory_length_m()` but no way to enumerate the
@@ -3336,16 +3349,26 @@ the folded `Process…` button's own path with real data.
   the simulator (§17.5a) — but no single run does beacon→arm end to end, because
   the replayed real beacon names a 192.168.1.x lidar that is not on this machine
   and the simulator emits no unsolicited heartbeat at all (§16.5).
-* **The LIVE trail against a moving rig.** The simulator is stationary, so the
-  live trail is ~0.5 m of LIO drift (visible in the panel readout: "Walking
-  0.33 m/s · 0.5 m of path · 16 poses"). The RENDERING is proven with a
+* **The LIVE trail against a moving rig.** The RENDERING is proven with a
   synthetic 41-vertex path pushed through the panel's own trail buffer
   (0 → 3578 ember pixels, `evidence/18-trail-window.png`); a real walked trail
   needs hardware.
+  **Corrected by §17.9.** This bullet used to read "the simulator is stationary,
+  so the live trail is ~0.5 m of LIO drift (visible in the panel readout:
+  'Walking 0.33 m/s · 0.5 m of path · 16 poses')". Both halves were wrong, and
+  the pass shipped on the strength of them: `mid360_sim`'s platform is NOT
+  stationary (`spikes/s2-mid360-sim/sim/scene.h` drives an analytic lissajous),
+  and the drift is not ~0.5 m — left running it reaches 24 m in 33 s. The
+  readout quoted above was the field bug the owner reported the next day, seen
+  and written off during the pass that introduced it.
 * **Windows/Linux**: compile-only, as with every other UI pass here.
   `DisplayAwake`'s Windows body has never been RUN; its Linux body is a
   documented no-op.
-* **The auto-downshift's upward path**: there is none by design.
+* **~~The auto-downshift's upward path: there is none by design.~~**
+  **Reversed by §17.10.** "By design" was the bug. A governor that only ever
+  goes down, decides from a ten-second history it never clears, and PERSISTS its
+  own output into the operator's saved setting is a one-way ratchet across
+  sessions. It now recovers, and it no longer writes to QSettings.
 * **`--capture-cluster-demo`'s armed/recording/paused shots** still work (re-run
   end to end against the simulator: gated / armed / recording / paused, plus the
   viewport badge grabs) but are named for states that no longer exist ("gated");
@@ -3356,3 +3379,369 @@ the folded `Process…` button's own path with real data.
   right for the USB-serial devices this app probes (the UM982, and a D6 someone
   plugs in to check), but the sentence about a picker in the capture window is
   not. Left alone rather than half-rewritten in a UI pass.
+
+---
+
+### 17.8 Round-5 FIELD BUGS — the owner's second session, on real hardware
+
+One day after round 5 shipped, the owner ran the redesigned app against a real
+Mid-360 on their Mac and reported three things in one sentence:
+
+> "the problem of the recording and live view is that wrongly detect me walking
+> and moving while i am stay still and its not recording and changing from live
+> while there are moving. i notice that it only record when the first connected"
+
+Three separate defects, labelled A, B and C below. All three are **desktop**
+defects — `engine/**` was read-only again — but A and C both turned out to be
+the app trusting an engine behaviour it should have been measuring, and both
+exposed seams that are now written down in §17.12.
+
+Everything below was reproduced and re-verified against
+`spikes/s2-mid360-sim`'s `mid360_sim` on loopback plus
+`scripts/replay_mid360_heartbeat.py`, the same harness round 5 was verified
+with. The new hooks (`--walk-speed-selftest`, `--walk-soak`, `--record-cycles`)
+are in `scripts/verify_round5.sh` step 5b and in `evidence/verify_field_bugs.log`.
+
+**One correction to the round-5 record first, because everything in A rests on
+it:** `mid360_sim` is **not** a stationary sensor. §17.7 said it was.
+`spikes/s2-mid360-sim/sim/scene.h`'s `Trajectory` is an analytic lissajous —
+`|v| ≤ 0.31 m/s`, `|a| ≤ 0.015 m/s²`, a 4-minute yaw sweep and a small
+roll/pitch wobble. It is **gait-free and barely accelerated**: nobody is
+carrying it anywhere. What it can therefore prove is that a source nobody is
+walking reads 0.00 m/s. It cannot prove the positive case at all — it has no
+motion options (`--rate --imu-rate --loss --jitter --noise --drop-link-after
+--link-down-for --repeat --restart-identity` is the whole list) and no gait to
+emulate one with — so the positive case is a unit test instead, exactly as the
+task allowed for.
+
+### 17.9 Field bug A — "wrongly detect me walking while i stay still"
+
+**SYMPTOM.** The walk hint reports walking, and fires its "ease off a little"
+warning, with the rig standing still. Measured on the pre-fix build against
+`mid360_sim`, 60 s soak:
+
+```
+walk-soak: 60 s, 587 measured samples, peak 4.359 m/s, 587 non-zero,
+           hint fired 226x  — FAIL
+```
+
+**ROOT CAUSE — and there are two layers, because fixing only the first would
+have bought minutes.**
+
+*Layer 1: the arithmetic.* Round 5 derived the speed inline in
+`pollTrajectory()` from two consecutive `LioPoseSource::latest()` polls. Five
+independent faults, all in six lines:
+
+1. **Wall clock, not pose time.** `dt` came from a `QElapsedTimer` in the GUI
+   thread, never from `Pose::t_mono_ns` — which `Pose` carries and which is the
+   only honest clock for an odometry sample.
+2. **A dt floor of `1e-3`.** A Qt timer that coalesces two 100 ms ticks into one
+   1.1 ms gap turned 3 cm of pose noise into ~27 m/s, and the 0.4-weight EMA
+   then kept it above the 1.5 m/s threshold for ~9 further samples.
+3. **No sample-identity check.** `latest()` answers every poll whether or not
+   the odometry produced anything new; a stalled LIO was resampled at 10 Hz and
+   every resample counted as an observation.
+4. **A single sample WAS the measurement.** One 10 Hz step, lightly smoothed. So
+   LIO's stationary jitter was the signal.
+5. **No frame-reset handling — the biggest one.** Every Start / Pause / Resume /
+   Stop calls `Engine::start_session()`, which builds a **new `LioOdometry`
+   whose first pose is the origin**. `trail_` still held the old frame's
+   position, so the next poll saw the entire previous trajectory as one 100 ms
+   step. Tens of m/s of "walking", from a rig that never moved, at the exact
+   moment the operator pressed a button.
+
+*Layer 2: the pose itself is not trustworthy, and no amount of filtering fixes
+that.* Instrumenting the raw poses against `mid360_sim`, whose true position is
+known analytically:
+
+```
+t=10 s   LIO (2.22, 1.86)   truth (2.17, 1.87)    tracking
+t=20 s   LIO (5.96, 3.83)   truth (3.46, 2.35)    2.5 m out
+t=33 s   LIO (23.8, 7.39)   truth  < 6 m possible diverged
+```
+
+The live odometry's position runs away, monotonically and superlinearly. There
+is no covariance, no quality flag and no divergence event on the pose API to
+tell an app that it has (§17.12). **A speed derived from pose displacement —
+however carefully windowed — eventually reports a stationary rig sprinting.**
+
+**FIX.** Two matching layers, both in `src/app/WalkSpeedEstimator.{h,cpp}` (new,
+Qt-free, engine-free) and its caller:
+
+* **`WalkSpeedEstimator`** replaces the inline arithmetic. It is driven by
+  `Pose::t_mono_ns`; ignores poses whose stamp did not advance; rejects gaps
+  under a 40 ms floor and treats gaps over 1.5 s or steps over 2 m as
+  **discontinuities** that reset the window (that is fault 5, handled
+  generically); and reports **median-to-median displacement over ≥ 1.2 s of pose
+  time** — the componentwise median position and median timestamp of each half
+  of the window — with a 0.08 m deadband. Median-to-median matters: for a still
+  rig both halves estimate the same point and jitter falls by ~√n while a single
+  wild pose is ignored outright, and for a steady walk the median position of a
+  half IS the position at that half's median time, so robustness costs nothing
+  in accuracy (measured 1.403 m/s for a 1.400 m/s walk carrying the same jitter).
+* **`MotionGate`** is the drift-free half. The accelerometer does not drift:
+  over the run above it read `|a| = 9.8083 ± 0.008 m/s²` — pure gravity, i.e.
+  the rig was **never accelerated**. A velocity nothing accelerated into is not
+  a velocity. And a human carrying a scanner cannot walk without gait: heel
+  strike and body sway put 1–3 m/s² on `|a|` and 0.2–0.6 rad/s on the gyro,
+  every step. So the gate measures, over the same window from
+  `Engine::imu().recent()`, the RMS deviation of `|accel|` from its own mean and
+  the mean `|gyro|`, and calls the rig **still** below 0.30 m/s² and
+  0.15 rad/s. Measured separation: sim/tripod 0.008 m/s², gentle walk
+  0.40 m/s², normal walk 1.06 m/s². The gate only ever **suppresses** — it never
+  invents motion, never raises the speed, and **no IMU at all is UNKNOWN, not
+  still**, so a dead IMU cannot silently disable the hint.
+* `CaptureWindow::resetWalkTracking()` is called at every one of the five places
+  the session restarts, so the trail and the window never straddle two pose
+  frames; and the trail is no longer extended while the gate says still, which
+  also removes the per-frame trail rebuild that fed field bug B.
+* The disagreement is **said out loud**, once a minute, rather than swallowed:
+  `"live odometry is drifting: the IMU reads the rig as stationary (|a| dev
+  0.007 m/s², gyro 0.032 rad/s) while the SLAM pose implies 0.27 m/s. The walk
+  hint reports 0; recording is unaffected."` That line is the only signal an
+  operator or a support log will get until the engine grows one (§17.12).
+
+**PROOF.**
+
+* `--walk-speed-selftest` (no hardware, no display; runs in CI). Ten cases:
+  stationary-with-jitter for 60 s, a 1.4 m/s walk, a 2.2 m/s walk that must trip
+  the hint, a LIO frame reset after 40 m, coalesced 1 ms polls, a stalled pose
+  stream, and the four `MotionGate` cases. **PASS (0 failures)** —
+  and this carries the positive case the simulator cannot.
+* `--walk-soak 60` against `mid360_sim` through the shipped 10 Hz poll and real
+  `LioOdometry`:
+
+  | | pre-fix | post-fix |
+  |---|---|---|
+  | measured samples | 587 | 601 |
+  | peak speed | **4.359 m/s** | **0.000 m/s** |
+  | non-zero samples | 587 | **0** |
+  | "ease off" hint fired | **226×** | **0×** |
+
+* `evidence/19-fieldbug-walkhint-window.png`: the panel reading
+  `Holding still (0.00 m/s) · 8.4 m of path · 256 poses` — the path length is
+  the drift, honestly reported, and the speed is not.
+
+### 17.10 Field bug B — "its not … changing from live while there are moving"
+
+**SYMPTOM.** The live view stops following what the sensor sees.
+
+**ROOT CAUSE.** Not one bug; a governor built as a ratchet, plus a cost driver
+that field bug A was feeding it.
+
+1. **There was no recovery path at all.** `nextLowerRefreshNotch()` was the only
+   mover and `refreshDownshifted()` only ever lowered. §17.7 called this "by
+   design". It is not a design, it is a one-way valve: the cap could only ever
+   descend the ladder 120→90→60→48→30→24→15→10→**5 fps** and stay there.
+2. **It decided from a stale, uncleared history.** `trimSamples()` kept **600
+   samples — ten seconds at 60 fps** — and `setMaxFps()` did not clear it. So
+   one stall kept `stats_.fps` depressed long after the machine recovered, and
+   every downshift then re-evaluated the SAME samples that had just triggered
+   it, satisfying its own trigger again notch after notch.
+3. **It PERSISTED its own output into the operator's setting.**
+   `noteRefreshDownshift()` wrote the governed value to
+   `QSettings("capture/liveRefreshHz")`. A machine that stuttered once came back
+   from the next launch permanently capped at whatever notch it had reached —
+   the descent accumulated **across sessions**, which is how a live view ends up
+   at 5 fps for good.
+4. **It downshifted below what the machine was already delivering.** Measured on
+   an idle M4 with nothing loaded: the display link paces this window at ~29 fps
+   at **0.15 ms** of frame CPU, so `rate_under` fires with the machine
+   completely idle. Walking a notch every 2 s from there is pure loss.
+5. **Field bug A was the load.** A drifting pose pushed a new trail vertex every
+   100 ms, and `trail_dirty_` costs a **full trail vertex/index buffer
+   destroy-and-rebuild on the next presented frame**. So the false-motion path
+   was manufacturing the very frame cost the governor was reacting to.
+
+**What was NOT the cause, checked and stated because the task asked:** the walk
+speed / motion state does **not** gate rendering. `renderFrame()` has no
+reference to any capture state; the trail path is the only coupling between the
+two, and it is now gated by the motion gate (fix 5).
+
+**FIX** (`src/render/ViewportWindow.{h,cpp}`, `CaptureWindow::noteRefreshGovernor`):
+
+* A **requested** cap (`requested_max_fps_`, what the panel/settings asked for)
+  is now distinct from the **effective** cap (`max_fps_`, what the governor
+  holds). `setMaxFps()` is a request and always outranks the governor.
+* `applyGovernedFps()` **clears the frame-time history** on every rate change,
+  so no decision is ever made from samples taken at a different rate; the
+  history cap dropped from 600 to 240 samples.
+* **Recovery exists**: 12 consecutive 0.4 s windows (~5 s) of headroom — frame
+  CPU under 0.6 of budget AND delivered rate over 0.9 of the cap, deliberately
+  stricter than the mirror image of the downshift test so the two cannot chatter
+  — steps one notch back up, never above the requested cap.
+* **Exponential backoff** on recovery. A machine whose sustainable rate falls
+  between two notches would otherwise hunt (the first fix run did exactly that,
+  30↔48 every few seconds). Each downshift doubles the headroom a recovery
+  attempt must demonstrate, 12 → 300 windows (~5 s → ~2 min), reset by an
+  explicit request. One probe, then settle.
+* **A downshift never goes below the rate already being delivered**
+  (`refreshNotchAtOrAbove(stats_.fps)`), which is cause 4.
+* **The governor no longer persists anything.** The saved setting is what the
+  operator chose; the governor is a temporary measured override, and its inline
+  note now says it will come back up on its own.
+* **A log line on every governor change, in both directions**, written to
+  stderr by `ViewportWindow` itself as well as emitted as a signal — so a field
+  log shows the governor's whole history even when no capture panel is listening:
+  `[lidarscan] refresh governor: 30 -> 48 fps (recovering) — sustained 29.2 fps
+  at cpu p95 0.16 ms of a 33.3 ms budget — recovering toward the 60 fps you
+  asked for`.
+
+**PROOF.** `--live-refresh 60 --resize-storm 10` against the simulator, 60 s.
+The governor descends 60 → 48 → 30 under the storm, **probes back up to 48 after
+the storm ends**, finds 48 genuinely unsustainable on this display, drops to 30
+and settles there — 30 fps being what the machine actually delivers, not the
+5 fps floor. `QSettings("capture/liveRefreshHz")` reads **60** after that run:
+the governor no longer eats the operator's setting.
+Screenshot: `evidence/19-fieldbug-governor-window.png`.
+
+### 17.11 Field bug C — "it only record when the first connected"
+
+**SYMPTOM.** Start → Stop (seals) → Start again records nothing.
+
+**ROOT CAUSE.** `Engine::start_session()` **starts every registered device** and
+`Engine::stop_session()` **stops** them. Every Start, Stop, Pause and Resume in
+this flow restarts the session, so every one of them **tears the Mid-360's Livox
+SDK2 backend down and brings it back up** — the engine log shows `SDK2 torn
+down` / `SDK2 up` once per transition, with a fresh config file each time. On
+loopback the simulator re-handshakes fast enough to be invisible — though not
+instantly: the new watch measured `sensor data resumed 0.52 s after Stop
+restarted the sensor` on 127.0.0.1, and that is the floor, with no network, no
+switch and no real device to re-command. Against anything slower it is not
+invisible at all, and **nothing in the flow ever checked that the sensor came
+back**. A recording started inside that gap ran its whole
+duration against a device stuck in `kStarting`, then sealed a `.lscan` with zero
+chunks — while the panel showed the REC badge, ran the elapsed clock, and said
+nothing.
+
+Reproduced exactly, `mid360_sim --drop-link-after 8 --link-down-for 6 --repeat`,
+six 3 s cycles on one connect:
+
+```
+cycle 1 -> 7201 chunks     cycle 4 -> 6515 chunks
+cycle 2 -> 0 chunks        cycle 5 -> 0 chunks
+cycle 3 -> 6606 chunks     cycle 6 -> 6621 chunks
+   device state on the empty cycles: "starting -> stopping", never "streaming"
+```
+
+**FIX** (`CaptureWindow::beginDataWatch / updateDataWatch / rearmDeviceInPlace`):
+
+* After **every** session restart — Start, Pause, Resume and the Stop that seals
+  — the panel snapshots `DeviceHealth::points_out` and watches for it to move.
+  This is a **watch, not a gate**: Start never waits for the device, because a
+  recording that refuses to begin is worse than one that begins a moment before
+  the data does. Record-always still holds.
+* If the points do not move within the window (6 s, doubling to a 24 s cap after
+  each failed attempt so an unplugged device is not hammered, but never giving
+  up), the Mid-360 is **re-armed IN PLACE**: `remove_device()` + `add_device()`,
+  which `Engine` starts immediately because a session is live ("a device added
+  mid-session starts immediately", `engine/src/core/engine.cpp`). **The session
+  is never stopped, so the recorder stays open and the `.lscan` being written is
+  untouched** — only the driver is rebuilt. This is precisely why the fix
+  re-arms the DEVICE instead of restarting the session again.
+* While the watch is unsatisfied the panel says so, in red, instead of implying
+  all is well: `NO SENSOR DATA since Start restarted the sensor (6.3 s) — this
+  recording is EMPTY so far; re-arming the sensor`.
+* **An empty seal is announced.** Stop now leads with `NOTHING WAS RECORDED.`
+  and explains, rather than sealing a 0-chunk project silently. That silence is
+  most of what "it only records when the first connected" looked like from the
+  outside.
+
+**PROOF — the new `--record-cycles N` hook**, which drives the **shipped Start
+button** (auto-named project, `triggerStartWithAutoNameForCli()`, no explicit
+directory) N times over ONE arm, reads each project back with the same
+`readProject()` the Projects panel uses, prints per-cycle chunk counts, and
+**exits 7 if any cycle is empty**. Headless, so it can be pointed at real
+hardware in the field unchanged.
+
+* Healthy link, 4 cycles on one connect: `4781 / 4394 / 4794 / 4739` chunks —
+  **4/4 PASS**. (Unlimited cycles per connect, which is the actual requirement.)
+* Across **repeated 14 s transport outages**
+  (`--drop-link-after 12 --link-down-for 14 --repeat`), 4 × 12 s cycles:
+  **4/4 PASS**, `17104 / 9145 / 12020 / 19848` chunks, with the watch visible
+  doing its job — `no sensor data for 6.0 s after Start restarted the sensor —
+  re-armed the Mid-360 in place (attempt 1); the recording stayed open`. The
+  pre-fix build sealed those cycles empty and silent.
+
+### 17.12 New engine seams the field bugs exposed
+
+Added to §17.6's list. `engine/**` stayed read-only; each of these is worked
+around above, and each would be a small, well-defined addition.
+
+6. **No way to start/stop RECORDING without restarting the session.** This is
+   the root of field bug C. `Engine::start_session()` starts every device and
+   `stop_session()` stops them, so toggling `record` costs a full driver
+   teardown and SDK re-handshake — four times per scan (Start, Pause, Resume,
+   Stop), on a path whose entire premise is "every Start is a new project".
+   The recorder itself is already gated on nothing but `recorder->is_open()`,
+   and `Engine::recorder()` is public — but its header states plainly that it
+   "hands out the writer with no lock", and `FileRecordWriter` is not internally
+   synchronized while three driver threads may be inside `write_chunk()`. So the
+   app cannot open/close it safely from the UI thread. **The seam wanted is
+   `Engine::begin_recording(dir)` / `Engine::end_recording()` taking the same
+   `record_m` that `Engine::record_keyframe()` already takes** — the exact
+   precedent, for the exact reason (A11 §3.1: "what it cannot do for itself is
+   the LOCK"). With that, Start/Stop/Pause/Resume would not touch the device at
+   all and field bug C could not exist.
+7. **No pose quality, covariance or divergence signal from live SLAM.**
+   `Pose` carries `quality`, `position_sigma_m` and `tracking_lost`, but LIO's
+   live poses arrive with them unset, and `EventType` has nothing for "the
+   odometry diverged". Measured divergence on a known trajectory: 2.5 m of error
+   at 20 s, 18 m at 33 s, with no indication whatever. An app therefore cannot
+   distinguish "the operator walked there" from "the odometry ran away", which
+   is what forced the IMU cross-check in §17.9. **The seam wanted is either a
+   populated `position_sigma_m` on live poses, or a zero-velocity update inside
+   LIO, or a `kOdometryDiverged` event — any one of them.**
+8. **No device-level "is data flowing" callback.** `DeviceHealth::points_out` is
+   the only way to know, so the app polls it at 300 ms and infers. Workable, and
+   what §17.11 does, but every consumer will reimplement it.
+
+---
+
+## 18. App versioning — one file, every artefact
+
+Owner directive, 2026-08-17: **every shipped update gets a version code.** The
+repo-root `VERSION` file (`0.2.1` at the time of writing) is the only place a
+version is written by hand, and `android/app/build.gradle.kts` already derives
+`versionName`/`versionCode` from it. This is the desktop half.
+
+**The one rule:** bump `<repo>/VERSION`. Nothing else.
+
+| artefact | value | how |
+|---|---|---|
+| `--version` | `LidarScan Desktop 0.2.1 (build 201)` | `QCoreApplication::setApplicationVersion()` from the `LIDARSCAN_APP_VERSION` / `_CODE` compile definitions |
+| window title | `LidarScan 0.2.1`, or `LidarScan 0.2.1 — <project>` with a project open | `MainWindow`'s `appTitle()`, a VIEW of `applicationVersion()` |
+| status bar (right) | `Metal · dpr 1.00 · scanengine 0.1.0 · ABI v6 · app 0.2.1` | same; full `0.2.1 (build 201)` in the tooltip |
+| `Info.plist` | `CFBundleShortVersionString 0.2.1`, `CFBundleVersion 201` | `configure_file` of `packaging/Info.plist.in` |
+| macOS DMG | `dist/LidarScan-0.2.1-universal.dmg` | `tools/package_macos.sh` already reads `CFBundleShortVersionString` out of the BUILT bundle — unchanged, it just gets the right number now |
+| `.deb` / AppImage | `0.2.1` | `packaging/linux/build_{deb,appimage}.sh` default to the file (an explicit argument still wins) |
+| Windows installer | `LidarScan-0.2.1-x64-setup.exe` | `/DVERSION` from CMake as before, with the `!ifndef` fallback now `!searchparse /file` on the same file instead of a frozen `0.1.0` |
+
+**Mechanics.** `desktop/CMakeLists.txt` reads `../VERSION` **before `project()`**
+(legal — `file(READ)` needs only `cmake_minimum_required`), validates it as
+`MAJOR.MINOR.PATCH`, computes `LIDARSCAN_VERSION_CODE = major*10000 +
+minor*100 + patch` — **the identical formula Android uses**, so the two stores
+can never disagree about which build is newer — and passes both into
+`project(... VERSION ...)`, the compile definitions and the plist. The file is
+added to `CMAKE_CONFIGURE_DEPENDS`, so a bump re-configures on the next
+*incremental* build instead of quietly shipping the previous number. A tree with
+no `VERSION` file configures as `0.0.0` **with a warning**, rather than
+inventing one.
+
+**The engine's version is deliberately NOT this.** `scanengine 0.1.0` stays
+where it is, reported by `EngineHost::versionString()` and shown next to the app
+version in the status bar. The engine versions independently of the apps that
+embed it; conflating them would make a desktop-only fix (like all of §17.8-17.11)
+look like an engine change.
+
+**Verified** (2026-08-17, this tree, `VERSION` = `0.2.1`):
+
+* `cmake -S desktop -B build` prints `-- LidarScan desktop version 0.2.1 (code 201)`.
+* `./build/lidarscan --version` → `LidarScan Desktop 0.2.1 (build 201)`.
+* A bundle configure (`-DLIDARSCAN_MACOS_BUNDLE=ON`) writes
+  `CFBundleShortVersionString 0.2.1` / `CFBundleVersion 201`, and
+  `PlistBuddy -c "Print :CFBundleShortVersionString"` — the exact call
+  `tools/package_macos.sh` makes — yields `0.2.1`, i.e. the DMG becomes
+  `LidarScan-0.2.1-universal.dmg`.
+* `evidence/19-version-title-qtchrome.png`: the status strip reading
+  `… scanengine 0.1.0 · ABI v6 · app 0.2.1`.

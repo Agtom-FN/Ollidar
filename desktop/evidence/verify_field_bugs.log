@@ -1,0 +1,56 @@
+=== A1. WalkSpeedEstimator + MotionGate unit self-test (no hardware) ===
+[lidarscan] walk-speed-selftest: stationary 60 s (1.5 cm jitter)    PASS — peak 0.000 m/s, hint fired 0x
+[lidarscan] walk-speed-selftest: walking 1.4 m/s                    PASS — measured 1.403 m/s
+[lidarscan] walk-speed-selftest: brisk 2.2 m/s trips the hint       PASS — measured 2.200 m/s
+[lidarscan] walk-speed-selftest: LIO frame reset after 40 m walk    PASS — peak after reset 0.000 m/s, 1 discontinuity/ies
+[lidarscan] walk-speed-selftest: coalesced 1 ms polls               PASS — peak 0.000 m/s, 57 sub-floor samples rejected
+[lidarscan] walk-speed-selftest: stalled stream (repeated poses)    PASS — held 1.000 m/s, 50 repeats ignored
+[lidarscan] walk-speed-selftest: IMU gate: parked rig is STILL      PASS — |a| dev 0.0071 m/s², gyro 0.0025 rad/s
+[lidarscan] walk-speed-selftest: IMU gate: walking rig is NOT still PASS — |a| dev 1.0606 m/s², gyro 0.2227 rad/s
+[lidarscan] walk-speed-selftest: IMU gate: gentle walk is NOT still PASS — |a| dev 0.3993 m/s², gyro 0.1106 rad/s
+[lidarscan] walk-speed-selftest: IMU gate: no samples is UNKNOWN    PASS — valid=0 still=0
+[lidarscan] walk-speed-selftest: PASS (0 failure(s))
+exit=0
+
+=== A2. 60 s walk-hint soak against mid360_sim (gait-free source) ===
+[lidarscan] mid360-selftest PASSED — first packet after 1.59 s
+[lidarscan] walk-soak: armed — watching the walk hint for 60 s against a gait-free source (nobody is carrying it)
+[lidarscan][capture] live odometry is drifting: the IMU reads the rig as stationary (|a| dev 0.007 m/s², gyro 0.032 rad/s) while the SLAM pose implies 0.27 m/s. The walk hint reports 0; recording is unaffected.
+[lidarscan] walk-soak: 60 s, 601 measured samples, peak 0.000 m/s, 0 non-zero, hint fired 0x, 0 pose-frame reset(s) — PASS
+exit=
+
+=== C1. 4 back-to-back record cycles on ONE connect (shipped Start button) ===
+[lidarscan] record-cycles: armed; running 4 record cycles on this ONE connect
+[lidarscan] record-cycles: cycle 1/4 -> /private/tmp/claude-501/-Users-admin/615ff962-3732-4271-b413-089d064d304b/scratchpad/ev-rc/Scan-030 2026-08-17 22-04.lscan (2.0 s)
+[lidarscan] record-cycles: cycle 1 -> 4781 chunks, 6046020 bytes, 2.09 s, sealed=true
+[lidarscan] record-cycles: cycle 2/4 -> /private/tmp/claude-501/-Users-admin/615ff962-3732-4271-b413-089d064d304b/scratchpad/ev-rc/Scan-031 2026-08-17 22-04.lscan (2.0 s)
+[lidarscan] record-cycles: cycle 2 -> 4394 chunks, 5555520 bytes, 1.92 s, sealed=true
+[lidarscan] record-cycles: cycle 3/4 -> /private/tmp/claude-501/-Users-admin/615ff962-3732-4271-b413-089d064d304b/scratchpad/ev-rc/Scan-032 2026-08-17 22-05.lscan (2.0 s)
+[lidarscan] record-cycles: cycle 3 -> 4794 chunks, 6061320 bytes, 2.10 s, sealed=true
+[lidarscan] record-cycles: cycle 4/4 -> /private/tmp/claude-501/-Users-admin/615ff962-3732-4271-b413-089d064d304b/scratchpad/ev-rc/Scan-033 2026-08-17 22-05.lscan (2.0 s)
+[lidarscan] record-cycles: cycle 4 -> 4739 chunks, 5992020 bytes, 2.07 s, sealed=true
+[lidarscan] record-cycles: cycle 1 OK (4781 chunks)
+[lidarscan] record-cycles: cycle 2 OK (4394 chunks)
+[lidarscan] record-cycles: cycle 3 OK (4794 chunks)
+[lidarscan] record-cycles: cycle 4 OK (4739 chunks)
+[lidarscan] record-cycles: 4/4 cycles recorded — PASS
+exit=
+
+=== C2. record cycles across repeated 14 s transport drops (re-arm in place) ===
+[lidarscan] record-cycles: armed; running 4 record cycles on this ONE connect
+[lidarscan] record-cycles: cycle 1/4 -> /private/tmp/claude-501/-Users-admin/615ff962-3732-4271-b413-089d064d304b/scratchpad/ev-rcd/Scan-034 2026-08-17 22-05.lscan (12.0 s)
+[lidarscan] record-cycles: cycle 1 -> 17104 chunks, 21624840 bytes, 7.49 s, sealed=true
+[lidarscan] record-cycles: cycle 2/4 -> /private/tmp/claude-501/-Users-admin/615ff962-3732-4271-b413-089d064d304b/scratchpad/ev-rcd/Scan-035 2026-08-17 22-05.lscan (12.0 s)
+[lidarscan][capture] no sensor data for 6.0 s after Start restarted the sensor — re-armed the Mid-360 in place (attempt 1); the recording stayed open
+[lidarscan] record-cycles: cycle 2 -> 9145 chunks, 11562780 bytes, 4.00 s, sealed=true
+[lidarscan] record-cycles: cycle 3/4 -> /private/tmp/claude-501/-Users-admin/615ff962-3732-4271-b413-089d064d304b/scratchpad/ev-rcd/Scan-036 2026-08-17 22-05.lscan (12.0 s)
+[lidarscan][capture] no sensor data for 12.0 s after Start restarted the sensor — re-armed the Mid-360 in place (attempt 2); the recording stayed open
+[lidarscan] record-cycles: cycle 3 -> 12020 chunks, 15197640 bytes, 5.26 s, sealed=true
+[lidarscan] record-cycles: cycle 4/4 -> /private/tmp/claude-501/-Users-admin/615ff962-3732-4271-b413-089d064d304b/scratchpad/ev-rcd/Scan-037 2026-08-17 22-06.lscan (12.0 s)
+[lidarscan] record-cycles: cycle 4 -> 19848 chunks, 25094760 bytes, 8.69 s, sealed=true
+[lidarscan] record-cycles: cycle 1 OK (17104 chunks)
+[lidarscan] record-cycles: cycle 2 OK (9145 chunks)
+[lidarscan] record-cycles: cycle 3 OK (12020 chunks)
+[lidarscan] record-cycles: cycle 4 OK (19848 chunks)
+[lidarscan] record-cycles: 4/4 cycles recorded — PASS
+exit=

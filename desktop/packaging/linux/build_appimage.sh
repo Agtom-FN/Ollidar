@@ -33,7 +33,11 @@
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
-VERSION="${1:-0.1.0}"
+# Owner rule (2026-08-17): the version comes from the repo-root VERSION file.
+# An explicit argument still wins (a one-off build of an older tag), but the
+# DEFAULT is never a frozen literal that silently ships last year's number.
+_VERSION_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/VERSION"
+VERSION="${1:-$( [ -f "$_VERSION_FILE" ] && tr -d "[:space:]" < "$_VERSION_FILE" || echo 0.0.0 )}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DESKTOP="$(cd "$HERE/../.." && pwd)"
 BUILD="$DESKTOP/build-linux"

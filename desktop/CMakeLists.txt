@@ -13,15 +13,61 @@
 # fungible is not safe — REPORT.md §9 caveat 2.
 cmake_minimum_required(VERSION 3.20)
 
-if(APPLE)
-    project(lidarscan_desktop VERSION 0.1.0 LANGUAGES CXX OBJCXX)
+# ---------------------------------------------------------------------------
+# APP VERSION — the repo-root VERSION file, and nothing else
+# ---------------------------------------------------------------------------
+#
+# Owner rule (2026-08-17): every shipped update bumps ONE file, `<repo>/VERSION`,
+# and every artefact derives from it. The Android app already does
+# (android/app/build.gradle.kts reads the same file); this is the desktop half.
+#
+#   LIDARSCAN_VERSION       "0.2.1"  -> Info.plist CFBundleShortVersionString,
+#                                       QCoreApplication::setApplicationVersion
+#                                       (i.e. `--version`), the window title,
+#                                       the NSIS/.deb metadata, and — via
+#                                       tools/package_macos.sh, which reads the
+#                                       BUILT plist — the DMG's file name.
+#   LIDARSCAN_VERSION_CODE  201      -> Info.plist CFBundleVersion. The same
+#                                       monotonic integer Android uses,
+#                                       major*10000 + minor*100 + patch, so the
+#                                       two stores can never disagree about
+#                                       which build is newer.
+#
+# This is read BEFORE project(), which is allowed (file(READ) needs nothing but
+# cmake_minimum_required) and is the only way project()'s VERSION can carry it.
+# The engine's own version string (scanengine 0.1.0) is deliberately NOT touched:
+# the engine versions independently of the apps that embed it.
+set(LIDARSCAN_VERSION_FILE "${CMAKE_CURRENT_SOURCE_DIR}/../VERSION")
+if(EXISTS "${LIDARSCAN_VERSION_FILE}")
+    file(READ "${LIDARSCAN_VERSION_FILE}" LIDARSCAN_VERSION)
+    string(STRIP "${LIDARSCAN_VERSION}" LIDARSCAN_VERSION)
 else()
-    project(lidarscan_desktop VERSION 0.1.0 LANGUAGES CXX)
+    # A desktop/ tree checked out on its own still has to configure. Say so
+    # rather than silently shipping a made-up number.
+    set(LIDARSCAN_VERSION "0.0.0")
+    message(WARNING "no ${LIDARSCAN_VERSION_FILE}: building as version "
+                    "${LIDARSCAN_VERSION}. Every shipped build must come from a "
+                    "tree that has the repo-root VERSION file.")
+endif()
+if(NOT LIDARSCAN_VERSION MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)$")
+    message(FATAL_ERROR "VERSION must be MAJOR.MINOR.PATCH, got '${LIDARSCAN_VERSION}'")
+endif()
+math(EXPR LIDARSCAN_VERSION_CODE
+     "${CMAKE_MATCH_1} * 10000 + ${CMAKE_MATCH_2} * 100 + ${CMAKE_MATCH_3}")
+message(STATUS "LidarScan desktop version ${LIDARSCAN_VERSION} (code ${LIDARSCAN_VERSION_CODE})")
+
+if(APPLE)
+    project(lidarscan_desktop VERSION ${LIDARSCAN_VERSION} LANGUAGES CXX OBJCXX)
+else()
+    project(lidarscan_desktop VERSION ${LIDARSCAN_VERSION} LANGUAGES CXX)
 endif()
 
-# C8: the single source of the version string that reaches Info.plist,
-# the NSIS installer and the .deb/AppImage metadata.
-set(LIDARSCAN_VERSION "${PROJECT_VERSION}")
+# Reconfigure whenever VERSION changes, so a bump is picked up by an INCREMENTAL
+# build instead of quietly shipping the previous number.
+if(EXISTS "${LIDARSCAN_VERSION_FILE}")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                 "${LIDARSCAN_VERSION_FILE}")
+endif()
 
 set(CMAKE_CXX_STANDARD 20)          # Filament 1.75 requires C++20; so does the engine
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -280,6 +326,7 @@ set(LIDARSCAN_SOURCES
     src/app/CaptureWindow.cpp
     src/app/DeviceDiscovery.cpp
     src/app/DisplayAwake.cpp
+    src/app/WalkSpeedEstimator.cpp
     src/app/MeasureDock.cpp
     src/app/ExportDialog.cpp
     src/app/ProcessingDock.cpp
@@ -343,6 +390,13 @@ endif()
 # Q_EMIT / Q_SIGNALS / Q_SLOTS. Any future Qt code linking libscanengine — B, C
 # and the cloud tools alike — needs the same flag.
 target_compile_definitions(lidarscan PRIVATE QT_NO_KEYWORDS)
+# The app version reaches the binary from exactly one place: the repo-root
+# VERSION file, via LIDARSCAN_VERSION above. main.cpp feeds it to
+# QCoreApplication::setApplicationVersion(), which is what `--version` prints and
+# what the window title shows.
+target_compile_definitions(lidarscan PRIVATE
+    LIDARSCAN_APP_VERSION="${LIDARSCAN_VERSION}"
+    LIDARSCAN_APP_VERSION_CODE=${LIDARSCAN_VERSION_CODE})
 
 if(WIN32)
     # _USE_MATH_DEFINES: ViewportWindow.cpp uses M_PI, which the MSVC CRT only

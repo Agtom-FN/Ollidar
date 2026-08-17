@@ -45,7 +45,9 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <functional>
+#include <random>
 #include <vector>
 
 #include "app/CaptureWindow.h"
@@ -119,13 +121,228 @@ qint64 countEmberPixels(const QString& path) {
   return n;
 }
 
+// --walk-speed-selftest — round-5 field bug A, the unit test for the estimator
+// CaptureWindow::pollTrajectory() now delegates to.
+//
+// This is the POSITIVE and NEGATIVE proof the simulator cannot give: mid360_sim
+// models a STATIONARY sensor (its option list has rate/loss/jitter/noise/link
+// faults and no motion at all — spikes/s2-mid360-sim/sim/mid360_sim.cpp), so the
+// sim proves "stationary reads zero" against real LIO output and this proves
+// "walking reads the walk", plus the four specific fault modes that produced
+// "walking" from a tripod. No Qt, no engine, no device — pure arithmetic against
+// WalkSpeedEstimator, so it runs anywhere, including CI with no display.
+int runWalkSpeedSelfTest() {
+  using lidarscan::WalkSpeedEstimator;
+  int failures = 0;
+  auto check = [&failures](const char* name, bool ok, const QString& detail) {
+    std::fprintf(stderr, "[lidarscan] walk-speed-selftest: %-34s %s — %s\n", name,
+                 ok ? "PASS" : "FAIL", detail.toUtf8().constData());
+    if (!ok) ++failures;
+  };
+  // A deterministic, repeatable pseudo-noise so a failure can be reproduced.
+  std::mt19937 rng(20260817u);
+  std::normal_distribution<double> jitter_m(0.0, 0.015);  // 1.5 cm 1-sigma per axis
+
+  // 1. STATIONARY, 60 s at 10 Hz, with LIO-scale pose jitter. The hint fires at
+  //    1.5 m/s; the requirement is far stronger — it must read a hard zero.
+  {
+    WalkSpeedEstimator est;
+    double peak = 0.0;
+    int fired = 0;
+    for (int i = 0; i < 600; ++i) {
+      const double p[3] = {jitter_m(rng), jitter_m(rng), jitter_m(rng)};
+      est.update(std::int64_t(i) * 100'000'000LL, p);
+      if (est.valid()) {
+        peak = std::max(peak, est.speedMps());
+        if (est.speedMps() > 1.5) ++fired;
+      }
+    }
+    check("stationary 60 s (1.5 cm jitter)", peak == 0.0 && fired == 0,
+          QString("peak %1 m/s, hint fired %2x").arg(peak, 0, 'f', 3).arg(fired));
+  }
+
+  // 2. WALKING at 1.4 m/s: the measurement has to actually register, within
+  //    10% — a hint that never fires is as useless as one that always does.
+  {
+    WalkSpeedEstimator est;
+    double last = 0.0;
+    for (int i = 0; i < 200; ++i) {
+      const double t = double(i) * 0.1;
+      const double p[3] = {1.4 * t + jitter_m(rng), jitter_m(rng), jitter_m(rng)};
+      est.update(std::int64_t(i) * 100'000'000LL, p);
+      if (est.valid()) last = est.speedMps();
+    }
+    check("walking 1.4 m/s", std::abs(last - 1.4) < 0.14,
+          QString("measured %1 m/s").arg(last, 0, 'f', 3));
+  }
+
+  // 3. A BRISK walk must trip the 1.5 m/s hint (the positive case for the
+  //    warning itself, not just for the number).
+  {
+    WalkSpeedEstimator est;
+    double last = 0.0;
+    for (int i = 0; i < 200; ++i) {
+      const double t = double(i) * 0.1;
+      const double p[3] = {2.2 * t, 0.0, 0.0};
+      est.update(std::int64_t(i) * 100'000'000LL, p);
+      if (est.valid()) last = est.speedMps();
+    }
+    check("brisk 2.2 m/s trips the hint", last > 1.5,
+          QString("measured %1 m/s").arg(last, 0, 'f', 3));
+  }
+
+  // 4. FRAME RESET. Every Start/Pause/Resume/Stop restarts LioOdometry at the
+  //    origin. 40 m of walked trajectory collapsing to (0,0,0) in one 100 ms
+  //    sample must NOT be reported as 400 m/s of walking — the failure the owner
+  //    saw. It must reset and re-measure zero for a stationary rig.
+  {
+    WalkSpeedEstimator est;
+    for (int i = 0; i < 400; ++i) {
+      const double t = double(i) * 0.1;
+      const double p[3] = {1.0 * t, 0.0, 0.0};
+      est.update(std::int64_t(i) * 100'000'000LL, p);
+    }
+    double peak_after = 0.0;
+    // the new odometry: back at the origin, standing still, its own timeline
+    for (int i = 0; i < 200; ++i) {
+      const double p[3] = {jitter_m(rng), jitter_m(rng), jitter_m(rng)};
+      est.update(std::int64_t(400 + i) * 100'000'000LL, p);
+      if (est.valid()) peak_after = std::max(peak_after, est.speedMps());
+    }
+    check("LIO frame reset after 40 m walk", peak_after == 0.0 && est.discontinuities() == 1,
+          QString("peak after reset %1 m/s, %2 discontinuity/ies")
+              .arg(peak_after, 0, 'f', 3)
+              .arg(est.discontinuities()));
+  }
+
+  // 5. COALESCED POLLS. Two poses 1 ms apart (a Qt timer catching up) used to be
+  //    accepted by the old `dt > 1e-3` guard and multiplied a centimetre of
+  //    noise by ~90.
+  {
+    WalkSpeedEstimator est;
+    double peak = 0.0;
+    std::int64_t t_ns = 0;
+    for (int i = 0; i < 400; ++i) {
+      t_ns += (i % 7 == 0) ? 1'000'000LL : 100'000'000LL;  // an occasional 1 ms gap
+      const double p[3] = {jitter_m(rng), jitter_m(rng), jitter_m(rng)};
+      est.update(t_ns, p);
+      if (est.valid()) peak = std::max(peak, est.speedMps());
+    }
+    check("coalesced 1 ms polls", peak == 0.0 && est.staleSamples() > 0,
+          QString("peak %1 m/s, %2 sub-floor samples rejected")
+              .arg(peak, 0, 'f', 3)
+              .arg(est.staleSamples()));
+  }
+
+  // 6. A STALLED pose stream polled at 10 Hz: latest() keeps answering with the
+  //    same pose. Nothing new happened, so nothing may be measured — and the
+  //    estimator must not decay a real speed to zero on the strength of it
+  //    either, so it simply ignores the repeats.
+  {
+    WalkSpeedEstimator est;
+    for (int i = 0; i < 40; ++i) {
+      const double p[3] = {1.0 * double(i) * 0.1, 0.0, 0.0};
+      est.update(std::int64_t(i) * 100'000'000LL, p);
+    }
+    const double before = est.speedMps();
+    const std::uint32_t stale_before = est.staleSamples();
+    const double frozen[3] = {1.0 * 39.0 * 0.1, 0.0, 0.0};
+    for (int i = 0; i < 50; ++i) est.update(39LL * 100'000'000LL, frozen);
+    check("stalled stream (repeated poses)",
+          est.speedMps() == before && est.staleSamples() == stale_before + 50,
+          QString("held %1 m/s, %2 repeats ignored")
+              .arg(est.speedMps(), 0, 'f', 3)
+              .arg(est.staleSamples() - stale_before));
+  }
+
+  // --- MotionGate: the drift-free "is this rig being carried?" test --------
+  //
+  // Three IMU windows at the Mid-360's 200 Hz, one second each.
+  using lidarscan::MotionGate;
+  auto imu_window = [&rng](double gait_hz, double gait_a_m_s2, double gyro_rad_s,
+                           std::vector<double>* g, std::vector<double>* a) {
+    std::normal_distribution<double> gn(0.0, 0.0015);  // the sim's own gyro noise
+    std::normal_distribution<double> an(0.0, 0.008);   // measured |a| deviation at rest
+    const int n = 200;
+    g->clear();
+    a->clear();
+    for (int i = 0; i < n; ++i) {
+      const double t = double(i) / 200.0;
+      const double gait = gait_a_m_s2 * std::sin(2 * M_PI * gait_hz * t);
+      g->push_back(gyro_rad_s * std::sin(2 * M_PI * gait_hz * t) + gn(rng));
+      g->push_back(gn(rng));
+      g->push_back(gn(rng));
+      a->push_back(an(rng));
+      a->push_back(an(rng));
+      a->push_back(9.8066 + gait + an(rng));  // gravity plus the gait's own force
+    }
+  };
+  {
+    std::vector<double> g, a;
+    // Parked on a tripod: the case the owner was looking at.
+    imu_window(0.0, 0.0, 0.0, &g, &a);
+    MotionGate::Reading r = MotionGate::measure(g.data(), a.data(), g.size() / 3);
+    check("IMU gate: parked rig is STILL", r.valid && r.still,
+          QString("|a| dev %1 m/s², gyro %2 rad/s")
+              .arg(r.accel_dev_m_s2, 0, 'f', 4)
+              .arg(r.gyro_rms_rad_s, 0, 'f', 4));
+
+    // A walking operator: ~2 Hz gait, ±1.5 m/s², a third of a rad/s of sway.
+    imu_window(2.0, 1.5, 0.35, &g, &a);
+    r = MotionGate::measure(g.data(), a.data(), g.size() / 3);
+    check("IMU gate: walking rig is NOT still", r.valid && !r.still,
+          QString("|a| dev %1 m/s², gyro %2 rad/s")
+              .arg(r.accel_dev_m_s2, 0, 'f', 4)
+              .arg(r.gyro_rms_rad_s, 0, 'f', 4));
+
+    // Even a gentle, deliberate walk has to clear the gate — this is the
+    // threshold's real margin test, not the loud case.
+    imu_window(1.6, 0.6, 0.18, &g, &a);
+    r = MotionGate::measure(g.data(), a.data(), g.size() / 3);
+    check("IMU gate: gentle walk is NOT still", r.valid && !r.still,
+          QString("|a| dev %1 m/s², gyro %2 rad/s")
+              .arg(r.accel_dev_m_s2, 0, 'f', 4)
+              .arg(r.gyro_rms_rad_s, 0, 'f', 4));
+
+    // No IMU at all must be UNKNOWN, never "still": a gate that suppresses on
+    // missing data would silently disable the hint on a rig with a dead IMU.
+    r = MotionGate::measure(nullptr, nullptr, 0);
+    check("IMU gate: no samples is UNKNOWN", !r.valid && !r.still,
+          QString("valid=%1 still=%2").arg(r.valid).arg(r.still));
+  }
+
+  std::fprintf(stderr, "[lidarscan] walk-speed-selftest: %s (%d failure(s))\n",
+               failures == 0 ? "PASS" : "FAIL", failures);
+  return failures == 0 ? 0 : 8;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
+  // Before QApplication and before the single-instance guard: this hook touches
+  // no display, no port and no engine, so it must run even while the real app is
+  // open (and in CI, where neither exists).
+  for (int i = 1; i < argc; ++i) {
+    if (std::strcmp(argv[i], "--walk-speed-selftest") == 0) return runWalkSpeedSelfTest();
+  }
+
   QApplication app(argc, argv);
   QCoreApplication::setOrganizationName("LidarScan");
   QCoreApplication::setApplicationName("LidarScan Desktop");
-  QCoreApplication::setApplicationVersion("0.1.0");
+  // Owner rule (2026-08-17): every shipped update gets a version code, and it
+  // comes from the repo-root VERSION file — CMakeLists.txt reads that file and
+  // defines LIDARSCAN_APP_VERSION / _CODE. This is what `--version`
+  // (parser.addVersionOption(), below) prints. Distinct from the ENGINE's
+  // version (`scanengine 0.1.0`, printed a few lines down and reported by
+  // EngineHost::versionString()): the engine versions independently of the apps
+  // that embed it, and conflating them would make a desktop-only fix look like
+  // an engine change.
+#ifndef LIDARSCAN_APP_VERSION
+#define LIDARSCAN_APP_VERSION "0.0.0"
+#define LIDARSCAN_APP_VERSION_CODE 0
+#endif
+  QCoreApplication::setApplicationVersion(
+      QString("%1 (build %2)").arg(LIDARSCAN_APP_VERSION).arg(LIDARSCAN_APP_VERSION_CODE));
 
   // The redesign's fonts, palette and stylesheet. BEFORE any widget exists:
   // a stylesheet applied later still restyles, but a widget that cached a
@@ -240,6 +457,45 @@ int main(int argc, char** argv) {
       ".lscan directory for 3 s, Stop, and print the resulting project's chunk/byte "
       "counts (a fresh directory — unlike --project this does not open an existing one)",
       "dir");
+  // Round-5 field bug C ("it only records when the first connected"): one app
+  // run, N back-to-back record cycles against the SAME armed device. Anything
+  // that only works on the first arm — a consumed session, a project dir eaten
+  // by the first Start, a recorder that never re-opens — shows up as an empty
+  // cycle 2, and this hook exits nonzero when that happens. Headless, so it can
+  // be pointed at real hardware in the field exactly as it is at the simulator.
+  QCommandLineOption optRecordCycles(
+      "record-cycles",
+      "With --mid360-selftest: after the arm passes, run N back-to-back Start/Stop "
+      "record cycles (2 s each) against the SAME armed device, print each cycle's "
+      "chunk/byte counts, and exit NONZERO if any cycle recorded nothing (round-5 "
+      "field bug C: 'it only records when the first connected')",
+      "n");
+  QCommandLineOption optRecordCyclesDir(
+      "record-cycles-dir",
+      "Where --record-cycles creates its per-cycle projects — the capture ROOT, "
+      "since each cycle goes through the panel's own auto-naming (default: a "
+      "'record-cycles' folder beside the binary). Cleared first, so a rerun cannot "
+      "read a previous run's chunks",
+      "dir");
+  QCommandLineOption optRecordCycleSeconds(
+      "record-cycle-seconds", "Seconds of recording per --record-cycles cycle", "s", "2");
+  // Round-5 field bug A ("wrongly detect me walking while I stay still").
+  //
+  // The S2 simulator's platform is NOT motionless — spikes/s2-mid360-sim's
+  // scene.h drives an analytic lissajous — but it is GAIT-FREE and barely
+  // accelerated: |v| <= 0.31 m/s, |a| <= 0.015 m/s², measured |accel| deviation
+  // 0.008 m/s². Nobody is walking it anywhere. So the correct answer for the
+  // whole soak is 0.00 m/s and no hint, and the pre-fix build answered 4.36 m/s
+  // with the hint firing 226 times in 60 s. The POSITIVE case (a real walk
+  // registers) cannot come from this simulator — it has no motion options and no
+  // gait — so --walk-speed-selftest carries it instead.
+  QCommandLineOption optWalkSoak(
+      "walk-soak",
+      "With --mid360-selftest: watch the capture panel's walk-speed hint for S seconds "
+      "against the armed device and report the peak. Exits NONZERO if the 'ease off' hint "
+      "ever fires or any non-zero speed is reported — nobody is carrying the simulator, so "
+      "it must read 0.00 m/s however far the SLAM pose drifts",
+      "s");
   QCommandLineOption optBuildSynthMid360(
       "build-synth-mid360",
       "C4 evidence hook: write a real .lscan (kMid360Points/kMid360Imu chunks) at DIR from "
@@ -336,6 +592,18 @@ int main(int argc, char** argv) {
   parser.addOption(optAutoDetectCancelSelftest);
   parser.addOption(optAutoDetectShot);
   parser.addOption(optMid360RecordInto);
+  parser.addOption(optRecordCycles);
+  parser.addOption(optRecordCyclesDir);
+  parser.addOption(optRecordCycleSeconds);
+  parser.addOption(optWalkSoak);
+  // Registered for --help only: this one is intercepted at the top of main(),
+  // before QApplication and the single-instance guard, because it needs neither
+  // and must run while the real app is open.
+  parser.addOption(QCommandLineOption(
+      "walk-speed-selftest",
+      "Unit self-test for WalkSpeedEstimator + MotionGate — the stationary, walking, "
+      "LIO-frame-reset, coalesced-poll and stalled-stream cases behind round-5 field "
+      "bug A (NOTES.md §17.9). No hardware, no display, no engine; exits 8 on failure"));
   parser.addOption(optBuildSynthMid360);
   parser.addOption(optPostE2e);
   parser.addOption(optPlanFixture);
@@ -977,6 +1245,146 @@ int main(int argc, char** argv) {
             });
           });
         });
+
+    // --- round-5 field bug A: a still sensor must read 0.00 m/s ------------
+    if (parser.isSet(optWalkSoak)) {
+      const double soakS = std::max(1.0, parser.value(optWalkSoak).toDouble());
+      auto* peak = new double(0.0);
+      auto* fired = new int(0);
+      auto* samples = new int(0);
+      auto* nonzero = new int(0);
+      auto* discos = new unsigned(0);
+      QObject::connect(cap, &lidarscan::CaptureWindow::walkSpeedMeasured, &app,
+                       [peak, fired, samples, nonzero, discos](double mps, bool valid,
+                                                               unsigned d) {
+                         *discos = d;
+                         if (!valid) return;  // no hint is shown, so nothing is claimed
+                         ++*samples;
+                         if (mps > *peak) *peak = mps;
+                         if (mps > 0.0) ++*nonzero;
+                         if (mps > 1.5) ++*fired;  // the "ease off a little" threshold
+                       });
+      QObject::connect(
+          cap, &lidarscan::CaptureWindow::selfTestFinished, &app,
+          [soakS, peak, fired, samples, nonzero, discos](bool passed, const QString& detail) {
+            if (!passed) {
+              std::fprintf(stderr, "[lidarscan] walk-soak: cannot arm (%s)\n",
+                           detail.toUtf8().constData());
+              QCoreApplication::exit(9);
+              return;
+            }
+            std::fprintf(stderr,
+                         "[lidarscan] walk-soak: armed — watching the walk hint for %.0f s "
+                         "against a gait-free source (nobody is carrying it)\n",
+                         soakS);
+            QTimer::singleShot(int(soakS * 1000.0), qApp,
+                               [peak, fired, samples, nonzero, discos, soakS] {
+                                 const bool ok = *fired == 0 && *nonzero == 0 && *samples > 0;
+                                 std::fprintf(stderr,
+                                              "[lidarscan] walk-soak: %.0f s, %d measured "
+                                              "samples, peak %.3f m/s, %d non-zero, hint fired "
+                                              "%dx, %u pose-frame reset(s) — %s\n",
+                                              soakS, *samples, *peak, *nonzero, *fired, *discos,
+                                              ok ? "PASS" : "FAIL");
+                                 QCoreApplication::exit(ok ? 0 : 9);
+                               });
+          });
+    }
+
+    // --- round-5 field bug C: unlimited record cycles per connect ----------
+    //
+    // Drives the SHIPPED slots (RecordCluster's Start and Stop, through
+    // trigger*ForCli) N times over ONE arm, and reads each cycle's project back
+    // off disk with the same readProject() the Projects panel uses. A cycle that
+    // recorded nothing is a FAILURE, not a note: that is precisely the bug the
+    // owner hit ("it only record when the first connected"). The last cycle's
+    // exit code is the process's.
+    const int cycles = parser.isSet(optRecordCycles) ? parser.value(optRecordCycles).toInt() : 0;
+    if (cycles > 0) {
+      const double cycleSeconds = std::max(0.5, parser.value(optRecordCycleSeconds).toDouble());
+      QString root = parser.value(optRecordCyclesDir);
+      if (root.isEmpty()) {
+        root = QFileInfo(QCoreApplication::applicationDirPath()).absoluteFilePath() +
+               "/record-cycles";
+      }
+      // A stale project from a previous run would make an empty cycle look
+      // healthy, so the whole root is cleared before the run.
+      QDir(root).removeRecursively();
+      QDir().mkpath(root);
+      // Drive the SHIPPED Start button, not the explicit-directory CLI path:
+      // setProjectDir() only sets the capture ROOT, and each cycle then goes
+      // through resolveNewProjectDir()'s auto-naming exactly as a click with an
+      // empty name field does. If anything in "every Start is a new project"
+      // only works once, this is the path that shows it.
+      cap->setProjectDir(root);
+      auto* results = new std::vector<quint64>();
+      auto* runCycle = new std::function<void(int)>();
+      *runCycle = [cap, cycles, cycleSeconds, results, runCycle](int i) {
+        const QString dir = cap->triggerStartWithAutoNameForCli();
+        std::fprintf(stderr, "[lidarscan] record-cycles: cycle %d/%d -> %s (%.1f s)\n", i,
+                     cycles, dir.isEmpty() ? "<Start refused>" : dir.toUtf8().constData(),
+                     cycleSeconds);
+        QTimer::singleShot(int(cycleSeconds * 1000.0), cap, [cap, dir, i, cycles, results,
+                                                            runCycle] {
+          cap->triggerStopForCli();
+          // Stop seals synchronously, but the Projects-side reader wants the
+          // manifest rewrite to have landed; the same 300 ms the
+          // --mid360-record-into hook above waits.
+          QTimer::singleShot(300, cap, [dir, i, cycles, results, runCycle] {
+            const lidarscan::ProjectInfo info = lidarscan::readProject(dir);
+            const quint64 chunks = info.valid ? info.total_chunks : 0;
+            results->push_back(chunks);
+            std::fprintf(stderr,
+                         "[lidarscan] record-cycles: cycle %d -> %llu chunks, %llu bytes, "
+                         "%.2f s, sealed=%s%s\n",
+                         i, (unsigned long long)chunks,
+                         (unsigned long long)(info.valid ? info.total_bytes : 0),
+                         info.valid ? info.duration_s : 0.0,
+                         info.valid && info.sealed ? "true" : "false",
+                         info.valid ? "" : (" [readProject: " + info.error).toUtf8().constData());
+            if (i < cycles) {
+              QTimer::singleShot(400, qApp, [runCycle, i] { (*runCycle)(i + 1); });
+              return;
+            }
+            // Verdict. "Comparable" is deliberately loose (a tenth of the best
+            // cycle): the point is empty-vs-not, not sample-accurate parity.
+            quint64 best = 0;
+            for (quint64 c : *results) best = std::max(best, c);
+            int bad = 0;
+            for (std::size_t k = 0; k < results->size(); ++k) {
+              const quint64 c = (*results)[k];
+              const bool ok = c > 0 && (best == 0 || c * 10 >= best);
+              if (!ok) ++bad;
+              std::fprintf(stderr, "[lidarscan] record-cycles: cycle %d %s (%llu chunks)\n",
+                           int(k + 1), ok ? "OK" : "EMPTY/DEGENERATE", (unsigned long long)c);
+            }
+            std::fprintf(stderr, "[lidarscan] record-cycles: %d/%d cycles recorded — %s\n",
+                         cycles - bad, cycles, bad == 0 ? "PASS" : "FAIL");
+            QCoreApplication::exit(bad == 0 ? 0 : 7);
+          });
+        });
+      };
+      auto* startedCycles = new bool(false);
+      QObject::connect(cap, &lidarscan::CaptureWindow::selfTestFinished, &app,
+                       [runCycle, startedCycles, cycles](bool passed, const QString& detail) {
+                         if (*startedCycles) return;  // a re-arm must not restart the run
+                         *startedCycles = true;
+                         if (!passed) {
+                           std::fprintf(stderr,
+                                        "[lidarscan] record-cycles: cannot arm (%s) — no cycles "
+                                        "run\n",
+                                        detail.toUtf8().constData());
+                           QCoreApplication::exit(7);
+                           return;
+                         }
+                         std::fprintf(stderr,
+                                      "[lidarscan] record-cycles: armed; running %d record "
+                                      "cycles on this ONE connect\n",
+                                      cycles);
+                         (*runCycle)(1);
+                       });
+    }
+
     // The one place the self-test is actually kicked off. Either a 500 ms
     // timer owns it (this hook alone) or the auto-detect chain does (both
     // hooks) — never both, and never concurrently: the two hooks used to fire

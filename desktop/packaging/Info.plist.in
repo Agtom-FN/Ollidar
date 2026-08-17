@@ -45,8 +45,15 @@
   <string>LidarScan Desktop</string>
   <key>CFBundleIdentifier</key>
   <string>com.lidarscan.desktop</string>
+  <!-- CFBundleVersion is the BUILD number: the same monotonic integer Android
+       derives from the repo-root VERSION file (major*10000 + minor*100 + patch,
+       0.2.1 -> 201), so neither store can disagree about which build is newer.
+       CFBundleShortVersionString is the human one. Both come from
+       <repo>/VERSION through CMake — see CMakeLists.txt's version block — and
+       tools/package_macos.sh reads CFBundleShortVersionString back out of the
+       BUILT bundle to name the DMG, so the DMG follows automatically. -->
   <key>CFBundleVersion</key>
-  <string>${LIDARSCAN_VERSION}</string>
+  <string>${LIDARSCAN_VERSION_CODE}</string>
   <key>CFBundleShortVersionString</key>
   <string>${LIDARSCAN_VERSION}</string>
   <key>CFBundlePackageType</key>

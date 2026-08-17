@@ -27,6 +27,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <memory>
+#include <vector>
 
 #include "app/DeviceDiscovery.h"
 #include "app/EngineHost.h"
@@ -559,23 +561,32 @@ void CaptureWindow::setLiveRefreshCeiling(double hz) {
   applyLiveRefreshRate();
 }
 
-void CaptureWindow::noteRefreshDownshift(double hz, const QString& why) {
+void CaptureWindow::noteRefreshGovernor(double hz, bool down, const QString& why) {
   if (!refresh_hz_) return;
   updating_display_ = true;
   refresh_hz_->setValue(hz);  // does not emit — the viewport already applied it
   updating_display_ = false;
-  QSettings().setValue("capture/liveRefreshHz", hz);
+  // ROUND-5 FIELD BUG B: this used to PERSIST the governed value into
+  // "capture/liveRefreshHz". A machine that stuttered once therefore came back
+  // from the next launch permanently capped at whatever notch the governor had
+  // reached — the setting the operator chose was overwritten by a measurement.
+  // The persisted value is the REQUEST, and only setLiveRefreshHz (a slider
+  // move) writes it; the governor is a temporary, measured override.
   if (refresh_note_) {
-    refresh_note_->setText(QString("Live refresh eased to %1 fps — this machine could not "
-                                   "sustain the previous rate (%2). The capture is "
-                                   "unaffected: recording is never throttled.")
-                               .arg(hz, 0, 'f', 0)
-                               .arg(why));
-    refresh_note_->setProperty("tone", "warn");
+    refresh_note_->setText(
+        down ? QString("Live refresh eased to %1 fps — this machine could not sustain the "
+                       "previous rate (%2). It will come back up on its own once frames "
+                       "are cheap again. The capture is unaffected: recording is never "
+                       "throttled.")
+                   .arg(hz, 0, 'f', 0)
+                   .arg(why)
+             : QString("Live refresh back up to %1 fps (%2).").arg(hz, 0, 'f', 0).arg(why));
+    refresh_note_->setProperty("tone", down ? "warn" : "");
     repolish(refresh_note_);
     refresh_note_->setVisible(true);
   }
-  log(QString("live refresh auto-downshift -> %1 fps (%2); recording untouched")
+  log(QString("live refresh governor %1 -> %2 fps (%3); recording untouched")
+          .arg(down ? "downshift" : "recovery")
           .arg(hz, 0, 'f', 0)
           .arg(why));
 }
@@ -585,8 +596,8 @@ void CaptureWindow::noteRefreshDownshift(double hz, const QString& why) {
 // The operator walks the space with the rig, so the two things they cannot see
 // from behind the screen are "where have I been" and "am I going too fast".
 //
-// TWO ENGINE SEAMS ARE MISSING HERE, and both are worked around rather than
-// papered over (NOTES.md §17):
+// THREE ENGINE SEAMS ARE MISSING HERE, and all three are worked around rather
+// than papered over (NOTES.md §17.6 / §17.9):
 //   1. LioPoseSource exposes latest() / size() / trajectory_length_m() but NO
 //      way to READ the pose ring, so the trail cannot be reconstructed from the
 //      engine — this polls the newest pose at 10 Hz (LIO's own rate) and
@@ -595,8 +606,29 @@ void CaptureWindow::noteRefreshDownshift(double hz, const QString& why) {
 //   2. There is no motion-gate event on this path at all: EventType has no
 //      "moving too fast" (event.h's list stops at kError), and the A8 pushbroom's
 //      skipped-turning counters belong to the phone-only D6 flow. So the speed is
-//      DERIVED here from consecutive pose positions, and the hint says what it
-//      measured rather than claiming to be the engine's own gate.
+//      DERIVED here from pose positions, and the hint says what it measured
+//      rather than claiming to be the engine's own gate.
+//   3. There is no way to ask whether the pose FRAME changed. Every session
+//      restart builds a new LioOdometry whose first pose is the origin, and
+//      nothing in the pose API distinguishes "I walked back to where I started"
+//      from "this is a different odometry". So the app tells ITSELF, via
+//      resetWalkTracking(), at each of the five places it restarts the session.
+//
+// ROUND-5 FIELD BUG A. This used to compute the speed from two consecutive
+// polls on a Qt wall clock, with a 1 ms dt floor, no check that the pose was
+// new, and no idea that the frame had reset — five independent ways to report
+// "walking" from a rig on a tripod. WalkSpeedEstimator.h enumerates them; the
+// measurement now lives there and is driven by Pose::t_mono_ns.
+void CaptureWindow::resetWalkTracking(const char* why) {
+  walk_.reset();
+  if (!trail_.empty()) {
+    trail_.clear();
+    Q_EMIT trajectoryTrailChanged(trail_);
+  }
+  if (walk_label_) walk_label_->setText(QString("Walking 0.00 m/s · new pose frame (%1)")
+                                            .arg(QString::fromUtf8(why)));
+}
+
 void CaptureWindow::pollTrajectory() {
   const bool armed = phase_ == Phase::kArming || phase_ == Phase::kPreview ||
                      phase_ == Phase::kRecording || phase_ == Phase::kPaused;
@@ -610,60 +642,139 @@ void CaptureWindow::pollTrajectory() {
   scanengine::Pose latest{};
   if (!slam->poses().latest(&latest)) return;
 
-  const std::array<float, 3> p{float(latest.position[0]), float(latest.position[1]),
-                              float(latest.position[2])};
-  const double now_s = walk_clock_.isValid() ? walk_clock_.elapsed() / 1000.0 : 0.0;
-  if (!walk_clock_.isValid()) walk_clock_.start();
-
-  bool appended = false;
-  if (trail_.empty()) {
-    trail_.push_back(p);
-    appended = true;
-  } else {
-    const auto& last = trail_.back();
-    const double dx = p[0] - last[0], dy = p[1] - last[1], dz = p[2] - last[2];
-    const double step = std::sqrt(dx * dx + dy * dy + dz * dz);
-    // 2 cm of movement before a new trail vertex: LIO publishes at 10 Hz whether
-    // the rig moved or not, and a standing operator must not grow the buffer.
-    if (step > 0.02) {
-      const double dt = now_s - trail_last_t_s_;
-      if (dt > 1e-3) {
-        // Lightly smoothed so a single jumpy pose does not flash the hint.
-        walk_speed_mps_ = 0.6 * walk_speed_mps_ + 0.4 * (step / dt);
-      }
-      trail_last_t_s_ = now_s;
-      trail_.push_back(p);
-      appended = true;
-      // ~40 m of 2 cm steps before the oldest vertex is dropped; the trail is a
-      // recent-history overlay, not the recorded trajectory (that is in the
-      // .lscan).
-      constexpr std::size_t kMaxTrailVertices = 2000;
-      if (trail_.size() > kMaxTrailVertices) {
-        trail_.erase(trail_.begin(), trail_.begin() + (trail_.size() - kMaxTrailVertices));
-      }
-    } else if (now_s - trail_last_t_s_ > 1.0) {
-      walk_speed_mps_ *= 0.5;  // decay to zero while standing still
-      trail_last_t_s_ = now_s;
+  // --- the IMU gate, read FIRST (round-5 field bug A) ---------------------
+  //
+  // ImuIngest is engine-lifetime, not session-lifetime, so this survives the
+  // session restarts that Start/Pause/Resume/Stop perform. `recent()` returns
+  // the newest samples oldest-first; 240 of them is ~1.2 s of the Mid-360's
+  // 200 Hz IMU, i.e. the same window the speed estimator uses.
+  constexpr std::size_t kImuWindow = 240;
+  scanengine::ImuSample imu_buf[kImuWindow];
+  const std::size_t imu_n = host_->engine()->imu().recent(imu_buf, kImuWindow);
+  // Stack buffers, not vectors: this runs ten times a second for the whole of a
+  // capture, and a heap round-trip per poll on the GUI thread is exactly the
+  // kind of avoidable cost the refresh governor would end up reacting to.
+  double gyro[3 * kImuWindow], accel[3 * kImuWindow];
+  for (std::size_t i = 0; i < imu_n; ++i) {
+    for (int k = 0; k < 3; ++k) {
+      gyro[3 * i + k] = double(imu_buf[i].gyro_rad_s[k]);
+      accel[3 * i + k] = double(imu_buf[i].accel_m_s2[k]);
     }
   }
-  if (appended) Q_EMIT trajectoryTrailChanged(trail_);
+  const MotionGate::Reading gate = MotionGate::measure(gyro, accel, imu_n);
+
+  // The estimator owns "is this pose new", "is this dt usable" and "did the
+  // frame just reset". It returns true only for a genuinely new, in-frame
+  // sample, which is also the only kind that may extend the trail.
+  const bool fresh = walk_.update(latest.t_mono_ns, latest.position);
+
+  // A rig the IMU says is parked has not moved, whatever the odometry's
+  // position did. Reporting 0 here is the fix for "wrongly detect me walking
+  // while I stay still", and NOT extending the trail is half the fix for "the
+  // live view stops changing": a drifting pose was pushing a new trail vertex
+  // every 100 ms, and every one of them cost the viewport a full trail-geometry
+  // rebuild on the next presented frame.
+  // LIO DOES flag a pose it knows is bad — `LioOdometry` sets
+  // Pose::quality = kInvalid and tracking_lost = 1 once its ESKF passes
+  // Eskf::diverged() (default 30 m/s). That threshold is far above the 1-4 m/s
+  // of false velocity ordinary drift produces, so this is a backstop rather than
+  // the fix (the IMU gate below is the fix) — but a pose the odometry itself
+  // disowns must never become a number on screen.
+  const bool pose_disowned =
+      latest.tracking_lost != 0 || latest.quality == scanengine::PoseQuality::kInvalid;
+
+  const bool still = gate.valid && gate.still;
+  const double v = (still || pose_disowned) ? 0.0 : walk_.speedMps();
+
+  const std::array<float, 3> p{float(latest.position[0]), float(latest.position[1]),
+                               float(latest.position[2])};
+  if (fresh && !still && !pose_disowned) {
+    bool appended = false;
+    if (trail_.empty()) {
+      trail_.push_back(p);
+      appended = true;
+    } else {
+      const auto& last = trail_.back();
+      const double dx = p[0] - last[0], dy = p[1] - last[1], dz = p[2] - last[2];
+      // 2 cm of movement before a new trail vertex: LIO publishes at 10 Hz
+      // whether the rig moved or not, and a standing operator must not grow the
+      // buffer.
+      if (std::sqrt(dx * dx + dy * dy + dz * dz) > 0.02) {
+        trail_.push_back(p);
+        appended = true;
+        // ~40 m of 2 cm steps before the oldest vertex is dropped; the trail is a
+        // recent-history overlay, not the recorded trajectory (that is in the
+        // .lscan).
+        constexpr std::size_t kMaxTrailVertices = 2000;
+        if (trail_.size() > kMaxTrailVertices) {
+          trail_.erase(trail_.begin(), trail_.begin() + (trail_.size() - kMaxTrailVertices));
+        }
+      }
+    }
+    if (appended) Q_EMIT trajectoryTrailChanged(trail_);
+  }
+
+  // ODOMETRY DIVERGENCE, said out loud once a minute rather than swallowed.
+  // The engine has no pose covariance, no quality flag on a LIO pose and no
+  // "odometry diverged" event (NOTES.md §17.9's seam list), so this disagreement
+  // — the IMU is certain the rig is parked while the pose keeps moving — is the
+  // only signal an operator or a support log will ever get. It is a note, never
+  // a dialog, and it never touches the recording: every raw byte is still
+  // written whatever the odometry believes.
+  if ((pose_disowned || (still && walk_.valid() && walk_.speedMps() > 0.25)) &&
+      (!drift_clock_.isValid() || drift_clock_.elapsed() > 60000)) {
+    drift_clock_.restart();
+    log(QString("live odometry is %1: the IMU reads the rig as %2 (|a| dev %3 m/s², "
+                "gyro %4 rad/s) while the SLAM pose implies %5 m/s (pose quality %6, "
+                "sigma %7 m). The walk hint reports 0; recording is unaffected — every "
+                "raw byte is still written.")
+            .arg(pose_disowned ? "LOST (the engine flagged it)" : "drifting")
+            .arg(still ? "stationary" : "moving")
+            .arg(gate.accel_dev_m_s2, 0, 'f', 3)
+            .arg(gate.gyro_rms_rad_s, 0, 'f', 3)
+            .arg(walk_.speedMps(), 0, 'f', 2)
+            .arg(int(latest.quality))
+            .arg(latest.position_sigma_m, 0, 'f', 3));
+  }
 
   // 1.5 m/s is a brisk walk; above it a 10 Hz LIO scan-match starts to see
   // between-scan motion it must undistort rather than register, which is the
   // regime where a walkthrough smears. Gentle, inline, no modal, no sound.
+  //
+  // The hint fires only on a VALID measurement — a full window of pose time in
+  // one frame, with the IMU corroborating that the rig is being carried at all.
+  // Anything less says so instead of guessing, because a guess here is precisely
+  // the bug the owner reported.
   const double len_m = slam->poses().trajectory_length_m();
-  const bool too_fast = walk_speed_mps_ > 1.5;
-  walk_label_->setText(
-      too_fast ? QString("Walking %1 m/s — ease off a little; %2 m of path so far.")
-                     .arg(walk_speed_mps_, 0, 'f', 2)
-                     .arg(len_m, 0, 'f', 1)
-               : QString("Walking %1 m/s · %2 m of path · %3 poses")
-                     .arg(walk_speed_mps_, 0, 'f', 2)
-                     .arg(len_m, 0, 'f', 1)
-                     .arg(slam->poses().size()));
+  const bool measured = !pose_disowned && (still || walk_.valid());
+  const bool too_fast = measured && v > 1.5;
+  if (pose_disowned) {
+    walk_label_->setText(QString("Odometry lost tracking — no speed to report · %1 m of "
+                                 "path · %2 poses · recording is unaffected")
+                             .arg(len_m, 0, 'f', 1)
+                             .arg(slam->poses().size()));
+  } else if (still) {
+    walk_label_->setText(QString("Holding still (0.00 m/s) · %1 m of path · %2 poses")
+                             .arg(len_m, 0, 'f', 1)
+                             .arg(slam->poses().size()));
+  } else if (!walk_.valid()) {
+    walk_label_->setText(QString("Measuring walking speed… · %1 m of path · %2 poses")
+                             .arg(len_m, 0, 'f', 1)
+                             .arg(slam->poses().size()));
+  } else {
+    walk_label_->setText(
+        too_fast ? QString("Walking %1 m/s — ease off a little; %2 m of path so far.")
+                       .arg(v, 0, 'f', 2)
+                       .arg(len_m, 0, 'f', 1)
+                 : QString("Walking %1 m/s · %2 m of path · %3 poses")
+                       .arg(v, 0, 'f', 2)
+                       .arg(len_m, 0, 'f', 1)
+                       .arg(slam->poses().size()));
+  }
   walk_label_->setProperty("tone", too_fast ? "warn" : "");
   repolish(walk_label_);
   walk_label_->setVisible(true);
+  Q_EMIT walkSpeedMeasured(v, measured, walk_.discontinuities());
 }
 
 double CaptureWindow::setLiveRefreshHzForCli(double hz) {
@@ -700,6 +811,11 @@ bool CaptureWindow::startPreviewSession(QString* err) {
   // comes from. If LIO refuses to start, the capture must NOT fail with it —
   // record-always outranks the overlay — so this falls back to Record-only and
   // says so once.
+  // Engine::start_session() builds a NEW LioOdometry whose first pose is the
+  // origin. Whatever the trail and the speed window held belongs to the previous
+  // odometry's frame; carrying it across is field bug A's largest single source
+  // (a whole trajectory's worth of displacement inside one 100 ms poll).
+  resetWalkTracking("preview session started");
   if (host_->startSession(QString(), profile_->currentText(), false, err,
                           /*live_slam=*/true)) {
     live_slam_running_ = true;
@@ -720,7 +836,9 @@ bool CaptureWindow::startRecordingSession(QString* err) {
   }
   if (host_->sessionActive() && !host_->stopSession(err)) return false;
   // Same live-SLAM decision as the preview session, and the same fallback: a
-  // recording never fails because the odometry could not start.
+  // recording never fails because the odometry could not start. And the same
+  // pose-frame reset — a new session is a new odometry, numbered from 0.
+  resetWalkTracking("recording session started");
   if (host_->startSession(last_project_dir_, profile_->currentText(), true, err,
                           /*live_slam=*/true)) {
     live_slam_running_ = true;
@@ -760,6 +878,7 @@ bool CaptureWindow::armPreview(QString* err) {
   cfg.udp.point_port = std::uint16_t(point_port_->value());
   cfg.udp.imu_port = std::uint16_t(imu_port_->value());
   cfg.udp.cmd_port = std::uint16_t(cmd_port_->value());
+  last_mid360_cfg_ = std::make_unique<scanengine::Mid360Config>(cfg);
   device_ = host_->addMid360(cfg, err);
   if (device_ == scanengine::kInvalidDeviceId) {
     QString stop_err;
@@ -780,13 +899,10 @@ bool CaptureWindow::armPreview(QString* err) {
       log("display sleep NOT inhibited — " + awake_.reason());
     }
   }
-  trail_.clear();
-  walk_speed_mps_ = 0.0;
-  trail_last_t_s_ = 0.0;
-  walk_clock_.restart();
-  Q_EMIT trajectoryTrailChanged(trail_);
+  resetWalkTracking("device armed");
 
   arm_clock_.start();
+  endDataWatch();  // kArming has its own first-packet measurement (evaluateArming)
   auto h = host_->engine()->device_health(device_);
   arm_baseline_points_ = h.ok() ? h.value().points_out : 0;
   last_arm_failed_ = false;
@@ -810,10 +926,10 @@ bool CaptureWindow::disarmPreview(const QString& why) {
   }
   if (host_ && host_->sessionActive()) (void)host_->stopSession(&err);
   live_slam_running_ = false;
+  endDataWatch();
   setPhase(Phase::kIdle);
   awake_.release();
-  trail_.clear();
-  Q_EMIT trajectoryTrailChanged(trail_);
+  resetWalkTracking("device disarmed");
   if (walk_label_) walk_label_->setVisible(false);
   log("live preview stopped — " + why);
   return true;
@@ -983,6 +1099,10 @@ void CaptureWindow::onStart() {
   summary_->clear();
 
   setPhase(Phase::kRecording);
+  // Field bug C: Start restarted the session, which tore the SDK down and back
+  // up. If the sensor does not come back, this is what notices and re-arms it —
+  // without ever closing the .lscan that is now open.
+  beginDataWatch("Start restarted the sensor");
   log(QString("recording started -> %1%2").arg(dir, auto_named ? "  (auto-named)" : ""));
   updateNameHint();
   Q_EMIT captureStarted(dir);
@@ -1008,6 +1128,7 @@ void CaptureWindow::onPauseResume() {
       return;
     }
     setPhase(Phase::kPaused);
+    beginDataWatch("Pause restarted the sensor");
     log("capture paused — still streaming to the viewport, not recording");
   } else {
     if (!startRecordingSession(&err)) {
@@ -1016,6 +1137,7 @@ void CaptureWindow::onPauseResume() {
     }
     record_segment_clock_.start();
     setPhase(Phase::kRecording);
+    beginDataWatch("Resume restarted the sensor");
     log("capture resumed -> " + last_project_dir_);
   }
 }
@@ -1057,6 +1179,10 @@ void CaptureWindow::onStop() {
     setPhase(Phase::kIdle);
   } else {
     setPhase(Phase::kPreview);
+    // The seal restarted the session too, so the live preview the operator is
+    // now looking at has exactly the same "did the sensor come back?" question —
+    // and answering it here is what makes the NEXT Start work.
+    beginDataWatch("Stop restarted the sensor");
   }
 
   const QString sum =
@@ -1070,14 +1196,134 @@ void CaptureWindow::onStop() {
           .arg(points_now - record_baseline_points_)
           .arg(drops_now)
           .arg(store_dropped);
-  summary_->setText(sum);
-  log(sum);
+  // Round-5 field bug C: an EMPTY seal must say so. The old flow showed the REC
+  // badge, ran the elapsed clock and then sealed a project with zero chunks
+  // without a word — which is exactly how "it only records when first
+  // connected" looked from the outside.
+  const bool empty_seal = cum_chunks_written_ == 0;
+  summary_->setText(empty_seal ? ("NOTHING WAS RECORDED. " + sum +
+                                  "  The sensor sent no data for the whole of this scan — "
+                                  "check the link and try again; the live preview is still up.")
+                               : sum);
+  summary_->setProperty("tone", empty_seal ? "warn" : "");
+  repolish(summary_);
+  log(empty_seal ? ("NOTHING WAS RECORDED — " + sum) : sum);
 
   recorded_seconds_accum_ = 0.0;
   if (record_cluster_) record_cluster_->setElapsedSeconds(0.0);
   name_edit_->clear();
   updateNameHint();
   Q_EMIT captureStopped(sealed_dir);
+}
+
+// --- round-5 field bug C: the post-restart data watch ----------------------
+//
+// See CaptureWindow.h's beginDataWatch() comment for the reproduction and the
+// reasoning. This is deliberately a WATCH, not a gate: Start never waits for the
+// device, because a recording that refuses to begin is worse than one that
+// begins a moment before the data does. Record-always still holds.
+void CaptureWindow::beginDataWatch(const QString& why) {
+  if (!host_ || !host_->ok() || device_ == scanengine::kInvalidDeviceId) return;
+  auto h = host_->engine()->device_health(device_);
+  data_watch_baseline_points_ = h.ok() ? h.value().points_out : 0;
+  data_watch_clock_.restart();
+  data_watch_active_ = true;
+  data_watch_why_ = why;
+}
+
+void CaptureWindow::endDataWatch() {
+  data_watch_active_ = false;
+  data_watch_window_s_ = 6.0;
+  rearm_attempts_ = 0;
+}
+
+bool CaptureWindow::rearmDeviceInPlace(QString* err) {
+  if (!host_ || !host_->ok()) {
+    if (err) *err = "engine unavailable";
+    return false;
+  }
+  // remove_device stops the driver and drops it; add_device rebuilds it and —
+  // because a session is live — starts it immediately. The SESSION is never
+  // stopped, so the recorder stays open and the .lscan being written is
+  // untouched. This is the whole reason the fix re-arms the DEVICE rather than
+  // restarting the session again.
+  if (device_ != scanengine::kInvalidDeviceId) {
+    QString rerr;
+    (void)host_->removeDevice(device_, &rerr);
+    device_ = scanengine::kInvalidDeviceId;
+  }
+  if (!last_mid360_cfg_) {
+    if (err) *err = "no Mid-360 config to re-arm with";
+    return false;
+  }
+  device_ = host_->addMid360(*last_mid360_cfg_, err);
+  return device_ != scanengine::kInvalidDeviceId;
+}
+
+void CaptureWindow::updateDataWatch() {
+  if (!data_watch_active_) return;
+  const bool live = phase_ == Phase::kPreview || phase_ == Phase::kRecording ||
+                    phase_ == Phase::kPaused;
+  if (!live || !host_ || !host_->ok() || device_ == scanengine::kInvalidDeviceId) {
+    endDataWatch();
+    return;
+  }
+  auto h = host_->engine()->device_health(device_);
+  const std::uint64_t pts = h.ok() ? h.value().points_out : 0;
+  if (pts > data_watch_baseline_points_) {
+    const double t = data_watch_clock_.elapsed() / 1000.0;
+    // Only worth a line when it actually took a moment; a millisecond resume is
+    // the normal case and does not need saying.
+    if (t > 0.5 || rearm_attempts_ > 0) {
+      log(QString("sensor data resumed %1 s after %2%3")
+              .arg(t, 0, 'f', 2)
+              .arg(data_watch_why_)
+              .arg(rearm_attempts_ > 0 ? QString(" (after %1 re-arm(s))").arg(rearm_attempts_)
+                                       : QString()));
+    }
+    if (arm_label_) {
+      arm_label_->setStyleSheet(
+          QString("color:%1;font-weight:600;").arg(theme::css(theme::good())));
+      arm_label_->setText(phase_ == Phase::kRecording ? "Recording — sensor data flowing."
+                                                      : "Live — sensor data flowing.");
+    }
+    endDataWatch();
+    return;
+  }
+
+  const double elapsed = data_watch_clock_.elapsed() / 1000.0;
+  if (arm_label_) {
+    arm_label_->setStyleSheet(QString("color:%1;font-weight:600;").arg(theme::css(theme::bad())));
+    arm_label_->setText(QString("NO SENSOR DATA since %1 (%2 s) — %3")
+                            .arg(data_watch_why_)
+                            .arg(elapsed, 0, 'f', 1)
+                            .arg(phase_ == Phase::kRecording
+                                     ? "this recording is EMPTY so far; re-arming the sensor"
+                                     : "re-arming the sensor"));
+  }
+  if (elapsed < data_watch_window_s_) return;
+
+  ++rearm_attempts_;
+  QString err;
+  if (rearmDeviceInPlace(&err)) {
+    log(QString("no sensor data for %1 s after %2 — re-armed the Mid-360 in place "
+                "(attempt %3); the recording stayed open")
+            .arg(elapsed, 0, 'f', 1)
+            .arg(data_watch_why_)
+            .arg(rearm_attempts_));
+  } else {
+    log(QString("no sensor data for %1 s after %2 — re-arm attempt %3 failed: %4")
+            .arg(elapsed, 0, 'f', 1)
+            .arg(data_watch_why_)
+            .arg(rearm_attempts_)
+            .arg(err));
+  }
+  // Back off so a device that is genuinely unplugged is not hammered, but never
+  // give up: an operator who plugs the cable back in must be picked up.
+  data_watch_window_s_ = std::min(data_watch_window_s_ * 2.0, 24.0);
+  data_watch_clock_.restart();
+  auto h2 = host_->engine()->device_health(device_);
+  data_watch_baseline_points_ = h2.ok() ? h2.value().points_out : 0;
 }
 
 void CaptureWindow::accumulateRecorderStats() {
@@ -1098,6 +1344,7 @@ double CaptureWindow::recordedSecondsNow() const {
 void CaptureWindow::updateHealth() {
   if (!host_) return;
   if (phase_ == Phase::kArming) evaluateArming();
+  updateDataWatch();
 
   if (device_ != scanengine::kInvalidDeviceId && host_->ok()) {
     auto h = host_->engine()->device_health(device_);

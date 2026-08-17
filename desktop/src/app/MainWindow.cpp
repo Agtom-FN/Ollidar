@@ -54,6 +54,16 @@
 namespace lidarscan {
 namespace {
 
+// The app's own name and version, for the title bar and the status strip.
+// QCoreApplication::applicationVersion() is set once in main() from the
+// repo-root VERSION file (via CMake's LIDARSCAN_APP_VERSION), so this is a
+// VIEW of that one value rather than a second copy of it — the same posture as
+// every other model in this shell. Unobtrusive by design: the owner asked for
+// the version to be visible, not prominent.
+QString appTitle() {
+  return QString("LidarScan %1").arg(QCoreApplication::applicationVersion().section(' ', 0, 0));
+}
+
 // Space-grouped thousands — the mockup's fmt(). Every point count in the
 // redesign reads this way, so it lives here rather than at four call sites.
 QString groupedCount(quint64 n) {
@@ -76,7 +86,7 @@ QString humanBytes(quint64 b) {
 }  // namespace
 
 MainWindow::MainWindow(EngineHost* host, QWidget* parent) : QMainWindow(parent), host_(host) {
-  setWindowTitle("LidarScan — Desktop");
+  setWindowTitle(appTitle());
   params_ = std::make_unique<scanengine::DisplayParamsController>(
       scanengine::profile_defaults(scanengine::DisplayProfile::kQuickScan));
   replay_ = new ReplayController(host_, this);
@@ -150,15 +160,22 @@ void MainWindow::buildUi() {
     // viewport's bottom-left chip; the status bar's right-hand segment is the
     // mockup's compact "<backend> · dpr <n> · engine <v> · ABI v<n>".
     const auto& st = viewport_->stats();
-    status_render_->setText(QString("%1 · dpr %2 · %3 · ABI v%4")
+    status_render_->setText(QString("%1 · dpr %2 · %3 · ABI v%4 · app %5")
                                 .arg(viewport_->surfaceDescription().section(" · ", 0, 0))
                                 .arg(st.dpr, 0, 'f', 2)
                                 .arg(host_->versionString().section(" (", 0, 0))
                                 // The C++ constant, NOT capi/scanengine_c.h's
                                 // SCAN_ABI_VERSION: NOTES.md §1.2 keeps the C
                                 // ABI header out of the desktop entirely.
-                                .arg(scanengine::kEngineAbiVersion));
-    status_render_->setToolTip(s);
+                                .arg(scanengine::kEngineAbiVersion)
+                                // ...and the APP's own version, right next to
+                                // the engine's, because they are different
+                                // numbers on purpose and a support log needs
+                                // both. Full "x.y.z (build N)" in the tooltip.
+                                .arg(QCoreApplication::applicationVersion()
+                                         .section(' ', 0, 0)));
+    status_render_->setToolTip(QString("LidarScan %1\n%2")
+                                   .arg(QCoreApplication::applicationVersion(), s));
     updateViewportChips();
   });
   connect(viewport_, &ViewportWindow::initFailed, this, [this](const QString& why) {
@@ -949,8 +966,10 @@ CaptureWindow* MainWindow::captureWindow() {
             });
     // Round-5 item 17: the viewport measured that this machine cannot sustain the
     // current live refresh and stepped down; the panel says so, quietly, inline.
-    connect(viewport_, &ViewportWindow::refreshDownshifted, capture_,
-            [this](double hz, const QString& why) { capture_->noteRefreshDownshift(hz, why); });
+    connect(viewport_, &ViewportWindow::refreshGovernorChanged, capture_,
+            [this](double hz, bool down, const QString& why) {
+              capture_->noteRefreshGovernor(hz, down, why);
+            });
     // ...and the CEILING is the screen's own refresh rate. QScreen is only
     // meaningful once the window exists, which by here it does (MainWindow's
     // viewport was created in buildUi and shown by main()).
@@ -1014,7 +1033,7 @@ bool MainWindow::openProject(const QString& dir, QString* err) {
     params_dock_->refreshFromModel();
   }
   viewport_->setDisplayParams(params_->get());
-  setWindowTitle(QString("LidarScan — %1").arg(info.name));
+  setWindowTitle(QString("%1 — %2").arg(appTitle(), info.name));
   log_->appendPlainText(QString("opened %1 (%2 chunks, %3, %4 s)")
                             .arg(info.dir)
                             .arg(info.total_chunks)
@@ -1028,7 +1047,7 @@ void MainWindow::closeProject() {
   persistDisplayParamsIfProjectOpen();
   project_ = ProjectInfo{};
   refreshProjectPanel();
-  setWindowTitle("LidarScan — Desktop");
+  setWindowTitle(appTitle());
   processing_dock_->setProjectDir(QString());
   plan_dock_->setProjectDir(QString());
   merge_dock_->setOpenProjectDir(QString());

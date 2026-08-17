@@ -94,6 +94,7 @@
 #include <vector>
 
 #include "app/DisplayAwake.h"
+#include "app/WalkSpeedEstimator.h"
 
 #include "scanengine/cloud/display_params.h"
 #include "scanengine/core/types.h"
@@ -111,6 +112,16 @@ class QSpinBox;
 class QThread;
 class QTimer;
 class QVBoxLayout;
+
+namespace scanengine {
+// Forward-declared rather than included: drivers/mid360/mid360_driver.h is an
+// engine DRIVER header, and this panel's header has never named one. The
+// definition is only needed in CaptureWindow.cpp (which includes EngineHost.h),
+// so a unique_ptr to an incomplete type plus an out-of-line destructor keeps it
+// that way. Round-5 field bug C needs the config kept so a re-arm can re-add the
+// device it already had.
+struct Mid360Config;
+}  // namespace scanengine
 
 namespace lidarscan {
 
@@ -149,11 +160,14 @@ class CaptureWindow : public QDockWidget {
   // knows which screen the viewport is on). Re-ranges the row and clamps the
   // current value into it.
   void setLiveRefreshCeiling(double hz);
-  // Round-5 item 17: the viewport measured that it cannot sustain the current
-  // cap and stepped down a notch. Moves the slider to match (without re-emitting
-  // a change) and shows a quiet inline note — never a dialog, never a warning
-  // sound, and never anything that touches the recording.
-  void noteRefreshDownshift(double hz, const QString& why);
+  // Round-5 item 17: the viewport's measured refresh governor moved the
+  // effective cap — down (it cannot sustain the current one) or back up (field
+  // bug B: it now recovers). Moves the slider to match (without re-emitting a
+  // change) and shows a quiet inline note — never a dialog, never a warning
+  // sound, and never anything that touches the recording. It does NOT persist:
+  // the saved setting is what the operator asked for, not what a bad minute
+  // measured.
+  void noteRefreshGovernor(double hz, bool down, const QString& why);
 
   // Re-emit the live refresh rate so the viewport picks up the PERSISTED value.
   // Called once by MainWindow right after it connects: the rate is restored from
@@ -197,6 +211,12 @@ class CaptureWindow : public QDockWidget {
   // frame. MainWindow hands it to ViewportWindow::setTrajectoryTrail(), which
   // coalesces it into one geometry rebuild per presented frame.
   void trajectoryTrailChanged(const std::vector<std::array<float, 3>>& path);
+  // Round-5 field bug A evidence: every 10 Hz trajectory poll's verdict, exactly
+  // as the walk hint renders it. `valid` is false while the estimator has not
+  // yet seen a full window of pose time in one frame (a hint is never shown
+  // then). --walk-soak (main.cpp) listens to this against the S2 simulator's
+  // STATIONARY stream, where the correct answer is 0.00 m/s for the whole soak.
+  void walkSpeedMeasured(double mps, bool valid, unsigned discontinuities);
 
   // Capture's log line, for the shell's LOG dock. This panel keeps its own
   // compact log strip too; both render the same text, and log() also writes
@@ -278,6 +298,10 @@ class CaptureWindow : public QDockWidget {
   // the path to the viewport, plus derive the walking speed for the "slow down"
   // hint. Runs on its own 10 Hz timer while a device is armed.
   void pollTrajectory();
+  // Drop the accumulated trail and the speed window. Called on every engine
+  // session (re)start — Start, Pause, Resume, Stop and arm all restart
+  // LioOdometry, and its poses come back numbered from the origin.
+  void resetWalkTracking(const char* why);
   void evaluateArming();   // first-packet-or-timeout, and the selfTestFinished signal
   void log(const QString& s);
   void setPhase(Phase p);
@@ -294,6 +318,30 @@ class CaptureWindow : public QDockWidget {
   bool startPreviewSession(QString* err);
   bool startRecordingSession(QString* err);
   void accumulateRecorderStats();
+
+  // --- round-5 field bug C: "it only record when the first connected" -------
+  //
+  // Engine::start_session() STARTS every registered device and stop_session()
+  // STOPS them, so every Start / Pause / Resume / Stop tears the Mid-360's Livox
+  // SDK2 backend down and brings it back up (the engine log shows "SDK2 torn
+  // down" / "SDK2 up" once per transition). On loopback the device is streaming
+  // again in milliseconds; on a real link it is not, and if the device is still
+  // in kStarting for the whole of a short recording, the .lscan is sealed with
+  // ZERO chunks while the panel cheerfully showed REC and an elapsed clock.
+  // Reproduced exactly (spikes/s2-mid360-sim --drop-link-after 8 --link-down-for
+  // 6 --repeat): cycles 2 and 5 of 6 recorded 0 chunks, device state
+  // "starting -> stopping", never "streaming".
+  //
+  // So: after EVERY session restart, watch for the device's points to start
+  // moving again, and if they do not, re-arm the device IN PLACE — remove_device
+  // + add_device, which Engine starts immediately mid-session (engine.cpp: "a
+  // device added mid-session starts immediately"). That leaves the recorder open
+  // and the .lscan intact; only the driver is rebuilt. Nothing here can stop a
+  // recording, and every raw byte that does arrive is still written.
+  void beginDataWatch(const QString& why);
+  void updateDataWatch();
+  bool rearmDeviceInPlace(QString* err);
+  void endDataWatch();
 
   // Mid-360 link fields, persisted GLOBALLY now rather than per project: a
   // project is created BY a capture in this flow, so there is no project whose
@@ -347,6 +395,16 @@ class CaptureWindow : public QDockWidget {
   QElapsedTimer arm_clock_;
   double arm_window_s_ = 8.0;   // Mid-360: first packet before the A3 connect timeout
   std::uint64_t arm_baseline_points_ = 0;
+
+  // Post-restart data watch (field bug C). `last_mid360_cfg_` is what a re-arm
+  // re-adds: exactly the config the current device was opened with.
+  std::unique_ptr<scanengine::Mid360Config> last_mid360_cfg_;
+  QElapsedTimer data_watch_clock_;
+  std::uint64_t data_watch_baseline_points_ = 0;
+  bool data_watch_active_ = false;
+  double data_watch_window_s_ = 6.0;  // doubles, capped, after each failed re-arm
+  int rearm_attempts_ = 0;
+  QString data_watch_why_;
 
   // recording-session bookkeeping (see the file header's "SESSION SUMMARY")
   QElapsedTimer record_segment_clock_;
@@ -422,10 +480,18 @@ class CaptureWindow : public QDockWidget {
   // walkthrough state (item 18)
   QLabel* walk_label_ = nullptr;          // trail length + speed + the "slow down" hint
   std::vector<std::array<float, 3>> trail_;
-  double trail_last_t_s_ = 0.0;
-  double walk_speed_mps_ = 0.0;
+  // Round-5 field bug A: the speed is measured by this, from POSE timestamps
+  // over a windowed net displacement — never from two consecutive polls on a
+  // wall clock. See WalkSpeedEstimator.h for the five separate faults that
+  // produced "walking" from a stationary tripod.
+  WalkSpeedEstimator walk_;
   bool live_slam_running_ = false;
-  QElapsedTimer walk_clock_;
+  // Rate-limits the "live odometry is drifting" note to once a minute.
+  QElapsedTimer drift_clock_;
+  // Set whenever the engine session is (re)started, which restarts LioOdometry
+  // at the origin: the trail and the speed window belong to the OLD pose frame
+  // and must not be carried across. Cleared by the first pose of the new frame.
+  bool walk_frame_reset_pending_ = true;
 
   RecordCluster* record_cluster_ = nullptr;
   QTimer* elapsed_timer_ = nullptr;

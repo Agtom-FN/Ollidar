@@ -111,8 +111,14 @@ class ViewportWindow : public QWindow {
   // syncing the cloud or touching the swapchain, which is where the CPU/GPU
   // cost of a frame actually is. 0 = uncapped, the C1 behaviour and still the
   // default — nothing outside the capture panel sets this.
+  //
+  // This is the REQUESTED cap. The governor below may hold the effective cap
+  // lower for a while; maxFps() reports what is in force and requestedMaxFps()
+  // what was asked for. Setting it always clears the governor — an explicit
+  // request outranks a measurement.
   void setMaxFps(double fps);
   double maxFps() const { return max_fps_; }
+  double requestedMaxFps() const { return requested_max_fps_; }
 
   // --- item 17: the cap is HARDWARE-DERIVED and must never take the app down --
   //
@@ -120,9 +126,21 @@ class ViewportWindow : public QWindow {
   // (QScreen::refreshRate, set by MainWindow — this class only clamps to it), and
   // the FLOOR under load is measured: if a presented frame's p95 CPU time keeps
   // overrunning the budget the current cap implies, the cap is downshifted one
-  // notch and refreshDownshifted() says so, quietly, in the capture panel. It
-  // never shifts back up on its own — a display that oscillates between rates is
-  // worse than one that settled low, and the operator can always drag the slider.
+  // notch and refreshGovernorChanged() says so, quietly, in the capture panel.
+  //
+  // ROUND-5 FIELD BUG B (NOTES.md §17.10). This governor used to be one-way, and
+  // it decided from a 600-sample (~10 s) rolling history that it never cleared.
+  // Both together made it a RATCHET: one stall — a window drag, the first big
+  // PageStore sync, a trail rebuilt every frame because the false-motion path was
+  // extending it — depressed the measured fps for ten seconds, which was long
+  // enough to satisfy the "5 consecutive windows" trigger repeatedly, and each
+  // downshift immediately re-satisfied it from the SAME stale samples. The ladder
+  // walked to its 5 fps floor and stayed there, which is what the owner saw as
+  // "the live view stops changing". It now (a) measures from a bounded recent
+  // window that is CLEARED whenever the rate changes, so every decision is made
+  // on data gathered at the current rate, and (b) recovers upward, one notch at a
+  // time, once the machine has demonstrably had headroom for several seconds —
+  // never above what the operator (or the persisted setting) actually asked for.
   //
   // WHAT THIS PROTECTS AGAINST is the classic flood: the render loop asking the
   // renderer to upload another PageStore delta every display tick while the GPU
@@ -200,9 +218,13 @@ class ViewportWindow : public QWindow {
   void statusChanged(const QString& text);
   void initFailed(const QString& reason);
   void measurementsChanged();
-  // The live refresh cap was lowered because this machine could not sustain the
-  // previous one (item 17). `why` carries the measured numbers.
-  void refreshDownshifted(double newHz, const QString& why);
+  // The MEASURED refresh governor moved the effective cap (item 17; round-5
+  // field bug B added the upward direction). `down` is true for a downshift,
+  // false for a recovery back toward the requested cap; `why` carries the
+  // measured numbers. Every emission is also written to stderr by the emitter,
+  // so a field log shows the governor's whole history even when no capture panel
+  // is listening.
+  void refreshGovernorChanged(double newHz, bool down, const QString& why);
 
  protected:
   void exposeEvent(QExposeEvent*) override;
@@ -235,9 +257,18 @@ class ViewportWindow : public QWindow {
   // trajectory trail (item 18)
   void rebuildTrailGeometry();
   void destroyTrailGeometry();
-  // One notch down the hardware-derived ladder (item 17). Returns `from` when
-  // there is nowhere lower to go.
+  // One notch down / up the hardware-derived ladder (item 17). Each returns
+  // `from` when there is nowhere further to go in that direction.
   static double nextLowerRefreshNotch(double from);
+  static double nextHigherRefreshNotch(double from);
+  // The lowest notch that is still at or above `fps`. A cap BELOW the rate the
+  // machine is already delivering helps nothing and costs the operator frames,
+  // so a downshift never goes past this.
+  static double refreshNotchAtOrAbove(double fps);
+  // Apply an effective cap decided by the governor (as opposed to setMaxFps(),
+  // which is a REQUEST and resets the governor). Clears the measurement window
+  // so the next decision cannot be made from samples taken at the old rate.
+  void applyGovernedFps(double fps, bool down, const QString& why);
 
   QWidget* top_level_ = nullptr;
 
@@ -283,10 +314,26 @@ class ViewportWindow : public QWindow {
   bool vsync_ = true;
   // Live refresh-rate throttle; see setMaxFps(). `last_presented_s_` is on the
   // same clock_ every other timing figure in this class uses.
-  double max_fps_ = 0.0;
+  double max_fps_ = 0.0;              // the EFFECTIVE cap (governor may hold it below…)
+  double requested_max_fps_ = 0.0;    // …this, what the panel/settings actually asked for
   double last_presented_s_ = 0.0;
   double refresh_ceiling_ = 0.0;      // 0 = unknown/unclamped (QScreen not asked yet)
   int overrun_windows_ = 0;           // consecutive 0.4 s stats windows over budget
+  int headroom_windows_ = 0;          // consecutive 0.4 s stats windows with room to spare
+  // Recovery BACKOFF. A machine whose sustainable rate falls between two notches
+  // would otherwise hunt: recover to the higher notch, fail it, drop back,
+  // recover again — the log from the first fix run did exactly that at 30<->48.
+  // Each downshift doubles how much sustained headroom the next recovery attempt
+  // demands (12 windows ≈ 5 s, up to 300 ≈ 2 min), so a genuinely transient
+  // stall still comes back within seconds while a machine that simply cannot
+  // hold the higher notch settles instead of oscillating. Reset by an explicit
+  // setMaxFps() — a new request deserves a fresh opinion.
+  int upshift_backoff_windows_ = 12;
+  // Governor decisions are made ONLY from samples taken at the current rate:
+  // this is the count of frames presented since the last rate change, and the
+  // sample vectors are cleared with it. Carrying stale samples across a change
+  // is what made the old governor a one-way ratchet (field bug B).
+  int frames_since_rate_change_ = 0;
 
   // trajectory trail
   filament::MaterialInstance* trail_material_ = nullptr;

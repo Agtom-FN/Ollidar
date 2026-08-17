@@ -76,8 +76,54 @@ if sim_up 30; then
   sim_down
 fi
 
+echo "=== 5b. ROUND-5 FIELD BUGS (NOTES §17.9-17.11) ===" | tee -a "$LOG"
+echo "===     A: a gait-free source must read 0.00 m/s for a whole minute      ===" | tee -a "$LOG"
+echo "===     B: the refresh governor recovers instead of ratcheting to 5 fps  ===" | tee -a "$LOG"
+echo "===     C: N record cycles on ONE connect, and re-arm across link drops  ===" | tee -a "$LOG"
+
+# A, part 1 — the estimator and the IMU gate, no hardware at all. The POSITIVE
+# case (a real walk registers, a brisk walk trips the hint) lives here because
+# mid360_sim has no motion options and no gait to emulate one with.
+run "$APP" --walk-speed-selftest
+
+# A, part 2 — the same hint, driven by the SHIPPED 10 Hz poll over real
+# LioOdometry output. The pre-fix build answered 4.36 m/s here and fired the
+# "ease off" hint 226 times in 60 s.
+if sim_up 75; then
+  run "$APP" --mid360-selftest "$LOOPBACK" --walk-soak 60 --quit-after 80
+  sim_down
+fi
+
+# C, part 1 — four back-to-back Start/Stop cycles on one arm, through the record
+# cluster's own Start (auto-named project, no explicit directory). Nonzero
+# chunks in every cycle or this exits 7.
+if sim_up 50; then
+  run "$APP" --mid360-selftest "$LOOPBACK" --record-cycles 4 \
+      --record-cycles-dir "${OUT}/round5-cycles" --quit-after 55
+  sim_down
+fi
+
+# C, part 2 — the same, across repeated 14 s transport outages: the post-restart
+# data watch has to re-arm the Mid-360 IN PLACE (recorder left open) so a cycle
+# that begins inside an outage still records once the link returns.
+if [ -x "$SIM" ]; then
+  "$SIM" --lidar-ip 127.0.0.1 --host-ip 127.0.0.1 --duration 70 \
+      --drop-link-after 12 --link-down-for 14 --repeat \
+      > "${OUT}/round5-sim-drop.log" 2>&1 &
+  SIM_PID=$!
+  trap 'kill "$SIM_PID" 2>/dev/null || true' EXIT
+  sleep 1
+  run "$APP" --mid360-selftest "$LOOPBACK" --record-cycles 4 --record-cycle-seconds 12 \
+      --record-cycles-dir "${OUT}/round5-cycles-drop" --quit-after 75
+  sim_down
+fi
+
 echo "=== 6. item 4 (5.1): Process / Export / Merge folded into the Projects tab ===" | tee -a "$LOG"
 run "$APP" --projects-actions-demo "${OUT}/18-projects-actions" --quit-after 18
+
+echo "=== 6b. app version comes from the repo-root VERSION file (NOTES §18) ===" | tee -a "$LOG"
+echo "repo VERSION file: $(tr -d '[:space:]' < "${REPO}/VERSION")" | tee -a "$LOG"
+run "$APP" --version
 
 echo "=== 7. no regressions in the other workstreams' hooks ===" | tee -a "$LOG"
 for w in projects capture review plan merge jobs; do

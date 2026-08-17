@@ -69,7 +69,15 @@ double mean(const std::vector<double>& v) {
   return s / double(v.size());
 }
 
-void trimSamples(std::vector<double>& v, size_t cap = 600) {
+// Round-5 field bug B: this was 600 samples — TEN SECONDS of frame history at
+// 60 fps — and both the status line's p95 and the refresh governor's decision
+// were computed over all of it. A single stall therefore kept `stats_.fps`
+// depressed long after the machine had recovered, which is half of what made the
+// governor a one-way ratchet (the other half, carrying samples across a rate
+// change, is fixed in applyGovernedFps). 240 is ~2 s at 120 fps and ~4 s at
+// 60 fps: still smooth enough for a p95 to mean something, short enough that the
+// numbers describe NOW.
+void trimSamples(std::vector<double>& v, size_t cap = 240) {
   if (v.size() > cap) v.erase(v.begin(), v.begin() + (v.size() - cap));
 }
 
@@ -120,16 +128,34 @@ void ViewportWindow::setVsync(bool on) {
   resize_pending_ = true;  // reconfigure the layer on the next tick
 }
 
+namespace {
+// The ladder the governor walks (item 17). Coarse on purpose: a 60 -> 57 fps
+// step would neither help a struggling machine nor be worth an inline note.
+const double kRefreshNotches[] = {120.0, 90.0, 60.0, 48.0, 30.0, 24.0, 15.0, 10.0, 5.0};
+}  // namespace
+
 double ViewportWindow::nextLowerRefreshNotch(double from) {
-  // The ladder the auto-downshift walks (item 17). Coarse on purpose: a
-  // 60 -> 57 fps step would neither help a struggling machine nor be worth an
-  // inline note about.
-  static const double kNotches[] = {120.0, 90.0, 60.0, 48.0, 30.0, 24.0, 15.0, 10.0, 5.0};
   double best = 0.0;  // the HIGHEST notch strictly below `from`
-  for (const double n : kNotches) {
+  for (const double n : kRefreshNotches) {
     if (n < from - 0.01 && n > best) best = n;
   }
   return best > 0.0 ? best : from;  // already on the floor
+}
+
+double ViewportWindow::refreshNotchAtOrAbove(double fps) {
+  double best = 0.0;  // the LOWEST notch >= fps
+  for (const double n : kRefreshNotches) {
+    if (n >= fps - 0.01 && (best == 0.0 || n < best)) best = n;
+  }
+  return best > 0.0 ? best : kRefreshNotches[0];
+}
+
+double ViewportWindow::nextHigherRefreshNotch(double from) {
+  double best = 0.0;  // the LOWEST notch strictly above `from`
+  for (const double n : kRefreshNotches) {
+    if (n > from + 0.01 && (best == 0.0 || n < best)) best = n;
+  }
+  return best > 0.0 ? best : from;  // already on the top notch
 }
 
 void ViewportWindow::setRefreshCeiling(double hz) {
@@ -143,12 +169,41 @@ void ViewportWindow::setMaxFps(double fps) {
   // not a cap at all, and pretending otherwise is how a "120 fps" setting on a
   // 60 Hz panel turns into a support question.
   if (refresh_ceiling_ > 0.0 && fps > refresh_ceiling_) fps = refresh_ceiling_;
+  // An explicit request outranks anything the governor measured, in BOTH
+  // directions: dragging the slider back up after a downshift must actually
+  // raise the cap, not be silently held at the governed value.
+  requested_max_fps_ = fps;
+  upshift_backoff_windows_ = 12;
+  applyGovernedFps(fps, /*down=*/false, QString());
+}
+
+void ViewportWindow::applyGovernedFps(double fps, bool down, const QString& why) {
+  const double was = max_fps_;
   max_fps_ = fps;
   overrun_windows_ = 0;
+  headroom_windows_ = 0;
+  // THE FIX FOR FIELD BUG B's RATCHET. The frame-time history was gathered at
+  // the OLD rate; judging the new rate by it re-fires the same trigger on the
+  // same samples, notch after notch, all the way to the floor. Every rate change
+  // starts a fresh measurement.
+  frames_since_rate_change_ = 0;
+  cpu_ms_.clear();
+  interval_ms_.clear();
+  gpu_ms_.clear();
+  last_frame_start_ = 0;
+  stats_.fps = 0.0;
   // Present the very next tick rather than making the new cap wait out the
   // interval of the old one — a slider drag from 5 to 60 fps has to feel
   // immediate, and the only state the throttle keeps is this timestamp.
   last_presented_s_ = 0.0;
+  if (!why.isEmpty() && std::abs(was - fps) > 0.01) {
+    // A field log has to show the governor's whole history even when nothing is
+    // connected to the signal (headless evidence runs, --shot runs, a crash log
+    // from the owner's machine). This is the ONE line that says the rate moved.
+    std::fprintf(stderr, "[lidarscan] refresh governor: %.0f -> %.0f fps (%s) — %s\n", was, fps,
+                 down ? "down" : "recovering", why.toUtf8().constData());
+    Q_EMIT refreshGovernorChanged(fps, down, why);
+  }
 }
 
 QString ViewportWindow::surfaceDescription() const {
@@ -918,6 +973,7 @@ void ViewportWindow::renderFrame() {
   if (!drew) return;
 
   last_presented_s_ = cpu1;
+  ++frames_since_rate_change_;
   cpu_ms_.push_back((cpu1 - tick0) * 1000.0);
   if (last_frame_start_ > 0) interval_ms_.push_back((cpu0 - last_frame_start_) * 1000.0);
   last_frame_start_ = cpu0;
@@ -966,7 +1022,11 @@ void ViewportWindow::renderFrame() {
     // budget across a sustained window (5 status windows ≈ 2 s, not one spike),
     // step the cap one notch down and say so quietly. Only ever downward, and
     // never below the 5 fps floor the notch ladder ends at.
-    if (max_fps_ > 0.0 && cpu_ms_.size() >= 8) {
+    //
+    // ROUND-5 FIELD BUG B: the window this decides from is bounded to the frames
+    // presented SINCE the last rate change (applyGovernedFps clears the sample
+    // vectors), and the decision runs in both directions.
+    if (max_fps_ > 0.0 && frames_since_rate_change_ >= 8 && cpu_ms_.size() >= 8) {
       const double budget_ms = 1000.0 / max_fps_;
       // TWO signals, because one of them alone lies. p95 CPU catches a frame
       // that is expensive to draw. But the throttle SKIPS ticks, and the cost of
@@ -980,22 +1040,67 @@ void ViewportWindow::renderFrame() {
       const bool rate_under = stats_.fps > 0.0 && stats_.fps < max_fps_ * 0.75;
       if (cpu_over || rate_under) {
         ++overrun_windows_;
+        headroom_windows_ = 0;
       } else {
         overrun_windows_ = 0;
+        // HEADROOM, the recovery signal: the frame is cheap against the budget
+        // AND the cap is actually being delivered. Deliberately stricter than
+        // the mirror image of the downshift test (0.6 of the budget, 0.9 of the
+        // cap) so the two cannot chatter around one operating point.
+        if (stats_.cpu_ms_p95 < budget_ms * 0.6 && stats_.fps > max_fps_ * 0.9) {
+          ++headroom_windows_;
+        } else {
+          headroom_windows_ = 0;
+        }
       }
       if (overrun_windows_ >= 5) {
-        const double lower = nextLowerRefreshNotch(max_fps_);
+        double lower = nextLowerRefreshNotch(max_fps_);
+        // NEVER cap below what this machine is already delivering. Measured on
+        // an idle M4 with a 60 fps request: the display link paces this window at
+        // ~29 fps at 0.15 ms of frame CPU, so `rate_under` fires with the machine
+        // completely unloaded. Walking a notch per 2 s from there took the cap
+        // toward the floor and made the live view crawl for no reason — the
+        // owner's "live view stops changing". Landing directly on the notch that
+        // matches the achieved rate both settles immediately and never asks for
+        // less than the machine is already giving.
+        const double achievable = refreshNotchAtOrAbove(stats_.fps);
+        if (stats_.fps > 0.0 && achievable > lower) lower = achievable;
         const double was = max_fps_;
-        overrun_windows_ = 0;
         if (lower < was) {
-          setMaxFps(lower);  // also resets the overrun counter
-          Q_EMIT refreshDownshifted(
-              lower, QString("delivered %1 fps against a %2 fps cap, frame cpu p95 %3 ms of a "
-                             "%4 ms budget")
-                         .arg(stats_.fps, 0, 'f', 1)
-                         .arg(was, 0, 'f', 0)
-                         .arg(stats_.cpu_ms_p95, 0, 'f', 2)
-                         .arg(budget_ms, 0, 'f', 1));
+          // Each failure makes the next recovery attempt earn its way back.
+          upshift_backoff_windows_ = std::min(upshift_backoff_windows_ * 2, 300);
+          applyGovernedFps(
+              lower, /*down=*/true,
+              QString("delivered %1 fps against a %2 fps cap, frame cpu p95 %3 ms of a "
+                      "%4 ms budget")
+                  .arg(stats_.fps, 0, 'f', 1)
+                  .arg(was, 0, 'f', 0)
+                  .arg(stats_.cpu_ms_p95, 0, 'f', 2)
+                  .arg(budget_ms, 0, 'f', 1));
+        } else {
+          overrun_windows_ = 0;  // already on the floor; stop counting
+        }
+      } else if (headroom_windows_ >= upshift_backoff_windows_ &&
+                 max_fps_ < requested_max_fps_ - 0.01) {
+        // At least ~5 s of comfortable frames before stepping back up (and more
+        // after each failed attempt — see upshift_backoff_windows_): long enough
+        // that a lull inside a genuinely heavy scene does not oscillate the rate,
+        // and short enough that the operator sees the view come back to life once
+        // whatever caused the downshift (a resize storm, a first big sync)
+        // passed. NEVER above the requested cap: the governor may only give back
+        // what it took.
+        double higher = nextHigherRefreshNotch(max_fps_);
+        if (higher > requested_max_fps_) higher = requested_max_fps_;
+        if (higher > max_fps_ + 0.01) {
+          applyGovernedFps(higher, /*down=*/false,
+                           QString("sustained %1 fps at cpu p95 %2 ms of a %3 ms budget — "
+                                   "recovering toward the %4 fps you asked for")
+                               .arg(stats_.fps, 0, 'f', 1)
+                               .arg(stats_.cpu_ms_p95, 0, 'f', 2)
+                               .arg(budget_ms, 0, 'f', 1)
+                               .arg(requested_max_fps_, 0, 'f', 0));
+        } else {
+          headroom_windows_ = 0;
         }
       }
     }
