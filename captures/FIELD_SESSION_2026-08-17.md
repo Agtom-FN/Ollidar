@@ -121,3 +121,8 @@ for the same modes). Hardware re-verification pending.
   conversion, pose timestamps not pairing (domain mismatch), nominal phone-back
   extrinsic mapping fan into wrong plane, or live view rendering raw fan-frame points.
   Synthetic straight-line-walk pushbroom test required to pin + prevent regression.
+- Owner field item #3 (same Pixel session): AR overlay shows NO camera feed. Suspects:
+  ArPosePumpView holding the ARCore session/camera when the real overlay opens (needs
+  yield/handoff — one camera consumer at a time), camera permission request path lost in
+  the round-5 "no dialog on tab entry" fix, or GLSurfaceView Z-order regression on the
+  stacked surfaces. Trail worked → ARCore tracked; this is plumbing, not ARCore init.
