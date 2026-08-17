@@ -75,3 +75,18 @@ Evidence: captures/d6_soak_180s.bin (2.5 MB, 100% pass on replay).
   streams / sealed=true. macOS app fully verified on real hardware.
 - TestPack refreshed (new DMG + new APK with auto-detect); app reinstalled to
   ~/Applications on kc-m4.
+
+## Session 3 (cont.) — round-5 capture redesign deployed
+- Rounds 5-5.3 (owner-approved, REVIEW_FEEDBACK items 7-18) implemented in both apps
+  and committed (a282d66): 2-step popup-free capture, inline auto-detect w/ self-opening
+  manual fallback, auto-armed live preview, auto-named projects, settings carry
+  preview->recording, D6 phone-only 3D (AR pose-pump bug found+fixed — would have
+  recorded 2D), Processing/Merge folded into Projects, phone-GPS georef fallback,
+  hw-derived refresh ceiling + downshift, walkthrough-first kit. Engine point-size
+  floor 0.1px (suite 2,280,270 assertions green). Android: 299 unit + 4/4 emulator.
+- Round-5 DMG deployed to kc-m4 ~/Applications; CLI verification of the new build:
+  suppression, chaining, D6-is-phone-only line, IOKit sleep inhibition all correct.
+  Live Mid-360 pass BLOCKED at session end: en7 reports "status: inactive" — the
+  lidar's Ethernet/power physically disconnected during hardware shuffling (UM982
+  also still unplugged). Rerun the chained selftest once cables are back.
+- TestPack rezipped with round-5 DMG + APK.
