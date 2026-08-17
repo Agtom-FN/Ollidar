@@ -26,3 +26,16 @@ Pixel 8 Pro, D6 powered-hub retest, mount rig + calibration.
 - Fix 0, 0 SVs — antennas not connected / indoors; link+protocol path PROVEN (S5 bench leg
   closed at maximum-achievable-indoors); needs antennas + sky for Single, NTRIP for RTK
 - /dev/cu.usbmodem2111101 = unrelated ESP32 (agri-IoT water-flow logger) on same Mac
+
+## Session 2 — NTRIP + app verification
+- **SatRef NTRIP WORKING with owner account FNF8838**: ntrip.geodetic.gov.hk:2101,
+  ICY 200 OK, 20+ station mountpoints (RTCM3.2 MSM5, all constellations);
+  71/71 frames CRC-valid from HKSC_32 (Stonecutters). 82.6 KB of live corrections
+  bridged into the UM982 serial port; device ingested cleanly (NMEA uninterrupted,
+  100% checksums). RTK Fixed pending ONLY antennas + sky.
+- **macOS app VERIFIED on kc-m4 vs real Mid-360**: --mid360-selftest PASSED,
+  first packet 0.70 s (faster than sim's 1.6 s). App installed to ~/Applications.
+  Gotcha logged: a first attempt left a port-holding process; later runs failed
+  SdkInit until killed — single-instance guard worth considering.
+- App RTK defaults to prefill later: host ntrip.geodetic.gov.hk:2101, HK station
+  mountpoints (nearest-station picker), UM982 @ 230400.
