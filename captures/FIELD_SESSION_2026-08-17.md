@@ -112,3 +112,12 @@ state gating renders); (C) recording works only on the FIRST Start after connect
 second Start after Stop/seal records nothing (session not re-armable).
 Fix wave dispatched (desktop Opus repro-vs-sim + --record-cycles hook; Android audit
 for the same modes). Hardware re-verification pending.
+
+## Owner field report #2 — Pixel 8 Pro + D6 real walk test
+- ARCore path tracking on the phone: GOOD (trail follows the real walk).
+- D6 scan result BAD: fan slices collapse into a single vertical plane ("captures the
+  plane of Z-axis instead of XY") — walk motion not extruding the fan into 3D.
+  Suspects (dispatched to Android agent): ARCore Y-up vs engine world-frame axis
+  conversion, pose timestamps not pairing (domain mismatch), nominal phone-back
+  extrinsic mapping fan into wrong plane, or live view rendering raw fan-frame points.
+  Synthetic straight-line-walk pushbroom test required to pin + prevent regression.
