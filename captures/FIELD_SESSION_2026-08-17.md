@@ -144,3 +144,18 @@ for the same modes). Hardware re-verification pending.
   connect; --walk-soak 60 s peak 0.000 m/s hint 0x PASS — soak log captured live LIO
   drift (0.25 m/s implied, sigma 1.449 m, quality 2) with IMU stationary => ENGINE
   FOLLOW-UP: stationary-scene LIO tuning (iVox/ESKF) worth a look before field runs.
+
+## Joint GUI session (owner at kc-m4, logged via /tmp/gui.log) — live-view freeze SOLVED
+- Owner ran Capture on fresh 0.2.1 w/ stderr logging: capture + auto-detect + recording
+  all work; live view freezes at the moment it fills.
+- ROOT CAUSE (proven, 1400 log hits): engine page store (64 x 1M pts) fills — live
+  preview alone fills it pre-Start at 200k pts/s — then drops every new point forever.
+  No eviction policy = display dead-ends; recording path unaffected (owner's data
+  complete). Fix in flight: live-mode oldest-first page eviction + status seam.
+- SECOND BUG (proven): GUI recorded into ~/Applications/LidarScan.app/Contents/MacOS/
+  record-cycles/ — the --record-cycles evidence hook persisted its project root into
+  QSettings. Owner data RESCUED to ~/Documents/LidarScan Projects (Scan-001 19-16 +
+  Scan-011 20-54). Fix in flight: hooks never persist settings; root self-heals.
+- Android relevance: 24-page phone cap hits the same dead-end sooner => likely the
+  "barely mapping" symptom on the Pixel; insight relayed to the round-6 Android agent.
+- Process rule adopted: no tests on kc-m4 while the owner is using it.
