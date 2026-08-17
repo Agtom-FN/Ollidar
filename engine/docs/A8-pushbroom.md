@@ -578,6 +578,31 @@ stream chunk type for `StreamId::kPoseAr` would also let a replayed `.lscan`
 re-assemble without the app — the assembler is already replay-clean (§3.6), it
 just needs the poses to come back off disk.
 
+> **ROUND 8 (0.5.0) — done, and it was load-bearing.** The paragraph above
+> reads like a convenience; it was not. A COIN-D6 is a 2D lidar and the third
+> dimension of its scan is *entirely* the trajectory, so a `.lscan` without
+> poses is a container from which the 3D result can never be rebuilt by
+> anyone. The owner's report — *"when i check the recording, it still show a
+> 2D scan"* — was exactly this. Landed:
+>
+> * `Engine::push_pose()` now writes `ChunkType::kPoseAr` chunks (68-byte
+>   `lscan::PoseChunkRecord`, ~2 KB/s at ARCore's 30 Hz);
+> * `lscan::ReplaySource` replays them through `push_pose()`
+>   (`ReplayConfig::replay_poses`, default on);
+> * the resolved cloud is cached as `kPointsXyzRgba` in `streams/map.bin`
+>   while the pushbroom is running, so Review opens without a re-resolve;
+> * `FileRecordWriter::set_mount_calibration()` puts `phone_from_lidar` in the
+>   manifest, which is what makes the container self-contained;
+> * `post::D6ResolvePipeline` (`slam/post/d6_resolve.h`) is the offline
+>   re-assembly this paragraph describes, driving the real `D6Driver`,
+>   `ExternalPoseSource` and `D6PushbroomAssembler` rather than a
+>   reimplementation.
+>
+> Proof: `tests/test_round8_d6_reopen.cpp` — a recorded walk, reopened cold
+> off disk, comes back at 0.052 cm plane-fit RMS and **bit-identical** to the
+> live pass, with a control showing the same bytes minus the poses produce
+> zero points.
+
 ---
 
 ## 8. Tests

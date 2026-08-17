@@ -15,6 +15,7 @@ import com.lidarscan.app.ui.components.ScanChip
 import com.lidarscan.app.ui.components.ScanDims
 import com.lidarscan.app.ui.components.SecondaryPill
 import com.lidarscan.app.ui.theme.Ember
+import com.lidarscan.app.ui.theme.ScanTeal
 import com.lidarscan.app.ui.theme.SemWarn
 import com.lidarscan.app.ui.theme.ViewportGround
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -28,6 +29,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -36,6 +38,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -203,15 +206,53 @@ fun ReviewScreen(
                     modifier = Modifier.align(Alignment.BottomStart).padding(12.dp),
                 )
             } else {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(
-                        "No cloud in memory.\n\nRun Post-process on this project first — the review viewer shows what " +
-                            "processing produced, and a processed cloud is not written into the .lscan (nothing in the " +
-                            "engine writes one yet), so it lives only for this app session.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                // ROUND 8 (owner item 27c). This used to be one paragraph
+                // saying "run Post-process first", which was wrong twice over
+                // for the sensor the owner actually uses: post-processing
+                // REFUSED a D6 project, and the reason it refused was that the
+                // trajectory was never recorded. Opening a saved D6 scan now
+                // shows the 3D map without being asked, and the only case that
+                // still shows text is the one that genuinely cannot be fixed.
+                Box(
+                    Modifier.fillMaxSize().testTag("reviewLoadState"),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier.padding(28.dp),
-                    )
+                    ) {
+                        val busy = state.load == ReviewLoad.PROBING ||
+                            state.load == ReviewLoad.LOADING_RECORDED ||
+                            state.load == ReviewLoad.RESOLVING
+                        if (busy) {
+                            CircularProgressIndicator(
+                                color = ScanTeal,
+                                strokeWidth = 2.dp,
+                                modifier = Modifier.size(28.dp),
+                            )
+                            Spacer(Modifier.height(14.dp))
+                        }
+                        Text(
+                            text = when (state.load) {
+                                // Named rather than a generic "Loading…": the
+                                // three paths have very different latencies
+                                // (a file read vs. a full re-resolve) and an
+                                // operator who knows which one is running does
+                                // not think the app has hung.
+                                ReviewLoad.PROBING -> "Opening this scan…"
+                                ReviewLoad.LOADING_RECORDED -> "Loading the 3D map recorded with this scan…"
+                                ReviewLoad.RESOLVING ->
+                                    "Rebuilding the 3D map from this scan's returns and trajectory…"
+                                else -> state.loadMessage ?: "No cloud in memory."
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (state.load == ReviewLoad.NO_TRAJECTORY) {
+                                SemWarn
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    }
                 }
             }
         }

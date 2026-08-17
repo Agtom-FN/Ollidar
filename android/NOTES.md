@@ -4999,3 +4999,592 @@ bench hour would settle, in order:
 The mount-bracket question ROUND 5 AUDIT §4 flagged — whether the physical
 bracket matches `cadNominal`'s premise — is now much less load-bearing than it
 was, because the re-zero measures the difference and (as of §2) keeps it.
+
+---
+
+## ROUND 8 — THE RECORDING IS THE 3D MAP
+
+Scope: `android/**` plus **engine changes** (this round's headline was an
+engine seam, and the brief said so). VERSION 0.4.0 → **0.5.0** (versionCode
+50000). Triggered by one sentence from the owner, on a real Pixel 8 Pro +
+COIN-D6 session:
+
+> "When i check the recording, it still show a 2D scan. i need a 3d mapping."
+
+and, mid-round, by two more:
+
+> "i need a live 3d mapping too"
+> "will the follow still work? the camera is facing forward while the scanning
+> is the two side"
+
+Unlike every previous round, this one had **the owner's actual data**: a sealed
+0.4.0 export (`captures/scan-015-pixel-0.4.0.lscan/`, 191,381 points over
+26.3 s) and the capture log that produced it
+(`captures/pixel_capture_log_2026-08-18.txt`). Both are checked in, and three
+of the findings below were measured out of them rather than reasoned about.
+
+Verdicts first.
+
+| # | Item | Verdict |
+| --- | --- | --- |
+| 27 | Recorded D6 scans must BE 3D | **Root cause was the seam ROUND 7 named. Fixed end to end, proved on the reopened project** |
+| — | The Projects thumbnail was 50 % raw 2D fan | **Found by measuring the owner's own export. Fixed, pinned against that file** |
+| — | `sensors: []` and `mountCalibration: null` in every `.lscan` ever written | **Two engine bugs, both fixed — `add_sensor()` had existed since A5 with no caller** |
+| 28 | Capture layout, live view >= 60 % | see §7 |
+| 29 | Display defaults | see §7 |
+| 30 | "Set mount reference look not working" | **Root cause found in the owner's log: the gate refused 7/7 on 0.4.0** — see §7 |
+| 31 | Post-capture flow | see §7 |
+| — | Live 3D map on by default for D6; third-person Follow | see §7 / §8 |
+
+---
+
+### 1. WHY A SAVED SCAN WAS NOT 3D — and it was not one bug, it was three
+
+ROUND 7 §9 item 1 named the first one precisely and then, correctly, declined
+to fix it inside a bug-fix round. It is this:
+
+```cpp
+// engine/src/core/engine.cpp, before ROUND 8
+Status Engine::push_pose(const Pose& pose) {
+  const Status s = impl_->poses->push_pose(pose);   // the interpolator
+  if (!s.ok()) return s;
+  publish_pose_(pose);                              // the event bus
+  return kOkStatus;                                 // ...and nothing else
+}
+```
+
+`ChunkType::kPoseAr` was **defined** (`lscan.h:76`), **mapped**
+(`lscan.cpp:142`) and had **no writer anywhere**. Record-always — Tech Spec §3
+key rule 2, "every raw stream hits the recorder before any processing" — was
+true of every stream except the one that matters most.
+
+It matters most because **a COIN-D6 is a 2D lidar**. The third dimension of a
+D6 scan is *entirely* the phone's trajectory: A8 resolves each return as
+`world_from_lidar(t) = world_from_phone(t) · phone_from_lidar`. So a D6
+`.lscan` holding the raw UART bytes and not the poses has recorded a pile of
+range-and-angle pairs from which **the 3D result can never be rebuilt by
+anyone** — not by a later version of this app, not by the desktop shell, not
+by the cloud worker. The assembled cloud lived only in the live `PageStore`
+and died with the session.
+
+That is the owner's sentence, exactly. There was nothing three-dimensional on
+disk to show him.
+
+**The second bug** was that nothing on the Android side would have drawn it
+even if it had been there. `ReviewViewModel.cloudSource` is
+`ProcessingCloudSource` — the processing engine's `PageStore` — and the only
+thing that ever filled that store was a post-process job, which **refused a D6
+project** (ROUND 7 §6 made the refusal honest; it could not make it work).
+So Review was an empty box with a paragraph telling the operator to run a
+button that would not work.
+
+**The third bug is the one he was actually looking at**, and it was found by
+measuring his export rather than by reading code. `processed/preview.f32` —
+the file the Projects tab draws a scan's tile from:
+
+```
+  4,040 points
+  2,027 with z == 0.0f EXACTLY   (50.2 %)
+  2,013 with z from -4.90 to +0.10 m
+      0 non-finite
+```
+
+Exactly half. Not corruption — every value is a perfectly good float, which is
+why four rounds of tests missed it. It is **two streams superimposed**. A D6
+capture with the pushbroom running holds two point streams in one `PageStore`
+(INT24-wiring.md §2): `SCAN_STREAM_LIDAR_D6`, the driver's raw sensor-frame
+preview whose returns lie in the lidar's own scan plane **by construction**
+(hence `z == 0` to the bit), and `SCAN_STREAM_SLAM_MAP`, the resolved room.
+The live renderer has filtered between them since B3 (`StreamFilter`).
+`writeProjectPreview` never did. So the tile a user judges a scan by was the
+3D room with a flat 2D disc drawn through it at 1:1 — which, at 108 dp,
+reads as a flat 2D scan.
+
+### 2. THE ENGINE — record-always finally applies to the trajectory
+
+Five additive changes, no ABI break (the C ABI is untouched; `SCAN_ABI_VERSION`
+stays 7 — nothing new needed to cross it, because every consumer that needed
+the new capability links the C++ API directly, as B4/B3/B6 already do).
+
+1. **`Engine::record_pose_()`** — `push_pose()` writes a `kPoseAr` chunk into
+   the active recording. After the interpolator accepts it (a pose it rejects
+   is not part of the trajectory and recording it would make a replay diverge
+   from the capture) and before the event bus hears about it (whatever a
+   consumer reacts to must already be durable — the same ordering
+   `push_serial_bytes` uses). Locked on the same `record_m` the D6 raw path
+   takes, because the ARCore pump thread and the USB reader thread genuinely
+   do write concurrently.
+
+   **Payload**: a fixed 68-byte little-endian record —
+   `lscan::PoseChunkRecord` + `encode_pose_chunk`/`decode_pose_chunk`
+   (position f64[3], orientation f64[4], two sigmas f32, source/quality/
+   tracking_lost/reserved u8). The stamp is NOT in the payload: a chunk
+   already carries `t_mono_ns` and duplicating it would let the two disagree.
+   The floats are written through shift-and-mask like the integers, not
+   `memcpy`'d, so the file is byte-identical on a big-endian host — the format
+   contract says "all little-endian", and a chunk that is only correct because
+   x86 and arm64 happen to agree is not a format.
+
+   **Cost**: 68 B × 30 Hz = **2.0 KB/s**, 7.3 MB over a one-hour walk, against
+   the ~200 KB/s of raw D6 UART the same session already writes. Under 1 %.
+
+2. **The resolved cloud is cached into the container.**
+   `stream_of(ChunkType::kPointsXyzRgba)` returned `kUnknown` — A7-post.md §8
+   item 2 and ROUND 7 §9 item 3 are the same gap from two directions — so a
+   processed cloud could not be written into a `.lscan` at all. It now maps to
+   `StreamId::kSlamMap`, which gets its own file, `streams/map.bin`.
+
+   Its own file, not `lidar.bin`, for a reason that is easy to miss: replaying
+   `kD6Raw` means walking `lidar.bin`, and interleaving a 16-byte-per-point
+   vertex stream into it would make every replay read and CRC tens of
+   megabytes it immediately discards.
+
+   The write is deliberately narrow — **only while the pushbroom is on**, i.e.
+   only for a D6 session. At the COIN-D6's ~3,600 pts/s that is 57 KB/s
+   (~8 % on top of the raw UART) and it makes "open a saved scan" instant
+   instead of a re-resolve. A Mid-360's 40k pts/s map would cost 640 KB/s for
+   a map that A7 will discard and rebuild better; that trade does not hold and
+   is not taken. **It is a cache, not the source of truth**: Process
+   re-resolves from `kD6Raw` + `kPoseAr` and overwrites it, and deleting
+   `map.bin` costs speed, never data.
+
+3. **`FileRecordWriter::set_mount_calibration()`** — `"mountCalibration"` had
+   been a reserved `null` since A5, and the owner's real manifest shows what
+   that costs: without `phone_from_lidar` a D6 project is **not
+   self-contained**, because the returns are in the lidar's own frame and
+   nothing else says where that frame sat on the rig. `Engine::start_session`
+   now writes whatever `set_mount_extrinsics()` last accepted.
+
+4. **`sensors: []` — in every `.lscan` this engine has ever written.**
+   `add_sensor()` has existed since A5 and **nothing ever called it**. Found in
+   the owner's manifest, not in a test. `start_session` now enumerates the
+   registered devices into it. That is not cosmetic: it is how a reader decides
+   what a container holds without decoding it.
+
+5. **`ReplaySource` replays the trajectory too.** `kPoseAr` chunks dispatch to
+   `Engine::push_pose()` rather than `push_serial_bytes()` — a different entry
+   point, so they ride *alongside* `cfg.chunk_type` rather than instead of it.
+   `ReplayConfig::replay_poses` defaults to **true**, and that is provably not
+   a behaviour change: nothing wrote a `kPoseAr` chunk before ROUND 8, so no
+   `.lscan` in existence contains one.
+
+### 3. THE OFFLINE PIPELINE — `post::D6ResolvePipeline`
+
+New: `engine/include/scanengine/slam/post/d6_resolve.h` +
+`engine/src/slam/post/d6_resolve.cpp`.
+
+**Why it is not "A7 with a D6 branch."** The two pipelines share a name and
+nothing else. A7 *estimates* a trajectory from lidar and IMU, so its expensive
+stages (loop detection, pose-graph optimization, re-integration) exist to make
+that estimate better. A D6 estimates nothing: its trajectory was **measured**
+by ARCore during the walk and is now on disk. What is left is the arithmetic
+A8 already owns, per point, with the pose interpolated to that point's own
+timestamp. No graph, no second pass — it runs in about the time it takes to
+read the file.
+
+**It drives the production classes, not a reimplementation**: the real
+`D6Driver` (so ROUND 7's per-byte time slicing — the fix that made walls
+straight — applies identically offline), the real `ExternalPoseSource` (same
+LERP/SLERP, same staleness and tracking-loss gates) and the real
+`D6PushbroomAssembler`. Nothing here re-derives geometry; if it did, the
+offline result could drift away from the live one and nobody would notice.
+That is also what makes "replay == capture" true of a D6 **cloud** rather than
+only of its bytes.
+
+**Routing is read from the container, not declared by the caller.**
+`jobs::run_post_process()` calls `post::lscan_is_d6_project()` and picks the
+pipeline. A `.lscan` already knows which sensor wrote it — the chunk types say
+so — and making the caller state it would add a way for the two to disagree,
+whose failure mode is a job running the wrong pipeline and reporting
+"not found". `PostProcessParams` gains an optional `d6_mount[16]`; unset, the
+pipeline reads the extrinsic out of the container's own manifest.
+
+**A project with no poses fails, in words.** `ScanError::kNotFound` with a
+message naming the version, and `stats().poses_read == 0` as the
+machine-readable half. It never silently resolves through identity: a D6
+mounted at ~130° to the phone (the owner's rig) resolved through identity
+produces a *confidently wrong room*, which is worse than a refusal.
+
+`post::load_recorded_cloud()` is the Review fast path — the cached cloud, no
+decode, no interpolation. A container without one is not an error; it returns
+`kOk` with 0 points and the caller falls through to the re-resolve.
+
+### 4. THE PROOF — `engine/tests/test_round8_d6_reopen.cpp` (6 cases)
+
+Records a synthetic walk through a **real `Engine` with a real
+`FileRecordWriter`**, seals the container, throws the engine away, and reopens
+the directory from disk. Same gait model, same mount and same plane fit as
+ROUND 7's wall test — the difference is that this one goes through a file.
+
+Measured, on the REOPENED project:
+
+| | |
+| --- | --- |
+| chunks sealed | 720 `kD6Raw`, **120 `kPoseAr`**, 1 `kPointsXyzRgba` |
+| points resolved | 2,456 |
+| **wall plane-fit RMS** | **0.052 cm** (bar: 2 cm) |
+| extent along the walk | 4.05 m (a 4 s walk at 1 m/s) |
+| extent floor-to-ceiling | 2.84 m |
+| **points at exactly z == 0** | **0** (a raw fan gives 100 %; the owner's preview gave 50 %) |
+| live vs reopened | **0 mismatched points** of 2,456 |
+| live vs replayed | **0 mismatched points** |
+
+and the two falsifiable controls, which matter as much:
+
+* **delete `poses_ar.bin`** (i.e. make it a pre-0.5.0 capture) → the resolve
+  refuses with `kNotFound`, `poses_read == 0`, and a message naming 0.5.0.
+* **replay the bytes with `replay_poses = false`** → 0 world points, 2,456
+  returns dropped for want of a pose. Same recording, same assembler, no
+  geometry: *the trajectory is the geometry*.
+
+Plus the manifest assertions that came from the owner's file: `sensors` is not
+`[]`, it names `coin-d6`; `mountCalibration` is present and round-trips to the
+matrix that was applied.
+
+### 5. ANDROID — opening a saved scan (item 27c)
+
+`ProcessingEngine::probe_project()` reads what a container actually holds
+(D6 / poses / cached map / mount) **off the bytes**, not off the app's sidecar
+manifest — a project can arrive by import, transfer bundle or ROUND 6's
+manifest recovery, and the question being asked is precisely "was this
+recorded by a version that stored poses".
+
+`ReviewViewModel` then takes one of three paths and **says which one it is
+on**, because they have very different latencies and an operator who knows
+which is running does not think the app has hung:
+
+1. `LOADING_RECORDED` — read the cached cloud. A file read.
+2. `RESOLVING` — re-resolve from returns + trajectory + extrinsic. Seconds,
+   and the room draws *while it is being built* (the points poll flips to
+   READY on the first page, at 250 ms).
+3. `NO_TRAJECTORY` — the honest one, and the exact wording the brief asked
+   for: *"Recorded before trajectory storage — showing raw sensor view"*,
+   followed by why it can never be fixed for that file and what changed.
+
+The mount precedence is: the project's measured calibration, else its stored
+trim composed onto the CAD nominal, else (null) the container's own manifest.
+The app's is preferred because the operator's persisted re-zero is fresher
+than a manifest written when the capture started.
+
+`hasProcessedCloud()` now also counts a project opened from its cache, so
+Colorize and Export gate on "is there a cloud" rather than "did a job run" —
+they read the same `PageStore` either way.
+
+New JNI: `nativeProcProbeProject` (a bitfield, one call, decoded by
+`ProjectProbe.of` — the Review screen makes it on every open),
+`nativeProcOpenRecordedCloud`, `nativeProcClearCloud`, and
+`nativeProcSubmitPostProcess` gains a nullable 16-double mount whose length is
+**checked, not assumed** (a 16-double contract crossing JNI is exactly where a
+silent truncation would go unnoticed).
+
+### 6. THE THUMBNAIL — `core/render/PreviewSanity.kt`
+
+Two fixes, because the preview is written once per capture and read on every
+list scroll for the life of the project, so a bad one is effectively permanent.
+
+* **The cause**: `writeProjectPreview` now mirrors `StreamFilter.MAPPED_ONLY`
+  exactly, fallback included — prefer the resolved stream, fall back to raw
+  only when no mapped page exists at all (a Record-only session genuinely has
+  nothing else, and a blank tile is worse than an honest sensor-frame one).
+  `PointCloudSource.samplePoints()` gained a stream predicate and
+  `streamsPresent()`; asking the store what it HAS rather than inferring from
+  the `liveSlam`/`pushbroomActive` flags is deliberate — those say what was
+  requested.
+* **The guard**: a verdict on the numbers, applied on write *and* on read.
+  Non-finite values, implausible extents (the uninitialised-memory case: ~1e38
+  values are finite and pass every naive check), and — the one that matters —
+  more than a third of points sitting at exactly `z == 0`, which is the raw
+  fan's signature. It runs on read too because 0.4.0-era previews are already
+  on people's phones, including the owner's, and this app cannot rewrite them;
+  such a tile falls back to the seeded placeholder, which is visibly
+  not-your-data (dimmer, no trajectory head).
+
+`PreviewSanityTest` (7 cases) is a **characterisation test against the checked-in
+real export**: it asserts 4,040 points, 2,027 exact zeros, 0 non-finite, and
+that the shipped file is refused with a reason naming the raw fan. Plus the
+required false-positive control — 15 % of points on the floor plane must NOT
+trip the gate, because a thumbnail is not worth a false alarm.
+
+(One correction to the round's own brief, stated because it changed what was
+looked for: the export's preview was reported as containing "garbage floats,
+extents ~6.4e38". It does not. That reading was little-endian;
+`DataOutputStream` writes big-endian, and read correctly every value is finite
+and in a ±3 m room. The real defect was subtler and worse — half the points
+were the wrong stream.)
+
+### 8. THE FOLLOW CAMERA — "the camera is facing forward while the scanning is the two side"
+
+The owner is right, and the observation is sharper than it looks. A COIN-D6 is
+a vertical fan on the back of the phone, **across** the direction of travel: it
+paints a ring around the operator — left wall, ceiling, right wall, floor — and
+**never anything ahead**. A first-person forward-facing follow camera would
+frame empty space, and the FOLLOW mode that existed was not a follow at all:
+it was a fixed offset from the whole cloud's bounding-box centroid, so it
+zoomed steadily out as the walk grew and stopped following anything.
+
+`core/render/FollowCamera.kt` (new, pure `:core`, no Android or Filament types
+— same reasoning `calib/MountTrim.kt` gives for being pure) is a **third-person
+chase camera**: behind along the negative walk heading, above, pitched down
+35°, looking at the rig, distance fitted to the RECENT geometry only.
+
+The four choices that matter, with their numbers:
+
+* **Heading comes from the trajectory, never from phone yaw.** The heading is
+  the chord between two halves of a **1.0 s window — exactly two gait cycles at
+  ROUND 7's 2 Hz** — so the periodic sway averages to zero and never enters the
+  heading at all. Measured wobble: **0.062° peak-to-peak** on a gait trail.
+  Below a 0.05 m baseline (a tenth of walking pace) it **holds the last
+  heading** rather than dividing by a near-zero displacement.
+* **Smoothing time constants** are chosen against the gait, not by feel:
+  position τ = 0.5 s gives a first-order gain of 0.157 at 2 Hz, turning ±3 cm
+  of bob into ±4.7 mm. Measured: lateral **13.95 → 1.44 mm RMS (9.7×)**,
+  vertical **20.93 → 3.58 mm (5.85×)**. Heading τ = 0.6 s is deliberately
+  slower than position (rotation is more nauseating than translation); a 90°
+  corner is 95 % converged in 1.8 s. Distance τ = 1.0 s is slowest, so the view
+  does not pump in and out at every doorway.
+* **A velocity lead term** cancels the low-pass's own `τ·v` steady-state lag
+  exactly — without it the camera trails the rig by half a metre at walking
+  pace; with it the target error is 16 mm. The velocity estimate is the same
+  half-window chord, so it carries no gait energy either.
+* **Distance is fitted to recent geometry**, `d = R / sin(vFov/2)`, clamped to
+  1–8 m. The clamp is what keeps this a *recent* fit instead of the old
+  whole-cloud zoom-out: measured flat at 5.23 m across a 60 m walk.
+  **Vertical** FoV, not `min(vertical, horizontal)`, because the phone is
+  portrait and horizontal containment would push the camera ~3× further back.
+
+`FollowCameraTest` — 14 cases, including the ones that matter most: the
+degenerate set (empty trail, single pose, stationary rig, non-finite input, a
+rewound clock, a long stall) must all produce a finite camera and never a NaN
+or a jump cut, and a stopped rig must hold its heading rather than spin.
+
+**World frame: Y-up, stated explicitly rather than assumed.** The runtime frame
+is ARCore's — `publishPose` pushes `camera.pose` verbatim, so `PointVertex`'s
+"session local metric frame" *is* ARCore's world frame, and `TrajectoryTrail`
+and the existing ORBIT up vector agree. (The engine's +z-up appears only in
+`test_pushbroom.cpp`'s synthetic wall, which is test-fixture geometry, not a
+device frame.) `FollowCamera` takes the axis as configuration and never
+guesses.
+
+3D orbit is untouched and remains the free camera.
+
+### 7. THE CAPTURE SCREEN — items 28, 29, 30, 31
+
+#### 7.1 Item 30: "Set mount reference look not working"
+
+It was not "look". **The gate was refusing every attempt.** The owner's log,
+on the ROUND 7 build:
+
+```
+00:50:43 [ar] mount re-zero refused: MOVING
+00:51:05 [ar] mount re-zero refused: MOVING
+00:51:16 [ar] mount re-zero refused: MOVING
+00:51:23 [ar] mount re-zero refused: MOVING
+00:51:24 [ar] mount re-zero refused: MOVING
+00:51:25 [ar] mount re-zero refused: MOVING
+00:51:26 [ar] mount re-zero refused: MOVING
+```
+
+Seven attempts in 44 seconds and **not one success on that build** — and so
+scan-013, scan-014 and scan-015 all ran `trim=none`. (The successful re-zeros
+earlier in the same file are from an older build: the seal lines there have no
+`sections=` field, which ROUND 7 added, so the log spans two versions.)
+
+The old gate compared `spreadDeg = window.maxOf { deviation from mean }`
+against a single `MAX_SPREAD_DEG = 1.5` over a 1200 ms window — i.e. **every
+one** of ~37 consecutive ARCore frames had to land within 1.5° of the mean.
+One bad feature match, one footstep travelling up an arm, one post-
+relocalisation yaw correction vetoes the whole hold. It is not a steadiness
+test, it is a worst-frame test.
+
+Now two numbers instead of one:
+
+* `MAX_SPREAD_P90_DEG = 2.5` on the **p90** deviation — steadiness with the
+  top decile of VIO jitter excluded. Against the 0.47–0.82° *max* the 0.3.0
+  successes measured, a hold as good as the ones that already worked clears
+  this by 3×.
+* `MAX_SPREAD_OUTLIER_DEG = 6.0` on the **max** — the falsifiable half, which
+  is why relaxing the first number is safe. Motion is a trend, not a tail: a
+  rig carried at 12°/s puts its extremes ±6° from their own mean over a 1 s
+  window, so it still fails.
+* `WINDOW_MS` 1200 → 1000 and `MIN_SAMPLE_SPAN_MS` 800 → 700, so a steady hand
+  is done in ~1.5 s door to door. `MIN_SAMPLES` and the `NOT_TRACKING` gate are
+  untouched — those were never the problem.
+* `MountTrim.spreadDeg` keeps its ROUND 6 meaning (the worst frame) so old
+  field log lines and persisted JSON stay comparable; `spreadP90Deg` is added
+  alongside with a default, so a 0.4.0-persisted trim still decodes.
+
+**Refusals now carry their measurement**, in the log and on screen:
+
+```
+mount re-zero refused: MOVING p90=2.90deg max=5.10deg limit=2.50deg
+                              outlierLimit=6.00deg samples=31 spanMs=980
+```
+
+and the panel shows the numbers **plus what to do** ("Brace the phone against
+your body, hold still ~1 s") in a loud amber banner rather than a grey hint —
+the next field report arrives with its own diagnosis attached, which is the
+same principle ROUND 7 §2 applied to the trim's provenance.
+
+**The persistent state** (item 30c) is a `MountStateRow` that is part of the
+compact chrome rather than something behind a sheet:
+`MOUNT SET · 132.8° · 2 min ago`, or `NO MOUNT REF · CAD NOMINAL`. The age
+re-ticks off the existing 15 s provenance tick.
+
+**And one more bug found while proving item 30d.** `applyMountExtrinsic` sat
+inside `startArPipelines`, behind an `arController ?: return` — so a session
+with no camera controller recorded 2D and **logged nothing at all about it**.
+It moved into `startCapture`, and it now logs even when there is no engine
+handle, under a deliberately different verb
+(`extrinsic resolved (no engine handle): …`) so that a field log can never be
+read as "the engine is using this".
+
+#### 7.2 Item 28: the live view keeps >= 60 %
+
+`app/ui/capture/CaptureLayout.kt` (new, pure Kotlin, no Compose, JVM-testable)
+holds `MIN_VIEWPORT_FRACTION = 0.60f` and a dp band budget — mount row 46,
+chip row 46, transport 80, tab-bar clearance 86 = **258 dp of fixed chrome**
+— and it is *used*: `viewportMinHeightDp()` feeds the viewport's
+`heightIn(min = )`. The guarantee is then arithmetic rather than a hope,
+because the viewport is the column's only weighted child.
+
+Measured before: ~370 dp of fixed chrome at 800 dp, plus a pre-capture strip
+capped at 46 % — the live view could be **60 dp**.
+
+What was collapsed: the `BackBar` (the floating tab bar already goes to
+Projects), the RTK chip strip (now shown only when there is RTK to report),
+the `PERFORMANCE` label and its three preset buttons, the whole pre-capture
+strip, and the four-cell stat panel with its spacers (~80 dp) which is now one
+mono line inside the transport row. In their place: one mount row and one chip
+row — `[Capture · Optimal] [Display] [Diag]` — plus a new capture-settings
+sheet.
+
+**Measured after, on the emulator in the connected state:** the viewport spans
+1350 of 2000 px = **67.5 %** (`screenshots/round8/05-capture-connected.png`).
+
+Two honest limits, both documented in the file rather than in a commit
+message. The compact form is keyed off **connected**: a disconnected Capture
+screen's job is the connect flow and it needs the room, so the auto-detect
+line, manual entry and the mount explanation stay expanded there
+(`screenshots/round8/04-capture-mount-state.png`). And the 60 % rule cannot
+hold below ~660 dp of portrait height — the transport row plus the 86 dp
+tab-bar clearance exceed 40 % on their own — so `REFERENCE_SCREEN_HEIGHT_DP`
+names that floor and below it the viewport takes everything left over (~57 %
+at 640 dp) rather than over-constraining the column and measuring the record
+button to zero.
+
+#### 7.3 Item 29: display defaults
+
+`DisplayParams.captureDefaults()`: colour mode **INTENSITY**, point size
+**1.0 px**, gamma **1.0**, brightness **1.0**; 30 fps was already OPTIMAL's
+live refresh. `PerformancePresets.displayDefaultsFor()` exposes it per preset
+and returns the same values for all of them — presets own *performance*, not
+taste (ROUND 6 item 22).
+
+The owner's `project.json` recorded `"pointSize": {"fixedPx": 2.5}`, which is
+what became 1.0 — and reading that same object turned up a bug nobody had
+asked about: it also said `"mode": "ADAPTIVE"`. The ViewModel built
+`PointSizeParams(fixedPx = size)` and left `mode` on its default, so a renderer
+honouring the mode never reads `fixedPx` at all and **the point-size slider had
+no defined effect**. Mode is now explicitly `FIXED_PIXELS`.
+
+One clarification against the brief's wording: "colormap = INTENSITY" is a
+colour *mode*, not a colormap. `ColorMode.INTENSITY` is set; `Colormap` stays
+SPECTRUM.
+
+#### 7.4 Item 31: the post-capture flow
+
+`CaptureViewModel.sealedProjectId` is a `SharedFlow<String>` emitted **only on
+the verified seal path** (the one ROUND 6 made re-read the project back through
+the store). `CaptureRoute(onScanSealed = )` hands it to `LidarScanApp`, which
+sets `activeProjectId` and switches to Projects; `ProjectsListRoute` takes a
+new `initialSelectedId` and adopts it **once**, keyed on the id — keyed rather
+than unconditional because the operator must stay in charge afterwards, and a
+card that springs back open on every recomposition is worse than one that never
+opened.
+
+The Capture tab's re-arm now also clears the scan name, zeroes the stats and
+resets the section count, so returning to it gives a fresh auto-name and a
+ready Start. Connection, auto-connect state, preview source, preset, display
+params and **the mount trim** are deliberately untouched — re-zeroing between
+two scans of the same room is exactly what ROUND 7 §2 fixed.
+
+#### 7.5 The live 3D map, and the live view during a D6 capture
+
+* `PerformancePresets.liveMapDefault(preset) = preset != LIGHT` — on by
+  default in every preset but LIGHT, now asserted for every preset × tier ×
+  display-ceiling combination rather than being an emergent property.
+* `_cameraMode` defaults to `FOLLOW` for a D6 capture (ORBIT for a replay
+  session, which has no rig to follow).
+* **The live map does render with `trim=none`**, which the round brief asked to
+  be checked. `applyMountExtrinsic` resolves
+  `measured ?: trim?.composedWith(nominal) ?: nominal`, so a null trim falls
+  through to the CAD nominal, the extrinsic is still pushed,
+  `pushbroom_enable` still runs, `_pushbroomActive` goes true and
+  `liveMapRequested = liveMapEnabled && (liveSlam || pushbroomActive)` is true.
+  The owner's own log is the proof —
+  `extrinsic applied: source=nominal trim=none pushbroomEnabled=true` — and it
+  is now pinned by a test rather than inferred.
+* Related, and worth stating because the brief read it the other way:
+  **`liveSlam=false` under `preset=OPTIMAL` is not a bug and is not "live map
+  off"**. `liveSlam` is the Mid-360's LIO switch; a D6's live map is the
+  pushbroom, and the same log line's own suffix says so.
+
+### 9. VERIFICATION
+
+```
+$ cmake --build engine/build/a16 --target scanengine_tests
+$ ./engine/build/a16/scanengine_tests            # 535 cases, 0 failures (7 skipped)
+$ ctest --test-dir engine/build/a16 -LE "sim|sim-rtk"   # 5/5 passed (incl. capi smoke)
+$ cmake --build desktop/build                    # BUILD SUCCESSFUL (engine changes are additive)
+$ ./gradlew :core:test                           # 405 tests, 0 failures (5 skipped, pre-existing)
+$ ./gradlew :app:testDebugUnitTest               # 55 tests, 0 failures
+$ ./gradlew :app:assembleDebug                   # BUILD SUCCESSFUL
+$ ./gradlew :app:connectedDebugAndroidTest       # b4_test AVD, API 34 — 14 tests, 0 failures
+```
+
+* **Engine — 535 cases** (was 529). New: `test_round8_d6_reopen.cpp` (6) — the
+  sealed container's contents, the reopened 3D room, the recorded-map fast
+  path, and the three controls.
+* **`:core:test` — 405** (was 370). New: `FollowCameraTest` (14),
+  `MountTrimGateTest` (10), `PreviewSanityTest` (7), plus `DisplayParamsTest`
+  (+2) and `PerformancePresetTest` (+2).
+* **`:app:testDebugUnitTest` — 55** (was 36). New: `CaptureLayoutTest` (8),
+  `ProjectProbeTest` (6), `CaptureRound8FlowTest` (5).
+* **Emulator — 14/14** (was 12). New: `ReopenedD6ProjectIs3dTest` (2) — the
+  reopened-project-is-3D proof against the real native engine, and the
+  pre-0.5.0 control.
+
+**Screenshots** (`android/screenshots/round8/`): `01-projects.png` /
+`02-selected.png` (a recorded 0.5.0 D6 project listed and selected),
+`03-review-3d.png` (**Review drawing the resolved 3D cloud, 2,456 pts** — the
+answer to owner item 27), `04-capture-mount-state.png` (the Capture tab
+disconnected, i.e. the setup state), `05-capture-connected.png` (the connected
+state, **viewport 67.5 % of screen height**, settings collapsed to three
+chips, Orbit/Follow on the viewport).
+
+The Review screenshot was produced by pushing a container the engine test
+itself recorded (`test_round8_d6_reopen.cpp`'s walk) onto the emulator and
+opening it in the app — i.e. the bytes in that screenshot are the same bytes
+the 0.052 cm plane fit was measured on.
+
+### 10. EXPLICITLY NOT VERIFIED
+
+Still no D6, no Mid-360 and no ARCore device here, so:
+
+1. **The mount gate on a real hand.** The new thresholds are derived from the
+   owner's own logged numbers (7/7 refusals at the old limit; 0.47–0.82° on the
+   holds that used to pass) and tested against a jitter model, not against a
+   hand. The first field session either passes in ~1.5 s or arrives with
+   `p90=`/`max=`/`limit=` in the log, which is the point of putting them there.
+2. **The `MOUNT SET · … ` chip could not be screenshotted.** It renders only
+   for a connected COIN-D6 with pose tracking, which an emulator cannot
+   provide; it is covered by unit tests on `chipLabel` and by
+   `CaptureRound8FlowTest`, not by a picture.
+3. **The follow camera on a real walk.** Its smoothing is measured against the
+   ROUND 7 gait model (9.7× lateral, 5.85× vertical), which is a model.
+4. **Re-resolving the owner's own scan-015 is impossible and always will be** —
+   it has no trajectory. The first 0.5.0 capture is the one that closes item 27
+   on real returns rather than on synthetic ones.
+5. **Recording overhead on a phone.** The map cache adds ~57 KB/s and the pose
+   stream ~2 KB/s by construction; neither has been measured against a real
+   phone's storage under thermal load.

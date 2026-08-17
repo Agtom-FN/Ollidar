@@ -319,8 +319,41 @@ object ScanEngineNative {
     external fun nativeProcDestroy(handle: Long)
     external fun nativeProcLastError(handle: Long): String
 
-    /** Returns the job id, or 0 on a submit-time refusal ([nativeProcLastError] says why). */
-    external fun nativeProcSubmitPostProcess(handle: Long, lscanDir: String): Long
+    /**
+     * Returns the job id, or 0 on a submit-time refusal ([nativeProcLastError] says why).
+     *
+     * ROUND 8: [mountPhoneFromLidar] is the ROW-MAJOR 4x4 `phone_from_lidar`,
+     * or null for "read it out of the container's own manifest". It is ignored
+     * for a Mid-360 project (A7's pipeline estimates its own trajectory) and
+     * load-bearing for a COIN-D6 one, whose returns are range/angle pairs in
+     * the lidar's own frame and are not geometry until that matrix is applied
+     * — see `engine/include/scanengine/slam/post/d6_resolve.h`.
+     */
+    external fun nativeProcSubmitPostProcess(
+        handle: Long,
+        lscanDir: String,
+        mountPhoneFromLidar: DoubleArray?,
+    ): Long
+
+    /**
+     * ROUND 8 (owner item 27c) — what a `.lscan` on disk actually contains,
+     * read from the bytes rather than from the app's sidecar manifest.
+     *
+     * A bitfield, decoded by [ProjectProbe.of]. One JNI call because the Review
+     * screen makes it on every open.
+     */
+    external fun nativeProcProbeProject(handle: Long, lscanDir: String): Long
+
+    /**
+     * Loads the container's CACHED resolved cloud (the `kPointsXyzRgba` chunks
+     * a 0.5.0+ capture writes) into the processing engine's PageStore, clearing
+     * whatever project was there before, and returns the point count. 0 means
+     * there is no cache — the caller should run a post-process instead.
+     */
+    external fun nativeProcOpenRecordedCloud(handle: Long, lscanDir: String): Long
+
+    /** Retires every page in the processing engine's store. */
+    external fun nativeProcClearCloud(handle: Long)
 
     /**
      * @param chainFrom a finished post-process job whose `PageStore` is the

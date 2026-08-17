@@ -137,13 +137,62 @@ Java_com_lidarscan_app_engine_ScanEngineNative_nativeProcLastError(JNIEnv* env, 
 
 // --- jobs --------------------------------------------------------------------
 
+// ROUND 8: `mount_phone_from_lidar` may be null (or the wrong length), which
+// means "read the extrinsic out of the container's own manifest". A D6 project
+// resolved through the wrong extrinsic produces a confidently wrong room, so
+// the length is checked rather than assumed — a 16-double contract crossing
+// JNI is exactly where a silent truncation would go unnoticed.
 JNIEXPORT jlong JNICALL
-Java_com_lidarscan_app_engine_ScanEngineNative_nativeProcSubmitPostProcess(JNIEnv* env, jclass,
+Java_com_lidarscan_app_engine_ScanEngineNative_nativeProcSubmitPostProcess(
+    JNIEnv* env, jclass, jlong handle, jstring lscan_dir, jdoubleArray mount_phone_from_lidar) {
+  auto* p = HandleOf(handle);
+  if (p == nullptr) return 0;
+  const std::string dir = ToStdString(env, lscan_dir);
+  if (mount_phone_from_lidar == nullptr || env->GetArrayLength(mount_phone_from_lidar) != 16) {
+    return static_cast<jlong>(p->submit_post_process(dir, nullptr));
+  }
+  double m[16];
+  env->GetDoubleArrayRegion(mount_phone_from_lidar, 0, 16, m);
+  return static_cast<jlong>(p->submit_post_process(dir, m));
+}
+
+// ROUND 8 (owner item 27c). Returned as a long bitfield plus counts rather than
+// as an object, for the same reason MakePointPage exists on the other side of
+// this file: one JNI call and no per-field FindClass/GetFieldID, on a path the
+// Review screen hits every time a project is opened.
+//
+//   bit 0  opened            bit 3  has recorded map
+//   bit 1  is a D6 project   bit 4  manifest carries the mount extrinsic
+//   bit 2  has kPoseAr poses
+JNIEXPORT jlong JNICALL
+Java_com_lidarscan_app_engine_ScanEngineNative_nativeProcProbeProject(JNIEnv* env, jclass,
+                                                                       jlong handle,
+                                                                       jstring lscan_dir) {
+  auto* p = HandleOf(handle);
+  if (p == nullptr) return 0;
+  const auto probe = p->probe_project(ToStdString(env, lscan_dir));
+  jlong flags = 0;
+  if (probe.opened) flags |= 1;
+  if (probe.is_d6) flags |= 2;
+  if (probe.has_poses) flags |= 4;
+  if (probe.has_recorded_map) flags |= 8;
+  if (probe.has_mount) flags |= 16;
+  return flags;
+}
+
+JNIEXPORT jlong JNICALL
+Java_com_lidarscan_app_engine_ScanEngineNative_nativeProcOpenRecordedCloud(JNIEnv* env, jclass,
                                                                            jlong handle,
                                                                            jstring lscan_dir) {
   auto* p = HandleOf(handle);
   if (p == nullptr) return 0;
-  return static_cast<jlong>(p->submit_post_process(ToStdString(env, lscan_dir)));
+  return static_cast<jlong>(p->open_recorded_cloud(ToStdString(env, lscan_dir)));
+}
+
+JNIEXPORT void JNICALL
+Java_com_lidarscan_app_engine_ScanEngineNative_nativeProcClearCloud(JNIEnv*, jclass, jlong handle) {
+  auto* p = HandleOf(handle);
+  if (p != nullptr) p->clear_cloud();
 }
 
 JNIEXPORT jlong JNICALL

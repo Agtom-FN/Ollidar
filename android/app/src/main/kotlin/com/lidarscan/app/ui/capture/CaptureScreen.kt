@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
@@ -90,6 +91,7 @@ import com.lidarscan.app.ui.theme.Ember
 import com.lidarscan.app.ui.theme.InkFaint
 import com.lidarscan.app.ui.theme.MonoLabel
 import com.lidarscan.app.ui.theme.MonoMeta
+import com.lidarscan.app.ui.theme.MonoValue
 import com.lidarscan.app.ui.theme.OnEmber
 import com.lidarscan.app.ui.theme.PoseBlue
 import com.lidarscan.app.ui.theme.ScanTeal
@@ -135,6 +137,12 @@ fun CaptureRoute(
     onBack: () -> Unit,
     /** Optional door to the mount-calibration wizard, for a D6 running on the CAD nominal. */
     onOpenMountCalibration: ((String) -> Unit)? = null,
+    /**
+     * ROUND 8, owner item 31 — called once per **verified** seal with the id of
+     * the scan that was just saved, so the shell can land the operator on it in
+     * Projects. Null (the replay route) means "stay here".
+     */
+    onScanSealed: ((String) -> Unit)? = null,
 ) {
     // ROUND 5.2: the fine-location prompt, hoisted here because only an Activity
     // context can ask. The ViewModel calls `requestLocationPermission` at Start;
@@ -309,6 +317,19 @@ fun CaptureRoute(
     val mountTrimProvenance by viewModel.mountTrimProvenance.collectAsStateWithLifecycle()
     val noDataAlert by viewModel.noDataAlert.collectAsStateWithLifecycle()
     val sectionHint by viewModel.sectionHint.collectAsStateWithLifecycle()
+    // ── ROUND 8 ─────────────────────────────────────────────────────────────
+    val mountTrimNoteIsWarning by viewModel.mountTrimNoteIsWarning.collectAsStateWithLifecycle()
+
+    // ROUND 8 (item 31): stop → seal → Projects, with the new scan selected.
+    //
+    // Keyed on the ViewModel so the collector is re-established with it and
+    // never on two ViewModels at once; the flow itself has `replay = 0`, so
+    // a recomposition cannot re-deliver a seal that has already navigated.
+    if (onScanSealed != null) {
+        LaunchedEffect(viewModel) {
+            viewModel.sealedProjectId.collect { onScanSealed(it) }
+        }
+    }
 
     // ROUND 6 (owner item 19): the AR path degraded. Fall back to the 3D-orbit
     // view rather than leaving the operator staring at a black overlay — the
@@ -488,6 +509,16 @@ fun CaptureRoute(
         onCameraModeChange = viewModel::setCameraMode,
         onKeyframesEnabledChange = viewModel::setKeyframesEnabled,
         onKeyframeRateChange = viewModel::setKeyframeRateFps,
+        // ROUND 8 (live 3D map): the FOLLOW camera's rig-pose feed. The
+        // renderer is Compose-scoped and the ARCore frame stream is
+        // ViewModel-scoped; this is where the two meet, and it is a lambda
+        // rather than a renderer reference so the ViewModel never holds a
+        // GL-thread object across its own lifetime.
+        onRendererChanged = { renderer ->
+            viewModel.setRigPoseSink(
+                renderer?.let { r -> { x, y, z, t -> r.setRigPose(x, y, z, t) } },
+            )
+        },
         onOpenMountCalibration = (uiState as? CaptureUiState.Loaded)?.project?.id?.let { pid ->
             onOpenMountCalibration?.let { open -> { open(pid) } }
         },
@@ -508,6 +539,7 @@ fun CaptureRoute(
         lastSavedProject = lastSavedProject,
         mountTrim = mountTrim,
         mountTrimNote = mountTrimNote,
+        mountTrimNoteIsWarning = mountTrimNoteIsWarning,
         mountTrimProvenance = mountTrimProvenance,
         noDataAlert = noDataAlert,
         onDismissNoDataAlert = viewModel::dismissNoDataAlert,
@@ -621,6 +653,8 @@ fun CaptureScreen(
     onCameraModeChange: (CameraMode) -> Unit,
     onKeyframesEnabledChange: (Boolean) -> Unit,
     onKeyframeRateChange: (Int) -> Unit,
+    /** ROUND 8: the live renderer, for the FOLLOW camera's rig-pose feed. */
+    onRendererChanged: (com.lidarscan.app.render.PointCloudRenderer?) -> Unit = {},
     onOpenMountCalibration: (() -> Unit)? = null,
     // ── ROUND 6 (owner items 19–23) ─────────────────────────────────────────
     /** Item 22: the Light / Optimal / Full chip row's selection, or CUSTOM. */
@@ -650,6 +684,13 @@ fun CaptureScreen(
     /** Item 23: this session's mount trim, or null. */
     mountTrim: com.lidarscan.core.calib.MountTrim? = null,
     mountTrimNote: String? = null,
+    /**
+     * ROUND 8 (item 30b): true when [mountTrimNote] is a REFUSAL rather than a
+     * confirmation, so the screen can shout it instead of whispering it. The
+     * owner tapped Set mount reference eight times in one session against a
+     * grey one-liner and concluded it did nothing.
+     */
+    mountTrimNoteIsWarning: Boolean = false,
     /** ROUND 7 (field bug 1): where the trim in force came from, and how old it is. */
     mountTrimProvenance: com.lidarscan.core.calib.MountTrimProvenance? = null,
     /** ROUND 7 (field bug 2): non-null while a running capture is receiving nothing. */
@@ -664,6 +705,7 @@ fun CaptureScreen(
 ) {
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     var sheet by remember { mutableStateOf(CaptureSheet.NONE) }
+    val configSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val settingsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val diagSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -682,6 +724,26 @@ fun CaptureScreen(
         lossEpisodes = arTrackingLossEpisodes,
     )
 
+    // ── ROUND 8, owner item 28: the live scan view keeps 60 % of the screen ──
+    //
+    // The whole of the pre-capture stack — name field, auto-detect line, manual
+    // panel, preset chips, the D6 mount paragraph — collapses to ONE chip row
+    // plus the always-visible mount state, and the viewport takes what is left.
+    // See [CaptureLayout] for the band-by-band budget and for why the compact
+    // form is keyed off *connected* rather than being unconditional (the
+    // disconnected screen's job is the connect flow, and it needs the room).
+    val manualEntryOpen = autoConnectState?.manualEntryOpen == true
+    val compact = CaptureLayout.useCompactChrome(connected = connected, manualEntryOpen = manualEntryOpen)
+    val screenHeightDp = LocalConfiguration.current.screenHeightDp.toFloat()
+    // The mount row is only for the sensor whose extrinsic the trim is ABOUT.
+    val mountRowVisible = poseTrackingRequired && sensor == SensorType.COIN_D6
+    // The `BackBar` survives only where there is a real parent to go back to.
+    // The Capture *tab* has none — its back arrow went to Projects, which the
+    // floating tab bar already does — and 56 dp is 7 % of a phone screen.
+    // `isReplaySession` is the discriminator because REPLAY_CAPTURE is the only
+    // project-scoped entry into this screen left (see Routes.kt).
+    val showAppBar = isReplaySession || !compact
+
     Column(
         Modifier
             .fillMaxSize()
@@ -689,29 +751,37 @@ fun CaptureScreen(
             .statusBarsPadding()
             .navigationBarsPadding(),
     ) {
-        BackBar(
-            title = project?.manifest?.name
-                ?: if (isReplaySession) "Capture — Replay" else "New scan",
-            subtitle = when {
-                project != null -> "${project.manifest.profile.displayName} · ${captureStateLabel(captureState)}"
-                else -> "${profile.displayName} · ${captureStateLabel(captureState)}"
-            },
-            onBack = onBack,
-            actions = {
-                ScanChip(
-                    text = sensor.badgeLabel.uppercase(),
-                    color = if (connected) {
-                        if (sensor == SensorType.MID360) PoseBlue else ScanTeal
-                    } else {
-                        null
-                    },
-                    showDot = true,
-                )
-                Spacer(Modifier.width(8.dp))
-            },
-        )
+        if (showAppBar) {
+            BackBar(
+                title = project?.manifest?.name
+                    ?: if (isReplaySession) "Capture — Replay" else "New scan",
+                subtitle = when {
+                    project != null -> "${project.manifest.profile.displayName} · ${captureStateLabel(captureState)}"
+                    else -> "${profile.displayName} · ${captureStateLabel(captureState)}"
+                },
+                onBack = onBack,
+                actions = {
+                    ScanChip(
+                        text = sensor.badgeLabel.uppercase(),
+                        color = if (connected) {
+                            if (sensor == SensorType.MID360) PoseBlue else ScanTeal
+                        } else {
+                            null
+                        },
+                        showDot = true,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                },
+            )
+        }
 
-        FixChipStrip(fix = fix, ntrip = ntrip, georefSource = georefSource)
+        // ROUND 8 (item 28): three RTK chips are 32 dp of a screen that a D6
+        // walkthrough — which has no rover at all — spends saying "NO ROVER".
+        // Shown whenever there is genuinely RTK to report, and otherwise left to
+        // the Diagnostics sheet's own `Georeference source` row.
+        if (!compact || georefSource.isRtk || ntrip.receiving) {
+            FixChipStrip(fix = fix, ntrip = ntrip, georefSource = georefSource)
+        }
 
         // Weighted, not fillMaxSize: a `fillMaxSize` child of a Column takes
         // the FULL incoming height, not the height left over after the app bar
@@ -725,29 +795,24 @@ fun CaptureScreen(
                 }
 
                 else -> {
+                    // ROUND 8 (item 28): the four-cell `StatPanel` and its two
+                    // 12 dp spacers — ~80 dp — are gone from here. The same four
+                    // numbers are one mono line inside the transport row, where
+                    // the "display only · recording unaffected" caption used to
+                    // sit. Nothing is lost: the caption is still true and still
+                    // written on the switch's own label, and mid-walk a single
+                    // line of numbers under the Live switch is easier to read at
+                    // a glance than a four-tile panel anyway. `StatPanel` itself
+                    // stays — the session-summary sheet is where a four-tile
+                    // read-out earns its height.
                     val body: @Composable () -> Unit = {
-                        StatPanel(
-                            stats = listOf(
-                                Stat(formatRate(stats.pointsPerSecond), "pts / s"),
-                                // testTag: the CI emulator smoke test polls this
-                                // node to assert the decoded point count grows
-                                // during a replay session. It stays a plain grouped
-                                // integer under a million so the assertion keeps
-                                // seeing motion at replay-sized counts — see
-                                // formatPoints.
-                                Stat(formatPoints(stats.pointsCaptured), "points", testTag = "pointsCapturedValue"),
-                                Stat(formatDuration(stats.elapsedMillis), "rec"),
-                                Stat(formatMegabytes(stats.recordingSizeBytes), ".lscan"),
-                            ),
-                            modifier = Modifier.padding(horizontal = 14.dp),
-                        )
-                        Spacer(Modifier.height(12.dp))
                         TransportRow(
                             captureState = captureState,
                             connected = connected,
                             liveView = liveView,
                             isReplaySession = isReplaySession,
                             pauseSupported = !isReplaySession && sensor != SensorType.MID360,
+                            stats = stats,
                             onLiveViewChange = onLiveViewChange,
                             onStart = onStart,
                             onPause = onPause,
@@ -796,23 +861,24 @@ fun CaptureScreen(
                             onOpenSettings = { sheet = CaptureSheet.SETTINGS },
                             onOpenDiagnostics = { sheet = CaptureSheet.DIAGNOSTICS },
                             onCameraModeChange = onCameraModeChange,
+                            onRendererChanged = onRendererChanged,
                         )
                     }
 
-                    // ROUND 5: everything that used to be a wizard, inline and
-                    // collapsible — and gone entirely once recording starts.
-                    val preCapture: @Composable () -> Unit = {
-                        // ROUND 6 (owner item 20): the loudest thing on this
-                        // screen, and it stays until dismissed. A capture that
-                        // did not save must never be quieter than one that did.
+                    // ROUND 6 (item 20) / ROUND 7 (field bug 2): the two failures
+                    // that are allowed to shout, and the only two bands that are
+                    // deliberately left OUT of [CaptureLayout]'s height budget.
+                    //
+                    // A capture that did not save, and a capture that is running
+                    // and receiving nothing, are by definition not the "normal
+                    // state" item 28's 60 % rule is written about — and shrinking
+                    // the two messages that cost the owner two field sessions to
+                    // protect a viewport that is showing nothing worth protecting
+                    // would be the wrong trade in both directions.
+                    val loudBanners: @Composable () -> Unit = {
                         if (saveError != null) {
                             SaveErrorBanner(saveError, onDismissSaveError)
                         }
-                        // ROUND 7 (field bug 2): the scan is running and nothing
-                        // is arriving. This lives OUTSIDE the collapsible part of
-                        // the strip on purpose — it has to be readable at the
-                        // exact moment the rest of the pre-capture UI is gone,
-                        // which is while recording.
                         if (noDataAlert != null) {
                             LoudBanner(
                                 title = "NO SENSOR DATA",
@@ -821,143 +887,199 @@ fun CaptureScreen(
                                 testTag = "noDataBanner",
                             )
                         }
-                        // ROUND 6 (owner item 22): the three chips. Above the
-                        // scrolling strip and present during a recording too —
-                        // switching mid-walk is a live-view decision, and the
-                        // recording is never touched by it.
-                        PresetChipRow(
-                            preset = preset,
-                            deviceTierLabel = deviceTierLabel,
-                            onPresetChange = onPresetChange,
-                        )
-                        if (presetChangeNote != null) {
-                            Hint(
-                                presetChangeNote,
-                                color = ScanTeal,
-                                modifier = Modifier
-                                    .padding(horizontal = 14.dp, vertical = 2.dp)
-                                    .clickable(onClick = onDismissPresetNote)
-                                    .testTag("presetChangeNote"),
+                        // ROUND 8 (item 30b): a refused re-zero is now as loud as
+                        // a failed save, and for the same reason — the owner
+                        // tapped this control eight times in one session, was told
+                        // "MOVING" in a grey one-liner every time, and reasonably
+                        // concluded the button did nothing. The measured numbers
+                        // and the instruction ("hold still ~1 s") are in the
+                        // message; see MountTrimResult.Rejected.sentence.
+                        if (mountTrimNote != null && mountTrimNoteIsWarning) {
+                            LoudBanner(
+                                title = "MOUNT REFERENCE NOT SET",
+                                message = mountTrimNote,
+                                onDismiss = onDismissMountTrimNote,
+                                testTag = "mountTrimRefusalBanner",
+                                accent = SemWarn,
                             )
                         }
-                        if (presetCaution != null) {
-                            Hint(
-                                presetCaution,
-                                color = SemWarn,
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
-                                    .testTag("presetCaution"),
-                            )
+                    }
+
+                    // ROUND 5.2 / 5.3 / 6 / 7: the quiet inline lines. Every one
+                    // is one sentence, every one clears itself, and none is ever a
+                    // dialog — mid-walk, a modal is the worst possible
+                    // interruption.
+                    //
+                    // ROUND 8 (item 28): they are now a BOUNDED band. Six of them
+                    // can be live at once (georef + downshift + motion + AR +
+                    // section + page-store), which was ~180 dp of capture screen
+                    // taken by advisories about a scan the operator can no longer
+                    // see. Capped at [CaptureLayout.HINT_BAND_MAX_DP] and
+                    // scrollable: the first one is always readable, the rest are a
+                    // flick away, and the viewport keeps its height.
+                    val anyHint = georefNote != null || refreshDownshiftNote != null || motionHint != null ||
+                        arErrorMessage != null || sectionHint != null || liveMapFullNote != null ||
+                        (mountTrimNote != null && !mountTrimNoteIsWarning)
+                    val hints: @Composable () -> Unit = {
+                        if (anyHint) {
+                            Column(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = CaptureLayout.HINT_BAND_MAX_DP.dp)
+                                    .verticalScroll(rememberScrollState()),
+                            ) {
+                                if (georefNote != null) {
+                                    Hint(
+                                        georefNote,
+                                        color = InkFaint,
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
+                                            .testTag("georefDeniedNote"),
+                                    )
+                                }
+                                if (refreshDownshiftNote != null) {
+                                    Hint(
+                                        refreshDownshiftNote,
+                                        color = InkFaint,
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
+                                            .testTag("refreshDownshiftNote"),
+                                    )
+                                }
+                                if (motionHint != null) {
+                                    Hint(
+                                        motionHint,
+                                        color = SemWarn,
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
+                                            .testTag("motionHint"),
+                                    )
+                                }
+                                // ROUND 6 (owner item 19): the AR path failed. The
+                                // view has already fallen back to 3D orbit — the
+                                // app does not die and the capture keeps running.
+                                if (arErrorMessage != null) {
+                                    Hint(
+                                        "Phone tracking degraded — $arErrorMessage. The recording is " +
+                                            "unaffected; a COIN-D6 needs tracking to build 3D, so stop and " +
+                                            "start again if this persists.",
+                                        color = SemWarn,
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
+                                            .testTag("arUnavailableNote"),
+                                    )
+                                }
+                                // ROUND 7 (item 3): a tracking jump split the scan.
+                                // Not a banner — the capture is still good and
+                                // still recording — but it must be visible while
+                                // the operator is still in the room and can walk
+                                // the seam again.
+                                if (sectionHint != null) {
+                                    Hint(
+                                        sectionHint,
+                                        color = SemWarn,
+                                        modifier = Modifier
+                                            .padding(horizontal = 14.dp, vertical = 2.dp)
+                                            .testTag("sectionHint"),
+                                    )
+                                }
+                                // ROUND 6 (owner item 21): the live page store
+                                // filled and the map stopped growing. Says which
+                                // half of the app it costs, because the answer is
+                                // "the preview, not the scan".
+                                if (liveMapFullNote != null) {
+                                    Hint(
+                                        liveMapFullNote,
+                                        color = SemWarn,
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
+                                            .testTag("liveMapFullNote"),
+                                    )
+                                }
+                                // ROUND 6 (owner item 23): the re-zero's own
+                                // verdict, when it is a confirmation. Refusals go
+                                // to the loud banner above instead.
+                                if (mountTrimNote != null && !mountTrimNoteIsWarning) {
+                                    Hint(
+                                        mountTrimNote,
+                                        color = ScanTeal,
+                                        modifier = Modifier
+                                            .padding(horizontal = 14.dp, vertical = 2.dp)
+                                            .clickable(onClick = onDismissMountTrimNote)
+                                            .testTag("mountTrimNote"),
+                                    )
+                                }
+                            }
                         }
-                        if (!live && !isReplaySession) {
-                            // Capped and scrollable: with the manual panel open the
-                            // strip would otherwise squeeze the live viewport to a
-                            // sliver — seen on a booted emulator, which is exactly
-                            // the failure mode round 5 is trying to avoid (the
-                            // points ARE the proof, so they must stay on screen).
-                            PreCaptureStrip(
-                                maxHeight = LocalConfiguration.current.screenHeightDp.dp * 0.46f,
-                                autoName = newScan?.autoName,
-                                scanName = scanName,
-                                autoConnectState = autoConnectState,
-                                sensor = sensor,
-                                poseTrackingRequired = poseTrackingRequired,
-                                poseState = poseState,
-                                sensorStreaming = connected,
-                                mountIsNominal = mountIsNominal,
-                                manualDevices = manualDevices,
-                                manualLidarIp = manualLidarIp,
-                                manualHostIp = manualHostIp,
-                                onScanNameChange = onScanNameChange,
-                                onRetryAutoDetect = onRetryAutoDetect,
-                                onShowManualEntry = onShowManualEntry,
-                                onHideManualEntry = onHideManualEntry,
-                                onManualDeviceConnect = onManualDeviceConnect,
-                                onManualLidarIpChange = onManualLidarIpChange,
-                                onManualHostIpChange = onManualHostIpChange,
-                                onManualMid360Connect = onManualMid360Connect,
-                                onOpenMountCalibration = onOpenMountCalibration,
-                                mountTrim = mountTrim,
-                                mountTrimProvenance = mountTrimProvenance,
-                                nowMillis = nowMillis,
+                    }
+
+                    // ROUND 8 (items 28 + 30c): the compact chrome — the mount
+                    // state row, which must be readable without opening anything,
+                    // and one chip row for the three sheets.
+                    val compactChrome: @Composable () -> Unit = {
+                        if (mountRowVisible) {
+                            MountStateRow(
+                                provenance = mountTrimProvenance,
+                                hasTrim = mountTrim != null,
                                 onSetMountReference = onSetMountReference,
-                                onClearMountReference = onClearMountReference,
                             )
                         }
-                        // ROUND 5.2 / 5.3: the two quiet inline lines. Both are
-                        // one sentence, both clear themselves, and neither is ever
-                        // a dialog — mid-walk, a modal is the worst possible
-                        // interruption.
-                        if (georefNote != null) {
-                            Hint(
-                                georefNote,
-                                color = InkFaint,
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
-                                    .testTag("georefDeniedNote"),
-                            )
-                        }
-                        if (refreshDownshiftNote != null) {
-                            Hint(
-                                refreshDownshiftNote,
-                                color = InkFaint,
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
-                                    .testTag("refreshDownshiftNote"),
-                            )
-                        }
-                        if (motionHint != null) {
-                            Hint(
-                                motionHint,
-                                color = SemWarn,
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
-                                    .testTag("motionHint"),
-                            )
-                        }
-                        // ROUND 6 (owner item 19): the AR path failed. One
-                        // sentence, inline, and the view has already fallen back
-                        // to 3D orbit — the app does not die and the capture
-                        // keeps running.
-                        if (arErrorMessage != null) {
-                            Hint(
-                                "Phone tracking degraded — $arErrorMessage. The recording is unaffected; a COIN-D6 needs tracking to build 3D, so stop and start again if this persists.",
-                                color = SemWarn,
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
-                                    .testTag("arUnavailableNote"),
-                            )
-                        }
-                        // ROUND 6 (owner item 21): the live page store filled and
-                        // the map stopped growing. Says which half of the app it
-                        // costs, because the answer is "the preview, not the scan".
-                        // ROUND 7 (item 3): a tracking jump split the scan. Not a
-                        // banner — the capture is still good and still recording
-                        // — but it must be visible while the operator is still in
-                        // the room and can walk the seam again.
-                        if (sectionHint != null) {
-                            Hint(
-                                sectionHint,
-                                color = SemWarn,
-                                modifier = Modifier
-                                    .padding(horizontal = 14.dp, vertical = 2.dp)
-                                    .testTag("sectionHint"),
-                            )
-                        }
-                        if (liveMapFullNote != null) {
-                            Hint(
-                                liveMapFullNote,
-                                color = SemWarn,
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
-                                    .testTag("liveMapFullNote"),
-                            )
-                        }
-                        // ROUND 6 (owner item 23): the re-zero's own verdict.
-                        if (mountTrimNote != null) {
-                            Hint(
-                                mountTrimNote,
-                                color = ScanTeal,
-                                modifier = Modifier
-                                    .padding(horizontal = 14.dp, vertical = 2.dp)
-                                    .clickable(onClick = onDismissMountTrimNote)
-                                    .testTag("mountTrimNote"),
-                            )
-                        }
+                        CaptureChipRow(
+                            preset = preset,
+                            scanName = scanName.ifBlank { newScan?.autoName ?: project?.manifest?.name ?: "New scan" },
+                            poseState = poseState,
+                            poseChipVisible = poseTrackingRequired && connected,
+                            showCaptureChip = true,
+                            onOpenCapture = { sheet = CaptureSheet.CAPTURE },
+                            onOpenDisplay = { sheet = CaptureSheet.SETTINGS },
+                            onOpenDiagnostics = { sheet = CaptureSheet.DIAGNOSTICS },
+                        )
+                    }
+
+                    // ROUND 5: the connect flow, inline. Kept EXACTLY as it was
+                    // for the disconnected state — auto-detect status, the manual
+                    // panel that opens itself when detection fails (owner addition
+                    // 1), the name field — because that state is what the Capture
+                    // tab is FOR when no sensor is attached, there is no live view
+                    // to protect, and it is what the emulator smoke test walks.
+                    val fullChrome: @Composable () -> Unit = {
+                        PreCaptureStrip(
+                            maxHeight = LocalConfiguration.current.screenHeightDp.dp * 0.46f,
+                            autoName = newScan?.autoName,
+                            scanName = scanName,
+                            autoConnectState = autoConnectState,
+                            sensor = sensor,
+                            poseTrackingRequired = poseTrackingRequired,
+                            poseState = poseState,
+                            sensorStreaming = connected,
+                            mountIsNominal = mountIsNominal,
+                            manualDevices = manualDevices,
+                            manualLidarIp = manualLidarIp,
+                            manualHostIp = manualHostIp,
+                            onScanNameChange = onScanNameChange,
+                            onRetryAutoDetect = onRetryAutoDetect,
+                            onShowManualEntry = onShowManualEntry,
+                            onHideManualEntry = onHideManualEntry,
+                            onManualDeviceConnect = onManualDeviceConnect,
+                            onManualLidarIpChange = onManualLidarIpChange,
+                            onManualHostIpChange = onManualHostIpChange,
+                            onManualMid360Connect = onManualMid360Connect,
+                            onOpenMountCalibration = onOpenMountCalibration,
+                            mountTrim = mountTrim,
+                            mountTrimProvenance = mountTrimProvenance,
+                            nowMillis = nowMillis,
+                            onSetMountReference = onSetMountReference,
+                            onClearMountReference = onClearMountReference,
+                        )
+                        // Only the two sheets whose contents are NOT already on
+                        // screen behind them. Offering the Capture sheet here as
+                        // well would put a second `scanNameField` and a second
+                        // `manualLidarIpField` in the tree at the same time.
+                        CaptureChipRow(
+                            preset = preset,
+                            scanName = scanName,
+                            poseState = poseState,
+                            poseChipVisible = false,
+                            showCaptureChip = false,
+                            onOpenCapture = {},
+                            onOpenDisplay = { sheet = CaptureSheet.SETTINGS },
+                            onOpenDiagnostics = { sheet = CaptureSheet.DIAGNOSTICS },
+                        )
                     }
 
                     if (isLandscape) {
@@ -970,21 +1092,44 @@ fun CaptureScreen(
                                     .verticalScroll(rememberScrollState())
                                     .padding(bottom = ScanDims.TabBarClearance),
                             ) {
-                                preCapture()
+                                loudBanners()
+                                if (compact) compactChrome() else fullChrome()
+                                hints()
                                 body()
                             }
                         }
                     } else {
                         Column(Modifier.fillMaxSize()) {
-                            preCapture()
-                            // The hero cloud takes every pixel the rest of the
-                            // column does not claim, with a floor so the inline
-                            // manual panel can never squeeze it to nothing.
+                            loudBanners()
+                            if (compact) compactChrome() else fullChrome()
+                            // ROUND 8 (item 28): the hero cloud's share of the
+                            // screen is now a NUMBER, not whatever is left over.
+                            // `weight(1f)` still hands it every pixel the rest of
+                            // the column does not claim — that part is unchanged —
+                            // but the chrome above and below it has been budgeted
+                            // so that "what is left over" is at least
+                            // [CaptureLayout.MIN_VIEWPORT_FRACTION] of the screen,
+                            // and the `heightIn` floor below is that budget made
+                            // enforceable rather than merely intended.
                             viewport(
-                                Modifier.fillMaxWidth().weight(1f).heightIn(min = 140.dp)
+                                Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f)
+                                    .heightIn(
+                                        min = if (compact) {
+                                            CaptureLayout.viewportMinHeightDp(
+                                                screenHeightDp = screenHeightDp,
+                                                mountRow = mountRowVisible,
+                                                appBar = showAppBar,
+                                            ).dp
+                                        } else {
+                                            CaptureLayout.VIEWPORT_FLOOR_DP.dp
+                                        },
+                                    )
                                     .padding(horizontal = 14.dp),
                             )
-                            Spacer(Modifier.height(12.dp))
+                            hints()
+                            Spacer(Modifier.height(6.dp))
                             body()
                             Spacer(Modifier.height(ScanDims.TabBarClearance))
                         }
@@ -994,8 +1139,72 @@ fun CaptureScreen(
         }
     }
 
-    // ── the two sheets, mutually exclusive by construction ──────────────────
+    // ── the sheets, mutually exclusive by construction ──────────────────────
     when (sheet) {
+        // ROUND 8 (item 28): everything that configures the SCAN. See
+        // CaptureConfigSheet, and CaptureLayout for why it is a sheet at all.
+        CaptureSheet.CAPTURE -> CaptureConfigSheet(
+            sheetState = configSheetState,
+            preset = preset,
+            deviceTierLabel = deviceTierLabel,
+            presetChangeNote = presetChangeNote,
+            presetCaution = presetCaution,
+            onPresetChange = onPresetChange,
+            onDismissPresetNote = onDismissPresetNote,
+            autoName = newScan?.autoName,
+            scanName = scanName,
+            onScanNameChange = onScanNameChange,
+            // The profile is only settable while the project does not exist yet
+            // — afterwards it is a property of the .lscan, not a control.
+            profile = if (project == null && !isReplaySession) profile else null,
+            onProfileChange = onProfileChange,
+            liveMapEnabled = liveMapEnabled,
+            onLiveMapEnabledChange = onLiveMapEnabledChange,
+            liveSlam = liveSlam,
+            liveSlamEditable = !live && connected,
+            onLiveSlamChange = onLiveSlamChange,
+            connection = {
+                if (autoConnectState != null) {
+                    AutoDetectLine(
+                        state = autoConnectState,
+                        onRetry = onRetryAutoDetect,
+                        onShowManual = onShowManualEntry,
+                        onHideManual = onHideManualEntry,
+                    )
+                    if (autoConnectState.manualEntryOpen) {
+                        ManualEntryPanel(
+                            devices = manualDevices,
+                            lidarIp = manualLidarIp,
+                            hostIp = manualHostIp,
+                            busy = autoConnectState.phase ==
+                                CaptureAutoConnectState.Phase.CONNECTING,
+                            onDeviceConnect = onManualDeviceConnect,
+                            onLidarIpChange = onManualLidarIpChange,
+                            onHostIpChange = onManualHostIpChange,
+                            onMid360Connect = onManualMid360Connect,
+                        )
+                    }
+                } else {
+                    Hint("Replay session — there is no device to connect.", color = InkFaint)
+                }
+            },
+            mount = if (poseTrackingRequired && sensor == SensorType.COIN_D6) {
+                {
+                    MountReferenceDetail(
+                        mountTrim = mountTrim,
+                        mountTrimProvenance = mountTrimProvenance,
+                        mountIsNominal = mountIsNominal,
+                        nowMillis = nowMillis,
+                        onOpenMountCalibration = onOpenMountCalibration,
+                        onClearMountReference = onClearMountReference,
+                    )
+                }
+            } else {
+                null
+            },
+            onDismiss = { sheet = CaptureSheet.NONE },
+        )
+
         CaptureSheet.SETTINGS -> CaptureSettingsSheet(
             sheetState = settingsSheetState,
             cameraMode = cameraMode,
@@ -1016,18 +1225,9 @@ fun CaptureScreen(
             ),
             gamma = gamma,
             brightness = brightness,
-            liveSlam = liveSlam,
-            liveSlamEditable = !live && connected,
-            liveMapEnabled = liveMapEnabled,
-            onLiveMapEnabledChange = onLiveMapEnabledChange,
-            // The profile is only settable while the project does not exist yet —
-            // afterwards it is a property of the .lscan, not a control.
-            profile = if (project == null && !isReplaySession) profile else null,
             onRefreshHzChange = onRefreshHzChange,
             onGammaChange = onGammaChange,
             onBrightnessChange = onBrightnessChange,
-            onLiveSlamChange = onLiveSlamChange,
-            onProfileChange = onProfileChange,
             onCameraModeChange = onCameraModeChange,
             onKeyframesEnabledChange = onKeyframesEnabledChange,
             onKeyframeRateChange = onKeyframeRateChange,
@@ -1073,82 +1273,167 @@ fun CaptureScreen(
     }
 }
 
-// ── ROUND 6: performance presets + the save-failure banner ──────────────────
+// ── ROUND 8: the compact chrome (item 28) + the mount state (item 30c) ──────
 
 /**
- * Owner item 22's **fast select**: Light / Optimal / Full, on the capture screen
- * itself rather than three taps into a sheet.
+ * ROUND 8, owner item 30c — **"Mount set · 132.8° · 2 min ago", always on
+ * screen.**
  *
- * Deliberately *above* the collapsible pre-capture strip and present during a
- * recording as well as before one: switching preset is a live-view decision, the
- * recording is never touched by it, and mid-walk ("this is getting hot") is
- * exactly when an operator wants Light.
+ * The owner's ROUND 7 session ran five captures on `trim=none` and was never
+ * told. The panel's only mount affordance was a button reading "Set mount
+ * reference", which is an *action*, not a *state*: it looks identical whether
+ * the pushbroom is running on a measured re-zero or on a CAD nominal that is
+ * 132° wrong, and 132° of unmodelled mount rotation is a scan of walls that
+ * cannot be straight in any frame (ROUND 7 §2). So the state is now a chip that
+ * says which, in words, at the top of the capture screen, with no sheet to open
+ * and nothing to scroll.
  *
- * The row shows [com.lidarscan.core.capture.PerformancePreset.CUSTOM] as a
- * fourth, non-tappable state once an individual parameter has been moved in the
- * settings sheet — item 22's "keep the full parameter for advance user setting"
- * means an edit must survive, not be snapped back to whichever chip is lit.
+ * The age re-ticks: [com.lidarscan.core.calib.MountTrimProvenance] is
+ * recomputed on `CaptureViewModel`'s 15 s tick, so "just now" becomes "2 min
+ * ago" while the operator watches, which is the only thing that makes an age
+ * worth printing.
+ *
+ * The colour is load-bearing too — teal for a trim in force, amber for none —
+ * because "NO MOUNT REF · CAD NOMINAL" in the same ink as everything else is
+ * how a warning becomes wallpaper.
  */
 @Composable
-private fun PresetChipRow(
-    preset: com.lidarscan.core.capture.PerformancePreset,
-    deviceTierLabel: String,
-    onPresetChange: (com.lidarscan.core.capture.PerformancePreset) -> Unit,
+private fun MountStateRow(
+    provenance: com.lidarscan.core.calib.MountTrimProvenance?,
+    hasTrim: Boolean,
+    onSetMountReference: () -> Unit,
 ) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("PERFORMANCE", style = MonoLabel, color = InkFaint)
-            Spacer(Modifier.width(10.dp))
-            // Weighted + ellipsised on THIS side: the tagline is the variable
-            // half, so it is the half that must be allowed to shrink. Giving
-            // the fixed label the weight instead let a long tagline overrun it.
+    val shape = RoundedCornerShape(50)
+    val accent = when {
+        !hasTrim -> SemWarn
+        provenance?.warn == true -> SemWarn
+        else -> ScanTeal
+    }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(CaptureLayout.MOUNT_ROW_DP.dp)
+            .padding(horizontal = 14.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Box(
+            Modifier
+                .weight(1f)
+                .height(38.dp)
+                .background(accent.copy(alpha = 0.12f), shape)
+                .border(1.dp, accent, shape)
+                .padding(horizontal = 12.dp)
+                .testTag("mountStateChip"),
+            contentAlignment = Alignment.CenterStart,
+        ) {
             Text(
-                if (preset == com.lidarscan.core.capture.PerformancePreset.CUSTOM) {
-                    "custom · $deviceTierLabel phone"
-                } else {
-                    "${preset.tagline} · $deviceTierLabel phone"
-                },
+                provenance?.chipLabel ?: "NO MOUNT REF · CAD NOMINAL",
                 style = MonoLabel,
-                color = InkFaint,
+                color = accent,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                textAlign = androidx.compose.ui.text.style.TextAlign.End,
-                modifier = Modifier.weight(1f).testTag("presetReadout"),
             )
         }
-        Spacer(Modifier.height(4.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            com.lidarscan.core.capture.PerformancePreset.entries
-                .filter { it.isSelectable }
-                .forEach { option ->
-                    val selected = option == preset
-                    Box(
-                        Modifier
-                            .weight(1f)
-                            .height(ScanDims.Touch)
-                            .background(
-                                if (selected) Ember else MaterialTheme.colorScheme.surfaceContainer,
-                                RoundedCornerShape(50),
-                            )
-                            .border(
-                                1.dp,
-                                if (selected) Ember else MaterialTheme.colorScheme.outline,
-                                RoundedCornerShape(50),
-                            )
-                            .clickable(role = Role.RadioButton) { onPresetChange(option) }
-                            .semantics { contentDescription = "${option.displayName} performance preset" }
-                            .testTag("preset${option.name}"),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            option.displayName,
-                            fontFamily = DisplayFontFamily,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 14.sp,
-                            color = if (selected) OnEmber else MaterialTheme.colorScheme.onSurface,
-                        )
-                    }
-                }
+        // The Set button stays on the screen next to the state rather than
+        // inside the Capture sheet: a re-zero is taken while holding the rig in
+        // the pose you are about to walk with, and reaching it through a sheet
+        // is one more hand movement during the exact second that has to be
+        // still. The explanation and Clear live in the sheet; the tap does not.
+        SecondaryPill(
+            text = if (hasTrim) "Re-zero" else "Set mount ref",
+            height = 38.dp,
+            onClick = onSetMountReference,
+            modifier = Modifier.testTag("setMountReferenceButton"),
+        )
+    }
+}
+
+/**
+ * ROUND 8, owner item 28 — **the one row that replaces the settings stack.**
+ *
+ * `[Capture · Optimal] [Display] [Diag]`, plus the pose-tracking chip that used
+ * to sit inside the pre-capture strip (it is a live quality read-out for a
+ * phone-tracked D6, so it belongs where it can be seen during a walk, not in a
+ * band that disappears when recording starts).
+ *
+ * The Capture chip carries the current preset as its own read-out, which is the
+ * one thing ROUND 6's three-button `PERFORMANCE` row was really for: a preset
+ * is switched perhaps once a session, but it is *checked* every time the phone
+ * gets warm. A read-out costs 0 dp; three buttons cost 70.
+ *
+ * Horizontally scrollable, so a long scan name or a fourth chip can never wrap
+ * the row into two and blow the height budget [CaptureLayout] depends on.
+ */
+@Composable
+private fun CaptureChipRow(
+    preset: com.lidarscan.core.capture.PerformancePreset,
+    scanName: String,
+    poseState: PoseTrackingState,
+    poseChipVisible: Boolean,
+    showCaptureChip: Boolean,
+    onOpenCapture: () -> Unit,
+    onOpenDisplay: () -> Unit,
+    onOpenDiagnostics: () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(CaptureLayout.CHIP_ROW_DP.dp)
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 14.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        if (showCaptureChip) {
+            SheetChip(
+                label = scanName.takeIf { it.isNotBlank() } ?: "Capture",
+                readout = if (preset.isSelectable) preset.displayName else "Custom",
+                testTag = "captureConfigChip",
+                onClick = onOpenCapture,
+            )
+        }
+        SheetChip(label = "Display", readout = null, testTag = "displaySheetChip", onClick = onOpenDisplay)
+        SheetChip(label = "Diag", readout = null, testTag = "diagnosticsSheetChip", onClick = onOpenDiagnostics)
+        if (poseChipVisible && poseState != PoseTrackingState.NOT_REQUIRED) {
+            ScanChip(
+                text = poseState.chipLabel,
+                color = poseState.chipColor,
+                showDot = true,
+                modifier = Modifier.testTag("poseTrackingChip"),
+            )
+        }
+    }
+}
+
+/** One chip-shaped door to a sheet: a name, an optional read-out, a 40 dp target. */
+@Composable
+private fun SheetChip(label: String, readout: String?, testTag: String, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(50)
+    Row(
+        Modifier
+            .height(38.dp)
+            .background(MaterialTheme.colorScheme.surfaceContainer, shape)
+            .border(1.dp, MaterialTheme.colorScheme.outline, shape)
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = "$label settings" }
+            .padding(horizontal = 14.dp)
+            .testTag(testTag),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            label,
+            fontFamily = DisplayFontFamily,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.widthIn(max = 150.dp),
+        )
+        if (readout != null) {
+            Spacer(Modifier.width(6.dp))
+            Text(readout.uppercase(), style = MonoLabel, color = Ember, maxLines = 1)
         }
     }
 }
@@ -1168,6 +1453,17 @@ private fun SaveErrorBanner(message: String, onDismiss: () -> Unit) =
     LoudBanner("SCAN NOT SAVED", message, onDismiss, "saveErrorBanner")
 
 /**
+ * ROUND 8: a third caller, and the reason [LoudBanner] grew an [accent].
+ *
+ * A refused mount re-zero is not a data-loss failure — nothing was lost, the
+ * operator simply has to hold still and tap again — so it is amber rather than
+ * red. It is a *banner* rather than a `Hint` because the owner tapped that
+ * control eight times in one field session against a grey one-line refusal and
+ * concluded the feature did not work, which is the same silence problem in a
+ * quieter register.
+ */
+
+/**
  * The one shape on this screen that is allowed to shout: a red-bordered block
  * at the top of the capture body, not a `Hint` and not a toast, that stays
  * until it is tapped.
@@ -1178,14 +1474,20 @@ private fun SaveErrorBanner(message: String, onDismiss: () -> Unit) =
  * owner two field sessions.
  */
 @Composable
-private fun LoudBanner(title: String, message: String, onDismiss: () -> Unit, testTag: String) {
+private fun LoudBanner(
+    title: String,
+    message: String,
+    onDismiss: () -> Unit,
+    testTag: String,
+    accent: Color = SemBad,
+) {
     val shape = RoundedCornerShape(ScanDims.TileRadius)
     Column(
         Modifier
             .fillMaxWidth()
             .padding(horizontal = 14.dp, vertical = 6.dp)
-            .background(SemBad.copy(alpha = 0.14f), shape)
-            .border(1.dp, SemBad, shape)
+            .background(accent.copy(alpha = 0.14f), shape)
+            .border(1.dp, accent, shape)
             .clickable(onClick = onDismiss)
             .padding(12.dp)
             .testTag(testTag),
@@ -1193,7 +1495,7 @@ private fun LoudBanner(title: String, message: String, onDismiss: () -> Unit, te
         Text(
             title,
             style = MonoLabel,
-            color = SemBad,
+            color = accent,
         )
         Spacer(Modifier.height(4.dp))
         Text(
@@ -1373,6 +1675,64 @@ private fun PreCaptureStrip(
             }
         }
         Spacer(Modifier.height(6.dp))
+    }
+}
+
+/**
+ * ROUND 8 (item 28): the mount re-zero's **explanation**, for the Capture
+ * sheet.
+ *
+ * The split is deliberate. What has to be on the capture screen is the *state*
+ * and the *tap* — item 30c, and the fact that a re-zero is taken while holding
+ * the rig still, which is not a moment to be navigating. What belongs behind a
+ * sheet is the paragraph telling you why, the Clear button (a destructive
+ * action nobody performs mid-hold) and the door to the full calibration wizard.
+ * Together with [MountStateRow] this is the same content the ROUND 6 strip had,
+ * with the ~150 dp of prose off the critical screen.
+ */
+@Composable
+private fun MountReferenceDetail(
+    mountTrim: com.lidarscan.core.calib.MountTrim?,
+    mountTrimProvenance: com.lidarscan.core.calib.MountTrimProvenance?,
+    mountIsNominal: Boolean,
+    nowMillis: Long,
+    onOpenMountCalibration: (() -> Unit)?,
+    onClearMountReference: () -> Unit,
+) {
+    Hint(
+        mountTrimProvenance?.label
+            ?: if (mountTrim == null) {
+                "No mount reference — the pushbroom is running on the bracket's CAD nominal."
+            } else {
+                "Mount trim %.1f° · set %s · travels with the project."
+                    .format(mountTrim.magnitudeDeg, mountTrim.ageLabel(nowMillis))
+            },
+        color = when {
+            mountTrim == null -> SemWarn
+            mountTrimProvenance?.warn == true -> SemWarn
+            else -> ScanTeal
+        },
+        modifier = Modifier.testTag("mountTrimDetail"),
+    )
+    Spacer(Modifier.height(6.dp))
+    Hint(
+        "The D6 is clamped on by hand and comes off between scans, so its real angle on the phone differs " +
+            "from the bracket's CAD nominal every session — and that angle lands in every resolved point. " +
+            "Hold the rig in the pose you will walk with, keep it still for about a second, and tap " +
+            "Set mount ref on the capture screen. It measures attitude only; the lever arm still needs the " +
+            "calibration wizard.",
+        color = InkFaint,
+    )
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        if (mountTrim != null) {
+            TextButton(
+                onClick = onClearMountReference,
+                modifier = Modifier.testTag("clearMountReferenceButton"),
+            ) { Text("Clear mount reference") }
+        }
+        if (mountIsNominal && onOpenMountCalibration != null) {
+            TextButton(onClick = onOpenMountCalibration) { Text("Calibrate mount") }
+        }
     }
 }
 
@@ -1557,6 +1917,13 @@ private fun CaptureViewport(
     onOpenSettings: () -> Unit,
     onOpenDiagnostics: () -> Unit,
     onCameraModeChange: (CameraMode) -> Unit,
+    /**
+     * ROUND 8: the live renderer, or null once it is gone. The FOLLOW camera
+     * needs the rig's ARCore position once per frame and only `CaptureViewModel`
+     * has the frame stream, so the renderer has to travel UP out of here — see
+     * `CaptureViewModel.setRigPoseSink`.
+     */
+    onRendererChanged: (com.lidarscan.app.render.PointCloudRenderer?) -> Unit = {},
 ) {
     val shape = RoundedCornerShape(ScanDims.CardRadius)
 
@@ -1662,7 +2029,10 @@ private fun CaptureViewport(
                 // ROUND 5 AUDIT bugfix: lets the "what stream is on screen"
                 // chip poll whether a mapped/pushbroom page has actually
                 // landed yet, instead of just parroting the requested mode.
-                onRendererReady = { pointCloudRenderer = it },
+                onRendererReady = {
+                    pointCloudRenderer = it
+                    onRendererChanged(it)
+                },
                 modifier = Modifier.fillMaxSize(),
             )
         } else {
@@ -1906,6 +2276,12 @@ private fun TransportRow(
     liveView: Boolean,
     isReplaySession: Boolean,
     pauseSupported: Boolean,
+    /**
+     * ROUND 8 (item 28): the four capture numbers, as one mono line under the
+     * Live switch, replacing the standalone four-cell `StatPanel` and its
+     * spacers (~80 dp). See the `body` lambda in [CaptureScreen].
+     */
+    stats: CaptureStats,
     onLiveViewChange: (Boolean) -> Unit,
     onStart: () -> Unit,
     onPause: () -> Unit,
@@ -1947,13 +2323,43 @@ private fun TransportRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                Spacer(Modifier.width(8.dp))
+                // The caption the numbers displaced. Kept, because "the Live
+                // switch does not touch the recording" is the single most
+                // important thing to know about the only control on this screen
+                // that looks like it might.
+                Text(
+                    "display only",
+                    style = MonoLabel.copy(fontSize = 9.5.sp, letterSpacing = 0.06.em),
+                    color = InkFaint,
+                    maxLines = 1,
+                )
             }
-            Spacer(Modifier.height(2.dp))
-            Text(
-                "display only · recording unaffected",
-                style = MonoLabel.copy(fontSize = 9.5.sp, letterSpacing = 0.06.em),
-                color = InkFaint,
-            )
+            Spacer(Modifier.height(3.dp))
+            // ROUND 8 (item 28): points / rate / duration / size, on one line.
+            //
+            // `pointsCapturedValue` MUST stay on the points number and MUST stay
+            // parseable as either a grouped integer or "1.24 M" — the CI
+            // emulator smoke test polls this exact node for ~20 s to prove the
+            // native decoder is landing points, and `formatPoints` documents why
+            // it stays a plain integer below a million.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    formatPoints(stats.pointsCaptured),
+                    style = MonoValue.copy(fontSize = 13.sp),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    modifier = Modifier.testTag("pointsCapturedValue"),
+                )
+                Text(
+                    " pts · ${formatRate(stats.pointsPerSecond)}/s · " +
+                        "${formatDuration(stats.elapsedMillis)} · ${formatMegabytes(stats.recordingSizeBytes)}",
+                    style = MonoLabel.copy(fontSize = 10.sp, letterSpacing = 0.04.em),
+                    color = InkFaint,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
 
         // Pause: offered only where it actually works. Replay has no pause hook

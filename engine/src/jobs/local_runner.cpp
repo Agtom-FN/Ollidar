@@ -2,6 +2,7 @@
 
 #include "scanengine/color/colorizer.h"
 #include "scanengine/export/exporter.h"
+#include "scanengine/slam/post/d6_resolve.h"
 #include "scanengine/slam/post/post_pipeline.h"
 
 namespace scanengine {
@@ -20,6 +21,39 @@ Status run_post_process(const PostProcessParams& params, post::CancelToken* canc
   // (docs/A7-post.md §7: "STREAM CHOICE ... a config field precisely so
   // this does not become a code change").
   std::shared_ptr<PageStore> store = params.store ? params.store : std::make_shared<PageStore>();
+
+  // --- ROUND 8: a D6 project takes the other pipeline ----------------------
+  //
+  // The routing decision is made from the CONTAINER, not from a parameter,
+  // and that is the important part. A `.lscan` already knows which sensor
+  // wrote it — the chunk types say so — so making the caller declare it would
+  // add a way for the two to disagree, and the failure mode of disagreeing is
+  // a job that runs the wrong pipeline and reports "not found".
+  //
+  // android/NOTES.md ROUND 7 §6 traced this exact call for a phone-D6 project
+  // and found it landed in PostSlamPipeline, whose decode loop counts Mid-360
+  // chunks and returns kNotFound when there are none. The button was enabled
+  // and the job failed with two words. It now runs the pipeline that fits.
+  {
+    bool is_d6 = false;
+    // A directory that will not open at all falls through to A7, which
+    // produces the open error with its own context rather than this one
+    // pre-empting it with a routing failure.
+    if (post::lscan_is_d6_project(params.lscan_dir, &is_d6).ok() && is_d6) {
+      post::D6ResolveConfig dcfg;
+      dcfg.store = store.get();
+      dcfg.have_mount = params.d6_mount_valid;
+      if (params.d6_mount_valid) {
+        for (int i = 0; i < 16; ++i) dcfg.mount_phone_from_lidar[i] = params.d6_mount[i];
+      }
+      post::D6ResolvePipeline pipeline(dcfg);
+      if (progress_cb) pipeline.set_progress_callback(std::move(progress_cb));
+      if (cancel_token != nullptr) pipeline.set_cancel_token(cancel_token);
+      const Status st = pipeline.run(params.lscan_dir);
+      if (out_store != nullptr) *out_store = store;
+      return st;
+    }
+  }
 
   post::PostConfig cfg = params.config;
   cfg.store = store.get();

@@ -154,7 +154,12 @@ class MountTrimTest {
         val captured = result as? MountTrimResult.Captured
             ?: error("expected a captured trim, got $result")
         assertEquals("the trim must invert the held attitude", 45.0, captured.trim.magnitudeDeg, 1e-6)
-        assertTrue("spread must be reported", captured.trim.spreadDeg < MountTrim.MAX_SPREAD_DEG)
+        // ROUND 8: the single `MAX_SPREAD_DEG` became two gates. `spreadDeg`
+        // keeps its ROUND 6 meaning (the WORST deviation), so it is checked
+        // against the outlier ceiling; the p90 is checked against the steadiness
+        // limit. See MountTrim's companion for the field log behind the split.
+        assertTrue("spread must be reported", captured.trim.spreadDeg < MountTrim.MAX_SPREAD_OUTLIER_DEG)
+        assertTrue("p90 spread must be reported", captured.trim.spreadP90Deg <= MountTrim.MAX_SPREAD_P90_DEG)
         assertEquals(1_700_000_000_000L, captured.trim.capturedAtEpochMillis)
     }
 
@@ -165,14 +170,23 @@ class MountTrimTest {
         assertTrue("0.3 deg of wobble must not be rejected, got $result", result is MountTrimResult.Captured)
     }
 
+    /**
+     * ROUND 8: the refusals are compared on their REASON, not on the whole
+     * `Rejected` value.
+     *
+     * `Rejected` now carries a [MountTrimMeasurement] — the numbers the owner's
+     * eight identical `mount re-zero refused: MOVING` log lines did not have —
+     * so a whole-value `assertEquals` would be asserting the exact p90 of a
+     * synthetic wobble, which is a test of the fixture rather than of the gate.
+     */
+    private fun reasonOf(result: MountTrimResult): MountTrimRejection? =
+        (result as? MountTrimResult.Rejected)?.reason
+
     @Test
     fun `a rig that moved is refused`() {
         val hold = Quat.fromAxisAngle(Vec3(0.0, 0.0, 1.0), deg(20.0))
         val result = MountTrimSampler.capture(stillWindow(hold, jitterDeg = 6.0), nowMillis = 0L)
-        assertEquals(
-            MountTrimResult.Rejected(MountTrimRejection.MOVING),
-            result,
-        )
+        assertEquals(MountTrimRejection.MOVING, reasonOf(result))
     }
 
     @Test
@@ -181,26 +195,26 @@ class MountTrimTest {
         val samples = stillWindow(hold).toMutableList()
         samples[5] = samples[5].copy(tracking = false)
         assertEquals(
-            MountTrimResult.Rejected(MountTrimRejection.NOT_TRACKING),
-            MountTrimSampler.capture(samples, nowMillis = 0L),
+            MountTrimRejection.NOT_TRACKING,
+            reasonOf(MountTrimSampler.capture(samples, nowMillis = 0L)),
         )
     }
 
     @Test
     fun `too few samples, and too short a hold, are both refused`() {
         assertEquals(
-            MountTrimResult.Rejected(MountTrimRejection.NO_POSES),
-            MountTrimSampler.capture(emptyList(), nowMillis = 0L),
+            MountTrimRejection.NO_POSES,
+            reasonOf(MountTrimSampler.capture(emptyList(), nowMillis = 0L)),
         )
         assertEquals(
             "four frames is not a one-second hold",
-            MountTrimResult.Rejected(MountTrimRejection.NOT_ENOUGH_SAMPLES),
-            MountTrimSampler.capture(stillWindow(Quat.IDENTITY, count = 4), nowMillis = 0L),
+            MountTrimRejection.NOT_ENOUGH_SAMPLES,
+            reasonOf(MountTrimSampler.capture(stillWindow(Quat.IDENTITY, count = 4), nowMillis = 0L)),
         )
         assertEquals(
             "30 frames crammed into 200 ms is not a one-second hold either",
-            MountTrimResult.Rejected(MountTrimRejection.NOT_ENOUGH_SAMPLES),
-            MountTrimSampler.capture(stillWindow(Quat.IDENTITY, spanMs = 200L), nowMillis = 0L),
+            MountTrimRejection.NOT_ENOUGH_SAMPLES,
+            reasonOf(MountTrimSampler.capture(stillWindow(Quat.IDENTITY, spanMs = 200L), nowMillis = 0L)),
         )
     }
 

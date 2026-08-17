@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <iomanip>
 #include <sstream>
 #include <utility>
 
@@ -72,6 +73,39 @@ inline std::int64_t get_i64(const std::uint8_t* p) {
   return static_cast<std::int64_t>(u);
 }
 
+// ROUND 8: f32/f64 as little-endian bytes. Written through the same
+// shift-and-mask route the integers take rather than a memcpy of the native
+// representation, so the file is byte-identical on a big-endian host — the
+// format contract says "all little-endian", and a chunk that only happened to
+// be right because x86 and arm64 are little-endian is not a format.
+// IEEE-754 layout itself is assumed (and asserted below), byte ORDER is not.
+static_assert(sizeof(float) == 4, "lscan: f32 payloads assume IEEE-754 binary32");
+static_assert(sizeof(double) == 8, "lscan: f64 payloads assume IEEE-754 binary64");
+
+inline void put_f32(std::uint8_t* p, float v) {
+  std::uint32_t u = 0;
+  std::memcpy(&u, &v, 4);
+  put_u32(p, u);
+}
+inline float get_f32(const std::uint8_t* p) {
+  const std::uint32_t u = get_u32(p);
+  float v = 0.f;
+  std::memcpy(&v, &u, 4);
+  return v;
+}
+inline void put_f64(std::uint8_t* p, double v) {
+  std::uint64_t u = 0;
+  std::memcpy(&u, &v, 8);
+  for (int i = 0; i < 8; ++i) p[i] = static_cast<std::uint8_t>((u >> (8 * i)) & 0xFF);
+}
+inline double get_f64(const std::uint8_t* p) {
+  std::uint64_t u = 0;
+  for (int i = 0; i < 8; ++i) u |= static_cast<std::uint64_t>(p[i]) << (8 * i);
+  double v = 0.0;
+  std::memcpy(&v, &u, 8);
+  return v;
+}
+
 }  // namespace
 
 std::uint32_t crc32(ByteSpan data, std::uint32_t seed) {
@@ -134,6 +168,32 @@ std::uint32_t chunk_crc(const ChunkHeader& h, ByteSpan payload) {
   return acc ^ 0xFFFFFFFFu;
 }
 
+// --- ROUND 8: kPoseAr payload codec -----------------------------------------
+
+void encode_pose_chunk(const PoseChunkRecord& p, std::uint8_t* out) {
+  for (int i = 0; i < 3; ++i) put_f64(out + 0 + 8 * i, p.position[i]);
+  for (int i = 0; i < 4; ++i) put_f64(out + 24 + 8 * i, p.orientation[i]);
+  put_f32(out + 56, p.position_sigma_m);
+  put_f32(out + 60, p.orientation_sigma_deg);
+  out[64] = p.source;
+  out[65] = p.quality;
+  out[66] = p.tracking_lost;
+  out[67] = 0;  // reserved
+}
+
+bool decode_pose_chunk(ByteSpan in, PoseChunkRecord* out) {
+  if (out == nullptr || in.size() < kPoseChunkPayloadBytes) return false;
+  const std::uint8_t* p = in.data();
+  for (int i = 0; i < 3; ++i) out->position[i] = get_f64(p + 0 + 8 * i);
+  for (int i = 0; i < 4; ++i) out->orientation[i] = get_f64(p + 24 + 8 * i);
+  out->position_sigma_m = get_f32(p + 56);
+  out->orientation_sigma_deg = get_f32(p + 60);
+  out->source = p[64];
+  out->quality = p[65];
+  out->tracking_lost = p[66];
+  return true;
+}
+
 StreamId stream_of(ChunkType t) {
   switch (t) {
     case ChunkType::kD6Raw: return StreamId::kLidarD6;
@@ -143,10 +203,17 @@ StreamId stream_of(ChunkType t) {
     case ChunkType::kGnssNmea:
     case ChunkType::kGnssRtcm: return StreamId::kGnss;
     case ChunkType::kCameraFrameIndex: return StreamId::kCameraFrames;
+    // ROUND 8: the resolved world-frame cloud now HAS a stream. A7-post.md §8
+    // item 2 listed `stream_of(kPointsXyzRgba) -> kUnknown` as the reason "the
+    // post-processed cloud is never written back to disk"; ROUND 7 §9 item 3
+    // hit the same wall from the D6 side. Mapping it to kSlamMap — the stream
+    // id both A6's registered map and A8's pushbroom output already publish on
+    // — is the whole fix, and it is additive: nothing wrote this chunk type
+    // before, so no existing container changes meaning.
+    case ChunkType::kPointsXyzRgba: return StreamId::kSlamMap;
     case ChunkType::kDeviceInfo:
     case ChunkType::kMarker:
     case ChunkType::kSessionNote:
-    case ChunkType::kPointsXyzRgba:
     case ChunkType::kNone: return StreamId::kUnknown;
   }
   return StreamId::kUnknown;
@@ -161,9 +228,13 @@ const char* stream_file_of(StreamId s) {
     case StreamId::kPoseFused: return kPoseArStreamFile;
     case StreamId::kGnss: return kGnssStreamFile;
     case StreamId::kCameraFrames: return kFrameIndexFile;
-    // Engine-internal streams (SLAM map, LIO pose track): if a caller ever
-    // records them, they land beside the lidar/pose streams they derive from.
-    case StreamId::kSlamMap: return kLidarStreamFile;
+    // ROUND 8: the SLAM map gets its OWN file. It used to share lidar.bin on
+    // the reasoning that an engine-internal stream should land beside what it
+    // derives from — fine while nothing recorded it, wrong the moment
+    // something does: ReplaySource walks lidar.bin looking for kD6Raw, and
+    // interleaving a 40k-points/s vertex stream into it would make every
+    // replay read and CRC tens of megabytes it immediately discards.
+    case StreamId::kSlamMap: return kMapStreamFile;
     case StreamId::kPoseLio: return kPoseArStreamFile;
     case StreamId::kUnknown: return kLidarStreamFile;
   }
@@ -353,6 +424,10 @@ struct FileRecordWriter::Impl {
   std::string profile_ = "quickscan";
   std::vector<SensorInfo> sensors_;
   std::vector<ClockOffsetInfo> clock_offsets_;  // INT-34
+  // ROUND 8: row-major phone_from_lidar, or "not set" — see
+  // FileRecordWriter::set_mount_calibration().
+  bool have_mount_ = false;
+  double mount_phone_from_lidar_[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
   std::int64_t created_at_utc_ns_ = 0;
   std::map<StreamId, StreamFile> streams_;
 
@@ -424,9 +499,25 @@ struct FileRecordWriter::Impl {
         << "\", \"model\": \"" << json_escape(s.model) << "\"}";
     }
     j << "],\n";
-    // A8 (mount calibration) and A10 (CRS) fill these in; A5 only reserves
-    // the keys so consumers can rely on their presence from day one.
-    j << "  \"mountCalibration\": null,\n";
+    // A5 reserved these keys so consumers could rely on their presence from
+    // day one. ROUND 8 fills `mountCalibration` in (see
+    // FileRecordWriter::set_mount_calibration() — without it a D6 capture is
+    // not self-contained and cannot be re-resolved off this directory alone);
+    // A10's CRS is still a placeholder.
+    if (have_mount_) {
+      j << "  \"mountCalibration\": {\"phoneFromLidar\": [";
+      for (int i = 0; i < 16; ++i) {
+        if (i != 0) j << ", ";
+        // Round-trip precision: a 4x4 that decodes to a slightly different
+        // matrix than the one that was recorded resolves the cloud into a
+        // slightly different room, and "slightly" is what this whole round is
+        // about.
+        j << std::setprecision(17) << mount_phone_from_lidar_[i];
+      }
+      j << "]},\n";
+    } else {
+      j << "  \"mountCalibration\": null,\n";
+    }
     j << "  \"crs\": null,\n";
     // --- INT-34, additive: A11 §8.4's per-bracket camera clock offset ------
     // t_engine_ns = t_camera_ns + cameraToEngineNs. Always emitted, `{}` when
@@ -617,6 +708,13 @@ void FileRecordWriter::add_clock_offset(const std::string& bracket,
   impl_->clock_offsets_.push_back(Impl::ClockOffsetInfo{key, camera_to_engine_ns, sigma_ns});
 }
 
+// ROUND 8, additive: see FileRecordWriter::set_mount_calibration() in lscan.h.
+void FileRecordWriter::set_mount_calibration(const double phone_from_lidar[16]) {
+  if (phone_from_lidar == nullptr) return;
+  for (int i = 0; i < 16; ++i) impl_->mount_phone_from_lidar_[i] = phone_from_lidar[i];
+  impl_->have_mount_ = true;
+}
+
 // --- FileRecordReader ---------------------------------------------------------
 
 struct FileRecordReader::Impl {
@@ -780,7 +878,9 @@ Status FileRecordReader::open(const std::string& lscan_dir) {
   // one physical file (e.g. kLidarD6 and kLidarMid360 both live in
   // lidar.bin) -- stream_file_of() already encodes that mapping.
   static const char* const kCandidates[] = {kLidarStreamFile, kImuStreamFile, kPoseArStreamFile,
-                                            kGnssStreamFile, kFrameIndexFile};
+                                            kGnssStreamFile, kFrameIndexFile,
+                                            // ROUND 8: the resolved cloud, StreamId::kSlamMap.
+                                            kMapStreamFile};
   bool hard_fail = false;
   for (const char* rel : kCandidates) {
     if (!impl_->load_stream_file(lscan_dir + "/" + rel, &hard_fail)) {

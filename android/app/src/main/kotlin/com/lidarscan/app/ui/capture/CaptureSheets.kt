@@ -1,6 +1,7 @@
 package com.lidarscan.app.ui.capture
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,6 +18,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SheetState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -27,6 +29,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lidarscan.app.render.CameraMode
@@ -56,7 +59,29 @@ import com.lidarscan.core.render.Colormap
  * gesture. The mockup had to enforce this with `closeCapSheets()` and two
  * `S.cap.*` flags; here it is structural.
  */
-enum class CaptureSheet { NONE, SETTINGS, DIAGNOSTICS }
+enum class CaptureSheet {
+    NONE,
+
+    /**
+     * ROUND 8, owner item 28 — everything that is *about this capture* rather
+     * than about how it is drawn: the name, the profile, the Light/Optimal/Full
+     * chips, the connection (auto-detect + the manual fallback) and the D6
+     * mount reference.
+     *
+     * All of it used to be stacked on the capture screen itself, above the
+     * viewport, where it took roughly half the display. The rule this sheet
+     * exists to enforce is [CaptureLayout.MIN_VIEWPORT_FRACTION]: the live 3D
+     * view is the only thing on that screen that can tell an operator whether
+     * the scan is any good, so it keeps 60 % of the height and the
+     * configuration comes to the front only when it is asked for.
+     */
+    CAPTURE,
+
+    /** Display: colour, colormap, point size, gamma, brightness, refresh, LOD. */
+    SETTINGS,
+
+    DIAGNOSTICS,
+}
 
 /** The 30 dp grabber both sheets share — a real dismiss target, not decoration. */
 @Composable
@@ -129,27 +154,9 @@ fun CaptureSettingsSheet(
     /** Item 10: A14 scalar gamma / brightness, live against the preview. */
     gamma: Float,
     brightness: Float,
-    /**
-     * Item 10 + owner addition 3: this sheet is the SAME sheet before and during a
-     * recording, so it also carries the session settings that used to sit on the
-     * capture body — Live SLAM, and (pre-record only) the workflow profile the new
-     * project will be created with.
-     */
-    liveSlam: Boolean,
-    liveSlamEditable: Boolean,
-    /**
-     * ROUND 6 (owner item 22): the Light preset's one structural switch, exposed
-     * here as an individual parameter like everything else a preset prefills —
-     * "presets are starting points, not caps".
-     */
-    liveMapEnabled: Boolean,
-    onLiveMapEnabledChange: (Boolean) -> Unit,
-    profile: com.lidarscan.core.model.WorkflowProfile?,
     onRefreshHzChange: (Int) -> Unit,
     onGammaChange: (Float) -> Unit,
     onBrightnessChange: (Float) -> Unit,
-    onLiveSlamChange: (Boolean) -> Unit,
-    onProfileChange: (com.lidarscan.core.model.WorkflowProfile) -> Unit,
     onCameraModeChange: (CameraMode) -> Unit,
     onKeyframesEnabledChange: (Boolean) -> Unit,
     onKeyframeRateChange: (Int) -> Unit,
@@ -171,7 +178,7 @@ fun CaptureSettingsSheet(
         modifier = Modifier.testTag("captureSettingsSheet"),
     ) {
         Column(Modifier.height(screenHeight * 0.74f)) {
-            SheetHead("Capture settings", "A14 · live")
+            SheetHead("Display", "A14 · live")
 
             // ── pinned: view mode ────────────────────────────────────────
             Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp)) {
@@ -377,39 +384,142 @@ fun CaptureSettingsSheet(
                 )
                 Spacer(Modifier.height(8.dp))
 
-                // ── ROUND 5: session settings, in the same sheet ──────────────
-                //
-                // Live SLAM came off the transport row (where round 5's Live
-                // *view* toggle now sits) and the workflow profile came off the
-                // deleted new-project screen. Both belong with the rest of what
-                // this capture is configured with, one tap from the viewport.
-                SheetSection("Session")
-
-                // ROUND 6 (item 22): Light's "raw preview + record, no live
-                // map" as a plain switch. Above Live SLAM because it is the
-                // stronger statement — with this off, nothing draws a map at
-                // all, whichever engine would have produced one.
-                SheetSwitchRow(
-                    title = "Live 3D map",
-                    subtitle = "draw the registered / pushbroom cloud · recording unaffected",
-                    checked = liveMapEnabled,
-                    onCheckedChange = onLiveMapEnabledChange,
-                    modifier = Modifier.testTag("liveMapSwitch"),
+                // ROUND 8 (item 28): the Session block — Live 3D map, Live SLAM
+                // and the workflow profile — moved to [CaptureConfigSheet].
+                // Those three are properties of the CAPTURE (what is recorded,
+                // and whether a map is built at all); everything left in here is
+                // a property of the PICTURE. Splitting them is what lets the
+                // capture screen carry two chips instead of half a screen of
+                // controls — see CaptureLayout.
+                Hint(
+                    "Recording, connection, performance and the mount reference are in the Capture sheet — " +
+                        "this one is only about how the cloud is drawn. Nothing here touches the recording.",
+                    color = InkFaint,
                 )
+                Spacer(Modifier.height(14.dp))
+            }
 
-                SheetSwitchRow(
-                    title = "Live SLAM",
-                    subtitle = if (liveSlamEditable) {
-                        "registered map while recording · editable while idle"
-                    } else {
-                        "locked during a session"
-                    },
-                    checked = liveSlam,
-                    enabled = liveSlamEditable,
-                    onCheckedChange = onLiveSlamChange,
-                    modifier = Modifier.testTag("liveSlamSwitch"),
+            SheetFooter(onDismiss)
+        }
+    }
+}
+
+/**
+ * ROUND 8, owner item 28 — **the Capture sheet**: everything that configures
+ * the scan itself, one tap behind the chip that names the current preset.
+ *
+ * This is where the capture screen's whole pre-capture stack went. Top to
+ * bottom it is the same order it had on the screen, so an operator who knew the
+ * old layout finds every control in the place they expect it, just one tap
+ * further in:
+ *
+ *  * **Performance** — ROUND 6 item 22's Light / Optimal / Full, with its
+ *    "what changed" line and its weak-phone caution;
+ *  * **Scan** — the name field (blank = auto-name) and the workflow profile;
+ *  * **Connection** — the auto-detect status line and the inline manual
+ *    fallback, passed in as a slot so they stay the *same* composables the
+ *    disconnected screen shows inline (there is exactly one implementation of
+ *    "enter the device by hand", not two that can drift);
+ *  * **Mount reference** — the D6 re-zero's explanation and its Clear. The
+ *    *state* and the Set button stay on the capture screen itself, always
+ *    visible, because ROUND 8 item 30c is precisely that they must not be
+ *    behind a sheet;
+ *  * **Recording** — Live 3D map and Live SLAM, which decide what the engine
+ *    builds rather than how it is painted.
+ *
+ * 74 % tall, matching the Display sheet: a live band of the cloud stays on
+ * screen, which is what makes a re-zero taken with this sheet open verifiable.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CaptureConfigSheet(
+    sheetState: SheetState,
+    preset: com.lidarscan.core.capture.PerformancePreset,
+    deviceTierLabel: String,
+    presetChangeNote: String?,
+    presetCaution: String?,
+    onPresetChange: (com.lidarscan.core.capture.PerformancePreset) -> Unit,
+    onDismissPresetNote: () -> Unit,
+    autoName: String?,
+    scanName: String,
+    onScanNameChange: (String) -> Unit,
+    profile: com.lidarscan.core.model.WorkflowProfile?,
+    onProfileChange: (com.lidarscan.core.model.WorkflowProfile) -> Unit,
+    liveMapEnabled: Boolean,
+    onLiveMapEnabledChange: (Boolean) -> Unit,
+    liveSlam: Boolean,
+    liveSlamEditable: Boolean,
+    onLiveSlamChange: (Boolean) -> Unit,
+    /** The auto-detect line + the inline manual panel, exactly as the disconnected screen draws them. */
+    connection: @Composable () -> Unit,
+    /** The D6 mount-reference explanation and Clear, or nothing for a sensor that has no trim. */
+    mount: (@Composable () -> Unit)?,
+    onDismiss: () -> Unit,
+) {
+    val screenHeight = LocalConfiguration.current.screenHeightDp.dp
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        dragHandle = { SheetGrabber() },
+        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+        modifier = Modifier.testTag("captureConfigSheet"),
+    ) {
+        Column(Modifier.height(screenHeight * 0.74f)) {
+            SheetHead("Capture", "this scan")
+
+            Column(
+                Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 18.dp),
+            ) {
+                SheetSection("Performance")
+                SheetRowLabel(
+                    label = "Preset",
+                    hint = "$deviceTierLabel phone",
+                    readout = if (preset.isSelectable) preset.tagline else "custom",
                 )
+                SegmentedPill(
+                    options = com.lidarscan.core.capture.PerformancePreset.entries
+                        .filter { it.isSelectable }
+                        .map { it to it.displayName },
+                    selected = preset,
+                    onSelect = onPresetChange,
+                    height = ScanDims.SegmentTall,
+                    modifier = Modifier.testTag("presetRow"),
+                )
+                if (presetChangeNote != null) {
+                    Spacer(Modifier.height(6.dp))
+                    // ROUND 6 (item 22): "switching preset shows what it
+                    // changed" — and stays until read, or tapped away.
+                    Hint(
+                        presetChangeNote,
+                        color = SemGood,
+                        modifier = Modifier
+                            .clickable(onClick = onDismissPresetNote)
+                            .testTag("presetChangeNote"),
+                    )
+                }
+                if (presetCaution != null) {
+                    Spacer(Modifier.height(6.dp))
+                    Hint(presetCaution, color = SemWarn, modifier = Modifier.testTag("presetCaution"))
+                }
 
+                SheetSection("Scan")
+                if (autoName != null) {
+                    OutlinedTextField(
+                        value = scanName,
+                        onValueChange = onScanNameChange,
+                        singleLine = true,
+                        label = { Text("Scan name — optional") },
+                        placeholder = { Text(autoName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        modifier = Modifier.fillMaxWidth().testTag("scanNameField"),
+                    )
+                    Spacer(Modifier.height(6.dp))
+                }
                 if (profile != null) {
                     SheetRowLabel(
                         label = "Workflow profile",
@@ -423,6 +533,39 @@ fun CaptureSettingsSheet(
                         modifier = Modifier.testTag("profileRow"),
                     )
                 }
+
+                SheetSection("Connection")
+                connection()
+
+                if (mount != null) {
+                    SheetSection("Mount reference")
+                    mount()
+                }
+
+                SheetSection("Recording")
+                // ROUND 6 (item 22): Light's "raw preview + record, no live
+                // map" as a plain switch. Above Live SLAM because it is the
+                // stronger statement — with this off, nothing draws a map at
+                // all, whichever engine would have produced one.
+                SheetSwitchRow(
+                    title = "Live 3D map",
+                    subtitle = "draw the registered / pushbroom cloud · recording unaffected",
+                    checked = liveMapEnabled,
+                    onCheckedChange = onLiveMapEnabledChange,
+                    modifier = Modifier.testTag("liveMapSwitch"),
+                )
+                SheetSwitchRow(
+                    title = "Live SLAM",
+                    subtitle = if (liveSlamEditable) {
+                        "registered map while recording · editable while idle · Mid-360"
+                    } else {
+                        "locked during a session"
+                    },
+                    checked = liveSlam,
+                    enabled = liveSlamEditable,
+                    onCheckedChange = onLiveSlamChange,
+                    modifier = Modifier.testTag("liveSlamSwitch"),
+                )
                 Spacer(Modifier.height(14.dp))
             }
 

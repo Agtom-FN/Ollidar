@@ -17,8 +17,11 @@ import com.lidarscan.core.render.Colormap
 import com.lidarscan.core.store.Project
 import com.lidarscan.core.store.ProjectStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
@@ -207,13 +210,41 @@ class CaptureViewModel(
     // panel is B10's job). Kept in the ViewModel (not Compose `remember`) so
     // rotating the device (landscape<->portrait, explicitly in B4's scope)
     // doesn't reset them.
-    private val _colorMode = MutableStateFlow(ColorMode.RGB)
+    //
+    // ROUND 8 (owner item 29): the four defaults below are no longer this
+    // file's own opinion — they are
+    // [com.lidarscan.core.render.DisplayParams.Companion.captureDefaults], which
+    // is where the reasoning and the field evidence live. What the owner's real
+    // capture wrote into its own `project.json` was
+    // `pointSize.fixedPx: 2.5` in `colorMode: RGB` — 2.5 px points on an indoor
+    // cloud read as a solid smear, and RGB on a D6 return (which has no colour)
+    // is a pass-through of nothing.
+    private val _colorMode = MutableStateFlow(com.lidarscan.core.render.DisplayParams.CAPTURE_COLOR_MODE)
     val colorMode: StateFlow<ColorMode> = _colorMode.asStateFlow()
     private val _colormap = MutableStateFlow(Colormap.SPECTRUM)
     val colormap: StateFlow<Colormap> = _colormap.asStateFlow()
-    private val _pointSizePx = MutableStateFlow(2.5f)
+    private val _pointSizePx =
+        MutableStateFlow(com.lidarscan.core.render.DisplayParams.CAPTURE_POINT_SIZE_PX)
     val pointSizePx: StateFlow<Float> = _pointSizePx.asStateFlow()
-    private val _cameraMode = MutableStateFlow(CameraMode.ORBIT)
+
+    /**
+     * ROUND 8, owner directive *"i need a live 3d mapping too"* — **FOLLOW is
+     * the default camera during a D6 capture.**
+     *
+     * A COIN-D6 walkthrough is the one case where the operator and the camera
+     * are the same object: the phone IS the rig, the pushbroom is laying points
+     * down in front of it, and an orbit camera parked at the origin means the
+     * live map walks off screen within a few metres of the start. ORBIT is the
+     * right default for a cloud you are inspecting; FOLLOW is the right default
+     * for a cloud you are *making*.
+     *
+     * A replay session is inspection, not capture — it has no operator walking
+     * anywhere — so it keeps ORBIT. What FOLLOW does to the camera is
+     * `PointCloudRenderer`'s (a concurrent task owns that package); this sets
+     * the default and the View row's initial selection, which is the half that
+     * lives here.
+     */
+    private val _cameraMode = MutableStateFlow(if (isReplay) CameraMode.ORBIT else CameraMode.FOLLOW)
     val cameraMode: StateFlow<CameraMode> = _cameraMode.asStateFlow()
     private val _liveSlam = MutableStateFlow(false)
     val liveSlam: StateFlow<Boolean> = _liveSlam.asStateFlow()
@@ -310,11 +341,11 @@ class CaptureViewModel(
     val refreshRequestToken: StateFlow<Int> = _refreshRequestToken.asStateFlow()
 
     /** A14's scalar `gamma` (0.1 – 4.0), applied to whichever scalar block the colour mode selects. */
-    private val _gamma = MutableStateFlow(1f)
+    private val _gamma = MutableStateFlow(com.lidarscan.core.render.DisplayParams.CAPTURE_GAMMA)
     val gamma: StateFlow<Float> = _gamma.asStateFlow()
 
     /** A14's scalar `brightness` (0.1 – 3.0). */
-    private val _brightness = MutableStateFlow(1f)
+    private val _brightness = MutableStateFlow(com.lidarscan.core.render.DisplayParams.CAPTURE_BRIGHTNESS)
     val brightness: StateFlow<Float> = _brightness.asStateFlow()
 
     /**
@@ -421,7 +452,21 @@ class CaptureViewModel(
                     gamma = g,
                     brightness = b,
                 ),
-                pointSize = com.lidarscan.core.render.PointSizeParams(fixedPx = size),
+                // ROUND 8 (owner item 29): `mode` is set EXPLICITLY.
+                //
+                // This used to be `PointSizeParams(fixedPx = size)`, which
+                // leaves `mode` on the data class's own default — `ADAPTIVE`.
+                // The capture sheet's only point-size control is a 0.1–3.0 px
+                // slider that writes `fixedPx`, and a renderer honouring the
+                // mode reads `adaptiveMin/Max/Reference` and never looks at
+                // `fixedPx` at all. So the control the owner was moving wrote a
+                // field the declared mode said to ignore, and the owner's own
+                // `project.json` recorded the contradiction verbatim:
+                // `"mode": "ADAPTIVE", "fixedPx": 2.5`.
+                pointSize = com.lidarscan.core.render.PointSizeParams(
+                    mode = com.lidarscan.core.render.PointSizeMode.FIXED_PIXELS,
+                    fixedPx = size,
+                ),
                 lodPointBudget = (lodM.coerceIn(1, 200) * 1_000_000),
                 // The redesign's viewport ground, so the live view and the
                 // project thumbnails sit on the same black.
@@ -430,7 +475,13 @@ class CaptureViewModel(
         }.stateIn(
             viewModelScope,
             kotlinx.coroutines.flow.SharingStarted.Companion.WhileSubscribed(5_000),
-            com.lidarscan.core.render.DisplayParams(),
+            // ROUND 8 (item 29): the seed a collector sees before the first
+            // `combine` emission is the same block the controls are seeded from,
+            // not `DisplayParams()`'s engine-side defaults (RGB / 2 px /
+            // ADAPTIVE) — otherwise the very first frame of a capture is drawn
+            // with a display nobody chose and the manifest can be written with
+            // it too (`createProjectForThisScan` reads `displayParams.value`).
+            com.lidarscan.core.render.DisplayParams.captureDefaults(),
         )
 
     /** B5: this project's profile-driven capture defaults, read once at load. */
@@ -746,6 +797,32 @@ class CaptureViewModel(
     private val _lastSavedProject = MutableStateFlow<String?>(null)
     val lastSavedProject: StateFlow<String?> = _lastSavedProject.asStateFlow()
 
+    /**
+     * ROUND 8, owner item 31 — **the id of the scan a Stop just sealed, once.**
+     *
+     * > "stop => seal => navigate to Projects with the new scan selected"
+     *
+     * The capture flow used to end nowhere. Stop sealed the project, showed a
+     * summary sheet, and left the operator on a Capture tab whose viewport was
+     * still drawing the scan they had just finished — with the scan itself
+     * reachable only by remembering to tap Projects. Every one of the owner's
+     * two lost field sessions was discovered *in the Projects tab*, which is
+     * where a finished capture's evidence lives and therefore where a finished
+     * capture should land you.
+     *
+     * A one-shot rather than a `StateFlow`: navigation is an event, and a
+     * `StateFlow` holding the last sealed id would re-navigate on every
+     * recomposition and every configuration change. `replay = 0` with a buffer,
+     * so a collector that is momentarily absent (the screen mid-recomposition)
+     * does not make the emit block or drop silently.
+     */
+    private val _sealedProjectId = MutableSharedFlow<String>(
+        replay = 0,
+        extraBufferCapacity = 4,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
+    )
+    val sealedProjectId: SharedFlow<String> = _sealedProjectId.asSharedFlow()
+
     // --- ROUND 6 (owner item 21): the D6 live map ----------------------------
 
     /**
@@ -967,6 +1044,18 @@ class CaptureViewModel(
     val mountTrimNote: StateFlow<String?> = _mountTrimNote.asStateFlow()
 
     /**
+     * ROUND 8 (owner item 30b): true when [mountTrimNote] is a **refusal**.
+     *
+     * The capture screen shows a refusal as a loud amber banner and a
+     * confirmation as a quiet teal line. That distinction did not exist before,
+     * and the cost of not having it is in the owner's own log: eight taps in one
+     * session, eight grey `mount re-zero refused: MOVING` lines, and a field
+     * report that the control does not work.
+     */
+    private val _mountTrimNoteIsWarning = MutableStateFlow(false)
+    val mountTrimNoteIsWarning: StateFlow<Boolean> = _mountTrimNoteIsWarning.asStateFlow()
+
+    /**
      * ROUND 6 (item 23): captures the current phone attitude as this session's
      * mount reference, or refuses and says why.
      *
@@ -984,6 +1073,7 @@ class CaptureViewModel(
         val controller = arController
         if (controller == null) {
             _mountTrimNote.value = "Mount reference needs phone tracking, which this session does not have."
+            _mountTrimNoteIsWarning.value = true
             return
         }
         val result = com.lidarscan.core.calib.MountTrimSampler.capture(
@@ -993,10 +1083,31 @@ class CaptureViewModel(
         )
         when (result) {
             is com.lidarscan.core.calib.MountTrimResult.Rejected -> {
-                _mountTrimNote.value = result.reason.message
-                logEvent(LOG_TAG_AR, "mount re-zero refused: ${result.reason.name}")
+                // ROUND 8 (owner item 30b): the refusal carries its MEASUREMENT,
+                // to the screen and to the log.
+                //
+                // The entire on-device record of the owner's failed session was
+                // eight lines of `mount re-zero refused: MOVING` — a name, with
+                // no numbers, which cannot distinguish "you were 0.1° over" from
+                // "the gate is broken" from "no samples are arriving". All three
+                // were live hypotheses at the start of this round. The log line
+                // is now, e.g.:
+                //
+                //   mount re-zero refused: MOVING p90=2.90deg max=5.10deg
+                //   limit=2.50deg outlierLimit=6.00deg samples=31 spanMs=980
+                //
+                // and the panel gets the same numbers plus what to do about them
+                // (`MountTrimResult.Rejected.sentence`).
+                _mountTrimNote.value = result.sentence
+                _mountTrimNoteIsWarning.value = true
+                logEvent(
+                    LOG_TAG_AR,
+                    "mount re-zero refused: ${result.reason.name}" +
+                        (result.measurement?.let { " ${it.logSuffix}" } ?: " (no samples)"),
+                )
             }
             is com.lidarscan.core.calib.MountTrimResult.Captured -> {
+                _mountTrimNoteIsWarning.value = false
                 val stored = com.lidarscan.core.calib.StoredMountTrim(result.trim, appRunId)
                 _storedMountTrim.value = stored
                 refreshMountTrimProvenance()
@@ -1006,12 +1117,27 @@ class CaptureViewModel(
                 // taken BEFORE Start, is no project at all.
                 viewModelScope.launch { runCatching { persistMountTrim(stored) } }
                 _mountTrimNote.value =
-                    "Mount reference set — %.1f° from the bracket nominal, held to %.2f° over %d samples."
-                        .format(result.trim.magnitudeDeg, result.trim.spreadDeg, result.trim.sampleCount)
+                    ("Mount reference set — %.1f° from the bracket nominal, steady to %.2f° " +
+                        "(worst frame %.2f°) over %d samples.")
+                        .format(
+                            result.trim.magnitudeDeg,
+                            result.trim.spreadP90Deg,
+                            result.trim.spreadDeg,
+                            result.trim.sampleCount,
+                        )
+                // `spread=` keeps meaning the WORST deviation, unchanged since
+                // ROUND 6, so the 0.3.0 field lines (`spread=0.47deg`) and these
+                // remain directly comparable. `spreadP90=` is the new number the
+                // ROUND 8 gate actually judges on.
                 logEvent(
                     LOG_TAG_AR,
-                    "mount re-zero captured: magnitude=%.2fdeg spread=%.2fdeg samples=%d"
-                        .format(result.trim.magnitudeDeg, result.trim.spreadDeg, result.trim.sampleCount),
+                    "mount re-zero captured: magnitude=%.2fdeg spread=%.2fdeg spreadP90=%.2fdeg samples=%d"
+                        .format(
+                            result.trim.magnitudeDeg,
+                            result.trim.spreadDeg,
+                            result.trim.spreadP90Deg,
+                            result.trim.sampleCount,
+                        ),
                 )
                 applyMountExtrinsicNow()
                 // A trim taken mid-session belongs to the project being recorded.
@@ -1030,11 +1156,13 @@ class CaptureViewModel(
         refreshMountTrimProvenance()
         viewModelScope.launch { runCatching { persistMountTrim(null) } }
         _mountTrimNote.value = "Mount reference cleared — back to the bracket's CAD nominal."
+        _mountTrimNoteIsWarning.value = false
         applyMountExtrinsicNow()
     }
 
     fun dismissMountTrimNote() {
         _mountTrimNote.value = null
+        _mountTrimNoteIsWarning.value = false
     }
 
     // --- ROUND 6 (owner item 22): the Light / Optimal / Full chips ------------
@@ -1134,6 +1262,63 @@ class CaptureViewModel(
         val listener = keyframeFrameListener ?: return
         arController?.removeFrameListener(listener)
         keyframeFrameListener = null
+    }
+
+    // ── ROUND 8: feeding the third-person Follow camera ──────────────────────
+
+    /** Held so the exact same function reference can be removed again — see [detachKeyframeListener]. */
+    private var rigPoseFrameListener: ((com.google.ar.core.Frame) -> Unit)? = null
+
+    /**
+     * ROUND 8, owner directive *"i need a live 3d mapping too"* — **hands the
+     * renderer the rig's position, once per ARCore frame.**
+     *
+     * The FOLLOW camera lives in `PointCloudRenderer` / `core.render.FollowCamera`
+     * (a concurrent task owns those); what only this class can supply is the
+     * pose, because `CaptureArController`'s frame stream is a ViewModel-scoped
+     * subscription and the renderer is a Compose-scoped object. This is the
+     * seam between them, and it is a sink rather than a direct reference so
+     * that nothing here has to know what the renderer does with it.
+     *
+     * Two deliberate choices, both from the renderer's own contract:
+     *
+     *  * **`frame.camera.pose`, not `getDisplayOrientedPose()`.** The latter
+     *    bakes in the display rotation, which is a property of how the phone is
+     *    held rather than of where the rig is.
+     *  * **Position only.** The camera derives its heading from the trajectory,
+     *    never from phone yaw — a walking operator yaws several degrees per step
+     *    and glances around constantly, and either would swing the whole view.
+     *
+     * Without this the FOLLOW camera still works, on the renderer's documented
+     * fallback (the centroid of the newest points, which for a D6's ring is
+     * approximately the rig). This makes it exact.
+     */
+    fun setRigPoseSink(sink: ((Float, Float, Float, Long) -> Unit)?) {
+        val controller = arController ?: return
+        rigPoseFrameListener?.let { controller.removeFrameListener(it) }
+        rigPoseFrameListener = null
+        if (sink == null) return
+        val listener: (com.google.ar.core.Frame) -> Unit = { frame ->
+            // Cannot throw onto the GL thread: this runs inside
+            // CaptureArController.onFrame's listener fan-out, and ROUND 6's
+            // whole item 19 was about what an exception there costs (the
+            // process). `camera.pose` on a frame whose camera is not tracking
+            // is defined but meaningless, so it is skipped rather than fed in.
+            runCatching {
+                val camera = frame.camera
+                if (camera.trackingState != com.google.ar.core.TrackingState.TRACKING) return@runCatching
+                val t = camera.pose.translation
+                sink(t[0], t[1], t[2], frame.timestamp)
+            }
+        }
+        rigPoseFrameListener = listener
+        controller.addFrameListener(listener)
+    }
+
+    private fun detachRigPoseListener() {
+        val listener = rigPoseFrameListener ?: return
+        arController?.removeFrameListener(listener)
+        rigPoseFrameListener = null
     }
 
     /**
@@ -1463,6 +1648,17 @@ class CaptureViewModel(
                     )
                 }
             }
+            // ROUND 8 (item 30d): the extrinsic + `pushbroom_enable`, before the
+            // AR pipelines and independently of whether there is a camera
+            // controller at all. For a D6 this is what makes the capture 3D
+            // (ROUND 5 item 11), so it must not be a side effect of ARCore
+            // starting — and its log line is the app's only record of which
+            // extrinsic a scan actually ran on.
+            applyMountExtrinsic(
+                engineHandleProvider(),
+                project.manifest.sensor,
+                project.manifest.mountCalibration,
+            )
             startArPipelines(project)
             startPhoneGeorefIfNeeded(project)
         }
@@ -1619,7 +1815,15 @@ class CaptureViewModel(
         val handle = engineHandleProvider()
         controller.engineHandle = handle
 
-        applyMountExtrinsic(handle, project.manifest.sensor, project.manifest.mountCalibration)
+        // ROUND 8 (item 30d): `applyMountExtrinsic` moved OUT of here, up into
+        // `startCapture`. It never belonged behind `arController ?: return`:
+        // the extrinsic and `pushbroom_enable` are engine calls about the D6's
+        // geometry, not ARCore calls, and gating them on the presence of a
+        // camera controller meant a session without one silently recorded 2D
+        // *and* wrote no record of having decided to. It also made the one
+        // decision this round most needed to pin — "does a restored trim reach
+        // the pushbroom?" — unreachable from a JVM test, because no JVM test
+        // has an ARCore controller.
 
         keyframeRecorder = com.lidarscan.app.ar.KeyframeRecorder(
             motion = controller.motion,
@@ -1682,9 +1886,21 @@ class CaptureViewModel(
             ?: trim?.composedWith(nominalMatrix)
             ?: nominalMatrix
         val usingNominal = measuredMatrix == null
+        val source = if (usingNominal) "nominal" else "measured"
+        val trimSuffix = if (trim != null) provenance.logSuffix else "trim=none"
 
         if (handle == 0L) {
             _mountIsNominal.value = usingNominal
+            // ROUND 8 (item 30d): logged even with no live engine handle.
+            //
+            // A DIFFERENT verb ("resolved", not "applied") on purpose — a field
+            // log must never let "we worked out which extrinsic to use" be read
+            // as "the engine is using it". What this line does give is the one
+            // fact that was previously unobservable off-device: which trim the
+            // session picked, and how old it was. That is what makes the
+            // restored-trim path assertable on a bare JVM
+            // (`CaptureRound8MountGateTest`) instead of only on a phone.
+            logEvent(LOG_TAG_PUSHBROOM, "extrinsic resolved (no engine handle): source=$source $trimSuffix")
             return
         }
         val err = com.lidarscan.app.engine.ScanEngineNative.nativeSetMountExtrinsics(handle, matrix.m)
@@ -1697,9 +1913,7 @@ class CaptureViewModel(
             _pushbroomActive.value = pushbroomEnabled
             logEvent(
                 LOG_TAG_PUSHBROOM,
-                "extrinsic applied: source=${if (usingNominal) "nominal" else "measured"} " +
-                    "${if (trim != null) provenance.logSuffix else "trim=none"} " +
-                    "pushbroomEnabled=$enabled",
+                "extrinsic applied: source=$source $trimSuffix pushbroomEnabled=$enabled",
             )
         } else {
             logEvent(LOG_TAG_PUSHBROOM, "set_mount_extrinsics FAILED err=$err — no live 3D map this session")
@@ -1949,8 +2163,49 @@ class CaptureViewModel(
                     epochMillis = clock(),
                 ),
             )
+            // ── ROUND 8, owner item 31: the tab is RE-ARMED, not merely idle ──
+            //
+            // "the capture tab, when returned to, is RESET: fresh auto-name,
+            // still connected/armed, live preview running, ready to Start again
+            // immediately."
+            //
+            // The `NewScan` above was already ROUND 5 AUDIT's half of that (a
+            // second Start must create project #2, not re-record into #1). These
+            // three are the half that was missing, and the first is a real bug:
+            //
+            //  * **the typed name was never cleared.** `_scanName` is what
+            //    `ScanAutoName.resolve(typedName = …)` prefers over the
+            //    auto-name, so an operator who typed "Kitchen" once got
+            //    "Kitchen" — the same name, for a different scan — on every
+            //    subsequent Start of that session, with only the directory slug
+            //    to tell them apart. A name is spent when the scan it named is
+            //    sealed.
+            //  * **the stats line kept the finished scan's numbers**, so a
+            //    re-armed tab claimed 216 k points and 30 s of recording before
+            //    the next Start. `_sessionSummary` was already snapshotted above
+            //    from `finalStats`, so the sheet is unaffected.
+            //  * **the section count belonged to the scan that just ended.**
+            //
+            // What is deliberately NOT touched: the connection, `autoConnect`'s
+            // state, `_pointCloudSource`, the preset, the display parameters and
+            // the mount trim. "Still connected/armed, live preview running" is
+            // exactly the absence of code here — and the mount trim outliving a
+            // capture is ROUND 7's field bug 1, which must stay fixed.
+            _scanName.value = ""
+            _stats.value = CaptureStats()
+            lastStatsSampleMillis = 0L
+            lastStatsSamplePoints = 0L
+            _sectionCount.value = 1
         } else {
             projectStore.open(activeId)?.let { _uiState.value = CaptureUiState.Loaded(it) }
+        }
+
+        // ROUND 8 (item 31): the seal is complete and verified — tell the
+        // navigator which scan to open. Emitted last, and only on the verified
+        // path: navigating away from a capture that FAILED to save would take
+        // the operator off the one screen carrying the red banner that says so.
+        if (verified != null) {
+            _sealedProjectId.tryEmit(activeId)
         }
     }
 
@@ -2059,6 +2314,7 @@ class CaptureViewModel(
     override fun onCleared() {
         stopPhoneGeoref()
         detachTrailListener()
+        detachRigPoseListener()
         detachKeyframeListener()
         keyframeRecorder?.shutdown()
         keyframeRecorder = null

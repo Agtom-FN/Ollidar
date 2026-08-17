@@ -539,10 +539,19 @@ Each is a small change in a file A7 does not own.
    becomes able to drive a live `Engine` from a Mid-360 `.lscan`, and A7's
    decode loop could then be re-expressed on top of it — which would make
    "replay == capture" literally true for the second sensor too.
-2. **`stream_of(ChunkType::kPointsXyzRgba)` returns `kUnknown`**, so a processed
-   cloud has nowhere to be written in a `.lscan`. Whoever owns `record/` should
-   decide whether processed clouds live in `streams/` under a new `StreamId` or
-   in `processed/final.cloud` as a bare file. A7 has the bytes ready either way.
+2. ~~**`stream_of(ChunkType::kPointsXyzRgba)` returns `kUnknown`**, so a processed
+   cloud has nowhere to be written in a `.lscan`.~~ **CLOSED, ROUND 8 (0.5.0).**
+   It now maps to `StreamId::kSlamMap`, which lands in its own file,
+   `streams/map.bin` — its own rather than `lidar.bin` because replaying
+   `kD6Raw` walks `lidar.bin`, and interleaving a 16-byte-per-point vertex
+   stream into it would make every replay read and CRC megabytes it discards.
+   The engine writes it live for a D6 session only (`Engine::Impl::on_page_update`
+   gates on the pushbroom being on): at ~3,600 pts/s that is 57 KB/s and it
+   makes opening a saved scan instant, whereas a Mid-360's 40k pts/s map would
+   cost 640 KB/s for something A7 rebuilds better anyway. It is a **cache**,
+   not the source of truth — Process re-resolves and overwrites it, and
+   deleting `map.bin` costs speed, never data. A7 itself still does not write
+   its own output there; the bytes are ready and the stream now exists.
 3. **`PostStats` should become a `kJobProgress` payload.** `jobs/job.h` says
    progress is reported through `EventType::kJobProgress` on the event bus. A7
    deliberately exposes a plain C++ callback instead (see `progress.h`) so the

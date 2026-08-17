@@ -3,6 +3,7 @@ package com.lidarscan.core.capture
 import com.lidarscan.core.render.LivePageStoreSizing
 import com.lidarscan.core.render.RefreshGovernor
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -220,5 +221,85 @@ class PerformancePresetTest {
         val note = LivePageStoreSizing.fullNote(LivePageStoreSizing.forTier(DeviceTier.STANDARD))
         assertTrue("it must name the live map", note.contains("Live map"))
         assertTrue("and it must exonerate the recording, in words", note.contains("Recording is unaffected"))
+    }
+
+    // ── ROUND 8: the live 3D map default, and item 29's display block ──────
+
+    /**
+     * Owner directive, *"i need a live 3d mapping too"*: **the live pushbroom
+     * map is on by default in every preset except LIGHT.**
+     *
+     * It already was, and the point of pinning it is that the owner's log made
+     * it look otherwise:
+     *
+     * ```
+     * 22:53:09 [session] start: … preset=OPTIMAL tier=STANDARD liveSlam=false
+     * ```
+     *
+     * `liveSlam=false` on an OPTIMAL D6 session is correct and is NOT "no live
+     * map" — `liveSlam` is the Mid-360's LIO switch. The D6's live map is the
+     * pushbroom, and the very next line of that log says so:
+     * `extrinsic applied: … trim=none pushbroomEnabled=true`.
+     */
+    @Test
+    fun `the live 3D map is on by default in every preset except Light`() {
+        for (tier in DeviceTier.entries) {
+            for (ceiling in listOf(budgetPhoneCeiling, pixel8ProCeiling)) {
+                for (preset in PerformancePreset.entries.filter { it.isSelectable }) {
+                    val tuning = PerformancePresets.tuningFor(preset, tier, ceiling)
+                    assertEquals(
+                        "$preset on $tier@$ceiling: liveMapEnabled must match liveMapDefault",
+                        PerformancePresets.liveMapDefault(preset),
+                        tuning.liveMapEnabled,
+                    )
+                }
+                assertTrue(
+                    "OPTIMAL is the default preset, so the D6 live map is on out of the box",
+                    PerformancePresets.tuningFor(PerformancePresets.DEFAULT, tier, ceiling).liveMapEnabled,
+                )
+            }
+        }
+        assertFalse("Light is the ONLY raw-preview-only preset", PerformancePresets.liveMapDefault(PerformancePreset.LIGHT))
+    }
+
+    /**
+     * Item 29: the OPTIMAL preset opens on intensity, 1.0 px, identity tone and
+     * 30 fps — and the first three are the SAME for every preset.
+     *
+     * That sameness is the statement, not an oversight. Item 22's rule is that a
+     * preset owns the knobs that cost sustained GPU/CPU/disk during a walk;
+     * colour and point size cost nothing, so a preset switch must never repaint
+     * the operator's view. Light/Optimal/Full is a performance control, not a
+     * taste control.
+     */
+    @Test
+    fun `every preset opens on the same display block, and Optimal caps live refresh at 30 fps`() {
+        val expected = com.lidarscan.core.render.DisplayParams.captureDefaults()
+        for (preset in PerformancePreset.entries) {
+            assertEquals(
+                "$preset must not repaint the operator's view",
+                expected,
+                PerformancePresets.displayDefaultsFor(preset),
+            )
+        }
+        assertEquals(
+            com.lidarscan.core.render.ColorMode.INTENSITY,
+            PerformancePresets.displayDefaultsFor(PerformancePresets.DEFAULT).colorMode,
+        )
+        assertEquals(
+            1.0f,
+            PerformancePresets.displayDefaultsFor(PerformancePresets.DEFAULT).pointSize.fixedPx,
+            0f,
+        )
+
+        // 30 fps on a 120 Hz panel — item 21's "the default must not be the
+        // ceiling", still true, now also item 29's stated number.
+        for (tier in listOf(DeviceTier.STANDARD, DeviceTier.FLAGSHIP)) {
+            assertEquals(
+                "$tier: Optimal's live refresh is 30 fps",
+                30,
+                PerformancePresets.tuningFor(PerformancePreset.OPTIMAL, tier, pixel8ProCeiling).refreshHz,
+            )
+        }
     }
 }

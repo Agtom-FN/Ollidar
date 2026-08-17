@@ -1,6 +1,7 @@
 #include "scanengine/core/engine.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cctype>
 #include <map>
@@ -216,6 +217,11 @@ struct Engine::Impl {
   std::unique_ptr<D6PushbroomAssembler> pushbroom;
   mutable std::mutex pushbroom_m;
   std::atomic<bool> pushbroom_on{false};
+  // ROUND 8: the last extrinsic set_mount_extrinsics() accepted, kept so
+  // start_session() can put it in the manifest. The assembler stores it too,
+  // but only as its internal composed form; the manifest needs the number the
+  // caller actually gave. Guarded by pushbroom_m, like the assembler itself.
+  double mount_phone_from_lidar[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
   std::atomic<TrajectorySource> trajectory{TrajectorySource::kExternal};
 
   // --- A10: the GNSS/RTK stack --------------------------------------------
@@ -330,6 +336,42 @@ struct Engine::Impl {
     // points to the LIO a second time would insert duplicate geometry into
     // the voxel map, so the forwarding below is append-only.
     if (u.kind != PageUpdateKind::kAppended) return;
+
+    // --- ROUND 8: record the RESOLVED pushbroom cloud ----------------------
+    //
+    // Owner item 27a asked whether the resolved D6 output is recorded "like
+    // Mid-360's map is". It is not, and neither is Mid-360's: the raw shim
+    // records kMid360Points/kMid360Imu, i.e. the DATAGRAMS, and A7's whole
+    // premise is that the map is re-derivable from them. For a Mid-360 that
+    // premise holds — post_pipeline.cpp re-runs the LIO from the raw chunks
+    // and gets a better map than the live one.
+    //
+    // So this is deliberately narrow: it records the map only while the
+    // PUSHBROOM is on, i.e. only for a D6 session, and the reason is the
+    // owner's actual complaint. Re-resolving a D6 costs a full decode pass
+    // plus pose interpolation, which is seconds of work before Review can
+    // draw anything; the resolved cloud is already flowing past this exact
+    // point, at ~3,600 pts/s (COIN-D6, 10 Hz x 360 returns) = 57 KB/s, i.e.
+    // ~200 MB/hour against the ~700 MB/hour of raw UART the same session
+    // writes. Paying 8 % more disk to make "open a saved scan" instant is the
+    // right trade; paying Mid-360's 640 KB/s for a map that post-processing
+    // will discard and rebuild is not.
+    //
+    // It is a CACHE, not the source of truth. The Process path re-resolves
+    // from kD6Raw + kPoseAr and overwrites it; deleting map.bin costs speed,
+    // never data. That is exactly why it is safe to gate it on a live flag.
+    if (u.stream == StreamId::kSlamMap && self->pushbroom_on.load(std::memory_order_acquire)) {
+      const PageView v = self->points->page_view(u.page);
+      if (v.valid() && u.first + u.count <= v.count && u.count > 0) {
+        std::lock_guard<std::mutex> lock(self->record_m);
+        if (self->recorder->is_open()) {
+          (void)self->recorder->write_chunk(
+              lscan::ChunkType::kPointsXyzRgba, v.t_last_ns,
+              ByteSpan(reinterpret_cast<const std::uint8_t*>(v.data + u.first),
+                       static_cast<std::size_t>(u.count) * lscan::kPointVertexBytes));
+        }
+      }
+    }
 
     // --- A6: the raw Mid-360 cloud is also the odometry's input ------------
     //
@@ -679,9 +721,56 @@ Status Engine::start_session(const SessionConfig& cfg) {
                     "raw streams will NOT be persisted (Tech Spec §3 rule 2)");
     } else {
       // A5 seam: the workflow profile flows into the manifest before open().
+      //
+      // ROUND 8, two additions here, both from reading a REAL exported capture
+      // (captures/scan-015/, a Pixel 8 Pro + COIN-D6 session) rather than from
+      // a test fixture. Its manifest.json said:
+      //
+      //     "sensors": [],  "mountCalibration": null
+      //
+      // — and both of those are the engine's fault, not the app's.
+      //
+      // 1. `add_sensor()` has existed since A5 and NOTHING EVER CALLED IT.
+      //    Every `.lscan` this engine has ever written claims it was recorded
+      //    by no sensors at all. That is not cosmetic: it is how a reader
+      //    decides what a container HOLDS without decoding it, and the D6
+      //    re-resolve below is exactly such a reader.
+      // 2. `mountCalibration` is what makes a D6 project self-contained; see
+      //    FileRecordWriter::set_mount_calibration() in record/lscan.h.
+      //
+      // LOCK ORDER, and it is not incidental. The capture path runs
+      //     pushbroom_m  ->  record_m
+      // (on_d6_profile takes pushbroom_m for push_profile(), whose resolve_()
+      // appends into the PageStore, whose on_page_update now records the map
+      // under record_m). So NOTHING may take record_m and then reach for
+      // pushbroom_m, or a Start issued while the reader thread is still
+      // forwarding deadlocks the app. Both the device list and the extrinsic
+      // are therefore snapshotted FIRST, under their own locks, and only the
+      // copies cross into the record_m block below.
+      std::vector<std::array<std::string, 3>> sensors;  // id, kind, model
+      {
+        std::lock_guard<std::mutex> dlock(impl_->m);
+        for (const auto& kv : impl_->devices) {
+          const Driver* d = kv.second.get();
+          char id_buf[32];
+          std::snprintf(id_buf, sizeof(id_buf), "%u", static_cast<unsigned>(kv.first));
+          sensors.push_back({std::string(id_buf), std::string(to_string(d->kind())),
+                             std::string(d->name())});
+        }
+      }
+      bool have_mount = false;
+      double mount[16];
+      {
+        std::lock_guard<std::mutex> plock(impl_->pushbroom_m);
+        have_mount = impl_->pushbroom->has_mount_extrinsics();
+        for (int i = 0; i < 16; ++i) mount[i] = impl_->mount_phone_from_lidar[i];
+      }
+
       std::lock_guard<std::mutex> rlock(impl_->record_m);
       if (auto* fw = dynamic_cast<lscan::FileRecordWriter*>(impl_->recorder.get())) {
         fw->set_profile(cfg.profile);
+        for (const auto& s : sensors) fw->add_sensor(s[0], s[1], s[2]);
+        if (have_mount) fw->set_mount_calibration(mount);
       }
       const Status s = impl_->recorder->open(cfg.lscan_dir);
       if (!s.ok()) {
@@ -943,6 +1032,7 @@ Status Engine::push_serial_bytes(DeviceId id, ByteSpan bytes, TimePoint t_arriva
 Status Engine::push_pose(const Pose& pose) {
   const Status s = impl_->poses->push_pose(pose);
   if (!s.ok()) return s;
+  record_pose_(pose);
   publish_pose_(pose);
   return kOkStatus;
 }
@@ -950,8 +1040,58 @@ Status Engine::push_pose(const Pose& pose) {
 Status Engine::push_pose(const Pose& pose, float confidence) {
   const Status s = impl_->poses->push_pose(pose, confidence);
   if (!s.ok()) return s;
+  record_pose_(pose);
   publish_pose_(pose);
   return kOkStatus;
+}
+
+// --- ROUND 8: RECORD-ALWAYS FINALLY APPLIES TO THE TRAJECTORY ---------------
+//
+// This function is the seam android/NOTES.md ROUND 7 §9 item 1 named, and it
+// is worth being precise about what was broken, because "kPoseAr had no
+// writer" undersells it.
+//
+// A D6 is a 2D lidar. The third dimension of a D6 scan is ENTIRELY the phone's
+// trajectory: A8's pushbroom resolves each return through
+// `world_from_lidar(t) = world_from_phone(t) * phone_from_lidar`. So a D6
+// `.lscan` that stores the raw UART bytes and not the poses has recorded a
+// pile of range-and-angle pairs from which the 3D result **can never be
+// rebuilt by anyone** — not by a later version of this app, not by the desktop
+// shell, not by the cloud worker. The assembled cloud lived only in the live
+// PageStore and died with the session. That is the whole of owner item 27
+// ("when i check the recording, it still show a 2D scan"): there was nothing
+// three-dimensional on disk to show.
+//
+// Tech Spec §3 key rule 2 says record-always: every raw stream hits the
+// recorder before any processing, and live SLAM is just another consumer.
+// ARCore poses ARE a raw stream — they are the second sensor in a phone-plus-
+// D6 rig — and they were the one stream exempt from the rule.
+//
+// ORDERING. The pose is recorded AFTER `poses->push_pose()` accepted it and
+// BEFORE the event bus hears about it. After acceptance, because a pose the
+// interpolator rejects (out of order, non-finite) is not part of the
+// trajectory and recording it would make a replay diverge from the capture.
+// Before publishing, for the same reason `push_serial_bytes()` records before
+// parsing: whatever a consumer reacts to must already be durable.
+//
+// LOCKING. `record_m` is the same mutex the D6 raw path takes, because
+// FileRecordWriter is not internally synchronized and the ARCore pump thread
+// and the USB reader thread genuinely do write concurrently.
+void Engine::record_pose_(const Pose& p) {
+  std::lock_guard<std::mutex> lock(impl_->record_m);
+  if (!impl_->recorder->is_open()) return;
+  lscan::PoseChunkRecord rec{};
+  for (int i = 0; i < 3; ++i) rec.position[i] = p.position[i];
+  for (int i = 0; i < 4; ++i) rec.orientation[i] = p.orientation[i];
+  rec.position_sigma_m = p.position_sigma_m;
+  rec.orientation_sigma_deg = p.orientation_sigma_deg;
+  rec.source = static_cast<std::uint8_t>(p.source);
+  rec.quality = static_cast<std::uint8_t>(p.quality);
+  rec.tracking_lost = p.tracking_lost;
+  std::uint8_t buf[lscan::kPoseChunkPayloadBytes];
+  lscan::encode_pose_chunk(rec, buf);
+  (void)impl_->recorder->write_chunk(lscan::ChunkType::kPoseAr, p.t_mono_ns,
+                                     ByteSpan(buf, lscan::kPoseChunkPayloadBytes));
 }
 
 // A8 §7.2 item 5: PoseUpdatePayload has existed since A1 and nothing published
@@ -984,7 +1124,38 @@ Status Engine::set_mount_extrinsics(const double phone_from_lidar[16]) {
     return set_last_error(ScanError::kInvalidArgument, "mount extrinsic is null");
   }
   std::lock_guard<std::mutex> lock(impl_->pushbroom_m);
-  return impl_->pushbroom->set_mount_extrinsics(phone_from_lidar);
+  const Status s = impl_->pushbroom->set_mount_extrinsics(phone_from_lidar);
+  if (!s.ok()) return s;  // a rejected matrix must never describe a recording
+
+  // ROUND 8: remember it for the manifest.
+  for (int i = 0; i < 16; ++i) impl_->mount_phone_from_lidar[i] = phone_from_lidar[i];
+
+  // ...and push it at an ALREADY-OPEN recorder, which is the case that
+  // actually happens in the field. Writing it only in start_session() looked
+  // sufficient and is not: the Android capture flow calls
+  // `scan_engine_start()` first and applies the extrinsic ~70 ms later (the
+  // owner's own log is `[session] start:` at 00:53:14.438 followed by
+  // `[pushbroom] extrinsic applied:` at .503), because a mid-session re-zero
+  // has to work and the same code path serves both. So the manifest written
+  // at open() has no mount in it. FileRecordWriter rewrites manifest.json at
+  // close() with `"sealed": true`, and this is what makes that rewrite carry
+  // the extrinsic — i.e. what makes a SEALED D6 project self-contained.
+  //
+  // Found by the emulator test asserting exactly that, not by reading code:
+  // app/src/androidTest/.../ReopenedD6ProjectIs3dTest.kt.
+  //
+  // LOCK ORDER: pushbroom_m is held here and record_m is taken inside it,
+  // which is the same direction the capture path runs (on_d6_profile ->
+  // push_profile -> append -> on_page_update -> record_m). start_session()
+  // snapshots both under their own locks precisely so it does not run this
+  // the other way round.
+  {
+    std::lock_guard<std::mutex> rlock(impl_->record_m);
+    if (auto* fw = dynamic_cast<lscan::FileRecordWriter*>(impl_->recorder.get())) {
+      if (fw->is_open()) fw->set_mount_calibration(phone_from_lidar);
+    }
+  }
+  return kOkStatus;
 }
 
 Status Engine::set_pushbroom_enabled(bool on) {

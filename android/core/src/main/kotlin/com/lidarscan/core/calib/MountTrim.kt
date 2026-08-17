@@ -58,8 +58,11 @@ import kotlin.math.abs
  *
  * A trim captured while the rig was moving is worse than no trim, so
  * [MountTrimSampler] refuses one: the samples must span at least
- * [MIN_SAMPLE_SPAN_MS], the spread of orientations across the window must stay
- * under [MAX_SPREAD_DEG], and ARCore must have been tracking throughout.
+ * [MIN_SAMPLE_SPAN_MS], the steadiness of the hold must clear both
+ * [MAX_SPREAD_P90_DEG] and [MAX_SPREAD_OUTLIER_DEG], and ARCore must have been
+ * tracking throughout. See the companion's constants for why the gate is two
+ * numbers rather than one — ROUND 8 rebuilt it after it refused a real field
+ * session seven times out of seven.
  */
 @Serializable
 data class MountTrim(
@@ -73,8 +76,30 @@ data class MountTrim(
     val capturedAtEpochMillis: Long = 0L,
     /** How many pose samples the average was taken over. */
     val sampleCount: Int = 0,
-    /** Worst orientation deviation from the mean across the hold window, degrees — the "was it still?" evidence. */
+    /**
+     * **Worst** orientation deviation from the mean across the hold window, in
+     * degrees — the outlier, not the typical case.
+     *
+     * Kept under its original name and meaning because it is what every field
+     * log line since ROUND 6 has printed (`spread=0.47deg`) and what every
+     * persisted trim on a phone already carries. ROUND 8 added
+     * [spreadP90Deg] next to it rather than redefining this one: silently
+     * changing what a number in a field log means is how the next report gets
+     * misread.
+     */
     val spreadDeg: Double = 0.0,
+    /**
+     * ROUND 8: the **p90** orientation deviation from the mean, in degrees —
+     * how steady the hold actually was, with the top decile of ARCore's own
+     * VIO jitter excluded.
+     *
+     * This is the number the gate judges on now ([MountTrim.MAX_SPREAD_P90_DEG]);
+     * [spreadDeg] survives as the outlier ceiling's evidence. Defaulted so a
+     * trim persisted by 0.4.0 still decodes (`kotlinx.serialization` fills the
+     * default for an absent field) — a shape change that stopped decoding
+     * would put us straight back in ROUND 7's field bug 1.
+     */
+    val spreadP90Deg: Double = 0.0,
 ) {
     val rotation: Quat get() = Quat(qx, qy, qz, qw).normalized()
 
@@ -126,17 +151,125 @@ data class MountTrim(
          */
         val REFERENCE_HOLD: Quat = Quat.IDENTITY
 
-        /** Shortest hold that can be averaged; ~1 s at any ARCore frame rate. */
-        const val MIN_SAMPLE_SPAN_MS = 800L
+        // ── ROUND 8, owner item 30: "set mount reference look not working" ──
+        //
+        // It was not "look" not working. The gate was refusing every attempt.
+        // From the owner's own Pixel 8 Pro + COIN-D6 log
+        // (`~/Downloads/lidarscan-capture-log (1).txt`), 0.4.0:
+        //
+        //   00:50:43.157 [ar] mount re-zero refused: MOVING
+        //   00:51:05.346 [ar] mount re-zero refused: MOVING
+        //   00:51:16.648 [ar] mount re-zero refused: MOVING
+        //   00:51:23.378 [ar] mount re-zero refused: MOVING
+        //   00:51:24.533 [ar] mount re-zero refused: MOVING
+        //   00:51:25.133 [ar] mount re-zero refused: MOVING
+        //   00:51:26.967 [ar] mount re-zero refused: MOVING
+        //   00:51:28.357 [session] start: … preset=OPTIMAL …
+        //   00:51:28.428 [pushbroom] extrinsic applied: … trim=none
+        //
+        // **Seven refusals in 44 seconds and not one success**, then the
+        // operator gave up and scanned on the bare CAD nominal. 00:53:09 is an
+        // eighth refusal; every capture in that session logged `trim=none`.
+        //
+        // The 0.3.0 session on the same rig got through, but only barely — four
+        // refusals, then a run of successes at `spread=0.47deg … 0.82deg
+        // samples=36-37`, then four more refusals before the next one landed.
+        // That is a gate sitting *on* the noise floor, not above it: a control
+        // whose success is a coin flip reads to the operator exactly like a
+        // control that does nothing, which is the report we got.
+        //
+        // ## Why the old gate could not be passed
+        //
+        // It was `spreadDeg = window.maxOf { deviation from mean }` against a
+        // single 1.5° limit over a 1200 ms window. At the ~31 fps those logs
+        // show (37 samples / 1200 ms) that is **every one of 37 consecutive
+        // ARCore frames** having to land within 1.5° of the mean. ARCore's VIO
+        // attitude is not that quiet in a hand: a single frame with a bad
+        // feature match, one footstep transmitted up an arm, or the small yaw
+        // correction that follows a relocalisation is enough to put one sample
+        // out — and one sample out is a refusal under a max. The measurement
+        // itself was never the problem; the successes prove the arithmetic
+        // works. The *acceptance criterion* was the problem.
+        //
+        // ## The gate now
+        //
+        // Two numbers, because "steady" and "not moving" are two different
+        // questions and one statistic cannot answer both:
+        //
+        //  * **[MAX_SPREAD_P90_DEG] on the p90 deviation** answers "was the hold
+        //    steady?", and by construction ignores the worst 10 % of frames —
+        //    which is where VIO jitter lives.
+        //  * **[MAX_SPREAD_OUTLIER_DEG] on the max deviation** answers "was the
+        //    rig actually still?", and is what still catches a genuinely moving
+        //    rig: a walk, a hand-off, a rotation mid-tap. A percentile alone
+        //    would happily average a rig swinging through 8° as long as it did
+        //    so smoothly, and that trim would be worse than no trim.
+        //
+        // Both are needed. Dropping the outlier ceiling makes the gate
+        // unfalsifiable; dropping the percentile puts us back where we started.
 
-        /** Longest window averaged. Older samples are irrelevant to "how am I holding it now". */
-        const val WINDOW_MS = 1_200L
+        /**
+         * Shortest hold that can be averaged.
+         *
+         * 700 ms, down from 800. With [WINDOW_MS] at 1000 the operator's own
+         * experience is: press, hold, done — ~1.5 s including the tap latency
+         * and the frame that the tap itself wobbles. Long enough that a mean
+         * over ~21 frames at 30 fps is a mean; short enough that nobody has to
+         * hold a pose they cannot hold.
+         */
+        const val MIN_SAMPLE_SPAN_MS = 700L
+
+        /**
+         * Longest window averaged. Older samples are irrelevant to "how am I
+         * holding it now".
+         *
+         * 1000 ms, down from 1200. The window is also the *exposure* of the
+         * outlier ceiling: every extra 200 ms is six more chances for one bad
+         * ARCore frame to veto the whole hold, for no gain in the mean's
+         * quality (the mean of 30 samples and of 37 differ far below the
+         * 0.5° the successes above were already achieving).
+         */
+        const val WINDOW_MS = 1_000L
 
         /** Minimum samples in the window — a two-frame "average" is not one. */
         const val MIN_SAMPLES = 8
 
-        /** Above this spread across the hold window the rig was not still. */
-        const val MAX_SPREAD_DEG = 1.5
+        /**
+         * The percentile of per-sample deviation the steadiness gate judges on.
+         *
+         * p90 and not the median: the median would pass a hold in which a fifth
+         * of the frames were badly off, which is a rig being carried. p90 lets
+         * roughly three frames of a 30-frame window be outliers — the observed
+         * rate of ARCore attitude glitches — and no more.
+         */
+        const val SPREAD_PERCENTILE = 0.90
+
+        /**
+         * The steadiness limit, on the p90 deviation from the mean.
+         *
+         * 2.5°, against the 0.47–0.82° *max* the 0.3.0 successes actually
+         * measured. So a hold as good as the ones that already worked clears
+         * this by a factor of three or more, and a hold with a handful of 2–4°
+         * VIO excursions — the ones that were being refused — now passes with
+         * its p90 still around 1–2°. It is deliberately not tighter: the
+         * quantity being measured is a mount angle that the CAD nominal is
+         * already wrong about by ~132°, so 2° of averaging noise on the
+         * correction is not the error that matters.
+         */
+        const val MAX_SPREAD_P90_DEG = 2.5
+
+        /**
+         * The absolute ceiling, on the **worst** deviation from the mean.
+         *
+         * 6°. This is the falsifiable half: a rig that is genuinely moving
+         * cannot get under it, because motion is not an outlier — it is a
+         * trend, and a trend puts the ends of the window several degrees from
+         * their own mean. At a gentle 12°/s over a 1 s window the extremes sit
+         * ±6° from the mean and this refuses; at walking-turn rates it is not
+         * close. Six degrees of instantaneous VIO glitch, by contrast, is a
+         * single frame and does not move a 30-sample chordal mean measurably.
+         */
+        const val MAX_SPREAD_OUTLIER_DEG = 6.0
 
         /**
          * The trim for a rig whose phone attitude reads [hold] while it is held
@@ -148,6 +281,7 @@ data class MountTrim(
             capturedAtEpochMillis: Long = 0L,
             sampleCount: Int = 0,
             spreadDeg: Double = 0.0,
+            spreadP90Deg: Double = 0.0,
         ): MountTrim {
             val q = (hold.normalized().conjugate() * REFERENCE_HOLD).normalized()
             return MountTrim(
@@ -156,6 +290,7 @@ data class MountTrim(
                 capturedAtEpochMillis = capturedAtEpochMillis,
                 sampleCount = sampleCount,
                 spreadDeg = spreadDeg,
+                spreadP90Deg = spreadP90Deg,
             )
         }
     }
@@ -214,6 +349,33 @@ data class MountTrimProvenance(
     /** True when the sentence is a caution rather than a confirmation. */
     val warn: Boolean,
 ) {
+    /**
+     * ROUND 8, owner item 30c — **the state of the mount, at a glance, with no
+     * sheet open.**
+     *
+     * `"MOUNT SET · 132.8° · 2 min ago"` / `"NO MOUNT REF · CAD NOMINAL"`.
+     *
+     * [label] is a whole sentence and lives in the mount sheet where there is
+     * room to read it; this is the same fact compressed onto one always-visible
+     * chip on the capture panel. The owner's ROUND 7 session ran five captures
+     * on `trim=none` without ever being told — the panel said "Set mount
+     * reference" and nothing else, which is a *button*, not a *state*. A chip
+     * that says NO MOUNT REF cannot be mistaken for one.
+     *
+     * The age re-computes with the rest of this object on
+     * `CaptureViewModel`'s 15 s tick, so "just now" becomes "2 min ago" on its
+     * own — which is the point of showing an age at all.
+     */
+    val chipLabel: String
+        get() = if (trim == null) {
+            "NO MOUNT REF · CAD NOMINAL"
+        } else {
+            "MOUNT SET · %.1f° · %s".format(trim.magnitudeDeg, ageLabel)
+        }
+
+    /** Just the age, e.g. `"2 min ago"` — the half of [chipLabel] that has to re-tick. */
+    val ageLabel: String
+        get() = trim?.let { it.ageLabel(it.capturedAtEpochMillis + ageMillis) }.orEmpty()
     /** What `applyMountExtrinsic` writes into the capture log, so the next field report arrives with provenance. */
     val logSuffix: String
         get() = if (trim == null) {
@@ -275,14 +437,111 @@ object MountTrimProvenances {
 /** Why a re-zero attempt did not produce a trim. Each case is a sentence the panel can show verbatim. */
 enum class MountTrimRejection(val message: String) {
     NO_POSES("No phone tracking yet — point the camera at something with detail and try again."),
-    NOT_ENOUGH_SAMPLES("Hold the rig still for a full second, then tap again."),
+    NOT_ENOUGH_SAMPLES("Hold the rig still for about a second, then tap again."),
     MOVING("The rig moved while measuring — hold it steady in the scanning pose and tap again."),
     NOT_TRACKING("Tracking was lost mid-measurement — wait for TRACKING, then tap again."),
 }
 
+/**
+ * ROUND 8, owner item 30b — **what the gate actually measured.**
+ *
+ * The entire on-device record of eight consecutive failed re-zeros was:
+ *
+ * ```
+ * 00:50:43.157 [ar] mount re-zero refused: MOVING
+ * ```
+ *
+ * — eight times, byte-identical apart from the timestamp. A name, and nothing
+ * else. There is no way to tell from that whether the operator was 0.2° or 20°
+ * off the limit, whether the samples were even arriving, or whether the gate
+ * was broken; all three were live hypotheses when this round started, and
+ * answering the question needed a second field session that should not have
+ * been necessary. Every refusal now carries its own numbers into both the log
+ * and the panel, so the next report arrives already diagnosed.
+ */
+data class MountTrimMeasurement(
+    /** p90 of the per-sample deviation from the mean, degrees. */
+    val spreadP90Deg: Double,
+    /** Worst per-sample deviation from the mean, degrees. */
+    val spreadMaxDeg: Double,
+    /** The limit [spreadP90Deg] was judged against — [MountTrim.MAX_SPREAD_P90_DEG]. */
+    val limitDeg: Double,
+    /** The limit [spreadMaxDeg] was judged against — [MountTrim.MAX_SPREAD_OUTLIER_DEG]. */
+    val outlierLimitDeg: Double,
+    /** Samples inside the window. */
+    val samples: Int,
+    /** Wall time the window spans, milliseconds. */
+    val spanMs: Long,
+) {
+    /**
+     * The suffix the capture log carries, e.g.
+     * `p90=2.9deg max=5.1deg limit=2.5deg samples=31 spanMs=980`.
+     *
+     * Deliberately the same shape as [MountTrimProvenance.logSuffix]: one
+     * `key=value` run, greppable, and readable in a screenshot of a log a
+     * thousand miles away.
+     */
+    val logSuffix: String
+        get() = "p90=%.2fdeg max=%.2fdeg limit=%.2fdeg outlierLimit=%.2fdeg samples=%d spanMs=%d".format(
+            spreadP90Deg,
+            spreadMaxDeg,
+            limitDeg,
+            outlierLimitDeg,
+            samples,
+            spanMs,
+        )
+}
+
 sealed interface MountTrimResult {
     data class Captured(val trim: MountTrim) : MountTrimResult
-    data class Rejected(val reason: MountTrimRejection) : MountTrimResult
+
+    /**
+     * A refusal, with the measurement behind it when there was one to make.
+     *
+     * [measurement] is null only for [MountTrimRejection.NO_POSES] — no samples
+     * means nothing was measured, and inventing zeros for it would be a lie
+     * that reads as "perfectly still".
+     */
+    data class Rejected(
+        val reason: MountTrimRejection,
+        val measurement: MountTrimMeasurement? = null,
+    ) : MountTrimResult {
+
+        /**
+         * What the capture panel shows at the moment of the tap: the refusal,
+         * the numbers, and **what to do about it**.
+         *
+         * The last clause is the part that was missing. "The rig moved while
+         * measuring" tells an operator who believes they were holding still
+         * nothing they can act on; "steadiness 2.9°, limit 2.5° — brace your
+         * elbows and hold for about a second" does.
+         */
+        val sentence: String
+            get() {
+                val m = measurement ?: return reason.message
+                return when (reason) {
+                    MountTrimRejection.NO_POSES -> reason.message
+                    MountTrimRejection.NOT_TRACKING -> reason.message
+                    MountTrimRejection.NOT_ENOUGH_SAMPLES ->
+                        "Not enough of a hold yet — ${m.samples} tracked frames over ${m.spanMs} ms. " +
+                            "Keep the rig still for about a second (${MountTrim.MIN_SAMPLE_SPAN_MS} ms " +
+                            "of tracking is enough), then tap again."
+
+                    MountTrimRejection.MOVING -> (
+                        "Too much movement to trust — steadiness %.1f° against a %.1f° limit, " +
+                            "worst frame %.1f° against %.1f°, over %d frames in %d ms. " +
+                            "Brace the phone against your body, hold still ~1 s, and tap again."
+                        ).format(
+                        m.spreadP90Deg,
+                        m.limitDeg,
+                        m.spreadMaxDeg,
+                        m.outlierLimitDeg,
+                        m.samples,
+                        m.spanMs,
+                    )
+                }
+            }
+    }
 }
 
 /**
@@ -311,19 +570,50 @@ object MountTrimSampler {
         if (samples.isEmpty()) return MountTrimResult.Rejected(MountTrimRejection.NO_POSES)
         val newest = samples.maxOf { it.tMonoNs }
         val window = samples.filter { it.tMonoNs >= newest - windowMs * 1_000_000L }
-        if (window.size < MountTrim.MIN_SAMPLES) {
-            return MountTrimResult.Rejected(MountTrimRejection.NOT_ENOUGH_SAMPLES)
+        val spanMs = if (window.isEmpty()) {
+            0L
+        } else {
+            (window.maxOf { it.tMonoNs } - window.minOf { it.tMonoNs }) / 1_000_000L
         }
-        if (window.any { !it.tracking }) return MountTrimResult.Rejected(MountTrimRejection.NOT_TRACKING)
-        val spanMs = (window.maxOf { it.tMonoNs } - window.minOf { it.tMonoNs }) / 1_000_000L
+
+        // ROUND 8 (item 30b): the measurement is built even for the refusals
+        // that do not need a spread, so every rejected path can report SOMETHING
+        // rather than only a name. The two spread figures are meaningless before
+        // the window is big enough to have a mean, hence the `takeIf` below.
+        fun measure(p90: Double, max: Double) = MountTrimMeasurement(
+            spreadP90Deg = p90,
+            spreadMaxDeg = max,
+            limitDeg = MountTrim.MAX_SPREAD_P90_DEG,
+            outlierLimitDeg = MountTrim.MAX_SPREAD_OUTLIER_DEG,
+            samples = window.size,
+            spanMs = spanMs,
+        )
+
+        if (window.size < MountTrim.MIN_SAMPLES) {
+            return MountTrimResult.Rejected(MountTrimRejection.NOT_ENOUGH_SAMPLES, measure(0.0, 0.0))
+        }
+        if (window.any { !it.tracking }) {
+            return MountTrimResult.Rejected(MountTrimRejection.NOT_TRACKING, measure(0.0, 0.0))
+        }
         if (spanMs < MountTrim.MIN_SAMPLE_SPAN_MS) {
-            return MountTrimResult.Rejected(MountTrimRejection.NOT_ENOUGH_SAMPLES)
+            return MountTrimResult.Rejected(MountTrimRejection.NOT_ENOUGH_SAMPLES, measure(0.0, 0.0))
         }
 
         val mean = meanOrientation(window.map { it.orientation })
-        val spreadDeg = window.maxOf { Math.toDegrees(mean.angleTo(it.orientation)) }
-        if (spreadDeg > MountTrim.MAX_SPREAD_DEG) {
-            return MountTrimResult.Rejected(MountTrimRejection.MOVING)
+        val deviations = window.map { Math.toDegrees(mean.angleTo(it.orientation)) }
+        val spreadMaxDeg = deviations.max()
+        val spreadP90Deg = percentile(deviations, MountTrim.SPREAD_PERCENTILE)
+
+        // ROUND 8: TWO gates, not one. See MountTrim's companion for the
+        // 7-refusals-in-44-seconds field log that made a single max-based
+        // threshold indefensible. The p90 is the steadiness question; the max is
+        // the still-vs-moving question, and it is the one that keeps this
+        // falsifiable — a rig being carried cannot get under it.
+        if (spreadP90Deg > MountTrim.MAX_SPREAD_P90_DEG || spreadMaxDeg > MountTrim.MAX_SPREAD_OUTLIER_DEG) {
+            return MountTrimResult.Rejected(
+                MountTrimRejection.MOVING,
+                measure(spreadP90Deg, spreadMaxDeg),
+            )
         }
 
         return MountTrimResult.Captured(
@@ -332,9 +622,26 @@ object MountTrimSampler {
                 sensor = sensor,
                 capturedAtEpochMillis = nowMillis,
                 sampleCount = window.size,
-                spreadDeg = spreadDeg,
+                spreadDeg = spreadMaxDeg,
+                spreadP90Deg = spreadP90Deg,
             ),
         )
+    }
+
+    /**
+     * The [p]-th percentile of [values], nearest-rank.
+     *
+     * Nearest-rank rather than an interpolating definition on purpose: with
+     * 20–40 samples the interpolated and ranked answers differ by less than the
+     * jitter being measured, and a rank is a value that genuinely occurred —
+     * which matters when the number ends up in a log line an operator reads
+     * next to "worst frame".
+     */
+    fun percentile(values: List<Double>, p: Double): Double {
+        require(values.isNotEmpty()) { "no values to take a percentile of" }
+        val sorted = values.sorted()
+        val rank = Math.ceil(p * sorted.size).toInt().coerceIn(1, sorted.size)
+        return sorted[rank - 1]
     }
 
     /**

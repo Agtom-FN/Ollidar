@@ -27,10 +27,14 @@ import com.lidarscan.app.engine.ScanEngineNative
 import com.lidarscan.core.render.ColorMode
 import com.lidarscan.core.render.Colormap
 import com.lidarscan.core.render.ColormapLut
+import com.lidarscan.core.render.FollowCamera
+import com.lidarscan.core.render.FollowCameraConfig
 import com.lidarscan.core.render.PointSizeMode
+import com.lidarscan.core.render.UpAxis
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.max
+import kotlin.math.sqrt
 
 /**
  * How the Filament camera is driven.
@@ -40,6 +44,15 @@ import kotlin.math.max
  * camera image drawn underneath by [com.lidarscan.app.ar.ArCameraBackgroundRenderer].
  * [ORBIT] and [FOLLOW] are B4's free-3D modes — §3.7's "Toggle AR view <->
  * free-orbit 3D" is the switch between them.
+ *
+ * ROUND 8: [FOLLOW] is now a real third-person chase camera driven by
+ * [com.lidarscan.core.render.FollowCamera] (behind and above the rig, look-at
+ * the rig, framing fitted to *recent* geometry). It used to be a fixed offset
+ * from the whole cloud's bounding-box centroid, which followed nothing and zoomed
+ * out without bound as the walk grew — see `FollowCamera`'s header for the
+ * derivation and for why a *forward*-facing follow is the wrong answer for a D6
+ * specifically. [ORBIT] is untouched: it remains the free camera the operator
+ * drives by hand through filament-utils' `Manipulator`.
  */
 enum class CameraMode { ORBIT, FOLLOW, AR }
 
@@ -310,6 +323,16 @@ class PointCloudRenderer(
             pageStreams.clear()
             mappedPageSeen = false
             haveBounds = false
+            // ROUND 8: the follow camera's whole state — trail, heading, framing
+            // distance — belongs to ONE session's local metric frame. Carrying it
+            // into the next capture would ease the camera from the old origin
+            // toward the new one across whatever void lies between two unrelated
+            // frames. The pose latch goes with it, or the first frame of the new
+            // session would consume the last pose of the old one.
+            followCamera.reset()
+            synchronized(rigPoseLock) { rigPoseValid = false }
+            haveRealRigPose = false
+            recentGeometryValid = false
         }
     }
 
@@ -334,6 +357,107 @@ class PointCloudRenderer(
     fun setCameraMode(mode: CameraMode) {
         cameraMode = mode
     }
+
+    // --- ROUND 8: the third-person follow camera ------------------------------
+
+    /**
+     * The follow solver. Pure `:core` — see
+     * [com.lidarscan.core.render.FollowCamera] for the whole derivation; this
+     * class only feeds it a pose per frame and hands the answer to
+     * `Camera.lookAt`.
+     *
+     * **[UpAxis.Y_UP] is stated here rather than defaulted**, because the choice
+     * is a real one and the codebase has two conventions. The runtime frame is
+     * ARCore's: `CaptureArController.publishPose` pushes `camera.pose` verbatim
+     * into `scan_engine_push_pose`, A8's pushbroom resolves every return through
+     * it, and `PointVertex` therefore carries "the session's local metric frame"
+     * = ARCore's world frame, which is **Y-up**. The two other places in this app
+     * that already commit agree: `TrajectoryTrail`'s header ("ARCore's world
+     * frame is Y-up, so the trail is (x, z)") and this renderer's own ORBIT and
+     * pre-ROUND-8 FOLLOW branches, both of which pass `0.0, 1.0, 0.0` as the up
+     * vector. The engine's **+z-up** convention appears only in
+     * `engine/tests/test_pushbroom.cpp`'s synthetic wall — test-fixture geometry,
+     * not a frame any device ever produces — so it is not what the renderer sees.
+     *
+     * Known inconsistency, deliberately NOT changed here: [applyDynamicMaterialParams]'s
+     * HEIGHT auto-range reads `combinedBounds*[2]`, i.e. **z**, as the height
+     * axis. Under the Y-up convention established above that is the wrong
+     * component, and A14's "the caller refreshes those two fields from the real
+     * data range" would then be auto-ranging colour over a horizontal axis. It is
+     * flagged rather than fixed because it is a visible colour-mapping behaviour
+     * change on the Review screen, which is another workstream's surface this
+     * round; it is reported upward instead.
+     */
+    private val followCamera = FollowCamera(FollowCameraConfig(upAxis = UpAxis.Y_UP))
+
+    /**
+     * The minimal seam ROUND 8 adds: the rig's current world position, latched
+     * from whatever already has poses.
+     *
+     * Nothing in the render layer had a rig pose before this. `setArCamera` is
+     * the only pose-shaped input and it is only called by [ArOverlayView], which
+     * is archived (`AR_OVERLAY_ARCHIVED`), so the follow camera could not have
+     * been built on it. The pose *does* exist one layer over, on every ARCore
+     * frame, in `CaptureArController.publishPose` — and the Capture screen
+     * already holds this renderer, from `PointCloudView`'s existing
+     * `onRendererReady` callback (`CaptureScreen`'s `pointCloudRenderer`). So the
+     * wiring is one line in a `CaptureArController.addFrameListener` block:
+     *
+     * ```kotlin
+     *   val pose = frame.camera.pose        // getPose(), NOT displayOrientedPose
+     *   renderer.setRigPose(pose.tx(), pose.ty(), pose.tz(), frame.timestamp)
+     * ```
+     *
+     * `getPose()` and not `getDisplayOrientedPose()`, for exactly the reason
+     * `TrajectoryTrailRecorder.onFrame` gives: the display-oriented pose is
+     * rotated for rendering, so a camera driven by it would swing when the phone
+     * is turned in the hand. Only the **position** is taken at all — the walk
+     * heading is derived from the trajectory inside `FollowCamera`, never from
+     * phone yaw, because the phone yaws ±3° per step (ROUND 7's gait model) and
+     * the operator glances around, and neither of those should move the camera.
+     *
+     * No `PointCloudView` parameter for this: a pose arrives 30 times a second
+     * and a Compose parameter would mean 30 recompositions a second of the whole
+     * viewport. A direct setter on the renderer, called off the AR/GL thread, is
+     * the same pattern [setArCamera] already uses — hence the same latch-under-a-
+     * lock, consume-on-the-Choreographer-frame discipline.
+     *
+     * Until that line lands, [FOLLOW] still works: [updateCamera] falls back to a
+     * pseudo-pose derived from the newest points (see [recentGeometryValid]),
+     * which for a D6 ring is a biased but bounded estimate of where the operator
+     * is. That fallback is a safety net, not the design.
+     */
+    fun setRigPose(x: Float, y: Float, z: Float, tMonoNs: Long) {
+        if (!x.isFinite() || !y.isFinite() || !z.isFinite()) return
+        synchronized(rigPoseLock) {
+            rigPoseX = x.toDouble()
+            rigPoseY = y.toDouble()
+            rigPoseZ = z.toDouble()
+            rigPoseTNs = tMonoNs
+            rigPoseValid = true
+            rigPoseSeq++
+        }
+    }
+
+    private val rigPoseLock = Any()
+    private var rigPoseX = 0.0
+    private var rigPoseY = 0.0
+    private var rigPoseZ = 0.0
+    private var rigPoseTNs = 0L
+    private var rigPoseValid = false
+
+    /**
+     * Bumped on every [setRigPose]. The Choreographer frame only feeds
+     * [followCamera] when this has moved, so a render running faster than the
+     * 30 Hz pose stream does not push the same pose in repeatedly — which would
+     * be harmless for the filters (`FollowCamera` drops non-monotonic
+     * timestamps) but would waste the work every frame.
+     */
+    private var rigPoseSeq = 0L
+    private var consumedRigPoseSeq = 0L
+
+    /** True once a real pose has ever arrived — after which the points-derived fallback is never used again. */
+    private var haveRealRigPose = false
 
     /**
      * The last [requestToken] actually applied — see [setMaxRefreshHz]'s audit
@@ -803,6 +927,10 @@ class PointCloudRenderer(
                 val newBytes = page.buffer
                 newBytes.position(gpu.uploaded * POINT_STRIDE_BYTES)
                 newBytes.limit(uploadTo * POINT_STRIDE_BYTES)
+                // ROUND 8: measure the slice on its way to the GPU. Absolute
+                // reads only, so position/limit are left exactly as the upload
+                // below expects them.
+                accumulateRecentGeometry(newBytes, gpu.uploaded, uploadTo)
                 gpu.vertexBuffer.setBufferAt(
                     engine, 0, newBytes.slice(),
                     gpu.uploaded * POINT_STRIDE_BYTES, newPoints * POINT_STRIDE_BYTES,
@@ -837,7 +965,130 @@ class PointCloudRenderer(
             pagesDrawn++
         }
 
+        publishRecentGeometry()
         lastStats = PointCloudRenderStats(resident, pagesDrawn, haveBounds, mappedPageSeen)
+    }
+
+    // --- ROUND 8: what the newest points say about where the operator is ------
+
+    /**
+     * Accumulators for the geometry measurement, **carried across frames and
+     * reset only when a measurement is published** (see [publishRecentGeometry]).
+     *
+     * Resetting them per frame — the obvious version, and the first one written
+     * here — silently produces nothing at all on the sensor this feature exists
+     * for. A COIN-D6 emits 10 Hz × 360 = 3 600 points/s, which at 60 fps is
+     * **sixty points per frame**; after the sampling stride that is a handful of
+     * samples, permanently below any floor worth calling a measurement, so the
+     * follow camera would have run on the nominal radius forever and the bug
+     * would have shown up only as "the framing never responds to the room".
+     * Accumulating until the floor is reached instead makes the measurement
+     * window **auto-scale with the point rate**: ~0.15 s of D6, ~3 ms of a
+     * 200 kpt/s Mid-360, both of them a genuinely recent sample of the same size.
+     */
+    private var recentN = 0
+    private var recentSumX = 0.0
+    private var recentSumY = 0.0
+    private var recentSumZ = 0.0
+    private var recentSumSq = 0.0
+
+    /** Centroid of the most recently uploaded points, and their RMS spread about it. Valid only once [recentGeometryValid]. */
+    private var recentCentroidX = 0.0
+    private var recentCentroidY = 0.0
+    private var recentCentroidZ = 0.0
+    private var recentRadiusM = 0.0
+    private var recentGeometryValid = false
+
+    /**
+     * Stride-samples the points being uploaded this frame into a running centroid
+     * and second moment.
+     *
+     * **Why this exists at all.** `FollowCamera` fits its framing distance to how
+     * far the *recent* returns reach from the rig, and the renderer is the only
+     * layer that ever sees point coordinates. The alternative — the page AABBs
+     * this class already tracks — is exactly the whole-cloud bound whose
+     * unbounded growth is the bug being fixed; a page is up to 64 k points, i.e.
+     * ~18 s of D6 walk at 10 Hz × 360 returns, so even a per-page AABB is far too
+     * coarse to call "recent".
+     *
+     * **Measured about the points' own centroid, which for a D6 is the rig.**
+     * `FollowCamera` wants "how far do the recent returns reach from the operator";
+     * what is computed here is their spread about their own centre. Those are the
+     * same number precisely because the D6 fan is vertical and *across* the walk:
+     * one revolution is a ring centred on the rig, so its centroid is the rig.
+     * (That identity is also what makes the centroid usable as the fallback
+     * pseudo-pose in [feedFollowCamera].) It degrades gracefully where it does not
+     * hold — a Mid-360 in a corner biases the centroid toward the open side and
+     * inflates the radius a little, which frames slightly wider. Nothing breaks.
+     *
+     * **RMS spread, not maximum.** For a D6 ring the RMS distance from the
+     * centroid *is* the ring radius, and it is robust: a single long return down
+     * an open corridor moves the RMS of a few thousand samples by nothing, where
+     * a max would throw the camera to the far end of the building for one frame.
+     * Computed from sums (`E[|p|²] − |c|²`) so it is one pass, no buffering.
+     *
+     * **Byte order is not decoration.** `page.buffer` comes from JNI's
+     * `NewDirectByteBuffer`, and a JNI-created direct buffer is **BIG_ENDIAN** on
+     * the Java side regardless of the platform — the default nobody notices,
+     * because the only existing consumer is `VertexBuffer.setBufferAt`, which
+     * copies raw bytes and never interprets them. Reading floats without setting
+     * the order gives byte-swapped garbage that is still finite and still
+     * plausible-looking, which is the worst kind of wrong. Setting the order
+     * mutates only this ByteBuffer *view*; the page memory and the upload path
+     * are untouched (and `slice()` resets order to BIG_ENDIAN for the copy
+     * anyway, which is equally irrelevant to it).
+     */
+    private fun accumulateRecentGeometry(buffer: ByteBuffer, fromPoint: Int, toPoint: Int) {
+        if (toPoint <= fromPoint) return
+        buffer.order(ByteOrder.LITTLE_ENDIAN)
+        var i = fromPoint
+        while (i < toPoint) {
+            val base = i * POINT_STRIDE_BYTES
+            val x = buffer.getFloat(base).toDouble()
+            val y = buffer.getFloat(base + 4).toDouble()
+            val z = buffer.getFloat(base + 8).toDouble()
+            if (x.isFinite() && y.isFinite() && z.isFinite()) {
+                recentN++
+                recentSumX += x; recentSumY += y; recentSumZ += z
+                recentSumSq += x * x + y * y + z * z
+            }
+            i += RECENT_GEOMETRY_STRIDE
+        }
+    }
+
+    /**
+     * Turns the accumulators into a centroid + radius once enough samples have
+     * gathered, then clears them so the next measurement is of the *next* stretch
+     * of walk rather than of the whole capture so far.
+     *
+     * The floor of [RECENT_GEOMETRY_MIN_SAMPLES] is what keeps the estimate from
+     * being defined by the tail of a page: a handful of points is a fan segment,
+     * not a room, and its "radius" would swing wildly. Below the floor the last
+     * published measurement is held — `FollowCamera` smooths distance with a 1 s
+     * time constant anyway, so holding for a few frames is invisible.
+     *
+     * The clear-on-publish is the half that makes this a *recent*-geometry
+     * measurement. Without it the sums would span the entire session and the
+     * radius would converge on the size of the whole building, which is the
+     * failure this ROUND set out to remove, reintroduced one layer down.
+     */
+    private fun publishRecentGeometry() {
+        if (recentN < RECENT_GEOMETRY_MIN_SAMPLES) return
+        val n = recentN.toDouble()
+        val cx = recentSumX / n
+        val cy = recentSumY / n
+        val cz = recentSumZ / n
+        // E[|p - c|²] = E[|p|²] - |c|². Clamped at zero: in exact arithmetic it
+        // cannot be negative, in float-summed arithmetic over a tight cluster it
+        // can be, and sqrt of that is a NaN straight into the camera.
+        val variance = (recentSumSq / n - (cx * cx + cy * cy + cz * cz)).coerceAtLeast(0.0)
+        recentCentroidX = cx
+        recentCentroidY = cy
+        recentCentroidZ = cz
+        recentRadiusM = sqrt(variance)
+        recentGeometryValid = true
+        recentN = 0
+        recentSumX = 0.0; recentSumY = 0.0; recentSumZ = 0.0; recentSumSq = 0.0
     }
 
     private fun updateCombinedBounds(page: com.lidarscan.app.engine.NativePointPage) {
@@ -862,11 +1113,7 @@ class PointCloudRenderer(
         engine.destroyVertexBuffer(gpu.vertexBuffer)
     }
 
-    private fun updateCamera() {
-        val centerX = if (haveBounds) (combinedBoundsMin[0] + combinedBoundsMax[0]) / 2f else 0f
-        val centerY = if (haveBounds) (combinedBoundsMin[1] + combinedBoundsMax[1]) / 2f else 0f
-        val centerZ = if (haveBounds) (combinedBoundsMin[2] + combinedBoundsMax[2]) / 2f else 0f
-
+    private fun updateCamera(frameTimeNanos: Long) {
         when (cameraMode) {
             CameraMode.AR -> {
                 val projection = DoubleArray(16)
@@ -909,33 +1156,95 @@ class PointCloudRenderer(
                 lastEye = eye
             }
             CameraMode.FOLLOW -> {
-                // Simple chase cam: fixed offset above/behind the combined
-                // bounds centroid, updated every frame as the cloud grows —
-                // "follow" in the sense of always framing the latest data,
-                // not a device-pose-driven AR follow (no ARCore in B4's
-                // scope; that lands with B7's ARCore mount-calibration work).
-                val span = if (haveBounds) {
-                    max(
-                        combinedBoundsMax[0] - combinedBoundsMin[0],
-                        max(
-                            combinedBoundsMax[1] - combinedBoundsMin[1],
-                            combinedBoundsMax[2] - combinedBoundsMin[2],
-                        ),
-                    )
-                } else {
-                    5f
-                }
-                val distance = max(span * 1.2f, 3f)
-                val eyeY = centerY + distance * 0.5f
-                val eyeZ = centerZ + distance
+                // ROUND 8. Third person: behind and above the rig, along the
+                // negative WALK direction, pitched 35° down, looking AT the rig,
+                // framing fitted to recent geometry. All of that is
+                // `FollowCamera`'s; this branch only chooses what pose to feed it
+                // and hands the answer to `Camera.lookAt`.
+                //
+                // What was here before was not a follow at all: a fixed offset
+                // from the whole cloud's bounding-box centroid, with the distance
+                // fitted to the whole cloud's span. Both stop tracking the
+                // operator the moment the walk is longer than a room, and the
+                // second one zooms out without bound. That code is quoted in
+                // `FollowCamera`'s header so the failure it had stays written
+                // down rather than merely deleted.
+                feedFollowCamera(frameTimeNanos)
+                val s = followCamera.solution()
                 camera.lookAt(
-                    centerX.toDouble(), eyeY.toDouble(), eyeZ.toDouble(),
-                    centerX.toDouble(), centerY.toDouble(), centerZ.toDouble(),
-                    0.0, 1.0, 0.0,
+                    s.eyeX, s.eyeY, s.eyeZ,
+                    s.targetX, s.targetY, s.targetZ,
+                    // Y-up, as stated and justified at [followCamera]'s
+                    // declaration — the solver returns the up vector for the
+                    // convention it was configured with rather than this branch
+                    // re-asserting `0, 1, 0` and hoping the two agree.
+                    s.upX, s.upY, s.upZ,
                 )
-                lastEye = floatArrayOf(centerX, eyeY, eyeZ)
+                lastEye = floatArrayOf(s.eyeX.toFloat(), s.eyeY.toFloat(), s.eyeZ.toFloat())
             }
         }
+    }
+
+    /**
+     * Gives [followCamera] one pose for this frame, from the best source
+     * available, and tells it how far the recent returns reach.
+     *
+     * **Preferred: the real rig pose** latched by [setRigPose]. Consumed only
+     * when its sequence number has moved, and with ARCore's own frame timestamp,
+     * so the solver's time constants are measured against the pose stream's clock
+     * rather than the display's.
+     *
+     * **Fallback: the centroid of the newest points.** Used only while no real
+     * pose has *ever* arrived. It is defensible precisely because of what a D6
+     * is: the fan is vertical and across the direction of travel, so one
+     * revolution is a ring *around* the operator, and the centroid of the newest
+     * returns is therefore an estimate of where the operator is — biased toward
+     * whichever wall is nearer and sitting at the ring's mid-height (about
+     * 1.3 m in a 2.6 m room) rather than at the phone (about 1.5 m), but bounded,
+     * and moving with the walk, which the old whole-cloud centroid was not. The
+     * two sources are never mixed: they are different clocks and different biases,
+     * and once [haveRealRigPose] latches the fallback is gone for the session.
+     *
+     * The fallback's timestamp is the Choreographer's `frameTimeNanos`. Both it
+     * and ARCore's `Frame.timestamp` are `CLOCK_MONOTONIC` nanoseconds on
+     * Android, so they are comparable — but they are still never interleaved,
+     * because comparability is not the same as equal latency and the solver only
+     * needs *differences* from one consistent source.
+     */
+    private fun feedFollowCamera(frameTimeNanos: Long) {
+        val radius = if (recentGeometryValid) recentRadiusM else null
+
+        var px = 0.0; var py = 0.0; var pz = 0.0; var pt = 0L
+        var have = false
+        synchronized(rigPoseLock) {
+            if (rigPoseValid && rigPoseSeq != consumedRigPoseSeq) {
+                px = rigPoseX; py = rigPoseY; pz = rigPoseZ; pt = rigPoseTNs
+                consumedRigPoseSeq = rigPoseSeq
+                have = true
+            } else if (rigPoseValid) {
+                // A real pose exists but has not changed since the last frame
+                // (the render is outrunning the 30 Hz pose stream). Nothing to
+                // feed — the solver holds its last solution, which is the correct
+                // behaviour for a camera whose input has not moved.
+                haveRealRigPose = true
+            }
+        }
+        if (have) {
+            haveRealRigPose = true
+            followCamera.update(pt, px, py, pz, radius)
+            return
+        }
+        if (!haveRealRigPose && recentGeometryValid) {
+            followCamera.update(
+                frameTimeNanos,
+                recentCentroidX, recentCentroidY, recentCentroidZ,
+                radius,
+            )
+        }
+        // Neither source yet: `FollowCamera` still returns a finite default
+        // camera (its documented degenerate contract), so there is nothing to
+        // guard against here and no reason for this branch to invent a fallback
+        // framing of its own.
     }
 
     private inner class SurfaceCallback : UiHelper.RendererCallback {
@@ -1003,7 +1312,7 @@ class PointCloudRenderer(
                 }
             }
             syncPointCloud()
-            updateCamera()
+            updateCamera(frameTimeNanos)
             materialInstance?.setParameter(
                 "cameraPos",
                 combinedBoundsCameraX(), combinedBoundsCameraY(), combinedBoundsCameraZ(),
@@ -1054,5 +1363,41 @@ class PointCloudRenderer(
 
         /** Companion bound for allocations, not bytes: new pages created in one frame. */
         const val MAX_NEW_PAGES_PER_FRAME = 24
+
+        /**
+         * ROUND 8: take every 16th point when measuring recent geometry.
+         *
+         * What is wanted is a centroid and an RMS radius, both of which are
+         * converged well inside a hundred samples — reading every point would buy
+         * significant figures nobody looks at. At the worst case this loop can
+         * face (a full [MAX_UPLOAD_BYTES_PER_FRAME] slice, 262 144 points) the
+         * stride leaves 16 384 samples of three float reads and five
+         * multiply-adds each: tens of microseconds on the UI thread, against the
+         * 4 MB of `setBufferAt` happening beside it. Without a stride this would
+         * be the only part of the frame that scales with an upload burst.
+         *
+         * 16 rather than something larger because the stride also sets how fast
+         * the measurement can be *produced*: with the cross-frame accumulation
+         * above, a D6's 3 600 points/s yields 225 samples/s, so a measurement
+         * lands every ~0.15 s — about one and a half D6 revolutions, i.e. at
+         * least one complete ring rather than an arc of one. A stride of 64 makes
+         * that 0.57 s, which is slow enough that the points-derived fallback pose
+         * visibly stutters.
+         *
+         * A stride is also *phase-uniform* over a revolution (360 returns per
+         * turn; 16 divides 360 evenly into 22.5 samples per turn), so it does not
+         * systematically prefer one side of the ring the way "the first N points"
+         * would.
+         */
+        const val RECENT_GEOMETRY_STRIDE = 16
+
+        /**
+         * Below this many samples the "room" is a fan segment and its radius is
+         * noise — see [publishRecentGeometry]. 32 samples give an RMS estimate
+         * good to roughly 12 %, which the follow camera's 1 s distance filter
+         * then smooths further; the floor is about rejecting an *arc*, not about
+         * statistical precision.
+         */
+        const val RECENT_GEOMETRY_MIN_SAMPLES = 32
     }
 }

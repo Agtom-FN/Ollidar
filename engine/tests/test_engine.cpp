@@ -924,11 +924,21 @@ TEST_CASE("engine/rtk_rover_session_end_to_end_from_synthetic_nmea") {
   CHECK(last.height_ellipsoid_m == doctest::Approx(last.alt_m + last.geoid_sep_m));
 
   // --- record-always -------------------------------------------------------
-  // One chunk per pushed buffer, written BEFORE parsing, exactly like kD6Raw.
+  // One chunk per pushed NMEA buffer, written BEFORE parsing, exactly like
+  // kD6Raw — PLUS, as of ROUND 8, one kPoseAr chunk per accepted pose.
+  //
+  // This assertion USED to read `chunks_written == kEpochs`, and it is called
+  // out here rather than quietly edited because the change it is tracking is
+  // the whole of owner item 27: `Engine::push_pose()` never touched the
+  // recorder, so "record-always" was true of every stream except the one that
+  // supplies the third dimension of a D6 scan. The old number was a record of
+  // the bug. See Engine::record_pose_().
   const lscan::RecordStats rs = e.recorder().stats();
-  CHECK(rs.chunks_written == static_cast<std::uint64_t>(kEpochs));
+  const std::uint64_t kPosesPushed = 10ull * kEpochs;
+  CHECK(rs.chunks_written == static_cast<std::uint64_t>(kEpochs) + kPosesPushed);
   CHECK(rs.bytes_written > 0);
   CHECK(lscan::stream_of(lscan::ChunkType::kGnssNmea) == StreamId::kGnss);
+  CHECK(lscan::stream_of(lscan::ChunkType::kPoseAr) == StreamId::kPoseAr);
 
   // --- the device row ------------------------------------------------------
   auto h = e.device_health(id.value());

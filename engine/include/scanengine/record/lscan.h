@@ -65,6 +65,13 @@ inline constexpr const char* kLidarStreamFile = "streams/lidar.bin";
 inline constexpr const char* kImuStreamFile = "streams/imu.bin";
 inline constexpr const char* kPoseArStreamFile = "streams/poses_ar.bin";
 inline constexpr const char* kGnssStreamFile = "streams/gnss.bin";
+// ROUND 8 (additive): the RESOLVED world-frame cloud, i.e. StreamId::kSlamMap.
+// Its own file rather than lidar.bin, for one reason that matters: replaying
+// kD6Raw means walking lidar.bin, and mixing 16-byte vertices into the raw
+// UART stream would make that walk read (and CRC) tens of megabytes of points
+// it then discards. Nothing wrote kSlamMap chunks before ROUND 8, so giving
+// the stream its own filename breaks no existing recording.
+inline constexpr const char* kMapStreamFile = "streams/map.bin";
 
 // Chunk payload kinds. STABLE, APPEND-ONLY: a shipped .lscan may contain any
 // of these forever.
@@ -123,6 +130,68 @@ bool decode_stream_header(ByteSpan in, StreamFileHeader* out);
 
 // CRC over [header][payload], i.e. everything the trailer protects.
 std::uint32_t chunk_crc(const ChunkHeader& h, ByteSpan payload);
+
+// --- ROUND 8: the kPoseAr payload ------------------------------------------
+//
+// `ChunkType::kPoseAr` has been defined since A1 and mapped since A5 with NO
+// WRITER — android/NOTES.md ROUND 7 §9 item 1 named that as the single seam
+// blocking offline re-assembly of a D6 capture ("a record-always D6 capture
+// stores the raw UART bytes but not the trajectory, and the assembled cloud
+// exists only in the live PageStore and dies with the session"). This is the
+// payload the writer needed.
+//
+// WHY A POD HERE AND NOT `scanengine::Pose`. record/ is the format module: it
+// owns framing, CRC and file layout and depends on core/ only. `Pose` lives in
+// poses/pose_source.h and drags timesync/clock.h behind it, so encoding it
+// directly would invert the layering for no gain. `Engine::push_pose()` does
+// the two-line conversion at the boundary, which is also the only place that
+// knows the pose is worth recording at all.
+//
+// LAYOUT — fixed 68 bytes, little-endian, no padding, no alignment
+// requirement (same rules as the chunk header itself). The stamp is NOT in
+// here: a chunk already carries `t_mono_ns`, and duplicating it would let the
+// two disagree.
+//
+//   off  size  field
+//     0    24  position[3]            f64  metres, session-local frame
+//    24    32  orientation[4]         f64  unit quaternion (x, y, z, w)
+//    56     4  position_sigma_m       f32
+//    60     4  orientation_sigma_deg  f32
+//    64     1  source                 u8   StreamId
+//    65     1  quality                u8   PoseQuality 0..3
+//    66     1  tracking_lost          u8   0/1
+//    67     1  reserved               u8   written 0, ignored on read
+//
+// COST, because "record-always" has to be affordable: ARCore delivers ~30
+// poses/s, so 68 B * 30 = 2.0 KB/s — 7.3 MB over a one-hour walk, against the
+// ~200 KB/s of raw D6 UART bytes the same session already writes. Under 1 %.
+inline constexpr std::size_t kPoseChunkPayloadBytes = 68;
+
+struct PoseChunkRecord {
+  double position[3] = {0.0, 0.0, 0.0};
+  double orientation[4] = {0.0, 0.0, 0.0, 1.0};  // x, y, z, w
+  float position_sigma_m = 0.0f;
+  float orientation_sigma_deg = 0.0f;
+  std::uint8_t source = 0;         // StreamId
+  std::uint8_t quality = 0;        // PoseQuality
+  std::uint8_t tracking_lost = 0;
+};
+
+// `out` must have room for kPoseChunkPayloadBytes.
+void encode_pose_chunk(const PoseChunkRecord& p, std::uint8_t* out);
+// False (leaving `*out` untouched) when `in` is not exactly the expected size.
+// A LONGER payload is accepted and its tail ignored, so a future engine that
+// appends a field stays readable here — the same forward-compatibility rule
+// the chunk framing itself follows.
+bool decode_pose_chunk(ByteSpan in, PoseChunkRecord* out);
+
+// --- ROUND 8: the kPointsXyzRgba payload -----------------------------------
+//
+// A `PointVertex` array (cloud/point_page.h), verbatim: 12 bytes of
+// little-endian f32 x/y/z then 4 bytes of r/g/b/a. Declared here as a byte
+// count rather than as the struct so record/ keeps its core/-only dependency
+// set; the two are pinned to each other by a static_assert in lscan.cpp.
+inline constexpr std::size_t kPointVertexBytes = 16;
 
 // Which stream file a chunk type belongs in.
 StreamId stream_of(ChunkType t);
@@ -263,6 +332,23 @@ class FileRecordWriter final : public RecordWriter {
   void add_clock_offset(const std::string& bracket, std::int64_t camera_to_engine_ns,
                         double sigma_ns = 0.0);
   // ===== end INT-34 addition ===============================================
+
+  // ===== ROUND 8 ADDITION — the mount extrinsic, so a project re-resolves ==
+  //
+  // `"mountCalibration"` has been a reserved `null` since A5. ROUND 8 fills it
+  // in, because without it a recorded D6 capture is NOT self-contained: the
+  // raw returns are in the lidar's own frame and only `phone_from_lidar` says
+  // where that frame sits on the rig. The app has the number (its own manifest
+  // has carried `mountTrim` since ROUND 6) but a desktop, a cloud worker or
+  // `engine_cli` re-resolving the same directory does not, and asking every
+  // consumer to also parse the app's private sidecar is the wrong shape.
+  //
+  // ROW-MAJOR 4x4, the same convention Engine::set_mount_extrinsics() takes
+  // and docs/A8-pushbroom.md §3.1 states. Call before open(); unset stays
+  // `null`, exactly as before. Emitted as:
+  //     "mountCalibration": {"phoneFromLidar": [16 doubles, row-major]}
+  void set_mount_calibration(const double phone_from_lidar[16]);
+  // ===== end ROUND 8 addition ==============================================
 
   const std::string& path() const;
 

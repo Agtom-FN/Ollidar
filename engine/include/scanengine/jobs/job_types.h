@@ -86,6 +86,21 @@ struct PostProcessParams {
                                       // store (e.g. the live Engine's, per
                                       // docs/A7-post.md §7); null = the job
                                       // creates one, kept alive for chaining.
+
+  // --- ROUND 8, additive: the D6 route ------------------------------------
+  //
+  // A `.lscan` holding kD6Raw and no Mid-360 chunks runs post::D6ResolvePipeline
+  // instead of A7's PostSlamPipeline — see jobs/local_runner.cpp, and
+  // slam/post/d6_resolve.h for why the two are different pipelines and not one
+  // with a branch. `config` above is ignored on that route (there is no
+  // odometry to configure) and these two fields are ignored on A7's.
+  //
+  // The extrinsic is OPTIONAL: unset, the pipeline reads `"mountCalibration"`
+  // out of the container's own manifest. Set, it wins — the Android app holds
+  // the operator's persisted mount re-zero and that is fresher than a manifest
+  // written before the re-zero was taken.
+  bool d6_mount_valid = false;
+  double d6_mount[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};  // row-major phone_from_lidar
 };
 
 // `colorizer` is caller-injected (a `color::PointColorizer*` in production;

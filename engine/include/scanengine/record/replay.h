@@ -11,11 +11,18 @@
 // stream to the live pass that made it (see engine/tests/test_lscan_io.cpp
 // for the round-trip proof).
 //
-// Only ChunkType::kD6Raw replays today, because push_serial_bytes() is the
-// only "feed a device bytes" entry point Engine exposes; Mid-360 (A3) and
+// Only ChunkType::kD6Raw replays through push_serial_bytes(), because that is
+// the only "feed a device bytes" entry point Engine exposes; Mid-360 (A3) and
 // GNSS (A10) raw streams will need an analogous push entry point on Engine
 // before this class's merge/pacing logic (already generic across chunk
 // types) needs anything beyond a wider `chunk_type`/dispatch table.
+//
+// ROUND 8 added ONE second dispatch, and it is a different shape on purpose:
+// ChunkType::kPoseAr chunks go to Engine::push_pose(). android/NOTES.md
+// ROUND 7 §9 item 1 called the missing pose writer "the single blocker for
+// offline D6 re-assembly, ... and for 'replay == capture' being true of a D6
+// cloud rather than only of its bytes". Bytes alone reproduce a 2D fan; bytes
+// plus trajectory reproduce the room. See ReplayConfig::replay_poses.
 //
 // Threading: run() is a blocking call, intended to be driven from a
 // dedicated "replay" thread by the caller (engine_cli, a test, or a future
@@ -53,11 +60,33 @@ struct ReplayConfig {
   //           use; it is NOT "instant" in the sense of a different code
   //           path, only in the sense of no artificial sleeps.
   double speed = 1.0;
+
+  // --- ROUND 8: the trajectory replays too -------------------------------
+  //
+  // `chunk_type` selects ONE stream to feed through push_serial_bytes().
+  // ChunkType::kPoseAr is not a byte stream and never could be: its entry
+  // point is Engine::push_pose(), not push_serial_bytes(). So poses ride
+  // alongside whatever `chunk_type` names rather than instead of it — which
+  // is what a D6 replay needs, because a D6 without its trajectory replays
+  // into a flat fan and with it replays into the room.
+  //
+  // DEFAULT true, and that is provably not a behaviour change: nothing wrote
+  // a kPoseAr chunk before ROUND 8, so no `.lscan` in existence contains one.
+  // Every recording made from ROUND 8 on does, and for those "replay ==
+  // capture" (Tech Spec §3 key rule 2) is only true with this on. A caller
+  // that deliberately wants the bytes without the trajectory — e.g. a test
+  // isolating the decode path — sets it false.
+  bool replay_poses = true;
 };
 
 struct ReplayStats {
   std::uint64_t chunks_replayed = 0;
   std::uint64_t bytes_replayed = 0;
+  // ROUND 8: counted separately from `chunks_replayed` (which stays the count
+  // of `chunk_type` chunks, so an existing caller's number does not change
+  // meaning). Zero on a pre-0.5.0 recording, which is how a caller tells
+  // "this project predates trajectory storage" from "this project has poses".
+  std::uint64_t poses_replayed = 0;
   // Copied from FileRecordReader::warnings() after the run — a replayed
   // capture that hit a recorded crash's truncated tail is not an error,
   // just a fact the caller may want to report (e.g. in a job's log).

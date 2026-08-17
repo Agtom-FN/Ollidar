@@ -78,6 +78,90 @@ data class DisplayParams(
         }
 
     companion object {
+        /**
+         * ROUND 8, owner item 29 — **what the capture screen opens on.**
+         *
+         * The owner's real Pixel 8 Pro capture wrote this into its own
+         * `project.json` (the app-side manifest, `displayParams`):
+         *
+         * ```json
+         * "pointSize": { "mode": "ADAPTIVE", "fixedPx": 2.5, ... },
+         * "colorMode": "RGB",
+         * ```
+         *
+         * Three things wrong with it, all of which the owner saw as "the live
+         * view looks like mush":
+         *
+         *  1. **2.5 px points.** An indoor D6 walkthrough puts hundreds of
+         *     thousands of returns into a room-sized volume; at 2.5 px on a
+         *     420 dpi panel every surface reads as a solid smear and the
+         *     structure the operator is trying to check — are the walls
+         *     straight? — is exactly what is painted over. **1.0 px** is where
+         *     an indoor cloud starts looking like a cloud again. (ROUND 5's own
+         *     slider bottoms out at 0.1 px for the same reason; the default was
+         *     simply never moved off the engine's.)
+         *  2. **`colorMode = RGB` on a capture with no colour.** A D6 return has
+         *     no RGB — [evaluatePointColor]'s RGB branch is a pass-through of
+         *     whatever the vertex carries, which for an uncolorized pushbroom
+         *     cloud is flat. **INTENSITY** is the mode that actually shows the
+         *     sensor's own measurement, and it is what the QUICK_SCAN profile
+         *     (the capture tab's own default profile) already selects.
+         *  3. **`mode = ADAPTIVE` while the UI's only point-size control writes
+         *     `fixedPx`.** Documented at [CAPTURE_POINT_SIZE_PX] below.
+         *
+         * gamma and brightness are 1.0 — identity — because a default that is
+         * not identity is a tone curve nobody chose and cannot see the effect
+         * of. They stay adjustable; they just start neutral.
+         *
+         * Presets do **not** own these: item 22's rule is that a preset owns
+         * the knobs that cost sustained GPU/CPU/disk during a walk, and colour
+         * and point size cost nothing (see `CaptureTuning`'s own header). They
+         * are the *initial* state, on OPTIMAL because OPTIMAL is the default
+         * preset — not a value a preset switch reaches in and changes under the
+         * operator.
+         */
+        val CAPTURE_COLOR_MODE: ColorMode = ColorMode.INTENSITY
+
+        /**
+         * 1.0 px, and **[PointSizeMode.FIXED_PIXELS]**.
+         *
+         * The mode matters as much as the number. The capture sheet's only
+         * point-size control is a 0.1–3.0 px slider that writes `fixedPx`, and
+         * the ViewModel assembled its `DisplayParams` with
+         * `PointSizeParams(fixedPx = size)` — leaving `mode` on the data class's
+         * own default, `ADAPTIVE`. A renderer honouring the mode reads
+         * `adaptiveMin/Max/Reference` and **never looks at `fixedPx` at all**,
+         * so the slider the owner was moving had no defined effect on a
+         * correctly-implemented shader. Both halves are set explicitly now.
+         */
+        const val CAPTURE_POINT_SIZE_PX: Float = 1.0f
+
+        /** Identity tone. See [CAPTURE_COLOR_MODE]. */
+        const val CAPTURE_GAMMA: Float = 1.0f
+
+        /** Identity tone. See [CAPTURE_COLOR_MODE]. */
+        const val CAPTURE_BRIGHTNESS: Float = 1.0f
+
+        /**
+         * The whole block, for callers that want the value rather than the
+         * four constants. Runs through [clamped] so it can never be a shape
+         * `clamp_display_params()` would disagree with.
+         */
+        fun captureDefaults(): DisplayParams = DisplayParams(
+            colorMode = CAPTURE_COLOR_MODE,
+            pointSize = PointSizeParams(
+                mode = PointSizeMode.FIXED_PIXELS,
+                fixedPx = CAPTURE_POINT_SIZE_PX,
+            ),
+            intensity = ScalarColorParams(gamma = CAPTURE_GAMMA, brightness = CAPTURE_BRIGHTNESS),
+            height = ScalarColorParams(
+                manualMin = 0f,
+                manualMax = 3f,
+                gamma = CAPTURE_GAMMA,
+                brightness = CAPTURE_BRIGHTNESS,
+            ),
+        ).clamped()
+
         val DEFAULT_FIX_COLORS: List<Rgba> = listOf(
             Rgba(128, 128, 128, 255), // none
             Rgba(214, 64, 64, 255), // single

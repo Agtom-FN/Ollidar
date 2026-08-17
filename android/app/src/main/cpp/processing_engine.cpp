@@ -15,6 +15,11 @@
 #include "scanengine/merge/session.h"
 #include "scanengine/plan/occupancy.h"
 #include "scanengine/plan/plan_writers.h"
+// ROUND 8: the D6 offline resolve, its manifest reader and the Review fast
+// path. Linked directly like every other engine C++ module this file uses —
+// none of A7/A12/A13/A15 has a C surface, and neither does this.
+#include "scanengine/record/lscan.h"
+#include "scanengine/slam/post/d6_resolve.h"
 
 namespace lidarscan_jni {
 
@@ -112,13 +117,82 @@ std::uint64_t ProcessingEngine::total_points() const {
 
 bool ProcessingEngine::has_cloud() const { return total_points() > 0; }
 
+// --- ROUND 8: opening a saved project ---------------------------------------
+//
+// The whole of owner item 27c ("opening a saved D6 scan shows the 3D map,
+// never raw slices") comes down to these three functions plus the two engine
+// entry points they call. Before ROUND 8 the Review screen drew whatever
+// happened to be in this engine's PageStore, which for a D6 project was
+// NOTHING — the only thing that ever filled it was a post-process job, and
+// post-processing refused a D6 project because there was no pipeline for one.
+
+void ProcessingEngine::clear_cloud() {
+  std::lock_guard<std::mutex> lk(m_);
+  if (!engine_) return;
+  // clear(), not recycle_all(): recycle_all keeps the pages allocated for a
+  // live capture that is about to refill them, and this store is a
+  // post-processing workspace whose next project may be a hundredth the size.
+  engine_->points().clear();
+}
+
+ProcessingEngine::ProjectProbe ProcessingEngine::probe_project(const std::string& lscan_dir) {
+  ProjectProbe out;
+  scanengine::lscan::FileRecordReader reader;
+  const Status st = reader.open(lscan_dir);
+  if (!st.ok()) {
+    set_error(std::string("could not open '") + lscan_dir + "': " + err_name(st.error()));
+    return out;
+  }
+  out.opened = true;
+  bool has_mid360 = false;
+  for (const auto& s : reader.stream_summaries()) {
+    if (s.chunk_count == 0) continue;
+    switch (s.stream) {
+      case StreamId::kLidarD6: out.lidar_chunks = s.chunk_count; break;
+      case StreamId::kLidarMid360:
+      case StreamId::kImu: has_mid360 = true; break;
+      case StreamId::kPoseAr:
+        out.pose_chunks = s.chunk_count;
+        out.has_poses = true;
+        break;
+      case StreamId::kSlamMap: out.has_recorded_map = true; break;
+      default: break;
+    }
+  }
+  (void)reader.close();
+  out.is_d6 = out.lidar_chunks > 0 && !has_mid360;
+  double mount[16];
+  out.has_mount = scanengine::post::read_manifest_mount(lscan_dir, mount);
+  return out;
+}
+
+std::uint64_t ProcessingEngine::open_recorded_cloud(const std::string& lscan_dir) {
+  if (!engine_) return 0;
+  clear_cloud();
+  std::uint64_t n = 0;
+  const Status st = scanengine::post::load_recorded_cloud(lscan_dir, &engine_->points(),
+                                                          StreamId::kSlamMap, &n);
+  if (!st.ok()) {
+    set_error(std::string("could not read the recorded cloud: ") + err_name(st.error()));
+    return 0;
+  }
+  return n;
+}
+
 // --- jobs -------------------------------------------------------------------
 
-std::uint64_t ProcessingEngine::submit_post_process(const std::string& lscan_dir) {
+std::uint64_t ProcessingEngine::submit_post_process(const std::string& lscan_dir,
+                                                    const double* mount_phone_from_lidar) {
   if (!engine_) return 0;
   scanengine::jobs::JobSpec spec;
   spec.kind = scanengine::jobs::JobKind::kPostProcess;
   spec.post.lscan_dir = lscan_dir;
+  // ROUND 8: ignored on A7's Mid-360 route, load-bearing on the D6 one — see
+  // jobs::PostProcessParams::d6_mount and slam/post/d6_resolve.h.
+  if (mount_phone_from_lidar != nullptr) {
+    spec.post.d6_mount_valid = true;
+    for (int i = 0; i < 16; ++i) spec.post.d6_mount[i] = mount_phone_from_lidar[i];
+  }
   // Publish into THIS engine's store rather than one the pipeline owns: A15
   // routes a post job "at an externally-owned PageStore ... so the store
   // outlives the pipeline object", and here that store is also the one the

@@ -128,6 +128,54 @@ object PerformancePresets {
     val DEFAULT: PerformancePreset = PerformancePreset.OPTIMAL
 
     /**
+     * ROUND 8, owner item 29 — **the display block a capture opens on**, for
+     * every preset.
+     *
+     * Deliberately preset-independent, and that is the whole statement: item 22
+     * says a preset owns the knobs that cost sustained GPU/CPU/disk during a
+     * walk, and colour mode, colormap, point size, gamma and brightness cost
+     * nothing (see [CaptureTuning]'s header, which has said so since ROUND 6).
+     * Letting a preset switch reach in and repaint the operator's view would
+     * make Light/Optimal/Full a *taste* control as well as a performance one,
+     * which is exactly the conflation item 22 exists to prevent.
+     *
+     * So this is a function of nothing, and it is a function rather than a
+     * constant only so the call site reads as "the defaults this preset opens
+     * on" — which is what the owner's item 29 asks for — and so that a future
+     * preset which genuinely does need its own view has one place to diverge.
+     *
+     * What it fixes is recorded on
+     * [com.lidarscan.core.render.DisplayParams.Companion.CAPTURE_COLOR_MODE]:
+     * the owner's real capture ran at `pointSize.fixedPx = 2.5` in `RGB` on a
+     * cloud with no colour in it.
+     */
+    fun displayDefaultsFor(
+        @Suppress("UNUSED_PARAMETER") preset: PerformancePreset,
+    ): com.lidarscan.core.render.DisplayParams = com.lidarscan.core.render.DisplayParams.captureDefaults()
+
+    /**
+     * ROUND 8, owner directive *"i need a live 3d mapping too"* — **the live
+     * pushbroom map is on by default in every preset except [PerformancePreset.LIGHT]**.
+     *
+     * This was already true of [tuningFor]'s table and is asserted here as its
+     * own named rule, because the owner's log made it look false:
+     *
+     * ```
+     * 22:53:09 [session] start: … preset=OPTIMAL tier=STANDARD liveSlam=false
+     * 00:54:13 [session] preset=LIGHT … changes=live 3D map off (raw preview only)
+     * ```
+     *
+     * `liveSlam=false` on an OPTIMAL D6 session reads like "no live map", and
+     * is not: `liveSlam` is the **Mid-360** concept (`CaptureDefaults`' own
+     * words — a Livox carries its own IMU and runs LIO). A D6's live map comes
+     * from A8's pushbroom, gated on `pushbroomActive`, and that is what
+     * `CaptureViewModel.liveMapRequested` combines with this flag. The same log
+     * line's neighbour is the proof it was on:
+     * `[pushbroom] extrinsic applied: … trim=none pushbroomEnabled=true`.
+     */
+    fun liveMapDefault(preset: PerformancePreset): Boolean = preset != PerformancePreset.LIGHT
+
+    /**
      * The device tier, from what any phone will tell you for free.
      *
      * Thresholds: 6 GB is where a modern Android phone stops having to fight for

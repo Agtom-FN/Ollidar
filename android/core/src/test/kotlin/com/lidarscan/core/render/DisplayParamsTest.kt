@@ -3,6 +3,7 @@ package com.lidarscan.core.render
 import com.lidarscan.core.gnss.FixType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -229,5 +230,58 @@ class DisplayParamsTest {
         val f = c.toFloat4()
         assertEquals(0x12 / 255f, f[0], 1e-6f)
         assertEquals(0x78 / 255f, f[3], 1e-6f)
+    }
+
+    // ── ROUND 8, owner item 29: the capture screen's own defaults ──────────
+
+    /**
+     * The exact block the owner's real Pixel 8 Pro capture should have been
+     * drawn with, and was not. Its `project.json` recorded:
+     *
+     * ```json
+     * "pointSize": { "mode": "ADAPTIVE", "fixedPx": 2.5, ... },
+     * "colorMode": "RGB"
+     * ```
+     *
+     * 2.5 px points smear an indoor cloud into a solid surface — which is
+     * exactly the structure ("are the walls straight?") the operator opens the
+     * live view to check — and RGB on an uncolorized D6 return is a
+     * pass-through of nothing.
+     */
+    @Test
+    fun `the capture defaults are intensity, one pixel, and identity tone`() {
+        assertEquals(ColorMode.INTENSITY, DisplayParams.CAPTURE_COLOR_MODE)
+        assertEquals(1.0f, DisplayParams.CAPTURE_POINT_SIZE_PX, 0f)
+        assertEquals(1.0f, DisplayParams.CAPTURE_GAMMA, 0f)
+        assertEquals(1.0f, DisplayParams.CAPTURE_BRIGHTNESS, 0f)
+
+        val d = DisplayParams.captureDefaults()
+        assertEquals(ColorMode.INTENSITY, d.colorMode)
+        assertEquals(1.0f, d.pointSize.fixedPx, 0f)
+        // The MODE matters as much as the number: the capture sheet's only
+        // point-size control writes `fixedPx`, and a renderer honouring
+        // ADAPTIVE never reads that field at all — so the slider the owner was
+        // moving had no defined effect. `2.5` was not merely too big; it was
+        // being written into a field the declared mode said to ignore.
+        assertEquals(PointSizeMode.FIXED_PIXELS, d.pointSize.mode)
+        assertEquals(1f, d.intensity.gamma, 0f)
+        assertEquals(1f, d.intensity.brightness, 0f)
+        assertEquals(1f, d.height.gamma, 0f)
+        assertEquals(1f, d.height.brightness, 0f)
+
+        // And it is NOT the 2.5 px the field capture used, stated as its own
+        // assertion so the regression has a name.
+        assertNotEquals(2.5f, d.pointSize.fixedPx)
+    }
+
+    /** Whatever else changes, the capture block must survive its own clamp unaltered. */
+    @Test
+    fun `the capture defaults are already clamped`() {
+        val once = DisplayParams.captureDefaults()
+        assertEquals(once, once.clamped())
+        assertTrue(
+            "1.0 px must be inside the Android-side point-size range (ROUND 5 lowered the floor to 0.1)",
+            once.pointSize.fixedPx >= DisplayLimits.POINT_SIZE_MIN_PX,
+        )
     }
 }

@@ -34,6 +34,35 @@ Status ReplaySource::run(const ReplayConfig& cfg) {
       return s;
     }
 
+    // ROUND 8: the trajectory replays alongside the byte stream, through
+    // push_pose() rather than push_serial_bytes(). Deliberately BEFORE the
+    // pacing sleep and outside it: poses are cheap, and FileRecordReader
+    // hands chunks back in non-decreasing t_mono_ns order across every stream
+    // (its own class comment), so a pose that belongs before the next lidar
+    // chunk arrives before it. That ordering is the whole reason the
+    // assembler can resolve a return the moment its bracketing poses exist
+    // instead of buffering the session.
+    if (cfg.replay_poses && h.type == ChunkType::kPoseAr) {
+      PoseChunkRecord rec{};
+      if (decode_pose_chunk(ByteSpan(payload.data(), payload.size()), &rec)) {
+        Pose p{};
+        p.t_mono_ns = h.t_mono_ns;
+        for (int i = 0; i < 3; ++i) p.position[i] = rec.position[i];
+        for (int i = 0; i < 4; ++i) p.orientation[i] = rec.orientation[i];
+        p.position_sigma_m = rec.position_sigma_m;
+        p.orientation_sigma_deg = rec.orientation_sigma_deg;
+        p.source = static_cast<StreamId>(rec.source);
+        p.quality = static_cast<PoseQuality>(rec.quality);
+        p.tracking_lost = rec.tracking_lost;
+        // A pose the interpolator rejects (duplicate stamp, out of order) is
+        // not an error for the replay: the capture accepted what it accepted
+        // and the reader hands back exactly that. Counting only accepted ones
+        // keeps `poses_replayed` meaning "poses now in the trajectory".
+        if (engine_.push_pose(p).ok()) ++stats_.poses_replayed;
+      }
+      continue;
+    }
+
     if (h.type != cfg.chunk_type) continue;  // not ours to replay (yet) — see class comment
 
     if (cfg.speed > 0.0) {

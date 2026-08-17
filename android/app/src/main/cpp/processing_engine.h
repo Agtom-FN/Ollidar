@@ -133,7 +133,44 @@ class ProcessingEngine {
   // Each returns the job id, or 0 on a submit-time refusal (last_error() says
   // why). kCloudSubmit is deliberately absent — see the class comment in
   // processing_jni.cpp and android/NOTES.md: the cloud client is Kotlin.
-  std::uint64_t submit_post_process(const std::string& lscan_dir);
+  // `mount_phone_from_lidar` is OPTIONAL (null = "read it out of the
+  // container's manifest"). ROUND 8: a COIN-D6 project routes to
+  // post::D6ResolvePipeline inside jobs/local_runner.cpp — see
+  // engine/include/scanengine/slam/post/d6_resolve.h — and that pipeline needs
+  // `phone_from_lidar` to turn range/angle pairs into a room. The app has a
+  // better one than the file does whenever the operator has re-zeroed the
+  // mount since the capture was written, so it is allowed to override.
+  std::uint64_t submit_post_process(const std::string& lscan_dir,
+                                    const double* mount_phone_from_lidar = nullptr);
+
+  // --- ROUND 8: opening a SAVED project (owner item 27c) -------------------
+  //
+  // What the Review screen needs to know before it draws anything, read
+  // straight off the container rather than off the app's own sidecar manifest
+  // — a project can be moved, imported or recovered, and the bytes are the
+  // only thing that is always true about it.
+  struct ProjectProbe {
+    bool opened = false;          // the directory is a readable .lscan at all
+    bool is_d6 = false;           // D6 chunks and no Mid-360 ones
+    bool has_poses = false;       // kPoseAr — false for every pre-0.5.0 capture
+    bool has_recorded_map = false;// kPointsXyzRgba — the Review fast path
+    bool has_mount = false;       // "mountCalibration" in the manifest
+    std::uint64_t lidar_chunks = 0;
+    std::uint64_t pose_chunks = 0;
+  };
+  ProjectProbe probe_project(const std::string& lscan_dir);
+
+  // Loads the container's CACHED resolved cloud into this engine's PageStore
+  // and returns how many points landed (0 = there is no cache; the caller
+  // should submit a post-process instead). Clears the store first: the store
+  // is process-wide and shared between projects, so leaving the previous
+  // project's points in it would draw two rooms on top of each other — which
+  // is exactly the failure mode ROUND 8 found in the Android preview writer.
+  std::uint64_t open_recorded_cloud(const std::string& lscan_dir);
+
+  // Retires every page. Called before opening or re-processing a project, for
+  // the reason above.
+  void clear_cloud();
 
   // `chain_from` must be a finished kPostProcess job. `sync_quality` is
   // SCAN_SYNC_* (A4's SyncQuality) and FAILS CLOSED at 0.

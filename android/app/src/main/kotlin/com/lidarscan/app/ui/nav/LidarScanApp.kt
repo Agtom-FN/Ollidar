@@ -89,6 +89,12 @@ fun LidarScanApp(
             composable(Routes.PROJECTS) {
                 ProjectsListRoute(
                     container = container,
+                    // ROUND 8 (item 31): Stop -> seal -> here, with the scan
+                    // that was just recorded already selected and previewing.
+                    // `activeProjectId` is what CaptureRoute's onScanSealed
+                    // sets, so this is the same one-shot handoff, read at the
+                    // other end.
+                    initialSelectedId = activeProjectId,
                     onSelectProject = { activeProjectId = it },
                     onOpenProject = ::openProject,
                     onOpenReview = { navController.navigate(Routes.review(it)) },
@@ -107,6 +113,30 @@ fun LidarScanApp(
                     projectId = null,
                     onBack = { goTab(Routes.PROJECTS) },
                     onOpenMountCalibration = { pid -> navController.navigate(Routes.mountCalibration(pid)) },
+                    // ── ROUND 8, owner item 31: stop => seal => Projects ──────
+                    //
+                    // A capture used to end on the Capture tab, still drawing
+                    // the cloud it had just finished, with the scan itself
+                    // reachable only by remembering to tap Projects. Both of the
+                    // owner's lost field sessions were *discovered* in the
+                    // Projects tab, which is the tab that answers the question a
+                    // finished capture leaves you with — "is it saved?" — so it
+                    // is where a finished capture lands.
+                    //
+                    // `goTab` pops back to the graph's root, so this does not
+                    // grow the back stack: the Capture tab's own
+                    // `NavBackStackEntry` and ViewModel are destroyed, and
+                    // returning to Capture builds a fresh one. That is the same
+                    // trip ROUND 7's field bug 1 was about — and the reason the
+                    // mount trim is persisted rather than held in the ViewModel
+                    // is precisely so this navigation is safe to do
+                    // automatically now. `CaptureViewModel` re-arms everything
+                    // else (fresh auto-name, cleared typed name, zeroed stats)
+                    // before it emits, and the connection is untouched.
+                    onScanSealed = { pid ->
+                        activeProjectId = pid
+                        goTab(Routes.PROJECTS)
+                    },
                 )
             }
 

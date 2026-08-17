@@ -146,7 +146,18 @@ class MergedCloudSource(private val handleProvider: () -> Long) : PointCloudSour
  * cloud the tapped return may be up to a few centimetres from the one actually
  * drawn under the finger.
  */
-fun PointCloudSource.samplePoints(maxPoints: Int): List<com.lidarscan.core.measure.Vec3> {
+fun PointCloudSource.samplePoints(
+    maxPoints: Int,
+    /**
+     * ROUND 8: which `SCAN_STREAM_*` pages to sample. Defaults to all, which is
+     * right for the measure tool (Review holds exactly one resolved cloud) and
+     * WRONG for a live D6 capture, whose store holds the resolved world-frame
+     * map and the raw sensor-frame fan at the same time. See
+     * [com.lidarscan.core.render.PreviewSanity] for what sampling both did to
+     * the Projects-tab thumbnail, measured on a real export.
+     */
+    acceptStream: (Int) -> Boolean = { true },
+): List<com.lidarscan.core.measure.Vec3> {
     if (!isAvailable) return emptyList()
     val total = totalPoints()
     if (total <= 0L) return emptyList()
@@ -157,6 +168,7 @@ fun PointCloudSource.samplePoints(maxPoints: Int): List<com.lidarscan.core.measu
         val id = pageIdAt(i)
         if (id < 0) continue
         val page = getPage(id) ?: continue
+        if (!acceptStream(page.stream)) continue
         // `NewDirectByteBuffer` hands back a BIG_ENDIAN buffer regardless of
         // the platform — a JNI/NIO default, not an engine choice. The renderer
         // never noticed because `setBufferAt` copies raw bytes; `getFloat`
@@ -178,6 +190,27 @@ fun PointCloudSource.samplePoints(maxPoints: Int): List<com.lidarscan.core.measu
             }
             p += stride
         }
+    }
+    return out
+}
+
+/**
+ * ROUND 8: the `SCAN_STREAM_*` ids this source currently has pages for.
+ *
+ * Cheap (page headers only, no buffer reads) and used for exactly one
+ * decision: a preview or an export sample must take the RESOLVED map when one
+ * exists and the raw sensor-frame preview only when it does not. Asking the
+ * store rather than inferring it from `liveSlam`/`pushbroomActive` flags is
+ * deliberate — those say what was REQUESTED, and the pages say what happened.
+ */
+fun PointCloudSource.streamsPresent(): Set<Int> {
+    if (!isAvailable) return emptySet()
+    val out = mutableSetOf<Int>()
+    for (i in 0 until pageCount()) {
+        val id = pageIdAt(i)
+        if (id < 0) continue
+        val page = getPage(id) ?: continue
+        if (page.count > 0) out.add(page.stream)
     }
     return out
 }

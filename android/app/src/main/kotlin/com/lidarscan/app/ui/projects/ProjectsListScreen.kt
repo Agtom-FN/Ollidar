@@ -68,6 +68,16 @@ import com.lidarscan.core.store.Project
 @Composable
 fun ProjectsListRoute(
     container: AppContainer,
+    /**
+     * ROUND 8 (owner item 31): the scan Capture has just sealed, so that
+     * Stop lands here with the new scan already selected and its 3D preview
+     * open rather than on an anonymous list the operator has to search.
+     *
+     * A one-shot: it seeds [ProjectsListScreen]'s own selection the first time
+     * a given id arrives and never fights the user's taps afterwards. Null on
+     * every other route into this tab.
+     */
+    initialSelectedId: String? = null,
     onSelectProject: (String) -> Unit,
     onOpenProject: (String) -> Unit,
     onOpenReview: (String) -> Unit,
@@ -87,6 +97,7 @@ fun ProjectsListRoute(
 
     ProjectsListScreen(
         uiState = uiState,
+        initialSelectedId = initialSelectedId,
         onSelectProject = onSelectProject,
         onOpenProject = onOpenProject,
         onOpenReview = onOpenReview,
@@ -114,6 +125,7 @@ fun ProjectsListRoute(
 @Composable
 fun ProjectsListScreen(
     uiState: ProjectsUiState,
+    initialSelectedId: String? = null,
     onSelectProject: (String) -> Unit,
     onOpenProject: (String) -> Unit,
     onOpenReview: (String) -> Unit,
@@ -122,6 +134,15 @@ fun ProjectsListScreen(
     onDeleteProject: (String) -> Unit,
 ) {
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
+    // ROUND 8 (item 31): adopt the just-sealed scan ONCE, keyed on the id.
+    // Keyed rather than run on every composition because the user must stay in
+    // charge afterwards: collapsing the card and having it spring back open on
+    // the next recomposition would be worse than not highlighting it at all.
+    // `LaunchedEffect(id)` also means returning to this tab later does not
+    // re-select a scan the operator has since dismissed.
+    LaunchedEffect(initialSelectedId) {
+        if (initialSelectedId != null) selectedId = initialSelectedId
+    }
     Column(
         Modifier
             .fillMaxSize()

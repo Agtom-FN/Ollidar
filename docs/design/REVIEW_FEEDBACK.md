@@ -239,3 +239,46 @@ both closed × keyframes on / off. Screenshots: `redesign-exports/fix-r4-*.png`.
     and clear refusal reasons; investigate the owner's "looks not working".
 31. Post-capture flow: Stop => file kept, auto-return to Projects (new scan highlighted),
     Capture tab resets ready for the next scan.
+
+### Resolution — 2026-08-18 (0.5.0)
+27. **Fixed, end to end, and it was three bugs rather than one.**
+    (a) `Engine::push_pose()` never touched the recorder, so `ChunkType::kPoseAr`
+    had no writer — and a COIN-D6 is a 2D lidar whose third dimension IS the
+    trajectory, so a saved D6 scan held nothing 3D at all. It now records poses
+    (68 B, ~2 KB/s), caches the resolved cloud as `kPointsXyzRgba` in
+    `streams/map.bin`, and writes `mountCalibration` + a real `sensors` list
+    into the manifest (both were empty in every `.lscan` ever written).
+    (b) New `post::D6ResolvePipeline` re-resolves a D6 project offline through
+    the real driver/pose-source/assembler; `run_post_process` routes to it off
+    the container's own chunk types. `ReplaySource` replays `kPoseAr` too.
+    (c) Review probes the container and takes one of three paths — cached
+    cloud, re-resolve, or the honest "recorded before trajectory storage" for a
+    pre-0.5.0 capture — instead of showing an empty box.
+    (d) Proved on the REOPENED project: 0.052 cm wall plane-fit RMS, 4.05 m
+    walk extent, **0 points at exactly z = 0**, bit-identical to the live pass;
+    controls show the same bytes without poses produce nothing. Emulator test
+    proves the Android path against the real native engine.
+    **Also found by measuring the owner's own export:** the Projects thumbnail
+    was 50.2 % raw sensor-frame fan (2,027 of 4,040 points at exactly z = 0) —
+    the writer sampled every stream where the renderer has filtered since B3.
+    Fixed at the source plus a `PreviewSanity` verdict on write and on read.
+28. **Fixed.** `CaptureLayout.MIN_VIEWPORT_FRACTION = 0.60`, enforced by
+    arithmetic (258 dp of fixed chrome, viewport is the only weighted child).
+    Measured 67.5 % on the emulator in the connected state. Settings collapsed
+    into one mount row plus `[Capture · Optimal] [Display] [Diag]`.
+29. **Fixed.** `DisplayParams.captureDefaults()` — INTENSITY, 1.0 px, gamma
+    1.0, brightness 1.0, 30 fps. Also fixed the point-size mode being left on
+    ADAPTIVE, which made the slider have no defined effect.
+30. **Root cause found in the owner's log: the gate refused 7/7 on 0.4.0.** It
+    judged the WORST of ~37 ARCore frames against 1.5°. Now p90 <= 2.5° with a
+    6° outlier ceiling over a 1.0 s window (~1.5 s door to door), refusals
+    report their measured numbers on screen and in the log, and a persistent
+    `MOUNT SET · 132.8° · 2 min ago` chip is part of the capture chrome.
+31. **Fixed.** Stop -> verified seal -> Projects with the new scan selected and
+    previewing; the Capture tab re-arms with a fresh auto-name, still connected,
+    live preview running, and keeps the mount trim.
+    **Plus two owner messages taken mid-round:** the live pushbroom map is on by
+    default in every preset but LIGHT and the D6 capture view defaults to
+    Follow; and Follow is now a THIRD-PERSON camera (behind, above, pitched
+    down, heading from the trajectory not phone yaw) because the D6's fan paints
+    a ring around the operator and never anything ahead.

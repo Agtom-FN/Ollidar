@@ -30,6 +30,37 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/**
+ * ROUND 8 (owner item 27c): what Review is doing with the project it was handed.
+ *
+ * The states exist because "open a saved scan" is now three different actions
+ * with three different latencies, and the operator is entitled to know which
+ * one is happening rather than watching an empty viewport and guessing.
+ */
+enum class ReviewLoad {
+    /** Reading the container to find out what is in it. Milliseconds. */
+    PROBING,
+
+    /** Reading back the resolved cloud the capture cached. Fast — this is the normal path. */
+    LOADING_RECORDED,
+
+    /** Re-resolving from the raw returns and the trajectory. Seconds. */
+    RESOLVING,
+
+    /** A 3D cloud is on screen. */
+    READY,
+
+    /**
+     * A COIN-D6 capture with returns but no trajectory — every capture this app
+     * made before 0.5.0. There is nothing to show and nothing that can be done
+     * about it; see [ReviewUiState.loadMessage].
+     */
+    NO_TRAJECTORY,
+
+    /** Something else went wrong; [ReviewUiState.loadMessage] says what. */
+    FAILED,
+}
+
 data class ReviewUiState(
     val project: Project? = null,
     val display: DisplayParams = DisplayParams(),
@@ -41,6 +72,11 @@ data class ReviewUiState(
     val pickMessage: String? = null,
     val colorModeReasons: Map<com.lidarscan.core.render.ColorMode, String?> = emptyMap(),
     val hasCloud: Boolean = false,
+    val load: ReviewLoad = ReviewLoad.PROBING,
+    /** One paragraph the viewport shows when there is nothing to draw. Never a bare error code. */
+    val loadMessage: String? = null,
+    /** What the container turned out to contain — drives everything above. */
+    val probe: com.lidarscan.app.engine.ProjectProbe = com.lidarscan.app.engine.ProjectProbe.NONE,
 )
 
 /**
@@ -86,6 +122,7 @@ class ReviewViewModel(
                 project = p,
                 display = p?.manifest?.effectiveDisplayParams() ?: DisplayParams(),
             )
+            if (p != null) openProjectCloud(p)
         }
         viewModelScope.launch {
             settings.settings.collect { s ->
@@ -97,14 +134,149 @@ class ReviewViewModel(
         viewModelScope.launch {
             while (true) {
                 val n = processing.totalPoints()
-                _uiState.value = _uiState.value.copy(
+                val s = _uiState.value
+                // ROUND 8: a re-resolve publishes pages as it goes, so the
+                // first page arriving IS "ready" — the room draws while it is
+                // still being built, which is both truthful and much better to
+                // watch than a spinner. 250 ms rather than the old 1 s for the
+                // same reason.
+                val load = if (n > 0 && (s.load == ReviewLoad.RESOLVING ||
+                        s.load == ReviewLoad.LOADING_RECORDED || s.load == ReviewLoad.PROBING)
+                ) {
+                    ReviewLoad.READY
+                } else {
+                    s.load
+                }
+                _uiState.value = s.copy(
                     totalPoints = n,
                     hasCloud = n > 0,
+                    load = load,
+                    loadMessage = if (load == ReviewLoad.READY) null else s.loadMessage,
                     colorModeReasons = colorModeAvailability(gnssActive = false),
                 )
-                delay(1000)
+                delay(250)
             }
         }
+    }
+
+    // --- ROUND 8: opening a saved scan shows the 3D map (owner item 27c) -----
+    //
+    // THE FIELD REPORT this replaces, verbatim: *"When i check the recording,
+    // it still show a 2D scan. i need a 3d mapping."*
+    //
+    // What Review used to do was draw `ProcessingCloudSource` — the processing
+    // engine's PageStore — and nothing whatsoever put a D6 project into it.
+    // The only thing that ever filled that store was a post-process job, and
+    // post-processing REFUSED a D6 project (ROUND 7 §6 made the refusal honest
+    // but could not make it work: the engine had no D6 offline pipeline and,
+    // more fundamentally, a D6 `.lscan` did not contain the trajectory that
+    // pipeline would need). So the viewer was empty and the only 3D-looking
+    // thing anywhere near a saved scan was the Projects-tab thumbnail, which
+    // was drawing a 50/50 mix of the resolved map and the RAW SENSOR-FRAME FAN
+    // — a flat 2D disc. That is what the owner was looking at.
+    //
+    // Three paths now, cheapest first, and the screen says which one it is on:
+    //
+    //  1. **The cached cloud.** A 0.5.0+ capture writes its resolved cloud into
+    //     the container as it goes (`ChunkType::kPointsXyzRgba`), so opening a
+    //     scan is a file read, not a computation.
+    //  2. **Re-resolve.** No cache but a trajectory is present: run the offline
+    //     pipeline over the raw returns + poses + mount extrinsic. Seconds, and
+    //     it produces exactly what the live pass produced (proved bit-for-bit
+    //     in engine/tests/test_round8_d6_reopen.cpp).
+    //  3. **Say so.** A D6 capture with no trajectory cannot be made 3D by
+    //     anything, ever — the third dimension was never recorded. Rather than
+    //     show an empty box or fall back to the raw fan and let it be mistaken
+    //     for the result, the viewport explains it in one paragraph.
+    private fun openProjectCloud(p: Project) {
+        viewModelScope.launch {
+            val probe = withContext(Dispatchers.IO) { processing.probeProject(p.directory) }
+            _uiState.value = _uiState.value.copy(probe = probe)
+
+            if (!probe.opened) {
+                setLoad(
+                    ReviewLoad.FAILED,
+                    "This project's data files could not be read. The .lscan directory is " +
+                        "missing or unreadable:\n\n${p.directory.absolutePath}",
+                )
+                return@launch
+            }
+
+            if (probe.hasRecordedMap) {
+                setLoad(ReviewLoad.LOADING_RECORDED, null)
+                val n = withContext(Dispatchers.IO) {
+                    processing.openRecordedCloud(projectId, p.directory)
+                }
+                if (n > 0) {
+                    setLoad(ReviewLoad.READY, null)
+                    return@launch
+                }
+                // The cache is a cache: an empty or unreadable one is not a
+                // failure, it just means paying for the re-resolve below.
+            }
+
+            if (probe.predatesTrajectoryStorage) {
+                setLoad(
+                    ReviewLoad.NO_TRAJECTORY,
+                    "Recorded before trajectory storage — showing raw sensor view.\n\n" +
+                        "A COIN-D6 is a 2D lidar: the third dimension of a scan is entirely the " +
+                        "phone's motion while you walk. This capture was made by LidarScan " +
+                        "${p.manifest.appVersion.ifBlank { "before 0.5.0" }}, which recorded the " +
+                        "returns but not the trajectory, so there is no way to rebuild the 3D " +
+                        "map from it — not by this app and not by any later one.\n\n" +
+                        "Scans taken from 0.5.0 on store the trajectory alongside the returns " +
+                        "and open straight into 3D.",
+                )
+                return@launch
+            }
+
+            if (!probe.isD6) {
+                // A Mid-360 project: A7's pipeline is the answer and it has
+                // always been reachable from the Processing screen. Nothing to
+                // auto-run here — a full LIO re-run is minutes of work and a
+                // deliberate action, not something a screen starts by itself.
+                setLoad(
+                    ReviewLoad.FAILED,
+                    "No cloud in memory. Run Process on this project — the Mid-360 pipeline " +
+                        "re-runs the odometry from the raw returns, which takes a few minutes.",
+                )
+                return@launch
+            }
+
+            setLoad(ReviewLoad.RESOLVING, null)
+            // The operator's persisted mount re-zero beats the container's own,
+            // for the reason ProcessingRepository.submitPostProcess documents.
+            val mount = withContext(Dispatchers.IO) { resolveMountMatrix(p) }
+            val submitted = processing.submitPostProcess(projectId, p.directory, mount)
+            if (submitted.isFailure) {
+                setLoad(
+                    ReviewLoad.FAILED,
+                    "This scan could not be rebuilt: ${processing.lastError()}",
+                )
+            }
+            // Success is observed by the points poll below, which flips the
+            // state to READY the moment the job's first page lands — so the
+            // cloud appears as it is built rather than after it is finished.
+        }
+    }
+
+    /**
+     * `phone_from_lidar` for this project, as the offline resolve should use it.
+     * Null hands the decision to the engine, which reads the extrinsic the
+     * capture itself recorded.
+     */
+    private fun resolveMountMatrix(p: Project): DoubleArray? {
+        val sensor = p.manifest.sensor
+        val measured = p.manifest.mountCalibration
+            ?.let { com.lidarscan.core.calib.Mat4(it.cameraFromLidar.copyOf()) }
+            ?.takeIf { it.isRigid(1e-4) }
+        if (measured != null) return measured.m
+        val trim = p.manifest.mountTrim?.takeIf { it.sensor == sensor } ?: return null
+        return trim.composedWith(com.lidarscan.core.calib.BracketNominals.cadNominal(sensor)).m
+    }
+
+    private fun setLoad(load: ReviewLoad, message: String?) {
+        _uiState.value = _uiState.value.copy(load = load, loadMessage = message)
     }
 
     fun onRendererReady(r: PointCloudRenderer) {

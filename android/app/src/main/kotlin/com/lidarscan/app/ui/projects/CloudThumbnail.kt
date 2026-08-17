@@ -20,8 +20,11 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.unit.dp
+import com.lidarscan.app.engine.ScanEngineNative
 import com.lidarscan.app.render.PointCloudSource
 import com.lidarscan.app.render.samplePoints
+import com.lidarscan.app.render.streamsPresent
+import com.lidarscan.core.render.PreviewSanity
 import com.lidarscan.app.ui.theme.Ember
 import com.lidarscan.app.ui.theme.PoseBlue
 import com.lidarscan.app.ui.theme.ScanSand
@@ -87,18 +90,69 @@ private fun previewFile(projectDirectory: File) = File(File(projectDirectory, "p
  * thumbnail from an earlier session.
  */
 fun writeProjectPreview(projectDirectory: File, source: PointCloudSource?): Boolean {
-    val sample = source?.samplePoints(PREVIEW_MAX_POINTS).orEmpty()
+    if (source == null) return false
+
+    // --- ROUND 8: sample the RESOLVED map, not the raw fan on top of it ------
+    //
+    // This is the fix for the second half of owner item 27, and it was found by
+    // measuring the owner's own exported capture rather than by reading code:
+    // `captures/scan-015-pixel-0.4.0.lscan/processed/preview.f32` has exactly
+    // 2,027 of its 4,040 points at z == 0.0f — 50.2 %, one raw sensor-frame
+    // return for every resolved one. See
+    // [com.lidarscan.core.render.PreviewSanity] for the whole autopsy.
+    //
+    // A D6 capture with the pushbroom running holds two point streams in one
+    // PageStore. The live renderer has filtered between them since B3
+    // (`StreamFilter`); this writer never did, so the tile a user judges a scan
+    // by was the 3D room with a flat 2D disc drawn through it. At 108 dp that
+    // reads as "the scan is 2D", which is precisely what the owner reported.
+    //
+    // The policy mirrors `StreamFilter.MAPPED_ONLY` exactly, including its
+    // fallback: prefer the mapped stream, fall back to raw when there is no
+    // mapped page at all (a Record-only session genuinely has nothing else,
+    // and a blank tile would be worse than an honest sensor-frame one).
+    val streams = source.streamsPresent()
+    val mapped = ScanEngineNative.StreamId.SLAM_MAP
+    val sample = if (streams.contains(mapped)) {
+        source.samplePoints(PREVIEW_MAX_POINTS) { it == mapped }
+    } else {
+        source.samplePoints(PREVIEW_MAX_POINTS)
+    }
     if (sample.isEmpty()) return false
+
+    val xyz = FloatArray(sample.size * 3)
+    for (i in sample.indices) {
+        xyz[i * 3] = sample[i].x.toFloat()
+        xyz[i * 3 + 1] = sample[i].y.toFloat()
+        xyz[i * 3 + 2] = sample[i].z.toFloat()
+    }
+    // The second line of defence. A preview is written once per capture and
+    // read on every list scroll for the life of the project, so a bad one is
+    // effectively permanent; refusing to write it costs a tile, and the
+    // existing behaviour for "no preview file" is a seeded placeholder that is
+    // drawn dimmer and without a trajectory head — i.e. it already says "this
+    // is not your data" visually. Better that than a lie.
+    when (val verdict = PreviewSanity.check(xyz, sample.size)) {
+        is PreviewSanity.Verdict.Ok -> Unit
+        is PreviewSanity.Verdict.Rejected -> {
+            android.util.Log.w(
+                "CloudThumbnail",
+                "refusing to write a preview for ${projectDirectory.name}: ${verdict.reason}",
+            )
+            return false
+        }
+    }
+
     val out = previewFile(projectDirectory)
     out.parentFile?.mkdirs()
     return runCatching {
         DataOutputStream(out.outputStream().buffered()).use { s ->
             s.writeInt(PREVIEW_MAGIC)
             s.writeInt(sample.size)
-            for (p in sample) {
-                s.writeFloat(p.x)
-                s.writeFloat(p.y)
-                s.writeFloat(p.z)
+            for (i in sample.indices) {
+                s.writeFloat(xyz[i * 3])
+                s.writeFloat(xyz[i * 3 + 1])
+                s.writeFloat(xyz[i * 3 + 2])
             }
         }
         true
@@ -144,6 +198,14 @@ object ProjectPreviewCache {
                 if (n <= 0 || n > PREVIEW_MAX_POINTS * 4) return@use null
                 val raw = FloatArray(n * 3)
                 for (i in raw.indices) raw[i] = s.readFloat()
+                // ROUND 8: the same verdict on the way IN, because previews
+                // written by 0.4.0 and earlier are already on people's phones —
+                // the owner's own scan-015 among them — and this app cannot go
+                // back and rewrite them. A tile that would draw the raw
+                // sensor-frame fan falls back to the placeholder, which is
+                // visibly not-your-data (dimmer, no trajectory head) rather
+                // than a flat disc that looks like a finished scan.
+                if (PreviewSanity.check(raw, n) !is PreviewSanity.Verdict.Ok) return@use null
                 normalise(raw, n)
             }
         }.getOrNull()

@@ -102,8 +102,11 @@ matrix the tests exercise (mid-header, mid-payload, mid-CRC, and the
    `tests/test_lscan_io.cpp`'s `reader_tolerates_missing_empty_and_corrupt_manifests`
    covers all three cases and confirms the stream data is still fully
    readable regardless.
-2. **Streams.** For each of the five known on-disk paths (`lidar.bin`,
-   `imu.bin`, `poses_ar.bin`, `gnss.bin`, `frames/frames.idx` —
+2. **Streams.** For each of the known on-disk paths (`lidar.bin`,
+   `imu.bin`, `poses_ar.bin`, `gnss.bin`, `frames/frames.idx`, and — added in
+   ROUND 8 (0.5.0) — `map.bin`, which carries `ChunkType::kPointsXyzRgba` on
+   `StreamId::kSlamMap`: the resolved world-frame cloud a D6 capture caches so
+   that opening a saved scan is a file read rather than a re-resolve;
    `stream_of()`/`stream_file_of()` already map several `ChunkType`/
    `StreamId` values onto the same physical file, e.g. D6 and Mid-360 both
    land in `lidar.bin`; the reader trusts the file's own embedded

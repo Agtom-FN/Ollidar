@@ -461,6 +461,10 @@ class Engine {
  private:
   Engine();
   void publish_pose_(const Pose& pose);
+  // ROUND 8: writes an accepted pose into the active recording as a
+  // ChunkType::kPoseAr chunk — record-always, finally applied to the
+  // trajectory. See the long note above the definition in engine.cpp.
+  void record_pose_(const Pose& pose);
   void on_gnss_fix_(const GnssFix& fix);
 
   struct Impl;

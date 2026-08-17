@@ -2,6 +2,7 @@ package com.lidarscan.app.processing
 
 import android.util.Log
 import com.lidarscan.app.engine.NativePlanArrays
+import com.lidarscan.app.engine.ProjectProbe
 import com.lidarscan.app.engine.ScanEngineNative
 import com.lidarscan.core.jobs.JobKind
 import com.lidarscan.core.jobs.JobState
@@ -57,6 +58,15 @@ class ProcessingRepository(private val scope: CoroutineScope) {
 
     /** project id -> its most recent finished colorize job. */
     private val lastColorize = mutableMapOf<String, Long>()
+
+    /**
+     * ROUND 8: projects whose cloud is in the store because it was READ BACK
+     * from the container (`openRecordedCloud`) rather than produced by a job.
+     * A 0.5.0+ capture caches its resolved cloud, so opening one gives exactly
+     * what a post-process would have produced — and Colorize/Export gate on
+     * "is there a cloud for this project", not on "did a job run".
+     */
+    private val openedProjects = mutableSetOf<String>()
 
     private var pollJob: kotlinx.coroutines.Job? = null
 
@@ -135,15 +145,72 @@ class ProcessingRepository(private val scope: CoroutineScope) {
         return if (h == 0L) "the native processing engine is not available in this build" else ScanEngineNative.nativeProcLastError(h)
     }
 
-    /** True once a post-process job for [projectId] has finished — i.e. there is a cloud to colorize/export/slice. */
-    fun hasProcessedCloud(projectId: String): Boolean = lastPostProcess.containsKey(projectId)
+    /**
+     * True once there is a resolved cloud for [projectId] to colorize / export /
+     * slice — either because a post-process job finished, or (ROUND 8) because
+     * the project's own cached cloud was read back off disk.
+     */
+    fun hasProcessedCloud(projectId: String): Boolean =
+        lastPostProcess.containsKey(projectId) || openedProjects.contains(projectId)
 
     fun totalPoints(): Long = if (handle == 0L) 0L else ScanEngineNative.nativeProcTotalPoints(handle)
 
     // --- submissions ---------------------------------------------------------
 
-    fun submitPostProcess(projectId: String, lscanDir: File): Result<Long> = submit(projectId) { h ->
-        ScanEngineNative.nativeProcSubmitPostProcess(h, lscanDir.absolutePath)
+    /**
+     * @param mountPhoneFromLidar ROUND 8 — the ROW-MAJOR 4x4 `phone_from_lidar`
+     *   to resolve a COIN-D6 project through, or null for "read it out of the
+     *   container's own manifest". Ignored for a Mid-360 project.
+     *
+     *   The app passes its own when it has one, and the precedence is
+     *   deliberate: the operator's persisted mount re-zero
+     *   (`SettingsRepository.storedMountTrim`) is fresher than a manifest
+     *   written at the moment the capture started, which for a re-zero taken
+     *   *after* that capture is simply out of date.
+     */
+    fun submitPostProcess(
+        projectId: String,
+        lscanDir: File,
+        mountPhoneFromLidar: DoubleArray? = null,
+    ): Result<Long> = submit(projectId) { h ->
+        // The store is process-wide and shared between projects. Re-processing
+        // without clearing would append this project's cloud on top of
+        // whichever one was open before and draw two rooms superimposed.
+        ScanEngineNative.nativeProcClearCloud(h)
+        ScanEngineNative.nativeProcSubmitPostProcess(h, lscanDir.absolutePath, mountPhoneFromLidar)
+    }
+
+    // --- ROUND 8: opening a saved project (owner item 27c) -------------------
+
+    /** What the container on disk actually holds. [ProjectProbe.NONE] when the native engine is unavailable. */
+    fun probeProject(lscanDir: File): ProjectProbe {
+        val h = ensureHandle()
+        if (h == 0L) return ProjectProbe.NONE
+        return ProjectProbe.of(ScanEngineNative.nativeProcProbeProject(h, lscanDir.absolutePath))
+    }
+
+    /**
+     * Loads a 0.5.0+ capture's CACHED resolved cloud into the processing
+     * engine's store — the Review fast path — and returns the point count.
+     * 0 means there is no cache and the caller should [submitPostProcess].
+     */
+    fun openRecordedCloud(projectId: String, lscanDir: File): Long {
+        val h = ensureHandle()
+        if (h == 0L) return 0L
+        val n = ScanEngineNative.nativeProcOpenRecordedCloud(h, lscanDir.absolutePath)
+        // The cached cloud is the resolved result, so a project opened this way
+        // is chainable exactly like a post-processed one — Colorize and Export
+        // read the same PageStore either way. Recording that here is what keeps
+        // `hasProcessedCloud()` honest without a second concept.
+        if (n > 0L) openedProjects.add(projectId)
+        return n
+    }
+
+    /** Clears whatever project's cloud is currently loaded. */
+    fun clearCloud() {
+        val h = handle
+        if (h != 0L) ScanEngineNative.nativeProcClearCloud(h)
+        openedProjects.clear()
     }
 
     /**
