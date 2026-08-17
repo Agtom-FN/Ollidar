@@ -200,3 +200,18 @@ both closed × keyframes on / off. Screenshots: `redesign-exports/fix-r4-*.png`.
     capture, big touch targets usable one-handed mid-walk, live trajectory trail in the
     view so the operator sees where they have covered, gentle "moving too fast" hint tied
     to the existing motion gates. Stationary/tripod is the special case, not the default.
+
+### round 6 (owner, second Pixel field session + kc-m4 GUI session)
+19. AR overlay must never crash the app — enable path hardened; failure shows an inline
+    error state instead of dying.
+20. **Captures must never vanish.** Real-phone captures were not appearing in Projects —
+    data-loss class bug: end-to-end trace + seal errors surfaced in UI + persistent
+    on-device log file so field failures leave evidence.
+21. Don't default to the phone's maximum settings; defaults are conservative per device
+    class. D6 live 3D map stability + point alignment improved within phone budget.
+22. Performance presets: quick-select Light / Optimal / Full on the capture screen;
+    full parameter set stays available for advanced users (presets are starting points,
+    not caps).
+23. D6 mount re-zero: one-tap "set mount reference" while holding the rig still before
+    a scan — records the current phone-IMU/AR orientation as the session's mount trim on
+    top of the nominal bracket extrinsic (mount shifts between sessions).
