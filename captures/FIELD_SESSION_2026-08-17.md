@@ -126,3 +126,21 @@ for the same modes). Hardware re-verification pending.
   yield/handoff — one camera consumer at a time), camera permission request path lost in
   the round-5 "no dialog on tab entry" fix, or GLSurfaceView Z-order regression on the
   stacked surfaces. Trail worked → ARCore tracked; this is plumbing, not ARCore init.
+
+## Session 3 (final) — v0.2.1: both field-bug waves fixed and hardware-verified
+- Versioning adopted (owner rule): repo VERSION file drives both apps; artifacts named
+  LidarScan-0.2.1-201.apk / LidarScan-0.2.1-universal.dmg; version in Settings footer
+  (Android), title/--version/status bar (desktop).
+- Android wave (6 bugs): RigMotion dt==0 permanent-invalid, stale EXCESSIVE_MOTION across
+  pause/resume, 2nd Start reused project 1, governor recovery x2, AR camera session-
+  ownership race (RendererOwner), LIVE MAP chip mislabeling raw fallback. 306+13 unit,
+  4/4 emulator. D6 flat-plane: pose→pushbroom chain PROVEN correct synthetically; awaiting
+  owner re-walk w/ fixed live labeling + Process of the original project; physical bracket
+  orientation unchecked.
+- Desktop wave: WalkSpeedEstimator + IMU MotionGate (live LIO drifts — pose-only speed
+  unfixable; IMU gravity-check suppresses honestly), governor bidirectional + no longer
+  persists its own output, recording re-arms device in place (empty-seal-while-REC fixed).
+- REAL-HARDWARE verification (kc-m4, Mid-360, v0.2.1): --record-cycles 4/4 PASS on one
+  connect; --walk-soak 60 s peak 0.000 m/s hint 0x PASS — soak log captured live LIO
+  drift (0.25 m/s implied, sigma 1.449 m, quality 2) with IMU stationary => ENGINE
+  FOLLOW-UP: stationary-scene LIO tuning (iVox/ESKF) worth a look before field runs.
