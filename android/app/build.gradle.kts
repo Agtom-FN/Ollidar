@@ -113,8 +113,13 @@ android {
         applicationId = "com.lidarscan.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        // Owner rule (2026-08-17): every shipped update bumps the repo-root
+        // VERSION file; both apps and the DMG derive their version from it.
+        // versionCode = major*10000 + minor*100 + patch (0.2.1 -> 201).
+        val appVersion = rootProject.file("../VERSION").readText().trim()
+        val (vMaj, vMin, vPat) = appVersion.split(".").map { it.toInt() }
+        versionCode = vMaj * 10000 + vMin * 100 + vPat
+        versionName = appVersion
 
         // CI Android-emulator smoke test (:app:connectedDebugAndroidTest,
         // android/app/src/androidTest/) — see NOTES.md's "Android emulator

@@ -196,6 +196,15 @@ fun SettingsScreen(
             }
         }
 
+        Spacer(Modifier.height(16.dp))
+        Text(
+            "LidarScan v${com.lidarscan.app.BuildConfig.VERSION_NAME} " +
+                "(build ${com.lidarscan.app.BuildConfig.VERSION_CODE})",
+            style = MonoLabel,
+            color = MaterialTheme.colorScheme.outline,
+            modifier = Modifier.testTag("app_version_footer"),
+        )
+
         Spacer(Modifier.height(ScanDims.TabBarClearance))
     }
 }
