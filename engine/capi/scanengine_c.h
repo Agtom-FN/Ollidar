@@ -110,7 +110,30 @@ extern "C" {
  * Every addition is a NEW symbol or a NEW struct: no existing struct layout,
  * function signature or enum value from ABI 5 changed. An ABI-5 consumer
  * relinks against this header unmodified. */
-#define SCAN_ABI_VERSION 6u
+/* 6 -> 7 (live page eviction): the fix for the 2026-08-17 field bug "live view
+ * not moving even i move the lidar". The page store is bounded, and when it
+ * filled it dropped EVERY subsequent point for the rest of the run — a Mid-360
+ * at ~200k pts/s fills the default 64 x 1 M pages during a PREVIEW, and the
+ * live view then froze at that instant while the log took one warn per
+ * revolution (1400 in one session).
+ *   * scan_engine_set_live_page_eviction() — opt a LIVE CAPTURE's store into
+ *     recycling its oldest page instead of dead-ending. OFF by default: an
+ *     offline/post-processing store must still hard-cap and say so.
+ *   * scan_engine_page_stats() + scan_page_stats — pages, the ceiling,
+ *     resident/evicted points and `evicting`, so an app can say "the live map
+ *     shows the most recent N points; the recording has all of them".
+ *   * scan_engine_recycle_live_pages() — empty the live window without
+ *     freeing a buffer a renderer may be reading.
+ *   * SCAN_PAGE_UPDATE_EVICTED — a new VALUE of the existing
+ *     scan_event.payload.points.update_kind field (no layout change): the
+ *     page is gone. A consumer that ignores update_kind asks for the page,
+ *     gets SCAN_ERR_NOT_FOUND, and skips — which is what it already does for
+ *     any page that vanished.
+ * Every addition is a NEW symbol, a NEW struct or a NEW enum value: no
+ * existing struct layout or function signature from ABI 6 changed, and the
+ * default behaviour of every existing call is byte-for-byte what it was. An
+ * ABI-6 consumer relinks against this header unmodified. */
+#define SCAN_ABI_VERSION 7u
 
 /* --- errors: mirror of scanengine::ScanError --------------------------- */
 typedef int32_t scan_error_t;
@@ -309,7 +332,14 @@ enum {
  * RECOLOURED. */
 enum {
   SCAN_PAGE_UPDATE_APPENDED = 0,  /* the range is NEW */
-  SCAN_PAGE_UPDATE_RECOLOURED = 1 /* the range existed; only r/g/b/a changed */
+  SCAN_PAGE_UPDATE_RECOLOURED = 1, /* the range existed; only r/g/b/a changed */
+  /* ABI 7. The PAGE IS GONE: a live store recycled its oldest page to make
+   * room for newer points. `first` is 0 and `count` is how many points left
+   * the live window. The page id is never reused, and
+   * scan_engine_get_point_page() answers SCAN_ERR_NOT_FOUND for it from now
+   * on — so a consumer that ignores update_kind behaves correctly by
+   * accident, and one that reads it can free its GPU buffers immediately. */
+  SCAN_PAGE_UPDATE_EVICTED = 2
 };
 
 /* Which trajectory the D6 pushbroom assembles against (§3.3). Same interface
@@ -943,6 +973,47 @@ SCAN_API scan_error_t scan_engine_page_id_at(scan_engine* engine, uint32_t index
 SCAN_API scan_error_t scan_engine_get_point_page(scan_engine* engine, uint32_t page_id,
                                                  scan_point_page* out);
 SCAN_API scan_error_t scan_engine_total_points(scan_engine* engine, uint64_t* out_points);
+
+/* --- the live point window (ABI 7) ---------------------------------------
+ *
+ * The store is bounded (scan_engine_config.max_pages). Two things can happen
+ * when it fills, and the app chooses:
+ *
+ *   eviction OFF (default, and what every previous ABI did): the store refuses
+ *   every further point and scan_device_health.dropped_page_full climbs. Right
+ *   for an OFFLINE store — a post-processing pass that overruns has a bug and
+ *   must say so — and catastrophic for a live view, which simply freezes.
+ *
+ *   eviction ON: the OLDEST page is recycled to make room, so the live view is
+ *   a moving window over the newest points and never stops advancing. Memory
+ *   is unchanged (one spare page's worth on top of max_pages, and no buffer is
+ *   ever freed under a renderer). RECORDING IS A SEPARATE PATH and keeps every
+ *   point: turn this on for a live capture, and only for a live capture.
+ *
+ * Turning eviction on also makes scan_engine_start_session() reset the live
+ * window, because live SLAM restarts at the origin every session and the
+ * previous session's points are in a frame that no longer exists. */
+SCAN_API scan_error_t scan_engine_set_live_page_eviction(scan_engine* engine, uint8_t enabled);
+
+typedef struct scan_page_stats {
+  uint32_t pages;             /* pages live right now */
+  uint32_t max_pages;         /* the ceiling they are counted against */
+  uint64_t resident_points;   /* points readable right now */
+  uint64_t total_points;      /* points ever appended */
+  uint64_t dropped_points;    /* eviction OFF: points refused at the ceiling */
+  uint64_t evicted_pages;     /* eviction ON: pages recycled */
+  uint64_t evicted_points;    /* eviction ON: points that left the window */
+  uint8_t evicting;           /* 1 once the window started recycling */
+  uint8_t eviction_enabled;   /* 1 if this store recycles instead of refusing */
+} scan_page_stats;
+
+SCAN_API scan_error_t scan_engine_page_stats(scan_engine* engine, scan_page_stats* out);
+
+/* Empty the live window without freeing a buffer a renderer may be reading
+ * (every page is retired exactly as an eviction retires one, with a
+ * SCAN_PAGE_UPDATE_EVICTED event each). The lifetime counters above are NOT
+ * reset — they are what a support log adds up. */
+SCAN_API scan_error_t scan_engine_recycle_live_pages(scan_engine* engine);
 
 /* --- poses in (A8) -------------------------------------------------------
  *

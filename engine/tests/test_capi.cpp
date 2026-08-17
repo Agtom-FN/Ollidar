@@ -57,7 +57,7 @@ TEST_CASE("capi/smoke_sequence_from_C_with_a_synthetic_D6_capture") {
 
 TEST_CASE("capi/abi_version_and_error_strings") {
   CHECK(scan_engine_abi_version() == SCAN_ABI_VERSION);
-  CHECK(SCAN_ABI_VERSION == 6u);  // moves with scanengine::kEngineAbiVersion
+  CHECK(SCAN_ABI_VERSION == 7u);  // moves with scanengine::kEngineAbiVersion
   CHECK(std::string(scan_error_str(SCAN_OK)) == "ok");
   CHECK(std::string(scan_error_str(SCAN_ERR_CHECKSUM)) == "checksum failed");
   CHECK(std::string(scan_error_str(9999)) == "unrecognized error code");
@@ -811,4 +811,91 @@ TEST_CASE("capi/job_progress_no_longer_crosses_the_abi_as_zeroed_bytes") {
   CHECK(out.payload.job.job_id == 0x0123456789ABCDEFull);
   CHECK(out.payload.job.progress == doctest::Approx(0.625f));
   CHECK(out.payload.job.state == SCAN_JOB_RUNNING);
+}
+
+// --- the live point window (ABI 7, 2026-08-17 field bug) -------------------
+
+TEST_CASE("capi/live_page_eviction_keeps_the_view_advancing_and_reports_itself") {
+  scan_engine_config cfg;
+  std::memset(&cfg, 0, sizeof(cfg));
+  cfg.app_name = "capi-eviction";
+  cfg.log_level = SCAN_LOG_OFF;
+  cfg.page_capacity = 16;
+  cfg.max_pages = 2;  // a 32-point window, so a single revolution overruns it
+
+  scan_engine* e = nullptr;
+  REQUIRE(scan_engine_create(&cfg, &e) == SCAN_OK);
+
+  // A zeroed engine config is an OFFLINE store: it hard-caps, exactly as every
+  // ABI before 7 did. Nothing an existing consumer does changes.
+  scan_page_stats ps;
+  std::memset(&ps, 0, sizeof(ps));
+  REQUIRE(scan_engine_page_stats(e, &ps) == SCAN_OK);
+  CHECK(ps.eviction_enabled == 0);
+  CHECK(ps.max_pages == 2);
+  CHECK(ps.evicting == 0);
+
+  scan_device_config dev;
+  std::memset(&dev, 0, sizeof(dev));
+  dev.kind = SCAN_DEVICE_D6;
+  dev.serial_port_name = "capi";
+  std::uint32_t device_id = 0;
+  REQUIRE(scan_engine_add_device(e, &dev, &device_id) == SCAN_OK);
+
+  scan_session_config session;
+  std::memset(&session, 0, sizeof(session));
+  REQUIRE(scan_engine_start(e, &session) == SCAN_OK);
+
+  const auto bytes = d6test::build_revolution(4, 20, 1000, 90);  // 81 points
+  REQUIRE(scan_engine_push_serial_bytes(e, device_id, bytes.data(), bytes.size(), 1000) ==
+          SCAN_OK);
+  REQUIRE(scan_engine_page_stats(e, &ps) == SCAN_OK);
+  CHECK(ps.evicting == 0);
+  CHECK(ps.dropped_points > 0);   // the field bug, reproduced through the ABI
+  CHECK(ps.resident_points == 32);
+
+  // Opt in, and the same stream stops dead-ending.
+  REQUIRE(scan_engine_set_live_page_eviction(e, 1) == SCAN_OK);
+  const std::uint64_t dropped_before = ps.dropped_points;
+  for (int i = 0; i < 20; ++i) {
+    REQUIRE(scan_engine_push_serial_bytes(e, device_id, bytes.data(), bytes.size(),
+                                          2000 + i * 1000) == SCAN_OK);
+  }
+  REQUIRE(scan_engine_page_stats(e, &ps) == SCAN_OK);
+  CHECK(ps.eviction_enabled == 1);
+  CHECK(ps.evicting == 1);
+  CHECK(ps.evicted_pages > 0);
+  CHECK(ps.evicted_points > 0);
+  CHECK(ps.pages == 2);                        // bounded
+  // Still a full window of the NEWEST data. Eviction retires whole pages, so
+  // the tail page is partly filled: resident sits in (cap, 2*cap].
+  CHECK(ps.resident_points > 16);
+  CHECK(ps.resident_points <= 32);
+  CHECK(ps.dropped_points == dropped_before);  // nothing refused after opting in
+
+  // The eviction crosses as a new VALUE of an existing field, and the page it
+  // names is genuinely gone.
+  int evicted_events = 0;
+  scan_event ev;
+  while (scan_engine_poll_event(e, &ev) == SCAN_OK) {
+    if (ev.type != SCAN_EVENT_POINTS_AVAILABLE) continue;
+    if (ev.payload.points.update_kind != SCAN_PAGE_UPDATE_EVICTED) continue;
+    ++evicted_events;
+    scan_point_page gone;
+    CHECK(scan_engine_get_point_page(e, ev.payload.points.page, &gone) == SCAN_ERR_NOT_FOUND);
+  }
+  CHECK(evicted_events > 0);
+
+  // Emptying the window is a call, not a teardown.
+  REQUIRE(scan_engine_recycle_live_pages(e) == SCAN_OK);
+  REQUIRE(scan_engine_page_stats(e, &ps) == SCAN_OK);
+  CHECK(ps.pages == 0);
+  CHECK(ps.resident_points == 0);
+  CHECK(ps.evicted_pages > 0);  // lifetime totals survive
+
+  CHECK(scan_engine_set_live_page_eviction(nullptr, 1) == SCAN_ERR_INVALID_ARGUMENT);
+  CHECK(scan_engine_page_stats(e, nullptr) == SCAN_ERR_INVALID_ARGUMENT);
+
+  CHECK(scan_engine_stop(e) == SCAN_OK);
+  scan_engine_destroy(e);
 }

@@ -139,11 +139,25 @@ std::uint32_t PagedCloudRenderer::sync(const scanengine::PageStore& store,
 
   const std::vector<scanengine::PageId> ids = store.page_ids();
 
-  // Pages that vanished (PageStore::clear(), or a future A14 eviction policy).
-  if (pages_.size() > ids.size()) {
+  // Pages that vanished: PageStore::clear(), PageStore::recycle_all(), or the
+  // live window evicting its oldest page (engine ABI 7).
+  //
+  // The count guard this loop used to carry (`pages_.size() > ids.size()`) was
+  // wrong the moment eviction existed: a store that evicts ONE page and creates
+  // ONE page in the same gap has the same page COUNT and a different page SET,
+  // so a stale GpuPage — a Filament entity still in the scene, drawing points
+  // that left the store — survived until some later frame happened to shrink
+  // the count. Reconcile by identity, every frame; it is 64 ids against 64 keys.
+  {
+    bool flushed = false;
     for (auto it = pages_.begin(); it != pages_.end();) {
       if (std::find(ids.begin(), ids.end(), it->first) == ids.end()) {
-        engine_->flushAndWait();
+        // Once per frame, not once per page: flushAndWait() is a full GPU
+        // barrier and a long capture retires a page every few seconds.
+        if (!flushed) {
+          engine_->flushAndWait();
+          flushed = true;
+        }
         destroyPage(it->second);
         it = pages_.erase(it);
       } else {
@@ -156,11 +170,28 @@ std::uint32_t PagedCloudRenderer::sync(const scanengine::PageStore& store,
   CloudStats s{};
   auto& rm = engine_->getRenderableManager();
 
-  // Ordered walk: PageIds are assigned in creation order and never reused
-  // (page_store.h), so this is chronological and the LOD budget therefore keeps
-  // the OLDEST points — the ones that make up the already-scanned room —
-  // rather than flickering between arbitrary pages frame to frame.
-  std::uint64_t drawn = 0;
+  // WHICH END OF THE CLOUD THE LOD BUDGET KEEPS.
+  //
+  // PageIds are assigned in creation order and never reused (page_store.h), so
+  // walking `ids` forward is chronological. For a STATIC cloud — a project open
+  // for review — keeping the oldest pages is right: the set is stable, so the
+  // view does not flicker between arbitrary pages frame to frame.
+  //
+  // For a LIVE CAPTURE it is exactly backwards, and this was the second half of
+  // the owner's "live view not moving even i move the lidar" (NOTES.md §19.1).
+  // A capture profile's budget is 2-15 M points (quickscan is 2 M, the
+  // DisplayParams default 5 M) and a Mid-360 delivers ~200 k points/s, so after
+  // ten to sixty SECONDS the budget is spent on the oldest pages and every page
+  // after that — every point the operator is scanning right now — is uploaded,
+  // culled from the scene, and never seen. The store was still filling; the
+  // display had already stopped.
+  //
+  // A live store is one whose full-policy is kEvictOldest: CaptureWindow sets
+  // that while a device is armed and clears it when it disarms, so this needs no
+  // plumbing of its own and cannot disagree with the capture state.
+  const bool newest_first = !force_oldest_first_lod_ &&
+                            store.stats().when_full == scanengine::PageFullPolicy::kEvictOldest;
+
   for (scanengine::PageId id : ids) {
     const scanengine::PageView view = store.page_view(id);
     if (!view.valid()) continue;
@@ -212,21 +243,6 @@ std::uint32_t PagedCloudRenderer::sync(const scanengine::PageStore& store,
                           {view.bounds_max[0], view.bounds_max[1], view.bounds_max[2]}));
     }
 
-    // Soft LOD budget: past it, keep the page resident but stop drawing it.
-    const bool want_drawn =
-        p->uploaded > 0 && (lod_point_budget == 0 || drawn < lod_point_budget);
-    if (want_drawn && !p->in_scene) {
-      scene_->addEntity(p->entity);
-      p->in_scene = true;
-    } else if (!want_drawn && p->in_scene) {
-      scene_->remove(p->entity);
-      p->in_scene = false;
-    }
-    if (p->in_scene) {
-      drawn += p->uploaded;
-      ++s.pages_drawn;
-    }
-
     s.resident_points += p->uploaded;
     ++s.pages;
     s.gpu_bytes += std::size_t(p->capacity) * sizeof(scanengine::PointVertex);
@@ -242,6 +258,32 @@ std::uint32_t PagedCloudRenderer::sync(const scanengine::PageStore& store,
         }
       }
       s.bounds_valid = true;
+    }
+  }
+
+  // Soft LOD budget, applied AFTER every page's count is up to date: past the
+  // budget a page stays resident on the GPU but leaves the scene. Live captures
+  // spend the budget newest-first (see `newest_first` above), reviews keep the
+  // oldest-first order they always had.
+  std::uint64_t drawn = 0;
+  for (std::size_t k = 0; k < ids.size(); ++k) {
+    const scanengine::PageId id = newest_first ? ids[ids.size() - 1 - k] : ids[k];
+    auto it = pages_.find(id);
+    if (it == pages_.end()) continue;
+    GpuPage& p = it->second;
+    const bool want_drawn = p.uploaded > 0 && (lod_point_budget == 0 || drawn < lod_point_budget);
+    if (want_drawn && !p.in_scene) {
+      scene_->addEntity(p.entity);
+      p.in_scene = true;
+    } else if (!want_drawn && p.in_scene) {
+      scene_->remove(p.entity);
+      p.in_scene = false;
+    }
+    if (p.in_scene) {
+      drawn += p.uploaded;
+      ++s.pages_drawn;
+      // ids are creation-ordered, so the last one is the newest page.
+      if (id == ids.back()) s.newest_page_drawn = true;
     }
   }
 

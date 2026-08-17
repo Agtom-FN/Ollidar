@@ -3745,3 +3745,314 @@ look like an engine change.
   `LidarScan-0.2.1-universal.dmg`.
 * `evidence/19-version-title-qtchrome.png`: the status strip reading
   `… scanengine 0.1.0 · ABI v6 · app 0.2.1`.
+
+---
+
+## 19. The second field session's last two bugs — the live view, and where scans land
+
+The owner ran the app on the field Mac against a real Mid-360 again and reported
+one sentence plus a log:
+
+> "live view not moving even i move the lidar"
+
+and, separately, that their project had been recorded to
+
+```
+~/Applications/LidarScan.app/Contents/MacOS/record-cycles/Scan-011….lscan
+```
+
+Both were reproduced here, root-caused and fixed. Labelled **D** and **E**,
+continuing §17.9-17.11's A/B/C. Unlike round 5, **this pass owns `engine/**` as
+well** — D is an engine bug, and the seam §17.6 predicted ("A14 replaces the cap
+with an LOD/eviction policy") is now built rather than worked around. The C ABI
+went **6 → 7**, additively.
+
+### 19.1 Field bug D — "live view not moving even i move the lidar"
+
+The owner's `gui.log` says it 1400 times in one session:
+
+```
+[scanengine][warn][cloud] page store full (64 pages): dropped 8195 points
+```
+
+starting at **log line 37** — during the live PREVIEW, before recording had even
+started. **Three independent mechanisms** freeze that view, and all three had to
+go. Each one alone is enough to produce exactly what the owner saw, and each one
+leaves the recording untouched, which is why the `.lscan` files were always fine.
+
+#### D1. The store dead-ended (engine)
+
+`PageStore` is bounded by `max_pages` (64 × 1 M points ≈ 1 GB). When full it
+appended **nothing**, returned `kCapacityExceeded`, counted the points as
+dropped, and **warned once per revolution, forever**. There was no recovery path:
+from the fill instant on, every new point was refused for the rest of the run, so
+the display froze at the moment of the fill and the log filled with 1400 warns
+that told the operator nothing they could act on.
+
+**FIX — `PageFullPolicy` on the store** (`engine/include/scanengine/cloud/page_store.h`,
+`engine/src/cloud/page_store.cpp`):
+
+* `kReject` (**the default, unchanged**) is today's behaviour: refuse, count,
+  return `kCapacityExceeded`. Every offline store keeps it — a post-processing
+  pass that overruns its store has a BUG and must say so, not silently discard
+  the oldest half of a cloud. Every pre-existing test passes untouched.
+* `kEvictOldest` (**opt-in, live capture only**) retires the oldest page to make
+  room. The view becomes a moving window over the newest data and never stops
+  advancing; memory is bounded; **one INFO line on the first eviction**, never a
+  warn per revolution.
+* **An evicted page's buffer is not freed.** A reader is allowed to hold
+  `PageView::data` with no lock — that is the store's whole contract — so
+  freeing under it would be a use-after-free no reader could defend against.
+  Retired buffers go into an internal FIFO pool and are handed to a later page
+  instead, with `spare_pages` (default 1) of grace, so the worst case is a reader
+  stalled for a whole page fill (seconds) copying a few of the next page's
+  points. Ceiling: `(max_pages + spare_pages)` pages, allocated once — the test
+  asserts the store hands out at most that many distinct buffers over a 5000-point
+  soak through a 40-point window.
+* Page **ids are never reused** through eviction, so a stale `PageView` or a
+  queued event resolves to "not found", never to a different page. Subscribers
+  get one `PageUpdate` with the new kind `PageUpdateKind::kEvicted`; a subscriber
+  that ignores `kind` asks for the page, gets nothing, and skips — which is what
+  it already did for a page that vanished.
+* `PageStore::recycle_all()` is the safe version of `clear()` for a store a
+  renderer is reading: it retires every page through the same path, freeing
+  nothing.
+* `Engine::set_live_page_eviction(bool)` is the app's switch, and turning it on
+  also makes `start_session()` call `recycle_all()`. **That second half matters
+  independently**: `stop_session()` never freed a page, so a live preview plus N
+  record cycles on ONE connect all stacked into the same 64 pages — which is why
+  the field store filled during a preview. And they were not merely wasted:
+  every `start_session()` builds a new `LioOdometry` whose first pose is the
+  origin (§17.9 fault 5), so the previous session's pages are in a **frame that
+  no longer exists** and were being drawn misregistered against everything after
+  them.
+
+#### D2. Interleaved streams destroyed 99.6% of the store's capacity (engine)
+
+Pages are single-stream, for provenance (A13 merge / A9 export). The way that
+was implemented, the only page anyone could append to was **the last page**, so
+when two producers interleaved — the Mid-360's raw cloud on `kLidarMid360` and
+live SLAM's registered map on `kSlamMap`, which a live capture runs together —
+**every stream switch closed a page**. Measured on the S2 simulator through the
+shipped path: **4430 points per page against a 1 048 576-point capacity.**
+
+The store's real capacity was **0.4% of its nominal one**: a 64-page store held
+~283 k points, not 67 M. That is why the field session filled it in seconds,
+during a preview, and it is the reason the "64 × 1048576 pts" in the startup
+banner was so misleading.
+
+**FIX**: one open page **per stream** (`Impl::open_page_for`). The
+single-stream rule is exactly as before — a page still carries one stream — and
+only the newest page of a stream can have room, so it is a short scan from the
+back. Same soak after the fix: two pages, ~1 M points each.
+
+#### D3. The LOD budget kept the OLDEST pages (desktop renderer)
+
+Even with a healthy store, `PagedCloudRenderer::sync()` walked pages in
+creation order and stopped adding them to the scene once
+`DisplayParams::lod_point_budget` was spent. For a static cloud under review
+that is right (a stable set does not flicker). For a **live capture** it is
+exactly backwards: capture budgets are **2 M (quickscan) to 15 M (survey)**, the
+`DisplayParams` default is 5 M, and a Mid-360 delivers ~200 k points/s — so
+after **ten to sixty seconds** the budget is spent on the oldest pages and every
+page after that is uploaded to the GPU, culled from the scene, and never seen.
+The store was still filling; the display had already stopped.
+
+**FIX**: the budget is spent **newest-first when the store is a live window**
+(`when_full == kEvictOldest`, which `CaptureWindow` sets while a device is armed
+and clears when it disarms — no new plumbing, and it cannot disagree with the
+capture state). Review keeps the oldest-first order it always had. Two further
+renderer fixes came with it:
+
+* **Stale GPU pages.** The vanished-page reconcile was guarded by
+  `pages_.size() > ids.size()`, which is wrong the moment eviction exists: evict
+  one page and create one in the same gap and the COUNT matches while the SET
+  differs, so a Filament entity kept drawing points that had left the store.
+  Reconcile by identity, every frame (64 ids against 64 keys).
+* `flushAndWait()` — a full GPU barrier — was called **per destroyed page**;
+  now once per frame, however many pages retired.
+
+### 19.2 Field bug E — a recording landed inside the .app bundle
+
+`~/Applications/LidarScan.app/Contents/MacOS/record-cycles/Scan-011….lscan` is
+a signed, replaceable artefact: **the next install deletes the operator's scan.**
+(The owner's data was rescued by hand; this section is about it never happening
+again.)
+
+**ROOT CAUSE, confirmed.** Two faults, and they only bite together.
+
+1. `--record-cycles`' scratch root defaulted to
+   `applicationDirPath() + "/record-cycles"` — which on an installed macOS build
+   **is** `LidarScan.app/Contents/MacOS`.
+2. `CaptureWindow::setProjectDir()` **persisted** whatever it was given into
+   `QSettings("capture/root")` — and every caller of `setProjectDir()` is a CLI
+   hook. So a single evidence run made its own scratch directory the GUI's
+   permanent capture root, and every later NORMAL launch created the operator's
+   real scans there. This machine still had the leftover:
+   `capture/root = …/desktop/evidence/round5-cycles-drop`, from a §17.11
+   verification run — the same mechanism, one directory luckier.
+
+**FIX — four layers, because any one of them alone can be forgotten:**
+
+* `setProjectDir(dir, persist = false)` — a hook's path is a fact about that run,
+  never a preference. `persist` defaults to **false**, so a future hook cannot
+  make this mistake by omission, and when a caller does pass true the path is
+  validated first.
+* **Settings isolation for every evidence hook** (`main.cpp`). While any of the
+  16 evidence/CI hooks is driving the app, `QSettings` is redirected into a temp
+  directory, so nothing a hook touches — the capture root, the series number, the
+  live refresh rate, the recents list — can reach the settings a human's next
+  launch reads. One log line says so. Deliberately a whitelist of hooks, not
+  "always in CI": a developer running the real app keeps their real settings.
+  **Seeded, not blank**: the real settings are COPIED into the scratch location
+  first (68 keys on this machine), because a hook has to see the same world a
+  human does — `--projects-actions-demo` selects rows out of the library, and the
+  library IS `QSettings("recentProjects")`. The first cut of this isolation made
+  that demo report `selected 0 · Merge disabled`; caught in verification, fixed
+  by seeding. Read alike, write isolated.
+* **Startup self-heal** (`CaptureWindow::healCaptureRootSetting`, one log line,
+  never a dialog). A stored root is dropped when it is inside a `.app` bundle,
+  inside the installed application's own directory, non-existent with no
+  creatable ancestor, or non-writable — **and** when it carries no
+  `capture/rootChosenByOperator` marker, because until this build the ONLY writer
+  of `capture/root` was a CLI hook, so an unmarked value is by construction a
+  hook leftover.
+* `captureRoot()` validates every answer it gives, including a CLI hook's, and
+  falls back to the round-5 default `~/Documents/LidarScan Projects`
+  (`QStandardPaths`). One function decides where a scan may be created.
+* `--record-cycles`' own default root is now a temp directory, not the bundle.
+
+### 19.3 Bug C from the brief — saying it out loud, quietly
+
+With D fixed, the live map IS a moving window on a long scan, and the operator is
+entitled to know. The capture panel gets a **quiet inline note** (never a popup),
+polled from the same 300 ms health timer as everything else:
+
+> Live map is showing the most recent 1 048 576 points (64 of 64 pages) — the
+> oldest points leave the view so it can keep up. The recording has every point;
+> post-processing rebuilds the whole cloud.
+
+plus **one** log line the first time it happens per armed session, and a
+`liveWindowEvicting(resident, evicted)` signal (`--live-map-soak` is its only
+consumer). The note hides when the device disarms.
+
+### 19.4 The C ABI: 6 → 7, additively
+
+`engine/capi/scanengine_c.h`, `engine/include/scanengine/core/engine.h`. Android
+is not this task's, so the seam is there rather than assumed: the same freeze is
+in every C consumer, and no ABI-6 consumer changes behaviour.
+
+| new | what |
+|---|---|
+| `scan_engine_set_live_page_eviction(e, on)` | opt a LIVE capture's store into recycling. OFF by default |
+| `scan_engine_page_stats(e, out)` + `scan_page_stats` | pages, ceiling, resident / total / dropped / evicted points, `evicting`, `eviction_enabled` |
+| `scan_engine_recycle_live_pages(e)` | empty the live window without freeing a buffer a renderer may be reading |
+| `SCAN_PAGE_UPDATE_EVICTED` | a new VALUE of the existing `update_kind` field — no layout change |
+
+Deliberately **not** a new field on `scan_engine_config`: that would change a
+caller-allocated struct's layout, and an ABI-6 caller passing the old struct
+would have its config read past the end. A function cannot do that.
+
+### 19.5 Verification (2026-08-18, Apple M4, macOS 26.5.1, arm64)
+
+**Engine.** `524` test cases / **2 281 392 assertions**, 0 failed (baseline
+2 280 269 / 517 cases: 7 new cases, +1123 assertions). `ctest -LE 'sim|sim-rtk'`
+**5/5 pass** including `scanengine_capi_smoke`, `engine_cli_selftest`,
+`engine_cli_version`, `engine_cli_post`. A separate
+`-DENGINE_WARNINGS_AS_ERRORS=ON` tree builds and passes with **zero
+engine-owned warnings** (the only warnings are the vendored Livox SDK2's, as
+before).
+
+New engine cases: a live store recycling through 200 batches with the view
+provably advancing and at most `max_pages + spare_pages` buffers ever handed out;
+an offline store still hard-capping and reporting; the run-time policy switch;
+one `kEvicted` notification per page with the id never reused and
+`page_view`/`page_data_mutable`/`notify_recoloured` all refusing it;
+`recycle_all()` freeing nothing; interleaved streams not closing each other's
+pages; and the whole surface over the C ABI (including the pre-fix drop being
+reproduced through it, then fixed by one call).
+
+**Desktop.** Every file under `desktop/src` recompiled: **zero warnings**
+(`-Wall -Wextra`), zero errors.
+
+**(a) Field bug D, A/B, against `mid360_sim` on loopback** — a 2-page store of
+20 000-point pages, so the ceiling arrives in seconds through the SHIPPED store
+and the SHIPPED renderer. `--live-map-soak` samples every 500 ms and requires,
+in every window after the fill: the newest point in the store gets newer, the
+newest page is DRAWN, the renderer keeps uploading, the page count stays at the
+ceiling, and nothing is dropped.
+
+| run | result |
+|---|---|
+| `--live-map-no-evict` (pre-fix store) | **FAIL** — **48 of 49** windows stalled, **992 393 points dropped**, live map frozen at 40 000 resident |
+| fixed | **PASS** — **50/50** windows advancing, **0 dropped**, 76 pages recycled (1 041 566 points through the window) |
+| `--live-lod-oldest-first` (pre-fix LOD order) | **FAIL** — the newest page uploaded but **not drawn in 44 of 44** windows |
+| fixed | **PASS** — newest page drawn in **44/44** windows |
+
+The LOD pair runs against an **8-page window of 20 000-point pages with a
+20 000-point budget**, so the OLDEST page alone spends the whole budget and the
+question is forced. The first cut of this step used the 2-page window above and
+the control run **passed** — with only two pages the oldest page's live count is
+often under the budget on its own, so the newest page still fitted and the bug
+did not show. That is in this record because it is the kind of proof that looks
+fine and measures nothing; the parameters were changed until the control failed
+**44 of 44** windows, which is what makes the fixed run's 0 mean something. On a
+real capture the arithmetic is 2-15 M of budget against a 64 M window, and the
+newest pages are outside it permanently.
+
+Both control runs are in `scripts/verify_round5.sh` as `run_expect_fail`: a soak
+that cannot fail proves nothing.
+
+**(b) Field bug E.** `--capture-root-report` prints the settings file, the stored
+root, the root after the self-heal and the resolved root.
+
+* The poisoned real setting on this machine
+  (`…/evidence/round5-cycles-drop`, left by a §17.11 run):
+  `cleared; new scans go to /Users/admin/Documents/LidarScan Projects`.
+* A root planted inside the bundle, marked as operator-chosen, is rejected on its
+  own merits: `rejected (it is inside a .app bundle, which the next install
+  replaces)`.
+* **Before and after a full `--record-cycles 3` run**: `stored <none>`,
+  `resolved /Users/admin/Documents/LidarScan Projects — MATCHES (the round-5
+  default)`, and the operator's `capture/seriesNumber` (55) and
+  `capture/liveRefreshHz` (60) untouched. The hook's own projects went to
+  `$TMPDIR/lidarscan-record-cycles/`.
+
+**(c) No regressions.** `scripts/verify_round5.sh` runs green end to end
+(`evidence/verify_round5.log`): the whole capture flow demo,
+`--mid360-selftest` + `--mid360-record-into`, both directions of the
+discovery↔device serialization, the real-heartbeat auto-detect, the refresh
+governor under a resize storm, `--walk-speed-selftest`, `--walk-soak 60`
+(**600 samples, peak 0.000 m/s, hint fired 0×**), `--record-cycles 4` on one
+connect (**4/4**) and `--record-cycles 4` across repeated 14 s outages
+(**4/4**), the folded Projects actions, all six `--workspace` values and
+`--post-e2e` (**DONE — 83 228 points**). `--capture-flow-demo`'s auto-named
+project now seals into `~/Documents/LidarScan Projects/Scan-056 ….lscan`, which
+is the E fix showing up in an unrelated hook's output.
+
+One honest note on `--projects-actions-demo`: with a POPULATED library its chain
+(select → screenshot → Process… → select two → merge) is slow enough on this
+machine that it does not always reach the merge step inside the hook's own
+600 ms timers, and the merge it attempts fails on library entries whose
+directories a later `--record-cycles-dir` wipe removed. Pre-existing, unrelated
+to D or E — checked by rebuilding with the LOD change backed out and observing
+the same behaviour, and by confirming the renderer never even sees a page in
+that run. What this pass DID change there is that the demo sees the library at
+all (the seeding above).
+
+### 19.6 What this pass did NOT do
+
+* **Version untouched**: `VERSION` stays `0.3.0` (release pending). The ENGINE's
+  version string is likewise unchanged — only its ABI number moved, which is what
+  `kEngineAbiVersion` is for.
+* **`android/**` untouched.** ABI 7 is purely additive, so the phone app relinks
+  unmodified and keeps the hard cap until it opts in — but it has the SAME live
+  freeze until it does, and now it has the two calls it needs.
+* **A coarse-to-fine LOD is still not built.** The budget is still a soft
+  throttle (§17's "that is a throttle, not the coarse-to-fine LOD of §3.12");
+  what changed is which end of the cloud it keeps. A real LOD would let a live
+  view show the WHOLE scan decimated instead of the newest slice at full density.
+* **§17.12's engine seams 6-8 remain open** (recording without restarting the
+  session; pose quality/divergence from live SLAM; a device-level "data is
+  flowing" callback). None of them is D or E, and each is still worked around in
+  the app exactly as §17.11 describes.

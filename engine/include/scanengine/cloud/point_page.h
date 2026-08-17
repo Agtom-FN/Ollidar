@@ -77,6 +77,18 @@ enum class PageUpdateKind : std::uint8_t {
   // Positions, bounds, count, page id and time range are all unchanged, so a
   // consumer that caches geometry only has to re-upload colour.
   kRecoloured = 1,
+  // The page is GONE: a live store running PageFullPolicy::kEvictOldest made
+  // room for newer data by retiring its oldest page. `first` is 0 and `count`
+  // is how many points left the window, so a subscriber that ignores `kind`
+  // does the same harmless thing it does for the other two — it asks for the
+  // page, which no longer resolves (page_view() is invalid, page_data_mutable()
+  // is nullptr), and skips it. A consumer that DOES read `kind` can drop its
+  // GPU buffers for `page` the moment it hears, instead of noticing on its
+  // next enumeration.
+  //
+  // The page id is never reused (page_store.h's id rule holds through
+  // eviction), so this is unambiguous.
+  kEvicted = 2,
 };
 
 const char* to_string(PageUpdateKind k) noexcept;

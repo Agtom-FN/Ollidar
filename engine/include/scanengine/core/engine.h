@@ -78,7 +78,16 @@ class JobQueue;
 //             single-instance guard (scan_instance_acquire/release). All new
 //             symbols and new structs — no ABI-5 layout changed, so an ABI-5
 //             consumer relinks unmodified. docs/A16-discovery.md.
-inline constexpr std::uint32_t kEngineAbiVersion = 6;
+// 7 (live page eviction): scan_engine_set_live_page_eviction(),
+//             scan_engine_page_stats() + scan_page_stats,
+//             scan_engine_recycle_live_pages(), and SCAN_PAGE_UPDATE_EVICTED.
+//             The fix for the 2026-08-17 field bug "live view not moving": a
+//             full page store used to drop every subsequent point forever.
+//             All new symbols / new struct / a new value of an existing enum
+//             field — no ABI-6 layout changed, so an ABI-6 consumer relinks
+//             unmodified and keeps the old hard-cap behaviour (eviction is
+//             opt-in). page_store.h.
+inline constexpr std::uint32_t kEngineAbiVersion = 7;
 const char* engine_version_string();  // "scanengine 0.1.0 (<clock backend>)"
 
 struct EngineConfig {
@@ -412,6 +421,27 @@ class Engine {
   // Thread-safe: the lazy construction is serialized by the engine mutex, and
   // JobQueue's own methods are safe from any thread.
   jobs::JobQueue& jobs();
+
+  // --- the live point window (2026-08-17 field bug) -----------------------
+  //
+  // OFF by default, because this Engine's PageStore is also what a
+  // post-processing job, a merge preview and an export read: those must keep
+  // the hard cap and SAY they overran, never silently throw the oldest half of
+  // a cloud away (page_store.h "Backpressure").
+  //
+  // ON is what a LIVE CAPTURE wants, and only a live capture: the store then
+  // recycles its oldest page instead of dead-ending, so the preview keeps
+  // advancing for as long as the operator scans, with bounded memory, while
+  // A5's recorder — a completely separate path — keeps every point on disk.
+  //
+  // Enabling it also makes start_session() reset the live window
+  // (PageStore::recycle_all()) instead of stacking the next session's points
+  // on top of the last one's: live SLAM restarts at the origin on every
+  // session, so points from the previous session are in a STALE FRAME. An app
+  // that has NOT opted in keeps the pre-existing behaviour exactly, including
+  // the accumulation.
+  Status set_live_page_eviction(bool enabled);
+  bool live_page_eviction() const;
 
   // --- shared services ---------------------------------------------------
   EventBus& events();

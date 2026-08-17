@@ -197,6 +197,7 @@ SCAN_CHECK_ENUM(SCAN_JOB_FAILED, jobs::JobState::kFailed);
 
 SCAN_CHECK_ENUM(SCAN_PAGE_UPDATE_APPENDED, PageUpdateKind::kAppended);
 SCAN_CHECK_ENUM(SCAN_PAGE_UPDATE_RECOLOURED, PageUpdateKind::kRecoloured);
+SCAN_CHECK_ENUM(SCAN_PAGE_UPDATE_EVICTED, PageUpdateKind::kEvicted);
 
 static_assert(sizeof(scan_point_vertex) == sizeof(PointVertex),
               "scan_point_vertex must match PointVertex (16 B, S3-proven layout)");
@@ -977,6 +978,41 @@ scan_error_t scan_engine_total_points(scan_engine* engine, uint64_t* out_points)
     return fail(ScanError::kInvalidArgument, "null argument");
   }
   *out_points = handle_of(engine)->engine->points().total_points();
+  return SCAN_OK;
+  SCAN_GUARD_END
+}
+
+scan_error_t scan_engine_set_live_page_eviction(scan_engine* engine, uint8_t enabled) {
+  SCAN_GUARD_BEGIN
+  if (engine == nullptr) return fail(ScanError::kInvalidArgument, "null engine");
+  return to_c(handle_of(engine)->engine->set_live_page_eviction(enabled != 0));
+  SCAN_GUARD_END
+}
+
+scan_error_t scan_engine_page_stats(scan_engine* engine, scan_page_stats* out) {
+  SCAN_GUARD_BEGIN
+  if (engine == nullptr || out == nullptr) {
+    return fail(ScanError::kInvalidArgument, "null argument");
+  }
+  const PageStoreStats s = handle_of(engine)->engine->points().stats();
+  std::memset(out, 0, sizeof(*out));
+  out->pages = s.pages;
+  out->max_pages = s.max_pages;
+  out->resident_points = s.resident_points;
+  out->total_points = s.total_points;
+  out->dropped_points = s.dropped_points;
+  out->evicted_pages = s.evicted_pages;
+  out->evicted_points = s.evicted_points;
+  out->evicting = s.evicting ? 1u : 0u;
+  out->eviction_enabled = s.when_full == PageFullPolicy::kEvictOldest ? 1u : 0u;
+  return SCAN_OK;
+  SCAN_GUARD_END
+}
+
+scan_error_t scan_engine_recycle_live_pages(scan_engine* engine) {
+  SCAN_GUARD_BEGIN
+  if (engine == nullptr) return fail(ScanError::kInvalidArgument, "null engine");
+  handle_of(engine)->engine->points().recycle_all();
   return SCAN_OK;
   SCAN_GUARD_END
 }

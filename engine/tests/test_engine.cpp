@@ -207,7 +207,10 @@ TEST_CASE("engine/create_starts_idle_and_reports_a_version") {
   //    scan_engine_set_crs() and scan_engine_mid360_stats().
   // 6: A16's discovery surface (scan_discover_mid360, scan_host_check, the two
   //    serial probes, scan_enumerate_serial) and the single-instance guard.
-  CHECK(kEngineAbiVersion == 6);
+  // 7: the live point window (scan_engine_set_live_page_eviction,
+  //    scan_engine_page_stats + scan_page_stats,
+  //    scan_engine_recycle_live_pages, SCAN_PAGE_UPDATE_EVICTED).
+  CHECK(kEngineAbiVersion == 7);
 }
 
 TEST_CASE("engine/session_transitions_are_enforced_and_announced") {
@@ -1350,4 +1353,52 @@ TEST_CASE("engine/the_job_queue_is_owned_lazily_and_publishes_on_the_engines_bus
 
   std::error_code ec;
   std::filesystem::remove_all(spec.post.lscan_dir, ec);
+}
+
+// --- the live point window (2026-08-17 field bug) --------------------------
+
+TEST_CASE("engine/live_page_eviction_is_opt_in_and_resets_the_window_per_session") {
+  EngineConfig cfg = small_engine_config();
+  cfg.points.page_capacity = 8;
+  cfg.points.max_pages = 4;
+  auto engine = Engine::create(cfg);
+  REQUIRE(engine.ok());
+  Engine& e = *engine.value();
+
+  // Default: the pre-fix behaviour, untouched. A store that fills refuses, and
+  // a session start does NOT throw the previous session's points away.
+  CHECK_FALSE(e.live_page_eviction());
+  std::vector<PointVertex> pts(20);
+  for (std::size_t i = 0; i < pts.size(); ++i) pts[i].x = static_cast<float>(i);
+  CHECK(e.points()
+            .append(StreamId::kLidarMid360, Span<const PointVertex>(pts.data(), pts.size()), 1)
+            .ok());
+  CHECK(e.points().page_count() == 3);
+  CHECK(e.start_session(SessionConfig{}).ok());
+  CHECK(e.points().page_count() == 3);  // accumulates, exactly as before
+  CHECK(e.stop_session().ok());
+
+  // Opted in: the window is emptied at every session start, because live SLAM
+  // restarts at the origin and the old pages are in a frame that is gone.
+  CHECK(e.set_live_page_eviction(true).ok());
+  CHECK(e.live_page_eviction());
+  CHECK(e.start_session(SessionConfig{}).ok());
+  CHECK(e.points().page_count() == 0);
+  CHECK(e.points().stats().resident_points == 0);
+
+  // And it never dead-ends again: 60 batches through a 32-point window.
+  for (int i = 0; i < 60; ++i) {
+    CHECK(e.points()
+              .append(StreamId::kLidarMid360, Span<const PointVertex>(pts.data(), pts.size()),
+                      2 + i)
+              .ok());
+  }
+  const PageStoreStats st = e.points().stats();
+  CHECK(st.evicting);
+  CHECK(st.dropped_points == 0);
+  CHECK(st.pages == 4);
+  // Lifetime, so it still carries the 20 points appended before the opt-in:
+  // recycle_all() empties the WINDOW, it does not rewrite history.
+  CHECK(st.total_points == 20 + 20 * 60);
+  CHECK(e.stop_session().ok());
 }

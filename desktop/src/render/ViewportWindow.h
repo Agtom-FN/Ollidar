@@ -176,6 +176,9 @@ class ViewportWindow : public QWindow {
 
   const ViewportStats& stats() const { return stats_; }
 
+  // CONTROL-RUN ONLY: see PagedCloudRenderer::setForceOldestFirstLod.
+  void setForceOldestFirstLodForCli(bool on) { cloud_.setForceOldestFirstLod(on); }
+
   // Renderer::readPixels() off the swapchain — the literal pixels Filament put
   // in the Qt window. Writes `path`, plus `<path>-qtchrome.png` (QWidget::grab
   // of the main window) and `<path>-window.png` (the two composited, i.e. what

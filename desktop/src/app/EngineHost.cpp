@@ -2,6 +2,8 @@
 
 #include <QDateTime>
 
+#include <cstdio>
+
 #include "scanengine/core/event.h"
 
 namespace lidarscan {
@@ -46,9 +48,16 @@ QString describeEvent(const scanengine::Event& ev) {
 
 }  // namespace
 
-EngineHost::EngineHost(QObject* parent) : QObject(parent) {
+EngineHost::EngineHost(QObject* parent, quint32 live_max_pages, quint32 live_page_points)
+    : QObject(parent) {
   scanengine::EngineConfig cfg;
   cfg.app_name = "LidarScan Desktop";
+  if (live_page_points > 0) cfg.points.page_capacity = live_page_points;
+  if (live_max_pages > 0 || live_page_points > 0) {
+    if (live_max_pages > 0) cfg.points.max_pages = live_max_pages;
+    std::fprintf(stderr, "[lidarscan] page store ceiling overridden: %u pages of %u points\n",
+                 cfg.points.max_pages, cfg.points.page_capacity);
+  }
   auto res = scanengine::Engine::create(cfg);
   if (!res.ok()) {
     create_error_ = QString("Engine::create failed: %1").arg(scanengine::error_str(res.error()));
@@ -78,6 +87,23 @@ EngineHost::~EngineHost() {
 
 const scanengine::PageStore* EngineHost::points() const {
   return engine_ ? &const_cast<scanengine::Engine*>(engine_.get())->points() : nullptr;
+}
+
+bool EngineHost::setLivePageEviction(bool enabled) {
+  if (!engine_) return false;
+  const auto st = engine_->set_live_page_eviction(enabled);
+  if (!st.ok()) {
+    Q_EMIT logLine(QString("live page eviction %1 failed: %2")
+                       .arg(enabled ? "on" : "off")
+                       .arg(scanengine::error_str(st.error())));
+    return false;
+  }
+  return true;
+}
+
+scanengine::PageStoreStats EngineHost::pageStats() const {
+  if (!engine_) return scanengine::PageStoreStats{};
+  return const_cast<scanengine::Engine*>(engine_.get())->points().stats();
 }
 
 QString EngineHost::versionString() const {

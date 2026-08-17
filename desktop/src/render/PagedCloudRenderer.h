@@ -56,6 +56,11 @@ struct CloudStats {
   std::uint64_t drawn_points = 0;      // points actually in the scene (after the LOD budget)
   std::size_t pages = 0;
   std::size_t pages_drawn = 0;
+  // Is the NEWEST page in the store actually in the scene? For a live capture
+  // this is the whole question — "am I looking at what the sensor is seeing
+  // right now?" — and it is false whenever the LOD budget has been spent on
+  // older pages (NOTES.md §19.1). --live-map-soak asserts it.
+  bool newest_page_drawn = false;
   std::size_t gpu_bytes = 0;
   std::uint64_t uploads = 0;           // setBufferAt calls since init
   bool bounds_valid = false;
@@ -92,6 +97,12 @@ class PagedCloudRenderer {
   // of points uploaded by this call.
   std::uint32_t sync(const scanengine::PageStore& store, std::uint32_t lod_point_budget);
 
+  // CONTROL-RUN ONLY (--live-lod-oldest-first). Forces the pre-fix LOD order —
+  // budget spent on the OLDEST pages even during a live capture — so
+  // --live-map-soak can demonstrate that its "newest page drawn" check
+  // actually fails when the bug is present. Never set in a shipped run.
+  void setForceOldestFirstLod(bool on) { force_oldest_first_lod_ = on; }
+
   // Drop every GPU page (after a PageStore::clear(), or when closing a project).
   void reset();
 
@@ -120,6 +131,7 @@ class PagedCloudRenderer {
 
   // Ordered by PageId so "the first pages" is a stable, creation-ordered set.
   std::map<scanengine::PageId, GpuPage> pages_;
+  bool force_oldest_first_lod_ = false;
   CloudStats stats_{};
   // 256-bin luminance histogram over every uploaded point, for the percentile
   // range above. 1 KB, one increment per point.

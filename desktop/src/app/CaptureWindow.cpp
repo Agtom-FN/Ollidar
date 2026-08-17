@@ -2,6 +2,7 @@
 
 #include <QClipboard>
 #include <QComboBox>
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
@@ -47,6 +48,15 @@ void repolish(QWidget* w) {
   w->style()->polish(w);
 }
 
+// Space-grouped thousands, the same reading MainWindow's fmt() gives every
+// other point count in the redesign (a local copy: MainWindow's lives in its
+// own translation unit's anonymous namespace).
+QString groupedCount(quint64 n) {
+  QString s = QString::number(n);
+  for (int i = s.size() - 3; i > 0; i -= 3) s.insert(i, QChar(0x2009));  // thin space
+  return s;
+}
+
 QString humanBytesLocal(quint64 b) {
   static const char* u[] = {"B", "KB", "MB", "GB"};
   double v = double(b);
@@ -80,6 +90,72 @@ QLabel* hintLabel(const QString& text) {
 // are kept: they are legal everywhere and the owner asked for that shape.
 constexpr const char* kAutoNameTimeFormat = "yyyy-MM-dd HH-mm";
 
+// --- FIELD BUG E: where a capture is allowed to land ----------------------
+//
+// The owner's second field session recorded a real project INTO THE APP
+// BUNDLE: ~/Applications/LidarScan.app/Contents/MacOS/record-cycles/Scan-011…
+// .lscan. A .app is a signed, replaceable artefact — the next install deletes
+// the operator's scan — so no capture may EVER be created inside one, whatever
+// QSettings says. These three predicates are the guard; NOTES.md §19.2 has the
+// root cause (a CLI evidence hook persisted its own scratch root).
+
+// Documents, not the home directory (§17.5), and not the bundle.
+QString defaultCaptureRoot() {
+  QString docs = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+  if (docs.isEmpty()) docs = QDir::homePath();
+  return docs + "/LidarScan Projects";
+}
+
+// True if any component of `path` is a macOS bundle (…/Something.app/…). A
+// string test on purpose: it must hold on Windows and Linux too, where a copied
+// settings file or a synced home directory can still name one.
+bool insideAppBundle(const QString& path) {
+  const QString clean = QDir::cleanPath(QDir::fromNativeSeparators(path));
+  for (const QString& part : clean.split('/')) {
+    if (part.endsWith(".app", Qt::CaseInsensitive)) return true;
+  }
+  return false;
+}
+
+// Usable = not in a bundle, not inside the installed application's own
+// directory, and either an existing writable directory or creatable inside one.
+// `why` gets the one sentence the log line needs.
+bool captureRootUsable(const QString& path, QString* why) {
+  if (path.isEmpty()) {
+    if (why) *why = "it is empty";
+    return false;
+  }
+  const QString clean = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+  if (insideAppBundle(clean)) {
+    if (why) *why = "it is inside a .app bundle, which the next install replaces";
+    return false;
+  }
+  const QString appDir =
+      QDir::cleanPath(QFileInfo(QCoreApplication::applicationDirPath()).absoluteFilePath());
+  if (!appDir.isEmpty() && (clean == appDir || clean.startsWith(appDir + "/"))) {
+    if (why) *why = "it is inside the installed application's own directory";
+    return false;
+  }
+  // Walk up to the nearest component that exists and ask whether a directory
+  // could be made there. Nothing is created by this check.
+  QString probe = clean;
+  while (!probe.isEmpty() && !QFileInfo::exists(probe)) {
+    const QString parent = QFileInfo(probe).absolutePath();
+    if (parent == probe) break;
+    probe = parent;
+  }
+  const QFileInfo fi(probe);
+  if (!fi.exists() || !fi.isDir()) {
+    if (why) *why = "no part of it exists";
+    return false;
+  }
+  if (!fi.isWritable()) {
+    if (why) *why = QString("%1 is not writable").arg(probe);
+    return false;
+  }
+  return true;
+}
+
 }  // namespace
 
 CaptureWindow::CaptureWindow(EngineHost* host, scanengine::DisplayParamsController* params,
@@ -89,6 +165,7 @@ CaptureWindow::CaptureWindow(EngineHost* host, scanengine::DisplayParamsControll
   setAllowedAreas(Qt::BottomDockWidgetArea | Qt::TopDockWidgetArea);
   buildUi();
   setPhase(Phase::kIdle);
+  healCaptureRootSetting();  // field bug E: a bad stored root never survives a launch
 
   health_timer_ = new QTimer(this);
   connect(health_timer_, &QTimer::timeout, this, &CaptureWindow::updateHealth);
@@ -111,7 +188,7 @@ CaptureWindow::~CaptureWindow() {
   if (phase_ != Phase::kIdle) disarmPreview("shutdown");
 }
 
-void CaptureWindow::setProjectDir(const QString& dir) {
+void CaptureWindow::setProjectDir(const QString& dir, bool persist) {
   if (dir.isEmpty()) return;
   // Round 5: capture creates projects, it does not live inside one. A .lscan
   // path names the project a caller (a CLI hook) wants; its PARENT is the root
@@ -119,23 +196,77 @@ void CaptureWindow::setProjectDir(const QString& dir) {
   const QFileInfo fi(dir);
   project_root_ = dir.endsWith(".lscan", Qt::CaseInsensitive) ? fi.absolutePath()
                                                               : fi.absoluteFilePath();
-  QSettings().setValue("capture/root", project_root_);
+  // FIELD BUG E. This used to write "capture/root" UNCONDITIONALLY, and every
+  // caller it has is a CLI hook — so --record-cycles' scratch directory (which
+  // defaulted to a path inside the .app bundle) became the GUI's permanent
+  // capture root on the next normal launch. A hook's scratch path is a fact
+  // about that run, never a preference; only an explicit, validated choice by
+  // the operator is allowed to persist, and `persist` defaults to false so a
+  // future hook cannot make this mistake by omission.
+  if (persist) {
+    QString why;
+    if (captureRootUsable(project_root_, &why)) {
+      QSettings s;
+      s.setValue("capture/root", project_root_);
+      // The marker that separates "the operator chose this" from "a hook
+      // touched it": see healCaptureRootSetting().
+      s.setValue("capture/rootChosenByOperator", true);
+    } else {
+      log(QString("not saving '%1' as the default capture folder — %2")
+              .arg(project_root_, why));
+    }
+  }
   updateNameHint();
 }
 
+// Startup self-heal, called once from the constructor. A stored root that
+// points inside a .app bundle, at something that cannot exist, or at something
+// unwritable is not a preference worth keeping: it is how the owner's scans
+// ended up in Contents/MacOS. Reset to the Documents default, one log line,
+// no dialog.
+void CaptureWindow::healCaptureRootSetting() {
+  QSettings s;
+  const QString saved = s.value("capture/root").toString();
+  if (saved.isEmpty()) return;
+
+  // A root that no HUMAN chose. Until this fix, "capture/root" had exactly one
+  // writer — setProjectDir(), and every caller of setProjectDir() is a CLI
+  // evidence hook — so a stored root with no "chosen by the operator" marker
+  // beside it is, by construction, a hook's scratch directory that leaked into
+  // the settings a normal launch reads. That is how the owner's scans ended up
+  // in ~/Applications/LidarScan.app/Contents/MacOS/record-cycles/. Drop it
+  // once; from this build on, only an explicit operator choice writes either
+  // key, and no hook writes settings at all (main.cpp isolates them).
+  if (!s.value("capture/rootChosenByOperator", false).toBool()) {
+    s.remove("capture/root");
+    log(QString("saved capture folder '%1' was left behind by a CLI evidence run, not "
+                "chosen by you — cleared; new scans go to %2")
+            .arg(saved, defaultCaptureRoot()));
+    return;
+  }
+
+  QString why;
+  if (captureRootUsable(saved, &why)) return;
+  s.remove("capture/root");
+  s.remove("capture/rootChosenByOperator");
+  log(QString("saved capture folder '%1' rejected (%2) — new scans go to %3")
+          .arg(saved, why, defaultCaptureRoot()));
+}
+
 QString CaptureWindow::captureRoot() const {
-  if (!project_root_.isEmpty()) return project_root_;
+  // Every answer is validated, including a CLI hook's, so nothing downstream
+  // has to remember to check: this is the ONE function that says where a new
+  // scan may be created. Documents, not the home directory — the first default
+  // here was `~/LidarScan`, which on a case-insensitive macOS filesystem is the
+  // SAME DIRECTORY as a checkout named `~/lidarscan` (§17.5) — and
+  // QStandardPaths gets the localized/redirected (OneDrive, XDG) path right on
+  // all three platforms.
+  if (!project_root_.isEmpty() && captureRootUsable(project_root_, nullptr)) {
+    return project_root_;
+  }
   const QString saved = QSettings().value("capture/root").toString();
-  if (!saved.isEmpty()) return saved;
-  // Documents, not the home directory. The first default here was
-  // `~/LidarScan`, which on a case-insensitive macOS filesystem is the SAME
-  // DIRECTORY as a checkout named `~/lidarscan` — the first verification run
-  // wrote eight .lscan projects into the middle of the source tree. Documents is
-  // where a scan belongs anyway, and QStandardPaths gets the localized/redirected
-  // (OneDrive, XDG) path right on all three platforms.
-  QString docs = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
-  if (docs.isEmpty()) docs = QDir::homePath();
-  return docs + "/LidarScan Projects";
+  if (!saved.isEmpty() && captureRootUsable(saved, nullptr)) return saved;
+  return defaultCaptureRoot();
 }
 
 void CaptureWindow::showEvent(QShowEvent* event) {
@@ -417,6 +548,19 @@ QWidget* CaptureWindow::buildDisplayColumn() {
   refresh_note_->setWordWrap(true);
   refresh_note_->setVisible(false);
   v->addWidget(refresh_note_);
+
+  // The live map is a WINDOW once the engine's page store reaches its ceiling
+  // (engine ABI 7). Quiet, inline, and never a popup: nothing is wrong, and
+  // nothing the operator does can make it not happen on a long scan.
+  live_window_note_ = new QLabel();
+  live_window_note_->setWordWrap(true);
+  live_window_note_->setVisible(false);
+  live_window_note_->setToolTip(
+      "The live view holds a bounded number of points so it can keep up forever. "
+      "Once that ceiling is reached the OLDEST points leave the view to make room for "
+      "the newest — the view never stops moving. The recording is a separate path and "
+      "keeps every point; post-processing rebuilds the whole cloud from it.");
+  v->addWidget(live_window_note_);
 
   // Round-5 follow-up item 2, verbatim: "POINT SIZE range: min 0.1, max 3.0,
   // step 0.1 (px)". ENGINE SEAM MISSING (documented in NOTES.md §17): A14's own
@@ -870,6 +1014,14 @@ bool CaptureWindow::armPreview(QString* err) {
     return false;
   }
 
+  // The store this preview feeds is now a LIVE CAPTURE's moving window, not a
+  // review workspace: at its ceiling it recycles its oldest page instead of
+  // dropping every new point for the rest of the run. That drop-forever is
+  // FIELD BUG D (NOTES.md §19.1) — "live view not moving even i move the
+  // lidar". Enabled BEFORE start_session(), because start_session() is what
+  // empties the window for the new pose frame.
+  host_->setLivePageEviction(true);
+
   if (!startPreviewSession(err)) return false;
 
   scanengine::Mid360Config cfg;
@@ -925,8 +1077,14 @@ bool CaptureWindow::disarmPreview(const QString& why) {
     device_ = scanengine::kInvalidDeviceId;
   }
   if (host_ && host_->sessionActive()) (void)host_->stopSession(&err);
+  // Back to hard-cap semantics: with no device armed this store serves replay,
+  // merge previews and loaded post-processing results, and those must SAY they
+  // overran rather than silently showing the newest slice of a cloud.
+  if (host_) host_->setLivePageEviction(false);
   live_slam_running_ = false;
   endDataWatch();
+  if (live_window_note_) live_window_note_->setVisible(false);
+  live_window_seen_evicting_ = false;
   setPhase(Phase::kIdle);
   awake_.release();
   resetWalkTracking("device disarmed");
@@ -1345,6 +1503,7 @@ void CaptureWindow::updateHealth() {
   if (!host_) return;
   if (phase_ == Phase::kArming) evaluateArming();
   updateDataWatch();
+  updateLiveWindowNote();
 
   if (device_ != scanengine::kInvalidDeviceId && host_->ok()) {
     auto h = host_->engine()->device_health(device_);
@@ -1370,6 +1529,38 @@ void CaptureWindow::updateHealth() {
     }
   }
   health_->setText(host_->healthLine());
+}
+
+// FIELD BUG D, the honest half. The engine's live window is bounded, so on a
+// long scan the map on screen stops being "everything scanned" and becomes "the
+// most recent N points". That is a fact about the VIEW, not about the capture,
+// and the operator has to be told once, quietly, in the panel — never in a
+// dialog, and never once per revolution the way the engine used to warn.
+void CaptureWindow::updateLiveWindowNote() {
+  if (!live_window_note_ || !host_ || !host_->ok()) return;
+  const bool live = phase_ == Phase::kPreview || phase_ == Phase::kRecording ||
+                    phase_ == Phase::kPaused;
+  const scanengine::PageStoreStats st = host_->pageStats();
+  if (!live || !st.evicting) {
+    if (!live && live_window_note_->isVisible()) live_window_note_->setVisible(false);
+    return;
+  }
+  live_window_note_->setText(
+      QString("Live map is showing the most recent %1 points (%2 of %3 pages) — the "
+              "oldest points leave the view so it can keep up. The recording has "
+              "every point; post-processing rebuilds the whole cloud.")
+          .arg(groupedCount(st.resident_points))
+          .arg(st.pages)
+          .arg(st.max_pages));
+  live_window_note_->setVisible(true);
+  if (!live_window_seen_evicting_) {
+    live_window_seen_evicting_ = true;
+    log(QString("live map reached its %1-page ceiling: it now shows the most recent %2 "
+                "points and keeps advancing. Recording is unaffected.")
+            .arg(st.max_pages)
+            .arg(groupedCount(st.resident_points)));
+    Q_EMIT liveWindowEvicting(st.resident_points, st.evicted_points);
+  }
 }
 
 void CaptureWindow::updateRecordCluster() {

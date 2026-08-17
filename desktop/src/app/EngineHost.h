@@ -45,7 +45,12 @@ struct DeviceRow {
 class EngineHost : public QObject {
   Q_OBJECT
  public:
-  explicit EngineHost(QObject* parent = nullptr);
+  // `live_max_pages` overrides the engine's PageStore ceiling (0 = the engine
+  // default, 64 x 1 M points). It exists for one reason: --live-map-soak has to
+  // reach the ceiling in seconds instead of the five minutes a real Mid-360
+  // needs, and it must reach it through the SHIPPED store, not a mock.
+  explicit EngineHost(QObject* parent = nullptr, quint32 live_max_pages = 0,
+                      quint32 live_page_points = 0);
   ~EngineHost() override;
 
   bool ok() const { return engine_ != nullptr; }
@@ -53,6 +58,15 @@ class EngineHost : public QObject {
 
   scanengine::Engine* engine() { return engine_.get(); }
   const scanengine::PageStore* points() const;
+
+  // The live point window (engine ABI 7). OFF by default here, because this
+  // Engine's PageStore is also what a replay, a merge preview and a loaded
+  // result render out of — those must keep the hard cap and say when they
+  // overran. CaptureWindow turns it ON while a device is armed and OFF again
+  // when it disarms, which is the only period during which the store is a
+  // live capture's moving window.
+  bool setLivePageEviction(bool enabled);
+  scanengine::PageStoreStats pageStats() const;
 
   QString versionString() const;
 

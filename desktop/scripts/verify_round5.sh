@@ -27,6 +27,20 @@ mkdir -p "$OUT"
 LOG="${OUT}/verify_round5.log"
 : > "$LOG"
 run() { echo "\$ $*" | tee -a "$LOG"; "$@" 2>&1 | tee -a "$LOG"; }
+# A control run: the command MUST exit non-zero. Used for the pre-fix
+# reproduction of field bug D — a proof that cannot fail is not a proof.
+run_expect_fail() {
+  echo "\$ $*   # CONTROL RUN — must FAIL" | tee -a "$LOG"
+  set +e
+  "$@" >> "$LOG" 2>&1
+  local rc=$?
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    echo "   -> exit ${rc}: failed as required" | tee -a "$LOG"
+  else
+    echo "   -> exit 0: UNEXPECTED PASS — the soak is not measuring anything" | tee -a "$LOG"
+  fi
+}
 
 sim_up() {  # $1 = seconds
   [ -x "$SIM" ] || { echo "SKIPPED: $SIM not built" | tee -a "$LOG"; return 1; }
@@ -117,6 +131,63 @@ if [ -x "$SIM" ]; then
       --record-cycles-dir "${OUT}/round5-cycles-drop" --quit-after 75
   sim_down
 fi
+
+echo "=== 5c. FIELD BUGS D + E (NOTES §19) ===" | tee -a "$LOG"
+echo "===      D: the live map must keep moving after the page store fills   ===" | tee -a "$LOG"
+echo "===      E: a CLI evidence run must not move the GUI's capture root    ===" | tee -a "$LOG"
+
+# D, the CONTROL run first: the same soak with page recycling turned OFF is the
+# pre-fix engine, and it MUST fail. A soak that cannot fail proves nothing.
+if sim_up 50; then
+  run_expect_fail "$APP" --mid360-selftest "$LOOPBACK" \
+      --live-store-pages 2 --live-store-page-points 20000 \
+      --live-map-soak 25 --live-map-no-evict --quit-after 70
+  sim_down
+fi
+
+# D, the fixed run: identical parameters, recycling on. The newest point in the
+# store has to keep getting newer in EVERY window past the fill, nothing may be
+# dropped, and the renderer has to keep uploading.
+if sim_up 50; then
+  run "$APP" --mid360-selftest "$LOOPBACK" \
+      --live-store-pages 2 --live-store-page-points 20000 \
+      --live-map-soak 25 --quit-after 70
+  sim_down
+fi
+
+# D, the LOD half. The store is HEALTHY in both of these runs — what changes is
+# which end of the cloud the LOD budget is spent on. An 8-page window of 20 000-
+# point pages against a 20 000-point budget: the OLDEST page alone spends the
+# whole budget, so oldest-first cannot draw the newest page and newest-first
+# always can. (A 2-page window is too small to force the question — the oldest
+# page's live count is often under the budget on its own, and the first cut of
+# this step passed the control run for that reason.)
+printf '{"lodPointBudget": 20000}\n' > "${OUT}/round5-lod-budget.json"
+if sim_up 50; then
+  run_expect_fail "$APP" --mid360-selftest "$LOOPBACK" \
+      --display-params "${OUT}/round5-lod-budget.json" --live-lod-oldest-first \
+      --live-store-pages 8 --live-store-page-points 20000 \
+      --live-map-soak 25 --quit-after 70
+  sim_down
+fi
+if sim_up 50; then
+  run "$APP" --mid360-selftest "$LOOPBACK" \
+      --display-params "${OUT}/round5-lod-budget.json" \
+      --live-store-pages 8 --live-store-page-points 20000 \
+      --live-map-soak 25 --quit-after 70
+  sim_down
+fi
+
+# E: the capture root before an evidence run, after it, and the evidence run in
+# between. All three lines must name ~/Documents/LidarScan Projects — the hook
+# writes its projects to a temp directory and touches no setting at all.
+run "$APP" --capture-root-report --quit-after 2
+if sim_up 45; then
+  run "$APP" --mid360-selftest "$LOOPBACK" --record-cycles 3 --record-cycle-seconds 2 \
+      --quit-after 60
+  sim_down
+fi
+run "$APP" --capture-root-report --quit-after 2
 
 echo "=== 6. item 4 (5.1): Process / Export / Merge folded into the Projects tab ===" | tee -a "$LOG"
 run "$APP" --projects-actions-demo "${OUT}/18-projects-actions" --quit-after 18

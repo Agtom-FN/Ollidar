@@ -16,8 +16,8 @@
 [sim] pcl data type -> 1
 [sim] imu data enabled
 [sim] work mode 0x01 -> SAMPLING
-[sim] 22:26:30.991 ===== LINK DOWN (simulated cable pull) =====
-[sim] 22:26:45.329 ===== LINK UP (resumed) =====
+[sim] 00:42:47.586 ===== LINK DOWN (simulated cable pull) =====
+[sim] 00:43:01.762 ===== LINK UP (resumed) =====
 [sim] 0x0101 get-internal-info: 1 key(s) -> ack 8 B
 [sim] host cfg key 0x0005 -> 127.0.0.1:56201 (lidar port 56200)
 [sim] host cfg key 0x0006 -> 127.0.0.1:56301 (lidar port 56300)
@@ -25,7 +25,7 @@
 [sim] pcl data type -> 1
 [sim] imu data enabled
 [sim] work mode 0x01 -> SAMPLING
-[sim] t=    30s  points 78019 pts/s (812.7 pkt/s)  imu 78.0 Hz  dropped pt/imu 29867/2867  rss=1.6 MB  cpu=3.7%
+[sim] t=    30s  points 85863 pts/s (894.4 pkt/s)  imu 85.9 Hz  dropped pt/imu 29533/2835  rss=1.5 MB  cpu=3.7%
 [sim] 0x0101 get-internal-info: 1 key(s) -> ack 8 B
 [sim] 0x0101 get-internal-info: 1 key(s) -> ack 8 B
 [sim] host cfg key 0x0005 -> 127.0.0.1:56201 (lidar port 56200)
@@ -34,8 +34,8 @@
 [sim] pcl data type -> 1
 [sim] imu data enabled
 [sim] work mode 0x01 -> SAMPLING
-[sim] 22:26:57.584 ===== LINK DOWN (simulated cable pull) =====
-[sim] 22:27:11.916 ===== LINK UP (resumed) =====
+[sim] 00:43:13.907 ===== LINK DOWN (simulated cable pull) =====
+[sim] 00:43:28.084 ===== LINK UP (resumed) =====
 [sim] 0x0101 get-internal-info: 1 key(s) -> ack 8 B
 [sim] host cfg key 0x0005 -> 127.0.0.1:56201 (lidar port 56200)
 [sim] host cfg key 0x0006 -> 127.0.0.1:56301 (lidar port 56300)
@@ -44,7 +44,7 @@
 [sim] imu data enabled
 [sim] work mode 0x01 -> SAMPLING
 [sim] 0x0101 get-internal-info: 1 key(s) -> ack 8 B
-[sim] t=    60s  points 104956 pts/s (1093.3 pkt/s)  imu 105.0 Hz  dropped pt/imu 59725/5733  rss=1.5 MB  cpu=4.5%
-[sim] 22:27:24.219 ===== LINK DOWN (simulated cable pull) =====
-[sim] final rss=1.4 MB, cpu=3.2s (4.5% of one core)
-[sim] shutdown after 70.4s: point pkts sent=68464 dropped=68947, imu pkts sent=6573 dropped=6618, cmd datagrams=27, cmds handled=27
+[sim] t=    60s  points 105899 pts/s (1103.1 pkt/s)  imu 105.9 Hz  dropped pt/imu 59066/5670  rss=1.5 MB  cpu=4.8%
+[sim] 00:43:40.248 ===== LINK DOWN (simulated cable pull) =====
+[sim] final rss=1.5 MB, cpu=3.6s (5.1% of one core)
+[sim] shutdown after 70.2s: point pkts sent=69679 dropped=69857, imu pkts sent=6690 dropped=6706, cmd datagrams=27, cmds handled=27

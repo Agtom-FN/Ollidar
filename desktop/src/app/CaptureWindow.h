@@ -148,8 +148,16 @@ class CaptureWindow : public QDockWidget {
   // Where new projects are created. Round 5: capture no longer BELONGS to a
   // project (every Start makes a new one), so this only sets the parent
   // directory — passing a .lscan path uses its parent. Empty leaves the
-  // persisted default ("capture/root", itself defaulting to ~/LidarScan).
-  void setProjectDir(const QString& dir);
+  // persisted default ("capture/root", itself defaulting to
+  // ~/Documents/LidarScan Projects).
+  //
+  // `persist` is OFF by default and every caller today is a CLI hook, which is
+  // deliberate: a hook's scratch directory is a fact about that run, and when
+  // this method persisted unconditionally the --record-cycles scratch root
+  // (inside the .app bundle) became the GUI's capture root for good — the
+  // owner's real scans landed in Contents/MacOS. Only an explicit operator
+  // choice should pass true, and it is validated before it is written.
+  void setProjectDir(const QString& dir, bool persist = false);
 
   // The model changed somewhere else (the A14 dock, the inspector card, a
   // profile, a loaded JSON document): re-read the inline live controls.
@@ -222,6 +230,10 @@ class CaptureWindow : public QDockWidget {
   // compact log strip too; both render the same text, and log() also writes
   // stderr for headless runs.
   void logLine(const QString& line);
+  // Fired ONCE per armed session, the first time the live map starts recycling
+  // its oldest points: resident / evicted point counts. --live-map-soak is the
+  // only consumer today; the panel's own note does not need a signal.
+  void liveWindowEvicting(quint64 resident_points, quint64 evicted_points);
 
   // --- CLI test hooks (main.cpp) -------------------------------------------
  public:
@@ -235,6 +247,11 @@ class CaptureWindow : public QDockWidget {
   // --capture-flow-demo: Start with the name field left EMPTY, i.e. the
   // auto-naming path (round 5 item 9). Returns the directory it created.
   QString triggerStartWithAutoNameForCli();
+
+  // --capture-root-report: where THIS panel would create the next scan, after
+  // the startup self-heal has had its say. The proof that a CLI evidence run
+  // can no longer move the GUI's capture root (field bug E).
+  QString captureRootForCli() const { return captureRoot(); }
   void triggerPauseResumeForCli();
   void triggerStopForCli();
   // Drives the SAME "Auto-detect devices" button a click would.
@@ -314,6 +331,10 @@ class CaptureWindow : public QDockWidget {
   // that already exists (a numeric suffix is appended if it would).
   QString resolveNewProjectDir(const QString& typedName, bool* auto_named);
   QString captureRoot() const;
+  // Drops a stored capture root that points into a .app bundle, into the
+  // installed app's own directory, or at something unwritable. One log line,
+  // never a dialog. Called once, from the constructor.
+  void healCaptureRootSetting();
 
   bool startPreviewSession(QString* err);
   bool startRecordingSession(QString* err);
@@ -338,6 +359,9 @@ class CaptureWindow : public QDockWidget {
   // device added mid-session starts immediately"). That leaves the recorder open
   // and the .lscan intact; only the driver is rebuilt. Nothing here can stop a
   // recording, and every raw byte that does arrive is still written.
+  // Says, once and quietly, that the live map is now a window over the newest
+  // points. Polled from the same 300 ms health timer as everything else.
+  void updateLiveWindowNote();
   void beginDataWatch(const QString& why);
   void updateDataWatch();
   bool rearmDeviceInPlace(QString* err);
@@ -470,6 +494,9 @@ class CaptureWindow : public QDockWidget {
   // inline live display controls, bound to params_
   SliderRow* refresh_hz_ = nullptr;
   QLabel* refresh_note_ = nullptr;   // the auto-downshift note (item 17)
+  // The live map became a moving window (field bug D / NOTES.md §19.1).
+  QLabel* live_window_note_ = nullptr;
+  bool live_window_seen_evicting_ = false;
   SliderRow* point_size_ = nullptr;
   SliderRow* gamma_ = nullptr;
   SliderRow* brightness_ = nullptr;

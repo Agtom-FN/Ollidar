@@ -633,6 +633,23 @@ Status Engine::start_session(const SessionConfig& cfg) {
                   "set_mount_extrinsics() is called (docs/A8-pushbroom.md §4)");
   }
 
+  // The live window starts empty — but ONLY for an app that opted into live
+  // page eviction (set_live_page_eviction), i.e. one that has told the engine
+  // this store is a live capture's view and not a post-processing workspace.
+  //
+  // Why it must: every start_session() builds a NEW LioOdometry whose first
+  // pose is the origin, so the pages the previous session left behind are in a
+  // frame that no longer exists — they would sit in the live map misregistered
+  // against everything the new session adds. And they are not free: before
+  // this, a preview + N record cycles on ONE connect all stacked into the same
+  // 64 pages, which is most of why the field session hit the ceiling during a
+  // PREVIEW. recycle_all() is used rather than clear() because a renderer may
+  // be reading a PageView right now: it retires the pages without freeing a
+  // byte (page_store.h).
+  if (impl_->points->stats().when_full == PageFullPolicy::kEvictOldest) {
+    impl_->points->recycle_all();
+  }
+
   // A6: live SLAM is one LioOdometry for the session, publishing its map into
   // the Engine's own PageStore on StreamId::kSlamMap. It is fed by
   // Impl::on_page_update (points) and Impl::on_mid360_imu (IMU).
@@ -1224,6 +1241,15 @@ jobs::JobQueue& Engine::jobs() {
 }
 
 EventBus& Engine::events() { return impl_->bus; }
+Status Engine::set_live_page_eviction(bool enabled) {
+  return impl_->points->set_full_policy(enabled ? PageFullPolicy::kEvictOldest
+                                                : PageFullPolicy::kReject);
+}
+
+bool Engine::live_page_eviction() const {
+  return impl_->points->stats().when_full == PageFullPolicy::kEvictOldest;
+}
+
 PageStore& Engine::points() { return *impl_->points; }
 TimeSync& Engine::timesync() { return impl_->timesync; }
 lscan::RecordWriter& Engine::recorder() { return *impl_->recorder; }

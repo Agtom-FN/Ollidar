@@ -36,9 +36,11 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QMap>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QSettings>
+#include <QStandardPaths>
 #include <QTimer>
 
 #include <algorithm>
@@ -496,6 +498,61 @@ int main(int argc, char** argv) {
       "ever fires or any non-zero speed is reported — nobody is carrying the simulator, so "
       "it must read 0.00 m/s however far the SLAM pose drifts",
       "s");
+  // Round-5 field bug D ("live view not moving even i move the lidar").
+  //
+  // The engine's page store is bounded (64 x 1 M points by default). When it
+  // filled it REFUSED every further point for the rest of the run, so the live
+  // view froze at the fill instant while the recording carried on perfectly —
+  // which is exactly what the owner saw, and what their engine log said 1400
+  // times ("page store full (64 pages): dropped 8195 points"). A real Mid-360
+  // takes ~5 minutes to fill it; --live-store-pages shrinks the ceiling so the
+  // same moment arrives in seconds, through the SHIPPED store and the shipped
+  // renderer.
+  // FIELD BUG E's proof hook. Prints the settings file, the capture root that
+  // is STORED (if any), and the root the panel resolves — so a script can show
+  // that a --record-cycles run left the GUI's root alone, and that a poisoned
+  // root (one inside a .app bundle) is self-healed at launch.
+  QCommandLineOption optCaptureRootReport(
+      "capture-root-report",
+      "Print the QSettings file, the stored capture root and the root the capture panel "
+      "resolves for a NEW scan, then keep running (combine with --quit-after 1)");
+  QCommandLineOption optLiveStorePages(
+      "live-store-pages",
+      "Override the engine page store's ceiling (pages of 1 M points) for this run. "
+      "Test hook for --live-map-soak: it makes the live window fill in seconds instead "
+      "of minutes. 0/unset = the engine default (64)",
+      "n");
+  QCommandLineOption optLiveStorePagePoints(
+      "live-store-page-points",
+      "Override the engine page store's POINTS PER PAGE for this run (default 1048576). "
+      "With --live-store-pages this is how --live-map-soak reaches the ceiling in "
+      "seconds: the two together set the live window's exact size in points",
+      "n");
+  QCommandLineOption optLiveMapSoak(
+      "live-map-soak",
+      "With --mid360-selftest: run the live preview for S seconds PAST the point where "
+      "the page store fills, and verify the live map keeps advancing — the newest point "
+      "in the store gets newer, the page count stays at the ceiling, nothing is dropped, "
+      "and the renderer keeps uploading. Exits NONZERO if the view ever stops moving "
+      "(round-5 field bug D)",
+      "s");
+  // The control case for --live-map-soak. Without it a PASS proves only that
+  // the app did not crash: this switch puts the SHIPPED store back into the
+  // pre-fix hard-cap mode after arming, so the soak has to fail — and if it
+  // does not, the soak is not measuring anything.
+  QCommandLineOption optLiveMapNoEvict(
+      "live-map-no-evict",
+      "With --live-map-soak: reproduce the PRE-FIX behaviour by turning the live "
+      "window's page recycling off after arming. The soak must FAIL (the live view "
+      "freezes the moment the store fills) — this is the control run",
+      QString());
+  QCommandLineOption optLiveLodOldestFirst(
+      "live-lod-oldest-first",
+      "With --live-map-soak: the OTHER control run — spend the LOD budget on the oldest "
+      "pages during a live capture, which is what the app did before this fix. With a "
+      "budget smaller than the live window the soak must FAIL: everything is uploaded "
+      "and the newest page is never drawn",
+      QString());
   QCommandLineOption optBuildSynthMid360(
       "build-synth-mid360",
       "C4 evidence hook: write a real .lscan (kMid360Points/kMid360Imu chunks) at DIR from "
@@ -596,6 +653,12 @@ int main(int argc, char** argv) {
   parser.addOption(optRecordCyclesDir);
   parser.addOption(optRecordCycleSeconds);
   parser.addOption(optWalkSoak);
+  parser.addOption(optCaptureRootReport);
+  parser.addOption(optLiveStorePages);
+  parser.addOption(optLiveStorePagePoints);
+  parser.addOption(optLiveMapSoak);
+  parser.addOption(optLiveMapNoEvict);
+  parser.addOption(optLiveLodOldestFirst);
   // Registered for --help only: this one is intercepted at the top of main(),
   // before QApplication and the single-instance guard, because it needs neither
   // and must run while the real app is open.
@@ -690,7 +753,73 @@ int main(int argc, char** argv) {
                  lidarscan::theme::fontsLoaded() ? "yes" : "NO");
   }
 
-  lidarscan::EngineHost host;
+  // --- FIELD BUG E: an evidence hook must not touch the operator's settings --
+  //
+  // The owner's real project was recorded into
+  // ~/Applications/LidarScan.app/Contents/MacOS/record-cycles/. Root cause:
+  // --record-cycles pointed CaptureWindow at a scratch root beside the binary
+  // (inside the .app, on an installed build) and CaptureWindow::setProjectDir()
+  // PERSISTED it into QSettings("capture/root"), which every later NORMAL
+  // launch then used as the place new scans go. setProjectDir() no longer
+  // persists (CaptureWindow.cpp), and this is the second, generic half: while
+  // any evidence/CI hook is driving the app, QSettings is redirected into a
+  // scratch directory, so NOTHING a hook touches — the capture root, the series
+  // number, the live refresh rate, the recents list, the window geometry — can
+  // leak into the settings a human's next launch reads.
+  //
+  // Deliberately a whitelist of hooks rather than "always in CI": a developer
+  // running the real app must keep their real settings.
+  {
+    const QList<const QCommandLineOption*> evidence_hooks = {
+        &optMid360Selftest,   &optMid360RecordInto,     &optRecordCycles,
+        &optRecordCyclesDir,  &optWalkSoak,             &optLiveMapSoak,
+        &optAutoDetectSelftest, &optAutoDetectCancelSelftest, &optCaptureClusterDemo,
+        &optCaptureFlowDemo,  &optProjectsActionsDemo,  &optShot,
+        &optPostE2e,          &optBuildSynthMid360,     &optLiveStorePages,
+        &optLiveStorePagePoints};
+    bool hooked = false;
+    for (const QCommandLineOption* o : evidence_hooks) hooked = hooked || parser.isSet(*o);
+    if (hooked) {
+      // SEEDED, not blank. An evidence hook has to see the same world a human
+      // does — --projects-actions-demo selects rows out of the library, which
+      // IS QSettings("recentProjects"), and a demo against an empty library
+      // proves nothing — so the real settings are COPIED into the scratch
+      // location and every write after this point lands in the copy. Read
+      // alike, write isolated.
+      QSettings real;  // native format, real location: read BEFORE the redirect
+      QMap<QString, QVariant> snapshot;
+      for (const QString& k : real.allKeys()) snapshot.insert(k, real.value(k));
+
+      const QString scratch =
+          QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
+              .filePath(QString("lidarscan-evidence-settings-%1").arg(QCoreApplication::applicationPid()));
+      QDir().mkpath(scratch);
+      QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, scratch);
+      QSettings::setDefaultFormat(QSettings::IniFormat);
+
+      QSettings isolated;
+      for (auto it = snapshot.constBegin(); it != snapshot.constEnd(); ++it) {
+        isolated.setValue(it.key(), it.value());
+      }
+      isolated.sync();
+      std::fprintf(stderr,
+                   "[lidarscan] evidence hook active — settings isolated to %s "
+                   "(%d key(s) copied in; the operator's own settings are read-only from "
+                   "here)\n",
+                   scratch.toUtf8().constData(), int(snapshot.size()));
+    }
+  }
+
+  // Read BEFORE MainWindow exists: CaptureWindow's constructor self-heals a bad
+  // stored root, and the report has to show what was there beforehand.
+  const QString storedCaptureRootAtStartup = QSettings().value("capture/root").toString();
+  const QString settingsFileAtStartup = QSettings().fileName();
+
+  const quint32 liveStorePages =
+      parser.isSet(optLiveStorePages) ? parser.value(optLiveStorePages).toUInt() : 0;
+  const quint32 liveStorePagePoints =
+      parser.isSet(optLiveStorePagePoints) ? parser.value(optLiveStorePagePoints).toUInt() : 0;
+  lidarscan::EngineHost host(nullptr, liveStorePages, liveStorePagePoints);
   if (!host.ok()) {
     QMessageBox::critical(nullptr, "LidarScan", host.createError());
     return 2;
@@ -714,6 +843,35 @@ int main(int argc, char** argv) {
     }
   }
   win.show();
+
+  if (parser.isSet(optLiveLodOldestFirst)) {
+    win.viewport()->setForceOldestFirstLodForCli(true);
+    std::fprintf(stderr,
+                 "[lidarscan] CONTROL RUN — the LOD budget is spent oldest-first even for a "
+                 "live capture (the pre-fix order)\n");
+  }
+
+  if (parser.isSet(optCaptureRootReport)) {
+    lidarscan::CaptureWindow* cap = win.captureWindow();
+    const QString stored_now = QSettings().value("capture/root").toString();
+    std::fprintf(stderr, "[lidarscan] capture-root-report: settings   %s\n",
+                 settingsFileAtStartup.toUtf8().constData());
+    std::fprintf(stderr, "[lidarscan] capture-root-report: stored     %s\n",
+                 storedCaptureRootAtStartup.isEmpty()
+                     ? "<none>"
+                     : storedCaptureRootAtStartup.toUtf8().constData());
+    std::fprintf(stderr, "[lidarscan] capture-root-report: after heal %s\n",
+                 stored_now.isEmpty() ? "<none>" : stored_now.toUtf8().constData());
+    std::fprintf(stderr, "[lidarscan] capture-root-report: resolved   %s\n",
+                 cap->captureRootForCli().toUtf8().constData());
+    const QString docs =
+        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) +
+        "/LidarScan Projects";
+    std::fprintf(stderr, "[lidarscan] capture-root-report: default    %s — %s\n",
+                 docs.toUtf8().constData(),
+                 cap->captureRootForCli() == docs ? "MATCHES (the round-5 default)"
+                                                  : "differs");
+  }
 
   QString projectDir = parser.value(optProject);
   if (parser.isSet(optNewProject)) {
@@ -1291,6 +1449,149 @@ int main(int argc, char** argv) {
           });
     }
 
+    // --- round-5 field bug D: the live map must never stop moving ----------
+    //
+    // Runs the shipped preview against the shipped store and renderer with a
+    // deliberately small ceiling (--live-store-pages), waits for the store to
+    // FILL, and then keeps watching. PASS requires all four of:
+    //   1. the store actually reached its ceiling (else the soak proved nothing);
+    //   2. after that, the NEWEST point in the store keeps getting newer, in
+    //      every window — this is "the live view is still moving";
+    //   3. the page count never exceeds the ceiling and memory stays bounded;
+    //   4. nothing is dropped once the window is recycling, and the renderer
+    //      keeps uploading (the GPU mirror follows the store).
+    // The pre-fix build fails 2 and 4 the instant the store fills.
+    if (parser.isSet(optLiveMapSoak)) {
+      const double soakS = std::max(2.0, parser.value(optLiveMapSoak).toDouble());
+      const bool no_evict = parser.isSet(optLiveMapNoEvict);
+      auto* fill_seen = new bool(false);
+      auto* failures = new int(0);
+      auto* windows = new int(0);
+      auto* stalled = new int(0);
+      auto* over_ceiling = new int(0);
+      auto* newest_ns = new qint64(0);
+      auto* uploads = new quint64(0);
+      auto* upload_stalls = new int(0);
+      auto* undrawn = new int(0);
+      auto* dropped_at_fill = new quint64(0);
+      QObject::connect(
+          cap, &lidarscan::CaptureWindow::liveWindowEvicting, &app,
+          [](quint64 resident, quint64 evicted) {
+            std::fprintf(stderr,
+                         "[lidarscan] live-map-soak: the window started recycling — "
+                         "%llu points resident, %llu evicted so far\n",
+                         (unsigned long long)resident, (unsigned long long)evicted);
+          });
+      QObject::connect(
+          cap, &lidarscan::CaptureWindow::selfTestFinished, &app,
+          [&host, &win, soakS, no_evict, fill_seen, failures, windows, stalled, over_ceiling,
+           newest_ns, uploads, upload_stalls, undrawn,
+           dropped_at_fill](bool passed, const QString& detail) {
+            if (!passed) {
+              std::fprintf(stderr, "[lidarscan] live-map-soak: cannot arm (%s)\n",
+                           detail.toUtf8().constData());
+              QCoreApplication::exit(10);
+              return;
+            }
+            if (no_evict) {
+              host.setLivePageEviction(false);
+              std::fprintf(stderr,
+                           "[lidarscan] live-map-soak: CONTROL RUN — page recycling turned "
+                           "OFF after arming; this is the pre-fix behaviour and it must "
+                           "FAIL\n");
+            }
+            auto* sampler = new QTimer(qApp);
+            auto* clock = new QElapsedTimer();
+            clock->start();
+            QObject::connect(sampler, &QTimer::timeout, qApp, [&host, &win, sampler, clock,
+                                                               soakS, fill_seen, failures,
+                                                               windows, stalled, over_ceiling,
+                                                               newest_ns, uploads,
+                                                               upload_stalls, undrawn,
+                                                               dropped_at_fill] {
+              const scanengine::PageStoreStats st = host.pageStats();
+              // The newest point in the store, by page time — "is the view
+              // showing data that did not exist a moment ago?"
+              qint64 newest = 0;
+              if (const scanengine::PageStore* store = host.points()) {
+                for (const scanengine::PageId id : store->page_ids()) {
+                  const scanengine::PageView v = store->page_view(id);
+                  if (v.valid()) newest = std::max<qint64>(newest, v.t_last_ns);
+                }
+              }
+              const auto& cloud = win.viewport()->stats().cloud;
+              const quint64 up = cloud.uploads;
+              // "Is the newest page on screen?" — the LOD budget half of the
+              // same bug: a live view that uploads everything and DRAWS only
+              // the oldest pages is just as frozen as one that drops points.
+              const bool newest_drawn = cloud.newest_page_drawn;
+              // FULL is the moment the window ran out of room — the store
+              // either started recycling (fixed) or started refusing points
+              // (pre-fix). Both are measured, so the control run reaches the
+              // same instant the fixed run does.
+              if ((st.evicting || st.dropped_points > 0) && !*fill_seen) {
+                *fill_seen = true;
+                *dropped_at_fill = st.dropped_points;
+                *newest_ns = newest;
+                *uploads = up;
+                return;  // start measuring from the fill moment
+              }
+              if (*fill_seen) {
+                ++*windows;
+                if (newest <= *newest_ns) ++*stalled;   // THE bug: the view froze
+                if (up <= *uploads) ++*upload_stalls;   // the GPU mirror froze
+                if (!newest_drawn) ++*undrawn;         // uploaded but not on screen
+                if (st.pages > st.max_pages) ++*over_ceiling;
+                if (st.dropped_points != *dropped_at_fill) ++*failures;
+                *newest_ns = newest;
+                *uploads = up;
+              }
+              if (clock->elapsed() < qint64(soakS * 1000.0)) return;
+              sampler->stop();
+              const bool ok = *fill_seen && *windows > 0 && *stalled == 0 &&
+                              *upload_stalls == 0 && *undrawn == 0 && *over_ceiling == 0 &&
+                              *failures == 0;
+              std::fprintf(stderr,
+                           "[lidarscan] live-map-soak: %.0f s — ceiling %u pages, full=%s, "
+                           "recycling=%s, %d windows past the fill, %d stalled, %d upload "
+                           "stalls, %d windows with the newest page NOT drawn, %d over "
+                           "ceiling, %llu dropped, %llu pages evicted (%llu points), %llu "
+                           "resident — %s\n",
+                           soakS, st.max_pages, *fill_seen ? "yes" : "NO",
+                           st.evicting ? "yes" : "NO", *windows, *stalled,
+                           *upload_stalls, *undrawn, *over_ceiling,
+                           (unsigned long long)st.dropped_points,
+                           (unsigned long long)st.evicted_pages,
+                           (unsigned long long)st.evicted_points,
+                           (unsigned long long)st.resident_points, ok ? "PASS" : "FAIL");
+              if (!*fill_seen) {
+                std::fprintf(stderr,
+                             "[lidarscan] live-map-soak: the store never filled — soak "
+                             "longer or lower --live-store-pages; this run proved nothing\n");
+              } else if (*undrawn > 0) {
+                std::fprintf(stderr,
+                             "[lidarscan] live-map-soak: the newest page was UPLOADED but "
+                             "not DRAWN in %d of %d windows — the LOD budget is being spent "
+                             "on the oldest pages, so the operator sees a frozen map while "
+                             "the store is perfectly healthy\n",
+                             *undrawn, *windows);
+              } else if (*stalled > 0) {
+                std::fprintf(stderr,
+                             "[lidarscan] live-map-soak: the live map STOPPED ADVANCING in "
+                             "%d of %d windows after the store filled — this is exactly the "
+                             "field bug ('live view not moving even i move the lidar')\n",
+                             *stalled, *windows);
+              }
+              QCoreApplication::exit(ok ? 0 : 10);
+            });
+            std::fprintf(stderr,
+                         "[lidarscan] live-map-soak: armed; watching the live map for %.0f s "
+                         "across the page-store ceiling\n",
+                         soakS);
+            sampler->start(500);
+          });
+    }
+
     // --- round-5 field bug C: unlimited record cycles per connect ----------
     //
     // Drives the SHIPPED slots (RecordCluster's Start and Stop, through
@@ -1304,8 +1605,13 @@ int main(int argc, char** argv) {
       const double cycleSeconds = std::max(0.5, parser.value(optRecordCycleSeconds).toDouble());
       QString root = parser.value(optRecordCyclesDir);
       if (root.isEmpty()) {
-        root = QFileInfo(QCoreApplication::applicationDirPath()).absoluteFilePath() +
-               "/record-cycles";
+        // NOT applicationDirPath() any more. On an installed macOS build that
+        // is LidarScan.app/Contents/MacOS — inside the bundle, which the next
+        // install replaces — and this hook's scratch root is exactly what
+        // ended up as the owner's capture root (field bug E). A temp
+        // directory is what a scratch root should always have been.
+        root = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
+                   .filePath("lidarscan-record-cycles");
       }
       // A stale project from a previous run would make an empty cycle look
       // healthy, so the whole root is cleared before the run.
