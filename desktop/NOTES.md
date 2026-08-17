@@ -2820,3 +2820,224 @@ every time, no abort, no `QThread: Destroyed while thread is still running`.
   new UI (§14.5/§15.9's blanket caveat).
 * **No unit tests** for `DeviceDiscovery.{h,cpp}` — consistent with the rest of `desktop/`
   (§7), which is verified end-to-end against the real app rather than with a unit-test suite.
+
+### 16.7 Concurrency fix — auto-detect and a device session must never both hold UDP 56201
+
+**The regression (owner, field Mac, real Mid-360, 2026-08-17).** The
+previously-passing
+
+```
+LidarScan --mid360-selftest 192.168.1.5:192.168.1.159 --quit-after 15
+```
+
+started failing after §16 landed:
+
+```
+bind failed
+[scanengine][info][mid360] device 1: idle -> fault I/O error
+```
+
+`bind failed` is the vendored SDK's own `printf`
+(`third_party/Livox-SDK2/sdk_core/base/network/unix/network_util.cpp:92`),
+raised at `SdkInit` time; the fault is the driver reporting that failure back
+through `add_device()`. The combined `--auto-detect-selftest --mid360-selftest`
+invocation failed the same way — the two hooks used to fire on *identical*
+500 ms timers.
+
+The reported cause is a same-port race: `DiscoverMid360()` binds UDP 56201 (and
+56200) for the whole timeout it is given, and the SDK's push channel binds
+56201 as well, so the newly-added silent on-open pass (`showEvent()`, fires
+when a project has never had Mid-360 settings saved — true on a fresh install)
+can be holding the port at exactly the moment a device arms. Discovery itself
+is proven good against real hardware in the same session (Mid-360 FOUND, D6
+FOUND, screenshot OK) — nothing here is a discovery bug.
+
+#### What actually changed
+
+Discovery and device sessions are now **mutually exclusive, both ways**, and no
+CLI run can get them into the same second at all.
+
+**1. A cancel token the engine does not have** — `DiscoveryGate`, new in
+`src/app/DeviceDiscovery.{h,cpp}`. `engine/include/scanengine/discovery/
+discovery.h` ships no cancellation and `engine/**` is read-only for this task,
+so `DiscoveryWorker` no longer calls `DiscoverMid360()` once for the whole
+timeout. It calls it in **1 s slices** (`DiscoveryGate::kChunkMs`) inside a loop
+that consults the gate before each slice:
+
+* `beginUdpSlice()` checks "canceled" and publishes "bound" **under one lock**,
+  so a cancel can never slip between the two and observe a free port that is
+  about to be taken;
+* `cancelAndWaitForSockets(ms)` sets the flag and then **blocks the caller until
+  the slice in flight has RETURNED** — i.e. until the socket is provably closed.
+  A canceled-but-still-bound socket faults a device exactly as a running one
+  does, so "asked it to stop" is not a safe handoff; "it stopped" is. Cancel
+  latency is bounded by one slice (measured: 600 ms, see below).
+
+Each slice also passes `stop_after_devices = 1`, which is free here because this
+adapter only ever reports the first beacon (§16.1): a pass that hears a lidar
+now releases the port in well under a second instead of sitting out a 3 s clock.
+A canceled pass returns `DiscoveryResult::canceled = true`, and
+`handleDiscoveryFinished()` applies **nothing** from it and does **not** emit
+`autoDetectFinished()` — its "not seen" means "not looked for", which is a
+different sentence, and `main.cpp`'s chain keys off that signal.
+
+**2. `CaptureWindow` serializes both directions.**
+
+* `startDiscovery()` refuses outright while `phase_ != kIdle` (arming, armed,
+  recording). The clicked case says why in a new status line at the top of the
+  auto-detect summary panel (`auto_detect_status_line_`); the silent case only
+  logs, having no dialog and no operator behind it.
+* `stopDiscoveryForDeviceUse()` runs before every engine call that can arm a
+  device: `onTestDevice()`, `onRecord()`, `onPauseResume()` (both directions
+  restart the session, and `Engine::start_session()` restarts every registered
+  device), and — as the last line of defence, directly in front of
+  `host_->addMid360()` — `openDeviceForTab()`. All the `*ForCli` entry points
+  reach the engine through those, so `runMid360SelfTestForCli()`,
+  `triggerRecordForCli()`, `triggerPauseResumeForCli()` are covered by
+  construction rather than by four parallel copies of the check. If the port
+  does not come free, the device is **not** started and the log says so.
+* The manual progress dialog is no longer modal. "Click Test device while
+  auto-detect is running" is a state the operator is allowed to be in — the
+  click cancels the pass, waits for the port, and proceeds; a modal dialog would
+  answer that by making the button unclickable, which is a worse answer than
+  handling it.
+
+**3. `main.cpp` keeps CLI runs out of the situation entirely.**
+
+* A device-arming hook (`--mid360-selftest`) calls
+  `suppressSilentAutoDetectForCli()`, so the on-open pass never starts. **That
+  call sits above every hook that shows the capture window** —
+  `QWidget::show()` delivers `QShowEvent` *synchronously*, so suppressing after
+  `--capture-cluster-demo`'s `cap->show()` would be one stack frame too late.
+* `--auto-detect-selftest` + `--mid360-selftest` now **chain**: the discovery
+  pass runs to completion, and its `autoDetectFinished` handler fires the device
+  self-test 200 ms later. No parallel timers, and the manual follow-up pass that
+  hook normally does is skipped in that mode (one listener on 56201 at a time,
+  in a fixed order).
+* New `--auto-detect-cancel-selftest` evidence hook: deliberately provokes the
+  collision (start a pass, drive Test device 400 ms into it) and then, with the
+  device armed, clicks Auto-detect again — so **both** directions of the
+  exclusion are re-verifiable on the field Mac, not just argued from the source.
+* `CaptureWindow::log()` now also writes to stderr as `[lidarscan][capture]`.
+  That log used to exist only inside the widget, which meant a headless CLI run
+  (every field-Mac session is one) could see the engine's side of a capture but
+  not the app's — including these serialization messages.
+
+#### Verification (2026-08-17, Apple M4, macOS 26.5.1, arm64 Release)
+
+Rebuilt (`desktop/build`, normal arm64, not the universal packaging). A full
+recompile of every file under `desktop/src` produced **zero warnings**.
+
+**(a) The port conflict, reproduced directly.** `bind_any_udp()` sets
+`SO_REUSEADDR + SO_REUSEPORT` on `0.0.0.0`; the SDK's `CreateSocket()` sets
+`SO_REUSEADDR` only, and binds either `netif` or `INADDR_ANY`. Against a
+discovery-style holder on `0.0.0.0:56201`:
+
+| SDK-side bind | result |
+| --- | --- |
+| `0.0.0.0`, `SO_REUSEADDR` (the SDK's `host_ip == "local"` path) | **EADDRINUSE** |
+| specific IP, no `SO_REUSEADDR` | **EADDRINUSE** |
+| specific IP, `SO_REUSEADDR` (the normal push-channel path) | OK on this host |
+
+**(b) The gate, against the real worker.** A harness linked `DeviceDiscovery.cpp`
++ `libscanengine.a` and drove a real `DiscoveryWorker` on a `QThread` exactly as
+`startDiscovery()` does, attempting the SDK's plain bind at each step:
+
+```
+0) baseline SDK-style bind (nothing running): OK
+1) SDK-style bind WHILE discovery listens: Address already in use
+2) cancelAndWaitForSockets() -> released after 600 ms
+3) SDK-style bind right after the cancel returned: OK
+4) worker reported canceled=true (partial result must not be applied)
+5) uncancelled pass completed: canceled=false mid360.found=true
+```
+
+Line 5 with `scripts/replay_mid360_heartbeat.py` running: the sliced,
+`stop_after_devices = 1` listen still finds the replayed real beacon
+(`found Mid-360 ARMCP7K0034759 at 192.168.1.159 fw 35010108, expects host
+192.168.1.5`), so the chunking did not cost discovery its job.
+
+**(c) Chained ordering, replayer + `mid360_sim` on loopback.**
+`--auto-detect-selftest --mid360-selftest 127.000.000.001:127.0.0.1`:
+
+```
+[lidarscan][capture] auto-detect (silent, on open) suppressed — a device-arming CLI hook owns this run and needs UDP 56201
+[lidarscan] mid360-selftest: chained behind --auto-detect-selftest (no concurrent UDP 56201 listener)
+[lidarscan][capture] auto-detect: Mid-360 found, D6 not seen, UM982 not seen
+[lidarscan] auto-detect-selftest: Mid-360 FOUND, D6 not seen, UM982 not seen
+[lidarscan] auto-detect-selftest: discovery complete, UDP 56201 released — chaining to --mid360-selftest
+[scanengine][info][mid360] device 1: idle -> starting
+[lidarscan] mid360-selftest PASSED — first packet after 2.06 s
+```
+
+Strictly ordered, one listener at a time, and discovery still FOUND the beacon.
+
+**(d) Silent-pass suppression, with a control.** `--capture-cluster-demo` shows
+the capture window, so the silent pass fires:
+
+```
+[lidarscan][capture] auto-detect (silent, on open): Mid-360 not seen, D6 not seen, UM982 not seen
+```
+
+Add `--mid360-selftest` to the same command and it does not:
+
+```
+[lidarscan][capture] auto-detect (silent, on open) suppressed — a device-arming CLI hook owns this run and needs UDP 56201
+[lidarscan] mid360-selftest PASSED — first packet after 1.55 s
+```
+
+**(e) The GUI collision, both directions** (`--auto-detect-cancel-selftest
+--mid360-selftest`, no beacon in the air so the listen runs its full 3 s and the
+click lands inside slice 1):
+
+```
+[lidarscan] auto-detect-cancel-selftest: starting a discovery pass, then Test device 400 ms into it
+[lidarscan][capture] auto-detect canceled so Test device can have UDP 56201 — port released
+[lidarscan][capture] self-test started
+[lidarscan][capture] auto-detect: canceled before completion — nothing applied
+[lidarscan] mid360-selftest PASSED — first packet after 2.13 s
+[lidarscan] auto-detect-cancel-selftest: clicking Auto-detect with the device armed — must be refused
+[lidarscan][capture] auto-detect skipped — a capture session holds UDP 56201
+```
+
+#### One finding the field Mac should check first
+
+The local evidence does **not** fully confirm that discovery's socket is what
+broke the field run, and the difference matters because it is a one-command fix
+if it is the other cause.
+
+The SDK's push channel for a non-empty `host_ip` binds *that specific address*
+with `SO_REUSEADDR`, and on this host that **coexists** with a discovery pass
+holding `0.0.0.0:56201` — table (a), row 3; confirmed end to end by running the
+real app's `SdkInit` with both `56201` and `56200` held discovery-style for the
+whole run, which started cleanly. What *did* reproduce the field log verbatim,
+with no discovery anywhere in the picture, is an SDK bind to a host IP **the Mac
+does not hold**:
+
+```
+$ lidarscan --mid360-selftest 192.168.77.7:192.168.77.9
+bind failed
+[scanengine][info][mid360] device 1: idle -> fault I/O error
+```
+
+`bind(2)` returns `EADDRNOTAVAIL` there, and the SDK's `printf("bind failed")`
+discards `errno` — so `EADDRINUSE` and `EADDRNOTAVAIL` are *indistinguishable*
+in the log the field session captured. The field host IP `192.168.1.5` is an
+`ifconfig alias` that does not survive a reboot (§16.1's fix line exists for
+exactly this), so before blaming concurrency on real hardware, check:
+
+```
+ifconfig | grep 192.168.1.5      # nothing => sudo ifconfig <if> alias 192.168.1.5 255.255.255.255
+```
+
+The serialization above is still correct and still required — it removes the
+whole class of overlap, including the two rows of table (a) that genuinely do
+fail — but it may not be the whole of the field regression.
+
+#### Files
+
+`src/app/DeviceDiscovery.h`, `src/app/DeviceDiscovery.cpp` (DiscoveryGate,
+sliced listen, `canceled`), `src/app/CaptureWindow.h`,
+`src/app/CaptureWindow.cpp` (both-ways exclusion, status line, non-modal
+progress, stderr log), `src/main.cpp` (suppression, chaining,
+`--auto-detect-cancel-selftest`). No `engine/**` change.

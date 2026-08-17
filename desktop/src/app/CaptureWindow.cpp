@@ -28,6 +28,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <cstdio>
 
 #include "app/DeviceDiscovery.h"
 #include "app/EngineHost.h"
@@ -107,6 +108,18 @@ void CaptureWindow::setProjectDir(const QString& dir) {
 
 void CaptureWindow::showEvent(QShowEvent* event) {
   QDialog::showEvent(event);
+  // A device-arming CLI hook owns this run: the silent pass must not fire at
+  // all, or it holds UDP 56201 while the hook's SdkInit tries to bind it
+  // (NOTES.md §16.7). Marked as "prompted" so a later setProjectDir() cannot
+  // resurrect it either.
+  if (suppress_silent_auto_detect_) {
+    if (!auto_detect_prompted_for_project_) {
+      auto_detect_prompted_for_project_ = true;
+      log("auto-detect (silent, on open) suppressed — a device-arming CLI hook owns "
+          "this run and needs UDP 56201");
+    }
+    return;
+  }
   // Silent, once per project, and only when nothing has ever been saved for
   // it — see had_saved_mid360_settings_'s comment in the header. Never fires
   // mid-capture (phase_ != kIdle) or while a pass is already running.
@@ -443,6 +456,14 @@ scanengine::ScanError CaptureWindow::serialWrite(const std::uint8_t* data, std::
 }
 
 bool CaptureWindow::openDeviceForTab(QString* err) {
+  // The last line of defence, and the only one that sits directly in front of
+  // the engine call that binds the port (host_->addMid360 -> SdkInit). A
+  // no-op whenever a caller above already serialized, which is every current
+  // caller — but no future add_device path can slip past it.
+  if (!stopDiscoveryForDeviceUse("device start")) {
+    if (err) *err = "auto-detect is still holding UDP 56201 — try again in a moment";
+    return false;
+  }
   device_is_d6_ = (tabs_->currentIndex() == 0);
 
   if (device_is_d6_) {
@@ -553,6 +574,13 @@ void CaptureWindow::onTestDevice() {
   }
   if (!host_ || !host_->ok()) {
     log("engine unavailable");
+    return;
+  }
+  // Discovery and the Livox SDK both want UDP 56201; the test must own it
+  // alone. This BLOCKS (bounded by one DiscoveryGate slice, ~1 s) until the
+  // discovery worker's socket is really closed — see NOTES.md §16.7.
+  if (!stopDiscoveryForDeviceUse("Test device")) {
+    log("self-test: refusing to start — the auto-detect worker still holds UDP 56201");
     return;
   }
 
@@ -670,6 +698,12 @@ void CaptureWindow::onRecord() {
     return;
   }
   project_dir_ = dir;
+  // Record restarts the session, which restarts every registered device —
+  // i.e. it re-binds the SDK's push port. Same exclusion as Test device.
+  if (!stopDiscoveryForDeviceUse("Record")) {
+    log("record: refusing to start — the auto-detect worker still holds UDP 56201");
+    return;
+  }
 
   QString err;
   if (!startRecordingSession(&err)) {
@@ -690,6 +724,16 @@ void CaptureWindow::onRecord() {
 }
 
 void CaptureWindow::onPauseResume() {
+  // Both directions stop the current session and start another one, and
+  // Engine::start_session() restarts every still-registered device — so both
+  // re-bind the SDK's push port and both need the port to themselves. In
+  // practice discovery can never be in flight here (startDiscovery refuses
+  // while phase_ != kIdle), which is exactly why this is a cheap no-op rather
+  // than a redundant one: it is the invariant stated in code.
+  if (!stopDiscoveryForDeviceUse(phase_ == Phase::kRecording ? "Pause" : "Resume")) {
+    log("pause/resume: refusing — the auto-detect worker still holds UDP 56201");
+    return;
+  }
   QString err;
   if (phase_ == Phase::kRecording) {
     accumulateRecorderStats();
@@ -884,6 +928,13 @@ void CaptureWindow::triggerStopForCli() { onStop(); }
 
 void CaptureWindow::triggerAutoDetectForCli() { onAutoDetectClicked(); }
 
+void CaptureWindow::suppressSilentAutoDetectForCli() {
+  suppress_silent_auto_detect_ = true;
+  // setProjectDir() clears auto_detect_prompted_for_project_, and main.cpp
+  // calls it after this — showEvent() re-checks suppress_silent_auto_detect_
+  // first, so the order does not matter.
+}
+
 // --- Auto-detect ------------------------------------------------------------
 //
 // docs/design/REVIEW_FEEDBACK.md, 2026-08-17 round 4 item 5 (the owner, after
@@ -915,6 +966,14 @@ void CaptureWindow::buildAutoDetectSection(QVBoxLayout* v) {
   auto* pv = new QVBoxLayout(auto_detect_panel_);
   pv->setContentsMargins(2, 4, 2, 10);
   pv->setSpacing(3);
+
+  // Why the pass did not run / did not finish. Above the per-sensor lines
+  // because it overrides them: when this is visible, whatever those lines say
+  // is from an earlier pass.
+  auto_detect_status_line_ = new QLabel();
+  auto_detect_status_line_->setWordWrap(true);
+  auto_detect_status_line_->setVisible(false);
+  pv->addWidget(auto_detect_status_line_);
 
   auto_detect_mid360_line_ = new QLabel();
   auto_detect_mid360_line_->setWordWrap(true);
@@ -948,6 +1007,49 @@ void CaptureWindow::buildAutoDetectSection(QVBoxLayout* v) {
   v->addWidget(auto_detect_panel_);
 }
 
+void CaptureWindow::setAutoDetectStatus(const QString& text, const char* tone) {
+  if (!auto_detect_status_line_) return;
+  auto_detect_status_line_->setText(text);
+  auto_detect_status_line_->setProperty("tone", tone);
+  repolish(auto_detect_status_line_);
+  auto_detect_status_line_->setVisible(!text.isEmpty());
+  if (auto_detect_panel_ && !text.isEmpty()) auto_detect_panel_->setVisible(true);
+}
+
+void CaptureWindow::closeAutoDetectProgress() {
+  if (!auto_detect_progress_) return;
+  auto_detect_progress_->close();
+  auto_detect_progress_->deleteLater();
+  auto_detect_progress_ = nullptr;
+  auto_detect_progress_label_ = nullptr;
+}
+
+bool CaptureWindow::stopDiscoveryForDeviceUse(const QString& what) {
+  if (!discovery_in_flight_) return true;
+
+  // Several call sites deliberately overlap (onTestDevice -> openDeviceForTab,
+  // say), and discovery_in_flight_ stays true until the worker's queued
+  // finished() lands — so the second call still has work to do (re-confirm the
+  // port is free) but nothing new to SAY. Only the first one narrates.
+  const bool already = discovery_canceled_;
+  discovery_canceled_ = true;
+  // 3 s is generous against a bound of one DiscoveryGate::kChunkMs slice; the
+  // margin is for a machine under load, not for a second listen window.
+  const bool released = discovery_gate_ ? discovery_gate_->cancelAndWaitForSockets(3000) : true;
+  closeAutoDetectProgress();
+  if (already) return released;
+
+  const QString msg =
+      released
+          ? QString("auto-detect canceled so %1 can have UDP 56201 — port released").arg(what)
+          : QString("auto-detect canceled for %1 but its UDP socket did not come free in "
+                    "time — not starting the device")
+                .arg(what);
+  setAutoDetectStatus(msg, released ? "warn" : "bad");
+  log(msg);
+  return released;
+}
+
 void CaptureWindow::onAutoDetectClicked() {
   if (discovery_in_flight_) return;
   startDiscovery(/*silent=*/false);
@@ -955,13 +1057,38 @@ void CaptureWindow::onAutoDetectClicked() {
 
 void CaptureWindow::startDiscovery(bool silent) {
   if (discovery_in_flight_) return;
+  // BOTH ways (NOTES.md §16.7). A device session owns UDP 56201 for as long
+  // as it lives, so no discovery pass — silent or clicked — may start while
+  // one is arming, armed or recording. The clicked case says why, in the same
+  // panel the results land in; the silent case only logs, because it has no
+  // dialog and the operator did not ask for anything.
+  if (phase_ != Phase::kIdle) {
+    const QString msg =
+        "Auto-detect is unavailable while a capture session is running — it listens on "
+        "UDP 56201, the same port the Mid-360 driver binds. Stop the capture first.";
+    if (silent) {
+      log("auto-detect (silent, on open) skipped — a capture session holds UDP 56201");
+    } else {
+      setAutoDetectStatus(msg, "warn");
+      log("auto-detect skipped — a capture session holds UDP 56201");
+    }
+    return;
+  }
+
   discovery_in_flight_ = true;
+  discovery_canceled_ = false;
+  setAutoDetectStatus(QString(), "warn");
   auto_detect_btn_->setEnabled(false);
 
   if (!silent) {
     auto_detect_progress_ = new QDialog(this);
     auto_detect_progress_->setWindowTitle("Auto-detect devices");
-    auto_detect_progress_->setModal(true);
+    // NOT modal, deliberately. The window behind it holds the Test device
+    // button, and "click Test device while auto-detect is running" is a state
+    // the operator is allowed to be in: the click cancels the pass, waits for
+    // the port, and proceeds. A modal dialog would answer that by making the
+    // button unclickable, which is a worse answer than handling it.
+    auto_detect_progress_->setModal(false);
     auto_detect_progress_->setMinimumWidth(380);
     auto* dv = new QVBoxLayout(auto_detect_progress_);
     auto_detect_progress_label_ = new QLabel("Listening for Mid-360 heartbeat…");
@@ -999,6 +1126,10 @@ void CaptureWindow::startDiscovery(bool silent) {
   auto* thread = new QThread();
   discovery_thread_ = thread;
   auto* worker = new DiscoveryWorker(3000, 700);
+  // Grabbed BEFORE the thread starts: this is what a device start cancels
+  // against, and it must exist from the instant discovery_in_flight_ is true.
+  // shared_ptr, so it outlives the worker's own deleteLater.
+  discovery_gate_ = worker->gate();
   worker->moveToThread(thread);
   connect(thread, &QThread::started, worker, &DiscoveryWorker::run);
   connect(worker, &DiscoveryWorker::phase, this, [this](const QString& label) {
@@ -1022,12 +1153,20 @@ void CaptureWindow::startDiscovery(bool silent) {
 void CaptureWindow::handleDiscoveryFinished(const DiscoveryResult& r, bool silent) {
   discovery_in_flight_ = false;
   if (discovery_thread_) discovery_thread_ = nullptr;  // it is finishing itself off; see startDiscovery()
+  discovery_gate_.reset();
   if (auto_detect_btn_) auto_detect_btn_->setEnabled(true);
-  if (auto_detect_progress_) {
-    auto_detect_progress_->close();
-    auto_detect_progress_->deleteLater();
-    auto_detect_progress_ = nullptr;
-    auto_detect_progress_label_ = nullptr;
+  closeAutoDetectProgress();
+
+  // A canceled pass has NO verdict. Its "not seen" fields mean "not looked
+  // for", so nothing is applied and autoDetectFinished() is not emitted —
+  // main.cpp's --auto-detect-selftest chain keys off that signal and must not
+  // treat an aborted listen as a result. stopDiscoveryForDeviceUse() has
+  // already put the reason on the status line.
+  if (r.canceled || discovery_canceled_) {
+    discovery_canceled_ = false;
+    log(QString("auto-detect%1: canceled before completion — nothing applied")
+            .arg(silent ? " (silent, on open)" : ""));
+    return;
   }
 
   applyMid360Result(r, silent);
@@ -1214,6 +1353,13 @@ void CaptureWindow::applyUm982Result(const DiscoveryResult& r, bool silent) {
 }
 
 void CaptureWindow::log(const QString& s) {
+  // Also to stderr, next to the engine's own [scanengine][...] lines. This
+  // window's log used to exist only inside the widget, which meant a headless
+  // CLI evidence run (--mid360-selftest and friends, and every field-Mac
+  // session driven from a terminal) could see the engine's side of a capture
+  // but not the app's — including, now, the discovery/device serialization
+  // messages that say WHY a device did or did not arm (NOTES.md §16.7).
+  std::fprintf(stderr, "[lidarscan][capture] %s\n", s.toUtf8().constData());
   if (!log_) return;
   log_->appendPlainText(QDateTime::currentDateTime().toString("hh:mm:ss.zzz ") + s);
 }

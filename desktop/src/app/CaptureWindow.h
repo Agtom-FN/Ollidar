@@ -90,6 +90,7 @@
 #include <QString>
 
 #include <cstdint>
+#include <memory>
 
 #include "scanengine/core/types.h"
 #include "scanengine/record/lscan.h"
@@ -118,6 +119,7 @@ struct DiscoveryResult;  // app/DeviceDiscovery.h — kept out of this header on
                           // purpose so CaptureWindow.h never names an engine
                           // discovery type; see DeviceDiscovery.h's file
                           // comment.
+class DiscoveryGate;      // ditto — the cancel token, app/DeviceDiscovery.h
 
 class CaptureWindow : public QDialog {
   Q_OBJECT
@@ -165,6 +167,13 @@ class CaptureWindow : public QDialog {
   // the result has been applied to the UI. Evidence hook for
   // --auto-detect-selftest (main.cpp).
   void triggerAutoDetectForCli();
+  // main.cpp calls this when a device-ARMING CLI hook (--mid360-selftest and
+  // friends) owns this run: the silent on-open discovery pass must not fire
+  // at all, because the CLI hook is about to bind UDP 56201 through the Livox
+  // SDK and a discovery pass holding that port faults the device. See
+  // NOTES.md §16.7. Not a UI affordance — there is no way to reach it from
+  // the window itself.
+  void suppressSilentAutoDetectForCli();
 
  private:
   enum class Phase { kIdle, kTesting, kReady, kRecording, kPaused };
@@ -216,6 +225,20 @@ class CaptureWindow : public QDialog {
   void onAutoDetectClicked();
   void startDiscovery(bool silent);
   void handleDiscoveryFinished(const DiscoveryResult& r, bool silent);
+  // --- Discovery <-> device serialization (NOTES.md §16.7) -----------------
+  //
+  // Discovery binds UDP 56201 and so does the Livox SDK's push channel; on
+  // macOS the second bind loses (`bind failed` -> device fault). These two
+  // are the whole of the mutual exclusion, and it runs BOTH ways:
+  //   * startDiscovery() refuses outright while a device session is live.
+  //   * stopDiscoveryForDeviceUse() is called before every engine call that
+  //     can arm a device, and BLOCKS until the worker's socket is actually
+  //     closed — a canceled-but-still-bound socket faults the device exactly
+  //     as a running one does. Returns false if the port did not come free,
+  //     which the caller reports rather than papers over.
+  bool stopDiscoveryForDeviceUse(const QString& what);
+  void setAutoDetectStatus(const QString& text, const char* tone);
+  void closeAutoDetectProgress();
   void applyMid360Result(const DiscoveryResult& r, bool silent);
   void applyD6Result(const DiscoveryResult& r, bool silent);
   void applyUm982Result(const DiscoveryResult& r, bool silent);
@@ -252,6 +275,11 @@ class CaptureWindow : public QDialog {
   // --- Auto-detect --------------------------------------------------------
   QPushButton* auto_detect_btn_ = nullptr;
   QWidget* auto_detect_panel_ = nullptr;   // hidden until the first pass returns
+  // Why the last pass did not run / did not finish — "a capture session is
+  // running", "canceled so Test device could take UDP 56201". Empty and
+  // hidden when the pass simply ran, in which case the per-sensor lines below
+  // say everything.
+  QLabel* auto_detect_status_line_ = nullptr;
   QLabel* auto_detect_mid360_line_ = nullptr;
   QLabel* auto_detect_d6_line_ = nullptr;
   QLabel* auto_detect_um982_line_ = nullptr;
@@ -262,6 +290,15 @@ class CaptureWindow : public QDialog {
   QLabel* auto_detect_progress_label_ = nullptr;
   QThread* discovery_thread_ = nullptr;
   bool discovery_in_flight_ = false;
+  // The gate for the pass in flight (app/DeviceDiscovery.h). Non-null exactly
+  // while discovery_in_flight_ is true; shared with the worker so cancelling
+  // is safe even as the worker tears itself down.
+  std::shared_ptr<DiscoveryGate> discovery_gate_;
+  // Set by stopDiscoveryForDeviceUse(): the finished() still queued behind us
+  // carries a PARTIAL result that must not be applied to any field.
+  bool discovery_canceled_ = false;
+  // Set by suppressSilentAutoDetectForCli().
+  bool suppress_silent_auto_detect_ = false;
   // Reset in setProjectDir(): the silent on-open auto-run fires at most once
   // per project per time this window is shown, not once per process.
   bool auto_detect_prompted_for_project_ = false;

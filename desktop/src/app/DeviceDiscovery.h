@@ -24,9 +24,13 @@
 #pragma once
 
 #include <QMetaType>
+#include <QMutex>
 #include <QObject>
 #include <QString>
 #include <QStringList>
+#include <QWaitCondition>
+
+#include <memory>
 
 namespace lidarscan {
 
@@ -73,6 +77,69 @@ struct DiscoveryResult {
   // Non-empty only if the Mid-360 discovery call itself failed (not the same
   // as "nothing found" — that is mid360.found == false with this empty).
   QString mid360_error;
+  // The pass was cut short by DiscoveryGate::cancelAndWaitForSockets() (a
+  // device session needed UDP 56201). Everything else in this struct is
+  // partial and MUST NOT be applied to the UI — "not seen" here means "not
+  // looked for", which is a different sentence entirely.
+  bool canceled = false;
+};
+
+// ===========================================================================
+// DiscoveryGate — the cancel token engine/…/discovery.h does not have
+// ===========================================================================
+//
+// THE REGRESSION THIS EXISTS FOR (real hardware, 2026-08-17; NOTES.md §16.7).
+// scanengine::discovery::DiscoverMid360() binds UDP 56201 (any-bound, so the
+// broadcast heartbeat reaches it) and blocks for the WHOLE timeout it was
+// given. The Livox SDK's push channel must bind 56201 too, and on macOS/BSD a
+// second bind of the same addr:port succeeds only when EVERY socket holding
+// it set SO_REUSEPORT — which discovery does (net_compat.h) and the vendored
+// SDK does not. So a discovery pass in flight makes the next SdkInit fail with
+// a raw `bind failed`, which surfaces as `device 1: idle -> fault I/O error`.
+// Discovery is not wrong and the driver is not wrong; they must simply never
+// hold the port at the same time.
+//
+// discovery.h ships no cancellation and engine/** is read-only here, so the
+// worker does NOT call DiscoverMid360 once for the full timeout. It calls it
+// in kChunkMs slices inside a loop that consults this gate before every slice.
+// cancelAndWaitForSockets() then blocks its caller until the slice in flight
+// has RETURNED — i.e. until the socket is provably closed, not merely until a
+// flag was set. A canceled-but-still-bound socket reproduces the fault exactly
+// as a non-canceled one does, so "asked it to stop" is not a safe handoff;
+// "it stopped" is. Cancel latency is bounded by one slice (~1 s).
+//
+// THREADING: every method is safe from any thread; the begin/end pair is meant
+// for the worker thread and cancelAndWaitForSockets() for the GUI thread. The
+// gate outlives the worker (both hold a shared_ptr), so a GUI-side cancel is
+// safe even against a worker that is already tearing itself down.
+class DiscoveryGate {
+ public:
+  // One listen slice. 1000 ms is a whole beacon period (the heartbeat is
+  // 1 Hz), so a slice is still a meaningful window, and it caps the worst-case
+  // wait a device start pays for a discovery pass that must get out of the way.
+  static constexpr int kChunkMs = 1000;
+
+  // --- GUI-thread side ----------------------------------------------------
+  // Ask the worker to stop and BLOCK until it holds no UDP port (or wait_ms
+  // expires). True means the port is provably free and it is safe to arm a
+  // device; false means the caller should say so rather than pretend.
+  bool cancelAndWaitForSockets(int wait_ms);
+  bool wasCanceled() const;
+
+  // --- worker-thread side -------------------------------------------------
+  // False => canceled; do not bind, leave the loop. The check and the "I am
+  // bound" publication happen under one lock, so a cancel can never slip
+  // between them and observe a free port that is about to be taken.
+  bool beginUdpSlice();
+  void endUdpSlice();
+  void markFinished();
+
+ private:
+  mutable QMutex mutex_;
+  QWaitCondition released_;
+  bool cancel_ = false;
+  bool udp_bound_ = false;
+  bool finished_ = false;
 };
 
 // Runs one full discovery pass synchronously: Mid-360 heartbeat listen, then
@@ -93,6 +160,11 @@ class DiscoveryWorker : public QObject {
  public:
   DiscoveryWorker(int mid360_timeout_ms, int serial_probe_ms, QObject* parent = nullptr);
 
+  // The gate this worker consults. Held by shared_ptr precisely so the GUI
+  // side can keep cancelling against it after the worker has deleteLater'd
+  // itself on its own thread.
+  std::shared_ptr<DiscoveryGate> gate() const { return gate_; }
+
  Q_SIGNALS:
   void phase(const QString& label);
   void finished(lidarscan::DiscoveryResult result);
@@ -103,6 +175,7 @@ class DiscoveryWorker : public QObject {
  private:
   int mid360_timeout_ms_;
   int serial_probe_ms_;
+  std::shared_ptr<DiscoveryGate> gate_;
 };
 
 }  // namespace lidarscan

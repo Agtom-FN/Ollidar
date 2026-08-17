@@ -44,6 +44,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <functional>
 #include <vector>
 
 #include "app/CaptureWindow.h"
@@ -167,6 +168,13 @@ int main(int argc, char** argv) {
       "sensor's pass found and exits 0 either way — 'nothing seen' is a valid, "
       "reported outcome, not a failure of this hook. Combine with --shot to capture "
       "the summary panel.");
+  QCommandLineOption optAutoDetectCancelSelftest(
+      "auto-detect-cancel-selftest",
+      "Evidence hook for the §16.7 concurrency fix: open the capture window, start an "
+      "auto-detect pass, then drive 'Test device' 400 ms INTO it — deliberately the "
+      "collision the GUI has to survive (discovery must cancel, release UDP 56201 and "
+      "let the device arm). Requires --mid360-selftest for the addresses; overrides the "
+      "normal discovery-then-selftest chaining, which exists precisely to avoid this.");
   QCommandLineOption optAutoDetectShot(
       "auto-detect-shot",
       "With --auto-detect-selftest: QWidget::grab() the capture window (button + summary "
@@ -271,6 +279,7 @@ int main(int argc, char** argv) {
   parser.addOption(optMeasureSelftest);
   parser.addOption(optMid360Selftest);
   parser.addOption(optAutoDetectSelftest);
+  parser.addOption(optAutoDetectCancelSelftest);
   parser.addOption(optAutoDetectShot);
   parser.addOption(optMid360RecordInto);
   parser.addOption(optBuildSynthMid360);
@@ -701,6 +710,39 @@ int main(int argc, char** argv) {
     });
   }
 
+  // --- Discovery vs. device arming: one at a time, never both (NOTES.md
+  // §16.7) ------------------------------------------------------------------
+  //
+  // scanengine::discovery listens on UDP 56201 and the Livox SDK's push
+  // channel binds UDP 56201; on macOS the second bind loses, and the losing
+  // side is whichever one starts later — which on a real Mid-360 was the
+  // driver: `bind failed` in the SDK log, `device 1: idle -> fault I/O error`
+  // in ours. CaptureWindow serializes the two at runtime (it cancels a pass in
+  // flight and waits for the socket to close), but a CLI run should never get
+  // into that state to begin with, so:
+  //   * a device-arming hook SUPPRESSES the silent on-open pass outright, and
+  //   * --auto-detect-selftest + --mid360-selftest together CHAIN, they do not
+  //     both fire on a 500 ms timer (see the two blocks below).
+  //
+  // THIS MUST STAY ABOVE EVERY HOOK THAT SHOWS THE CAPTURE WINDOW.
+  // QWidget::show() delivers QShowEvent SYNCHRONOUSLY, so CaptureWindow's
+  // silent on-open pass starts inside the show() call itself — suppressing it
+  // after --capture-cluster-demo's cap->show() below would be too late by one
+  // stack frame.
+  const bool cliArmsDevice = parser.isSet(optMid360Selftest);
+  // ...except when --auto-detect-cancel-selftest asks for the collision ON
+  // PURPOSE, to prove CaptureWindow survives it. That hook drives both sides
+  // itself, so it opts out of the chaining below rather than out of the
+  // serialization, which is the thing under test.
+  const bool cancelProbe = parser.isSet(optAutoDetectCancelSelftest);
+  const bool chainToSelftest =
+      cliArmsDevice && parser.isSet(optAutoDetectSelftest) && !cancelProbe;
+  // Filled in by the --mid360-selftest block below; called by the auto-detect
+  // block's completion handler when both hooks are set. Populated before the
+  // event loop runs, so the timer-driven chain always sees it.
+  auto* chainedDeviceSelftest = new std::function<void()>();
+  if (cliArmsDevice) win.captureWindow()->suppressSilentAutoDetectForCli();
+
   if (parser.isSet(optCaptureClusterDemo)) {
     const QString prefix = QFileInfo(parser.value(optCaptureClusterDemo)).absoluteFilePath();
     QDir().mkpath(QFileInfo(prefix).absolutePath());
@@ -763,34 +805,48 @@ int main(int argc, char** argv) {
     if (!projectDir.isEmpty()) cap->setProjectDir(projectDir);
     cap->show();
     cap->raise();
-    // showEvent() below may ALSO fire the silent on-open pass (if this
-    // project has never had Mid-360 settings saved) racing this hook's own
-    // explicit trigger a few lines down — CaptureWindow's own
-    // discovery_in_flight_ guard makes whichever one loses the race a
-    // harmless no-op. So this hook does not just fire once: it fires the
-    // explicit button click again after the FIRST pass (silent or not)
-    // completes, guaranteeing at least one manual (dialog-shown, always-
-    // overwrite) pass is exercised regardless of how the race went.
+    // Without a device-arming hook, showEvent() may ALSO fire the silent
+    // on-open pass (if this project has never had Mid-360 settings saved)
+    // racing this hook's own explicit trigger a few lines down —
+    // CaptureWindow's own discovery_in_flight_ guard makes whichever one
+    // loses the race a harmless no-op. So this hook does not just fire once:
+    // it fires the explicit button click again after the FIRST pass (silent
+    // or not) completes, guaranteeing at least one manual (dialog-shown,
+    // always-overwrite) pass is exercised regardless of how the race went.
+    //
+    // WITH a device-arming hook there is no silent pass at all (suppressed
+    // above) and no follow-up pass either: this hook's single pass runs to
+    // completion and then hands over to the device self-test. One listener on
+    // 56201 at a time, in a fixed order, is the whole point.
     const QString shotPath = parser.value(optAutoDetectShot);
-    auto* firedManualFollowup = new bool(false);
+    auto* firedFollowup = new bool(false);
     QObject::connect(cap, &lidarscan::CaptureWindow::autoDetectFinished, &app,
-                     [cap, shotPath, firedManualFollowup](bool mid360Found, bool d6Found,
-                                                          bool um982Found) {
+                     [cap, shotPath, firedFollowup, chainedDeviceSelftest, chainToSelftest](
+                         bool mid360Found, bool d6Found, bool um982Found) {
                        std::fprintf(stderr,
                                     "[lidarscan] auto-detect-selftest: Mid-360 %s, D6 %s, "
                                     "UM982 %s\n",
                                     mid360Found ? "FOUND" : "not seen",
                                     d6Found ? "FOUND" : "not seen",
                                     um982Found ? "FOUND" : "not seen");
-                       if (!*firedManualFollowup) {
-                         *firedManualFollowup = true;
-                         QTimer::singleShot(200, cap, [cap] { cap->triggerAutoDetectForCli(); });
+                       if (!shotPath.isEmpty()) {
+                         QDir().mkpath(QFileInfo(shotPath).absolutePath());
+                         const bool ok = cap->grab().save(shotPath);
+                         std::fprintf(stderr, "[lidarscan] auto-detect-shot: %s -> %s\n",
+                                      ok ? "OK" : "FAILED", shotPath.toUtf8().constData());
                        }
-                       if (shotPath.isEmpty()) return;
-                       QDir().mkpath(QFileInfo(shotPath).absolutePath());
-                       const bool ok = cap->grab().save(shotPath);
-                       std::fprintf(stderr, "[lidarscan] auto-detect-shot: %s -> %s\n",
-                                    ok ? "OK" : "FAILED", shotPath.toUtf8().constData());
+                       if (*firedFollowup) return;
+                       *firedFollowup = true;
+                       if (chainToSelftest && *chainedDeviceSelftest) {
+                         std::fprintf(stderr,
+                                      "[lidarscan] auto-detect-selftest: discovery complete, "
+                                      "UDP 56201 released — chaining to --mid360-selftest\n");
+                         QTimer::singleShot(200, cap, [chainedDeviceSelftest] {
+                           (*chainedDeviceSelftest)();
+                         });
+                         return;
+                       }
+                       QTimer::singleShot(200, cap, [cap] { cap->triggerAutoDetectForCli(); });
                      });
     QTimer::singleShot(500, cap, [cap] { cap->triggerAutoDetectForCli(); });
   }
@@ -843,9 +899,41 @@ int main(int argc, char** argv) {
             });
           });
         });
-    QTimer::singleShot(500, cap, [cap, hostIp, lidarIp] {
+    // The one place the self-test is actually kicked off. Either a 500 ms
+    // timer owns it (this hook alone) or the auto-detect chain does (both
+    // hooks) — never both, and never concurrently: the two hooks used to fire
+    // on identical 500 ms timers, which put a discovery listener and an
+    // SdkInit on UDP 56201 at the same instant.
+    *chainedDeviceSelftest = [cap, hostIp, lidarIp] {
       cap->runMid360SelfTestForCli(hostIp, lidarIp);
-    });
+    };
+    if (cancelProbe) {
+      // The deliberate collision: a pass starts, and 400 ms later — well
+      // inside its first 1 s listen slice — the device arms. CaptureWindow
+      // must cancel the pass, WAIT for the socket, and then start the device.
+      cap->show();
+      cap->raise();
+      std::fprintf(stderr,
+                   "[lidarscan] auto-detect-cancel-selftest: starting a discovery pass, "
+                   "then Test device 400 ms into it\n");
+      QTimer::singleShot(500, cap, [cap] { cap->triggerAutoDetectForCli(); });
+      QTimer::singleShot(900, cap, [chainedDeviceSelftest] { (*chainedDeviceSelftest)(); });
+      // ...and the other direction of the same exclusion: with the device now
+      // armed, a click on "Auto-detect devices" must be REFUSED, not queued
+      // and not run. 5 s is well after the self-test has settled either way.
+      QTimer::singleShot(5000, cap, [cap] {
+        std::fprintf(stderr,
+                     "[lidarscan] auto-detect-cancel-selftest: clicking Auto-detect with "
+                     "the device armed — must be refused\n");
+        cap->triggerAutoDetectForCli();
+      });
+    } else if (chainToSelftest) {
+      std::fprintf(stderr,
+                   "[lidarscan] mid360-selftest: chained behind --auto-detect-selftest "
+                   "(no concurrent UDP 56201 listener)\n");
+    } else {
+      QTimer::singleShot(500, cap, [chainedDeviceSelftest] { (*chainedDeviceSelftest)(); });
+    }
   }
 
   // C4 evidence hook: a REAL A15 kPostProcess job through ProcessingDock's own
