@@ -182,3 +182,10 @@ both closed × keyframes on / off. Screenshots: `redesign-exports/fix-r4-*.png`.
     Export beside preview; 2+ selected → Merge unlocks. Same engines, fewer tabs.
 
 **Round 5 + 5.1 APPROVED by owner 2026-08-17 ("good to go") — items 7–15 are the build contract for the capture-flow redesign.**
+
+### round 5.2 (owner)
+16. **Phone-location georef fallback (Android)**: no RTK connected → automatically use the
+    phone's fused location (~1 Hz) as the georeference source, recording Android's reported
+    accuracy honestly as sigma into the A10 GNSS fusion. Inline chip shows "RTK Fixed ±2 cm"
+    vs "Phone GPS ±N m". Location permission asked only when needed; denial → capture
+    continues un-georeferenced with a quiet note (no blocking popup).
