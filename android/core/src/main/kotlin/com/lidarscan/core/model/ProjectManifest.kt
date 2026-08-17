@@ -89,6 +89,29 @@ data class ProjectManifest(
      * in**, and neither survives the end of a capture any other way.
      */
     val georef: GeorefRecord? = null,
+    /**
+     * ROUND 6 (owner item 23): the session's **mount trim** — the one-tap
+     * re-zero of how the D6 actually sat on the phone for THIS scan, composed
+     * on top of [com.lidarscan.core.calib.BracketNominals.cadNominal].
+     *
+     * On the project rather than the device-level calibration store for the
+     * same reason [mid360] is: the bracket's geometry belongs to the bracket,
+     * but "how it was clamped on this morning" belongs to the capture. Post-
+     * processing has to use the same trim the live pushbroom used or the two
+     * disagree, so it travels in the `.lscan`.
+     */
+    val mountTrim: com.lidarscan.core.calib.MountTrim? = null,
+    /**
+     * ROUND 6 (owner item 20): true when this manifest was **rebuilt** by
+     * [com.lidarscan.core.store.FileProjectStore] from a capture whose app-side
+     * metadata had been destroyed by the pre-0.3.0 `manifest.json` filename
+     * collision with the engine's own container manifest.
+     *
+     * The streams are intact; the name/sensor/profile are the store's best
+     * honest reconstruction. Surfaced in the UI rather than hidden, because a
+     * recovered project's *metadata* deserves less trust than its points.
+     */
+    val recovered: Boolean = false,
 ) {
     /** The project's own capture defaults, or the profile's if it predates B5. */
     fun effectiveCaptureDefaults(): CaptureDefaults =

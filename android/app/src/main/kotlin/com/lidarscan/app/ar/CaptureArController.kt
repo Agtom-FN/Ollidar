@@ -100,19 +100,39 @@ class CaptureArController(
      * only the ENFORCEMENT of "one at a time" moved from an assumption to a
      * runtime check.
      */
+    /**
+     * ROUND 6 (owner item 19): ownership AND lifecycle now live in one
+     * plain-Kotlin state machine, [ArSessionGate] — see its header for the
+     * three concrete ways enabling the AR overlay used to take the process
+     * down, and why the state machine is a separate, JVM-testable class rather
+     * than more `@Volatile` fields in here.
+     *
+     * This typealias keeps every existing call site (`ArPosePumpView`,
+     * `ArOverlayView`, `ArCameraBackgroundRenderer`, `MountCalibrationScreen`)
+     * reading the same way it did in ROUND 5.
+     */
     enum class RendererOwner { POSE_PUMP, OVERLAY }
 
-    @Volatile
-    private var activeOwner: RendererOwner? = null
+    private val gate = ArSessionGate()
+
+    private fun ArSessionGate.Owner.legacy(): RendererOwner =
+        if (this == ArSessionGate.Owner.OVERLAY) RendererOwner.OVERLAY else RendererOwner.POSE_PUMP
+
+    private fun RendererOwner.gated(): ArSessionGate.Owner =
+        if (this == RendererOwner.OVERLAY) ArSessionGate.Owner.OVERLAY else ArSessionGate.Owner.POSE_PUMP
 
     /**
      * Declares [owner] the only renderer allowed to drive this session from
      * now on. Idempotent, safe from any thread. A later claim always
      * supersedes an earlier one — the caller is switching TO that renderer,
      * so there is never a reason to refuse it.
+     *
+     * ROUND 6: a claim also clears any previous AR failure, because the
+     * operator toggling into the AR overlay is an explicit "try again".
      */
     fun claimRenderer(owner: RendererOwner) {
-        activeOwner = owner
+        gate.claim(owner.gated())
+        publishArError(null)
     }
 
     /**
@@ -122,7 +142,39 @@ class CaptureArController(
      * to survive) must never undo the newer owner's claim.
      */
     fun releaseRenderer(owner: RendererOwner) {
-        if (activeOwner == owner) activeOwner = null
+        gate.release(owner.gated())
+    }
+
+    /**
+     * ROUND 6: the renderer's surface went away (window detach, background,
+     * configuration change) while it may still have held the claim. Distinct
+     * call site from [releaseRenderer] on purpose — see [ArSessionGate.surfaceDestroyed].
+     */
+    fun onRendererSurfaceDestroyed(owner: RendererOwner) {
+        gate.surfaceDestroyed(owner.gated())
+    }
+
+    /**
+     * ROUND 6 (owner item 19): records that the AR path failed, degrading it to
+     * an inline message instead of an exception on a GL thread. Safe to call
+     * from any thread and from any depth of the render loop; the first failure
+     * of a session wins and the rest are swallowed so a per-frame throw cannot
+     * flood the log or the UI.
+     */
+    fun reportArFailure(context: String, error: Throwable?) {
+        val detail = when {
+            error == null -> context
+            error.message.isNullOrBlank() -> "$context (${error.javaClass.simpleName})"
+            else -> "$context (${error.javaClass.simpleName}: ${error.message})"
+        }
+        if (gate.fail(detail)) {
+            Log.w(TAG, "AR path degraded: $detail", error)
+            publishArError(detail)
+        }
+    }
+
+    private fun publishArError(message: String?) {
+        _status.value = _status.value.copy(arError = message)
     }
 
     data class ArStatus(
@@ -136,6 +188,14 @@ class CaptureArController(
         val message: String? = null,
         /** Null until the first session has been configured. */
         val cameraProbe: ArCameraCharacteristicsProbe? = null,
+        /**
+         * ROUND 6 (owner item 19): non-null once anything on the AR enable path
+         * has failed. The Capture screen renders it as an inline
+         * "AR unavailable — <reason>" state and falls back to the 3D-orbit
+         * view; nothing on this path is ever allowed to reach the default
+         * uncaught-exception handler again.
+         */
+        val arError: String? = null,
     ) {
         val trackingHint: String?
             get() = when {
@@ -230,11 +290,23 @@ class CaptureArController(
                 lightEstimationMode = Config.LightEstimationMode.DISABLED
             }
             s.configure(config)
+            // ROUND 6 (owner item 19, crash cause 2): the probe below is a
+            // Camera2 characteristics query and takes milliseconds. Publishing
+            // `session` before it used to open a window in which a
+            // RENDERMODE_CONTINUOUSLY GL thread could see a non-null,
+            // NOT-YET-RESUMED session and call `update()` on it —
+            // `SessionPausedException`, uncaught, on a non-UI thread, process
+            // gone. The gate is what closes that window for good (`mayDrive`
+            // requires `resumed`), and the probe now runs BEFORE publication so
+            // the window is not even opened.
+            val probe = runCatching { ArCameraCharacteristicsProbe.probe(context, s) }.getOrNull()
             session = s
+            gate.onSessionCreated()
             _status.value = _status.value.copy(
                 availability = ArAvailability.READY,
-                cameraProbe = ArCameraCharacteristicsProbe.probe(context, s),
+                cameraProbe = probe,
                 message = null,
+                arError = null,
             )
             Result.success(s)
         } catch (e: UnavailableArcoreNotInstalledException) {
@@ -265,19 +337,38 @@ class CaptureArController(
         return try {
             s.resume()
             geometryDirty = true
-            _status.value = _status.value.copy(sessionRunning = true, message = null)
+            // ROUND 6: only NOW may a renderer thread call `Session.update()`.
+            gate.onResumed()
+            _status.value = _status.value.copy(sessionRunning = true, message = null, arError = null)
             Result.success(Unit)
         } catch (e: CameraNotAvailableException) {
+            gate.onPaused()
             _status.value = _status.value.copy(
                 sessionRunning = false,
                 message = "Camera unavailable — close other camera apps and try again",
             )
             Result.failure(e)
+        } catch (e: Throwable) {
+            // ROUND 6 (owner item 19): `resume()` can also throw
+            // `SecurityException` (permission revoked between the check and the
+            // call), `UnavailableException` subclasses and, on some OEM builds,
+            // a bare `IllegalStateException`. Any of them used to propagate out
+            // of a Compose LaunchedEffect and kill the app; now the AR path
+            // degrades to an inline message and the 3D-orbit view keeps working.
+            gate.onPaused()
+            reportArFailure("could not start the AR camera", e)
+            _status.value = _status.value.copy(sessionRunning = false)
+            Result.failure(e)
         }
     }
 
     fun pause() {
-        session?.pause()
+        // ROUND 6 (owner item 19, crash cause 3): the gate is shut FIRST, so a
+        // GL thread that is mid-frame cannot get past `mayDrive` into a
+        // `Session.update()` on a session this line is about to pause.
+        gate.onPaused()
+        runCatching { session?.pause() }
+            .onFailure { Log.w(TAG, "ARCore pause threw; treating the session as paused", it) }
         // ROUND 5 AUDIT bugfix: `failureReason` used to be left exactly as it
         // was before the pause. `needsArSession` (CaptureScreen.kt) toggles
         // this controller through pause()/resume() any time it goes momentarily
@@ -302,13 +393,22 @@ class CaptureArController(
 
     fun close() {
         pause()
-        session?.close()
+        gate.onSessionClosed()
+        runCatching { session?.close() }
+            .onFailure { Log.w(TAG, "ARCore close threw; dropping the session anyway", it) }
         session = null
         latestFrame = null
         motion.clear()
         lastPoseNs.set(Long.MIN_VALUE)
         _status.value = ArStatus(availability = _status.value.availability)
     }
+
+    /**
+     * ROUND 6 (owner item 23): the last window of pose samples, for the one-tap
+     * mount re-zero. Snapshotted from [motion] (the same tracker B8's gate uses)
+     * so the re-zero costs no extra ARCore work at all.
+     */
+    fun poseWindow(): List<com.lidarscan.core.capture.PoseSample> = motion.snapshot()
 
     /** Display geometry, from the `GLSurfaceView`'s `onSurfaceChanged` and the activity's display rotation. */
     fun setDisplayGeometry(display: Display?, width: Int, height: Int) {
@@ -327,8 +427,15 @@ class CaptureArController(
      * wants on screen.
      */
     fun setCameraTextureName(textureId: Int, owner: RendererOwner) {
-        if (activeOwner != owner) return
-        session?.setCameraTextureName(textureId)
+        // ROUND 6: `setCameraTextureName` on a session that is merely created
+        // (not resumed) is legal, so this deliberately does NOT require
+        // `PROCEED` — binding the texture before resume is exactly what a
+        // renderer should be doing. What it does require is ownership and a
+        // session, and it must never throw onto the GL thread.
+        if (gate.currentOwner !== owner.gated()) return
+        val s = session ?: return
+        runCatching { s.setCameraTextureName(textureId) }
+            .onFailure { reportArFailure("could not bind the AR camera texture", it) }
     }
 
     /**
@@ -344,21 +451,42 @@ class CaptureArController(
      * at once, which ARCore's own contract leaves undefined.
      */
     fun onFrame(owner: RendererOwner): Frame? {
-        if (activeOwner != owner) return null
+        // ROUND 6 (owner item 19): ONE gate, checked before anything touches
+        // the session. `NOT_RESUMED` is the case that used to be a crash —
+        // `Session.update()` on a paused session throws `SessionPausedException`
+        // (unchecked), and on a GL thread that is a dead process, not a caught
+        // error. See ArSessionGate's header for all three routes into it.
+        if (!gate.mayDrive(owner.gated()).mayProceed) return null
         val s = session ?: return null
-        if (geometryDirty) {
-            s.setDisplayGeometry(displayRotation, viewWidth, viewHeight)
-            geometryDirty = false
-        }
         val frame = try {
+            if (geometryDirty) {
+                s.setDisplayGeometry(displayRotation, viewWidth, viewHeight)
+                geometryDirty = false
+            }
             s.update()
         } catch (e: CameraNotAvailableException) {
+            // Recoverable and expected (another app grabbed the camera): not a
+            // gate failure, so the AR path stays available and simply reports.
             _status.value = _status.value.copy(sessionRunning = false, message = "Camera lost")
+            return null
+        } catch (e: Throwable) {
+            // Everything else — SessionPausedException, MissingGlContextException,
+            // DeadlineExceededException, a driver's own IllegalStateException.
+            // The contract of this method is now that it NEVER throws onto the
+            // render thread, whatever ARCore does.
+            reportArFailure("the AR camera stopped", e)
             return null
         }
         latestFrame = frame
-        publishPose(frame)
-        for (listener in frameListeners) listener(frame)
+        // A listener is app code (B8's keyframe recorder, the trail, the
+        // calibration detector). One of them throwing must degrade AR, not kill
+        // the app — same rule, one layer up.
+        runCatching { publishPose(frame) }
+            .onFailure { reportArFailure("AR pose publishing failed", it) }
+        for (listener in frameListeners) {
+            runCatching { listener(frame) }
+                .onFailure { reportArFailure("an AR frame consumer failed", it) }
+        }
         return frame
     }
 

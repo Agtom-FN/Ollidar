@@ -6,8 +6,10 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.lidarscan.core.capture.PerformancePreset
 import com.lidarscan.core.gnss.NtripSettings
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 private val Context.settingsDataStore by preferencesDataStore(name = "settings")
@@ -97,6 +99,33 @@ class SettingsRepository(private val context: Context) {
         }
         return claimed
     }
+
+    /**
+     * ROUND 6 (owner item 22): the Light / Optimal / Full choice, **per device
+     * profile**.
+     *
+     * Keyed by `<manufacturer>/<model>/<tier>` rather than stored as one global
+     * value, because the whole point of the tiers is that "Full" means different
+     * numbers on different hardware — restoring a preset chosen on a flagship
+     * onto a modest phone would reintroduce exactly the "defaults are the
+     * maximum" problem item 21 is about. A phone the app has not seen before
+     * simply has no entry and starts on [com.lidarscan.core.capture.PerformancePresets.DEFAULT].
+     *
+     * A dynamic preference key rather than a field on [AppSettings]: the set of
+     * device profiles is open-ended, and one row per phone this install has run
+     * on is a handful of bytes.
+     */
+    suspend fun performancePreset(deviceProfileKey: String): PerformancePreset? {
+        val stored = context.settingsDataStore.data.first()[presetKey(deviceProfileKey)] ?: return null
+        return stored.toEnumOrNull<PerformancePreset>()?.takeIf { it.isSelectable }
+    }
+
+    suspend fun setPerformancePreset(deviceProfileKey: String, preset: PerformancePreset) {
+        context.settingsDataStore.edit { it[presetKey(deviceProfileKey)] = preset.name }
+    }
+
+    private fun presetKey(deviceProfileKey: String) =
+        stringPreferencesKey("perf_preset::$deviceProfileKey")
 
     suspend fun setUnits(units: Units) {
         context.settingsDataStore.edit { it[Keys.UNITS] = units.name }

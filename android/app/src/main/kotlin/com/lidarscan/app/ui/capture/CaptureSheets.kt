@@ -137,6 +137,13 @@ fun CaptureSettingsSheet(
      */
     liveSlam: Boolean,
     liveSlamEditable: Boolean,
+    /**
+     * ROUND 6 (owner item 22): the Light preset's one structural switch, exposed
+     * here as an individual parameter like everything else a preset prefills —
+     * "presets are starting points, not caps".
+     */
+    liveMapEnabled: Boolean,
+    onLiveMapEnabledChange: (Boolean) -> Unit,
     profile: com.lidarscan.core.model.WorkflowProfile?,
     onRefreshHzChange: (Int) -> Unit,
     onGammaChange: (Float) -> Unit,
@@ -365,6 +372,18 @@ fun CaptureSettingsSheet(
                 // deleted new-project screen. Both belong with the rest of what
                 // this capture is configured with, one tap from the viewport.
                 SheetSection("Session")
+
+                // ROUND 6 (item 22): Light's "raw preview + record, no live
+                // map" as a plain switch. Above Live SLAM because it is the
+                // stronger statement — with this off, nothing draws a map at
+                // all, whichever engine would have produced one.
+                SheetSwitchRow(
+                    title = "Live 3D map",
+                    subtitle = "draw the registered / pushbroom cloud · recording unaffected",
+                    checked = liveMapEnabled,
+                    onCheckedChange = onLiveMapEnabledChange,
+                    modifier = Modifier.testTag("liveMapSwitch"),
+                )
 
                 SheetSwitchRow(
                     title = "Live SLAM",

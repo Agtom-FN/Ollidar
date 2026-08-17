@@ -3942,3 +3942,467 @@ Starting 4 tests on b4_test(AVD) - 14 ... BUILD SUCCESSFUL
   physical mount-bracket check §4 flags as the one remaining unverified
   step — none of that is available in this environment, consistent with
   every prior round's own stated posture.
+
+## ROUND 6 — five field items from a real Pixel 8 Pro + COIN-D6 session
+
+Scope: `android/` only, no git, the engine tree **read-only** (read extensively —
+`engine/src/record/lscan.cpp`, `engine/src/core/engine.cpp`,
+`engine/src/cloud/page_store.cpp`, `engine/src/slam/pushbroom/pushbroom_assembler.cpp`
+— never modified; a concurrent task owns `engine/`). Triggered by five owner
+items from a second field session on 0.2.1 (`docs/design/REVIEW_FEEDBACK.md`
+items 19–23). VERSION 0.2.1 → **0.3.0** (versionCode 30000).
+
+Per-item verdicts first, then the evidence.
+
+| # | Owner's words | Verdict |
+| --- | --- | --- |
+| 1 | "the AR overlay crush the app when enable" | **Root cause found (3 crash paths), fixed, hardened.** Not device-verified. |
+| 2 | "the capture not saved… the app project not see any saved" | **Root cause found, fixed, proven against the real native engine on device.** Lost captures recover. |
+| 3 | "bearly maping the 3d slam… points not aligned… dont default to max" | **Two root causes found and fixed** (stream filter + page-store sizing) + conservative defaults. |
+| 4 | Light / Optimal / Full quick-select | **Shipped**, with the full parameter set still individually editable. |
+| 5 | D6 mount re-zero | **Shipped**, composition math unit-tested. Not device-verified. |
+
+---
+
+### 1. "the AR overlay crush the app when enable" — bug found, fixed (three crash paths)
+
+No stack trace came with the report, so the whole enable path was audited cold.
+The prime suspect named in the brief — the ROUND 5 `RendererOwner` hand-off —
+turned out **not** to be it. The hand-off was already correct. What was missing
+was the *lifecycle* half, and it produced a genuine, reproducible-by-inspection
+process kill.
+
+`Session.update()` throws `SessionPausedException` — an **unchecked**
+`RuntimeException` — when the session has not been resumed. It is called from
+the `GLSurfaceView` render thread, where an uncaught exception is an uncaught
+exception on a non-UI thread: the default handler takes the process down.
+`CaptureArController.onFrame()` caught exactly one type,
+`CameraNotAvailableException`. Every other ARCore exception went straight to the
+killer.
+
+Three concrete routes into it, and enabling the AR overlay hit all three:
+
+**(a) The grant-the-permission path — the likely one.**
+`CaptureScreen`'s camera-permission callback was
+`{ granted -> if (granted) container.arController.createSession() }`. **No
+`resume()`.** Since ROUND 5 moved the camera request off screen entry, the
+normal first time anyone selects AR overlay is: `needsArSession` flips true →
+`ArOverlayView` is composed and its `RENDERMODE_CONTINUOUSLY` GL thread starts →
+the permission dialog appears → grant → `createSession()` publishes a **live,
+un-resumed** `Session` → the GL thread's next `onDrawFrame` calls `update()` →
+throw → dead. The `LaunchedEffect(needsArSession)` that does call `resume()`
+does not re-run, because `needsArSession` never changed.
+
+**(b) The create/resume race.** Even with permission already granted,
+`createSession()` assigned `session = s` and *then* ran
+`ArCameraCharacteristicsProbe.probe()` (a Camera2 characteristics query,
+milliseconds) before `resume()` could run. A 60–120 fps GL thread only has to
+win that window once.
+
+**(c) Pause during teardown.** `DisposableEffect(needsArSession)`'s `onDispose`
+pauses the controller on the main thread while the GL thread is still running —
+backgrounding or leaving the screen with AR on.
+
+**Fixed** with `app/ar/ArSessionGate.kt`: one plain-Kotlin state machine holding
+*ownership* (ROUND 5's claim/release, unchanged in behaviour) **and** lifecycle
+(`sessionCreated`, `resumed`, sticky `failure`). `mayDrive(owner)` returns
+`PROCEED` only when the caller owns the session, the session exists, it is
+resumed, and nothing has failed; everything else is a named reason
+(`NOT_OWNER` / `NO_SESSION` / `NOT_RESUMED` / `FAILED`) and a silent no-op.
+Alongside it:
+
+* `CaptureArController.onFrame()` is gated by `mayDrive` and wrapped so it
+  **cannot throw** — `SessionPausedException`, `MissingGlContextException`,
+  `DeadlineExceededException`, a driver's own `IllegalStateException`, or a
+  frame listener throwing, all degrade instead. `pause()` shuts the gate
+  **before** pausing the session, so a GL thread mid-frame cannot slip past.
+  `createSession()` now probes *before* publishing `session`, so window (b) is
+  not merely guarded but never opened.
+* `ArCameraBackgroundRenderer` wraps `onSurfaceCreated` / `onSurfaceChanged` /
+  `onDrawFrame` in one try/catch each and latches a `degraded` flag, so a broken
+  driver reports once and draws black rather than throwing per frame. Its shader
+  **program link status was never checked** — added.
+* The permission callback now calls `createSession()` **and** `resume()`. This
+  is the half that makes AR actually work after a grant rather than merely not
+  crash.
+* `ArStatus.arError` carries the reason; `CaptureScreen` shows
+  **"AR unavailable — <reason>. The 3D view and the recording are unaffected."**
+  inline and falls the view back to 3D orbit. Toggling into AR again clears the
+  failure and retries, so one bad frame cannot disable AR for the session.
+
+**Proof.** `app/src/test/.../ar/ArSessionGateTest.kt` — 14 JVM tests, no
+Robolectric (this project has none, and adding a dependency to an offline build
+was not worth it; extracting the logic into a plain class is the better shape
+anyway). Covers exactly the brief's scenarios: rapid toggle (200 alternating
+claims with late out-of-order releases), background/foreground during a claim,
+surface destroyed mid-claim, the never-resumed session, pause-shuts-the-gate,
+failure reported once, re-claim clears it, and a 3-thread contention run.
+
+**Not verified**: no ARCore-capable device exists in this environment, so the
+crash is proven by construction and by the state machine's tests, not by
+watching it not happen on a phone. The mechanism is removed either way.
+
+### 2. "the capture not saved to the phone, it just gone" — ROOT CAUSE FOUND. Data loss. Fixed.
+
+**The app was writing its project metadata into a file the ENGINE owns.**
+
+`FileProjectStore` had persisted `ProjectManifest` as
+`<project>.lscan/manifest.json` since B1. That is the engine's file:
+`engine/src/record/lscan.cpp`'s `FileRecordWriter::open()` writes its own,
+completely different `manifest.json` there the moment `scan_engine_start()` is
+called (engine.cpp's `if (cfg.record)` block), and rewrites it `"sealed": true`
+at `scan_engine_stop()`. Tech Spec §3.11 is on the engine's side — `manifest.json`
+inside a `.lscan` is the *container's* manifest.
+
+So the first real capture into a project **destroyed that project's app-side
+metadata**. The app schema requires `name`, `sensor`, `createdAtEpochMillis` and
+`appVersion` (none of which the engine writes) and its `profile` is an enum where
+the engine writes `"quickscan"`, so `readProject()` could no longer decode it →
+`list()` skipped the directory → the project was invisible in Projects → and
+every later `updateManifest()` returned null, so the seal at Stop silently did
+nothing too. The bytes were on disk; the project was gone from the app. Word for
+word the field report.
+
+**Why five rounds of tests never caught it:** the two hardware-free paths cannot
+collide. `ReplayEngineBridge` documents that it ignores `projectDirectory`
+entirely, and `FakeEngineBridge` writes no files at all. The app's writer and
+the engine's writer only ever meet on a real device with a real sensor — which
+is precisely the session the owner ran.
+
+**The fix, in three parts, all Android-side:**
+
+1. **The app's record moved to `project.json`** (`FileProjectStore.APP_MANIFEST_FILE_NAME`),
+   a filename the engine has no concept of. `manifest.json` goes back to being
+   the engine's.
+2. **Legacy migration.** A project whose `manifest.json` still parses as the app
+   schema (created before this change, never recorded into) is read as before
+   and copied to `project.json` on first read, so the next capture cannot destroy
+   it.
+3. **Recovery of captures already lost.** A `.lscan` whose `manifest.json` is the
+   ENGINE's is rebuilt into a listable project from what is genuinely knowable —
+   name from the directory slug the app itself chose (`scan-014-2026-08-17-1932-a1b2c3.lscan`
+   → `Scan-014-2026-08-17-1932`), `createdAt` from the engine's `createdAtUtcNs`,
+   profile from the engine's own session string, sensor inferred from whether an
+   IMU stream exists (only a Mid-360 has one; the D6 has no IMU at all — ROUND 5
+   item 11). It is flagged `ProjectManifest.recovered` and the Projects card
+   shows a **RECOVERED** chip, because a rebuilt manifest deserves less trust
+   than its points. **The owner's vanished field captures should reappear on
+   first launch of 0.3.0.**
+
+**The seal itself was also wrong in three ways, independently of the above:**
+
+* It ran entirely in `viewModelScope`. Stop is the exact moment a walkthrough
+  operator also leaves the screen or pockets the phone, and every `withContext`
+  in it is a cancellation point. Now wrapped in `NonCancellable`.
+* `updateManifest`'s result was **not even assigned**. Now checked.
+* Nothing verified anything. The seal now **re-opens the project through the
+  same store the Projects tab lists with** and reports what it found.
+* Anything thrown inside the seal escaped into the scope's handler and the seal
+  simply stopped happening, silently. Now caught and surfaced.
+
+**And a safety net the emulator earned.** Watching the live run showed the replay
+engine **self-terminating** at end of file — `captureState` went IDLE with the
+ViewModel's `stopCapture()` never invoked, so that session was never sealed at
+all. A `captureState` watcher now seals any session that ends without Stop
+(`sealPending` + a mutex so a session seals exactly once). Proven on device:
+
+```
+[session] start: project=synthetic-replay-demo-20c7b9.lscan … preset=FULL tier=MODEST
+[seal] session ended without Stop (state=IDLE) — sealing anyway
+[seal] sealed OK id=synthetic-replay-demo-20c7b9.lscan name="Synthetic Replay Demo"
+       points=120300 elapsedMs=17146 listable=true dir=/storage/emulated/0/…/…lscan
+```
+
+**Surfaced loudly.** A failed save is a red-bordered **SCAN NOT SAVED** banner at
+the top of the capture body (not a `Hint`, not a toast), naming the on-disk path
+so the raw capture can be rescued; the session summary sheet now reads
+*"Saved to /storage/…/scan-…lscan — it is in the Projects tab now."* or the
+failure. A Start that cannot create its folder, and an engine that refuses to
+start, both say so instead of returning silently as they did.
+
+**The on-device rolling log** (`app/debug/CaptureLog.kt`): project created,
+session start, pushbroom/extrinsic applied, live-store full, every seal verdict,
+every failure — into `filesDir/logs/capture.log`, 512 KB live + 512 KB rotated,
+path + live tail + **Export log** / Clear on the Settings screen. Internal
+storage, not external, so a file manager cannot wipe it. Never contains a
+location fix, an address or a token.
+
+**Proof.**
+* `core/…/store/ProjectManifestCollisionTest.kt` (10 tests) writes a byte-shape
+  copy of `write_manifest()`'s output and asserts the project survives, seals,
+  re-opens, migrates, recovers, and that junk is *not* invented into a project.
+* `app/…/ui/capture/CaptureSealSurvivalTest.kt` (4 tests) drives the **real
+  `CaptureViewModel`** against a bridge that writes the engine manifest at start
+  and stop, and asserts the finished capture is in `store.list()`, sealed,
+  with a saved path and log lines — plus a storage-lost case that must raise a
+  loud error naming the path.
+* **`app/androidTest/…/CaptureSurvivesEngineSessionTest.kt` (2 tests) — the real
+  thing.** On the emulator it creates a genuine `scan_engine*` through the JNI,
+  starts a genuine recording session on a genuine `FileProjectStore` project
+  directory, asserts the ENGINE really did overwrite `manifest.json` with its own
+  schema, stops, and then asserts the capture is still listed, still named, and
+  still sealable. The second test deletes `project.json` to reproduce the 0.2.1
+  outcome exactly and asserts the capture is recovered with its name and profile.
+  Both ran (0 skipped) against the real native engine.
+
+### 3. "bearly maping the 3d slam for d6… the point are not really aligned" + "dont default to max"
+
+Two independent root causes, both found, plus the defaults audit.
+
+**(a) ROOT CAUSE — the D6's live map was never drawn at all.** The viewport's
+stream filter was `StreamFilter.forSession(liveSlam)`. On the Capture tab
+`_liveSlam` initialises to `false` and is only ever read from a manifest on the
+*project-scoped* route — so on the tab the owner actually uses it is false unless
+somebody opens the settings sheet and toggles it. `StreamFilter.RAW_ONLY`, by
+construction, **rejects `SCAN_STREAM_SLAM_MAP`** — which is exactly the stream
+A8's pushbroom publishes its world-frame cloud on (`engine_pushbroom_defaults()`
+sets `out_stream = kSlamMap`). So a D6 session drew the raw sensor-frame fan, in
+the sensor's own frame, and **never once drew the pushbroom-resolved cloud the
+entire D6 pipeline exists to produce**. "Barely mapping", and "points not
+aligned" — because what was on screen was un-posed fan slices at the origin.
+
+`liveSlam` is a Mid-360 concept — `CaptureDefaults`' own KDoc says so. The D6's
+live map is gated on the **pushbroom**, so that is what gates its filter now:
+`liveMapRequested = liveMapEnabled && (liveSlam || pushbroomActive)`, where
+`pushbroomActive` is set when `pushbroom_enable(true)` is actually accepted. The
+bottom-left chip follows (`RAW · COIN-D6` → `BUILDING MAP…` → `LIVE MAP · 3D`,
+plus `RAW · LIGHT PRESET` when it is off by choice).
+
+**(b) ROOT CAUSE — the live page store was sized for a desktop and filled in
+about a minute.** `page_store.h` defaults to `page_capacity = 1<<20` and
+`max_pages = 64`: with a 16-byte `PointVertex` that is **16 MB per page and a
+1 GB ceiling**. `RealEngineBridge` passed `0, 0` ("engine defaults") from B2
+until now, so a phone got a desktop's numbers.
+
+That would be merely wasteful if pages filled up. They do not, because
+`PageStore::append()` only ever appends to the **tail** page and a page belongs
+to exactly one stream:
+
+```cpp
+const bool need_page = tail == nullptr
+    || tail->count >= tail->capacity
+    || tail->stream != stream;   // pages are single-stream
+```
+
+A D6 capture has two producers publishing alternately — the driver's raw preview
+on `kLidarD6` and the pushbroom on `kSlamMap` — so **every alternation allocates
+a fresh 16 MB page for the ~4096 points of one pushbroom batch**. Utilisation
+well under 1 %, the 64-page ceiling reached in a few dozen alternations, and when
+the store is full `append()` stores **nothing, forever** (its header says so:
+"When full it appends nothing… A14 replaces the cap with an LOD/eviction
+policy"). The map grows for about a minute and then silently stops. The desktop
+shell independently proved the same store filling this round
+(`page store full (64 pages): dropped N points`, 1400× in one session).
+
+Fixed **without touching the engine**: `scan_engine_config` already exposes both
+numbers and the JNI already marshals them, so the app stops asking for desktop
+defaults. `core/render/LivePageStoreSizing.kt`, per device tier:
+
+| tier | page | pages | resident ceiling | worst case |
+| --- | --- | --- | --- | --- |
+| modest | 32 k pts | 192 | 6.3 M pts | 96 MB |
+| standard | 64 k pts | 256 | 16.8 M pts | 256 MB |
+| flagship | 128 k pts | 192 | 25.2 M pts | 384 MB |
+
+An alternation now costs ~1 MB instead of 16 MB, and there are 3–4× more pages.
+**It does not remove the ceiling** — a long enough walk fills any bounded store —
+so the app now *watches* for it (`pageCount() >= maxPages`, polled at 1 Hz, one
+JNI int) and says so inline: *"Live map is full (16.8 M points) and has stopped
+growing — the phone's preview buffer, not the scan. Recording is unaffected;
+processing the project afterwards uses every point."* **Eviction is an engine
+change and `engine/` is read-only here; a concurrent task owns it** — when that
+seam lands, the opt-in goes into `RealEngineBridge.createEngineHandle()` (one
+call site, deliberately consolidated from the two copies it had) and this note
+becomes "showing the most recent points" instead of "stopped growing".
+
+**(c) Conservative defaults.** Every live-view default was the *maximum* its
+control offered: refresh `0` = uncapped (120 Hz on the owner's phone), LOD budget
+20 M (top of its own 2–20 M slider), keyframes on at 3 fps, trail at its full
+600-point ring. All of them now come from
+`PerformancePresets.tuningFor(OPTIMAL, tier, ceiling)` — genuinely mid-tier per
+device class (30 fps of 120, 5–8 M of 20 M, keyframes at 2 fps on a standard
+phone). `PerformancePresetTest` asserts *"no default is a maximum on any device
+class"* as a property rather than pinning numbers.
+
+**Honest limits of live D6 quality** (asked for explicitly): the live map is a
+bounded, decimated preview of what the pushbroom resolves *while poses are
+already available*; it is not the scan. Points whose ARCore pose has not arrived
+yet stay pending inside the assembler and appear later; points resolved after the
+store fills never appear at all. **Post-processing remains ground truth** — it
+re-runs from the raw streams that record-always already wrote to disk, with the
+full trajectory, and is unaffected by every number on this page.
+
+### 4. Light / Optimal / Full — shipped
+
+`core/capture/PerformancePreset.kt`: three selectable presets plus a
+non-selectable `CUSTOM` read-out, a `CaptureTuning` of the five knobs that cost
+sustained GPU/CPU/disk during a walk (live map on/off, refresh cap, LOD budget,
+keyframes + rate, trail length), and a coarse `DeviceTier` from RAM, cores and
+the panel's real refresh ceiling.
+
+* **Light** = raw preview + record, no live map, no keyframes, smallest budget.
+* **Optimal** = the default, mid-tier on every axis.
+* **Full** = everything on — and *still capped* on a modest phone, because "Full"
+  must not mean "crash"; only a flagship gets `refreshHz = 0`.
+
+Presets **prefill** the same flows the settings sheet's own controls write, so
+every parameter stays individually editable; moving one flips the chip row to
+CUSTOM and **nothing is reverted** — that is item 22's "keep the full parameter
+for advance user setting", enforced by a test. Switching reports what it changed
+(*"Full: live 3D map on · live refresh 15 fps → 30 fps · point budget 2 M → 20 M ·
+camera keyframes on · trail length 200 → 600 points"*), and Full carries an
+inline caution on weaker devices. Persisted **per device profile**
+(`<manufacturer>/<model>/<tier>`) rather than globally, so a preset chosen on a
+flagship is not restored onto a budget phone — which would reintroduce item 21.
+
+The chip row sits above the collapsible pre-capture strip and stays visible
+during a recording: "this is getting hot, drop to Light" is a mid-walk decision.
+
+### 5. D6 mount re-zero — shipped
+
+`core/calib/MountTrim.kt`. The derivation, in full, because it is the part that
+decides where every point lands:
+
+```
+  nominal, by construction:   W_R_P = q_ref  and  P_R_L = N  (the CAD nominal)
+  actual, same physical pose: W_R_P = q_hold (what ARCore reports)
+
+  the LIDAR's world attitude is the same in both, so
+      q_ref · N = q_hold · (P_R_L)_actual
+  =>  trim = q_hold⁻¹ · q_ref
+```
+
+With `REFERENCE_HOLD` = identity (ARCore defines its world frame from the
+device's attitude at session start, so "the pose the nominal assumes" *is*
+identity) the trim collapses to `q_hold⁻¹` — literally "zero out the attitude you
+are holding right now", the owner's own description. **Rotation only**: a
+re-clamp also changes the lever arm by millimetres and nothing in this
+measurement can observe that, so `composedWith()` keeps the nominal's translation
+verbatim rather than inventing a number.
+
+`MountTrimSampler` averages ~1 s of the pose stream that is *already running*
+(no extra ARCore work) with a chordal mean that aligns quaternion signs — `q` and
+`-q` are the same rotation and ARCore hands out either — and **refuses** a window
+that is too short, has too few samples, lost tracking, or spread more than 1.5°.
+Each refusal is a sentence the panel prints verbatim.
+
+Wiring: the extrinsic ladder is measured calibration → nominal + trim → bare
+nominal. The trim is composed onto the **nominal only**, never onto a measured
+calibration: a solve already contains the real bracket geometry and multiplying a
+fresh attitude re-zero into it would double-count. `applyMountExtrinsic()` is
+split out of `startArPipelines()` so a re-zero **mid-walk** re-pushes
+`set_mount_extrinsics` and takes effect from the next resolved point.
+`ProjectManifest.mountTrim` persists it, so post-processing uses the same trim.
+UI: a **Set mount reference** / **Re-zero mount** pill in the D6 panel with the
+trim's magnitude and age (*"Mount trim 3.4° · set 2 min ago · travels with the
+project"*) and a Clear.
+
+**Proof.** `core/…/calib/MountTrimTest.kt` — 15 tests: identity, exact 90° roll
+cancellation, **upside-down (180°) including the quaternion double-cover sign
+flip**, a compound 12°/−37°/94° tilt, `trim × nominal` ordering, translation
+preserved, rigidity preserved, Mid-360 vs D6 nominals, plus every sampler
+rejection gate and the age labels.
+
+### 6. Files
+
+New (`:core`): `capture/PerformancePreset.kt`, `calib/MountTrim.kt`,
+`render/LivePageStoreSizing.kt`, `store/LscanManifests.kt`
+(+ `test/.../store/ProjectManifestCollisionTest.kt`,
+`test/.../calib/MountTrimTest.kt`, `test/.../capture/PerformancePresetTest.kt`).
+New (`:app`): `ar/ArSessionGate.kt`, `debug/CaptureLog.kt`
+(+ `test/.../ar/ArSessionGateTest.kt`,
+`test/.../ui/capture/CaptureSealSurvivalTest.kt`,
+`androidTest/.../CaptureSurvivesEngineSessionTest.kt`).
+Changed (`:core`): `store/FileProjectStore.kt` (the data-loss fix),
+`model/ProjectManifest.kt` (`mountTrim`, `recovered`), `capture/RigMotion.kt`
+(`snapshot()`, `@Synchronized`), `capture/TrajectoryTrail.kt` (settable capacity),
+`test/.../store/FileProjectStoreTest.kt`.
+Changed (`:app`): `ar/CaptureArController.kt`, `ar/ArCameraBackgroundRenderer.kt`,
+`ar/ArPosePumpView.kt`, `capture/TrajectoryTrailRecorder.kt`,
+`data/SettingsRepository.kt`, `di/AppContainer.kt`, `engine/RealEngineBridge.kt`,
+`ui/capture/{CaptureViewModel,CaptureScreen,CaptureSheets}.kt`,
+`ui/projects/ProjectsListScreen.kt`,
+`ui/settings/{SettingsScreen,SettingsViewModel}.kt`.
+
+### 7. Engine seams this round needed and did not have
+
+1. **`manifest.json` has one name and two owners.** The whole of item 20. The
+   engine's `FileRecordWriter` writes `<lscan>/manifest.json` unconditionally at
+   `open()` and `close()`, and Tech Spec §3.11 gives it that file — but nothing
+   in the C ABI *says* so to a client, and there is no reserved-filename list a
+   host app can check itself against. The app now stays out of the way
+   (`project.json`), but a `scan_lscan_reserved_files()` — or simply a documented
+   list in `scanengine_c.h` — would have made this collision impossible to write
+   in the first place, and it survived five rounds of review.
+2. **No page-store eviction, and no way to ask for it.** `PageStore` is a hard
+   cap that stores nothing once full (§3 above). `scan_engine_config` exposes
+   size but not policy. A live-capture ring (oldest-first) is the fix and it is
+   an engine change; until then a phone's live map has a hard, silent end that
+   the app can only *detect* (`page_count == max_pages`) and narrate.
+3. **`pushbroom_flush()` is destructive; there is no `drain()` in the C ABI.**
+   `D6PushbroomAssembler::drain()` resolves what the poses allow and *keeps* the
+   rest; `flush()` force-resolves and **discards** everything still pending
+   (`dropped_no_pose`). Only `flush()` is exposed
+   (`scan_engine_pushbroom_flush`). So the app cannot publish the assembler's
+   partial batch promptly during a live walk without throwing away points whose
+   pose has not landed yet — which is why this round deliberately does **not**
+   call flush periodically, and why the live map lags the recording by up to one
+   4096-point batch. `scan_engine_pushbroom_drain()` would close it.
+4. **No stream-provenance hint for the page store.** Pages are single-stream and
+   only the tail is appended to, so two interleaved producers (D6 raw + pushbroom)
+   fragment the store catastrophically at large page sizes. A per-stream tail —
+   or just a documented warning next to `max_pages` — would have made §3(b)
+   visible without reading `page_store.cpp`.
+5. Everything ROUND 5 §9 and B3 §8 listed still stands and still bites the same
+   way (no fix-shaped GNSS ingest, no phone-GNSS device kind, no live-trajectory
+   getter, the 0.5 px display clamp, `SCAN_EVENT_DEVICE_HEALTH` not surviving
+   `convert_event()`).
+
+### 8. Verification
+
+```
+$ ./gradlew :core:test                       # 343 tests, 0 failures (5 skipped, pre-existing)
+$ ./gradlew :app:testDebugUnitTest           # 31 tests, 0 failures  (was 13)
+$ ./gradlew clean :app:assembleDebug         # BUILD SUCCESSFUL (arm64-v8a + x86_64, real engine/ C++)
+$ ./gradlew :app:connectedDebugAndroidTest   # b4_test AVD, API 34 — 6 tests, 0 failures (was 4)
+```
+
+* **`:core:test` — 343** (was 306; +37). New: `ProjectManifestCollisionTest` (10),
+  `MountTrimTest` (15), `PerformancePresetTest` (12) and the existing suites
+  unchanged apart from `FileProjectStoreTest`'s one assertion that now names
+  `project.json` (with the reason in the diff).
+* **`:app:testDebugUnitTest` — 31** (was 13). New: `ArSessionGateTest` (14),
+  `CaptureSealSurvivalTest` (4). Plain JVM, no Robolectric.
+* **Emulator — 6/6**, including the two new real-native-engine tests that are the
+  actual proof of item 20 (`assumeTrue` did not skip: `scanengine_jni` loaded and
+  both ran).
+* **Screenshots** (`scratchpad/r6_*.png`, emulator 1080x2400):
+  `r6_01_capture` — the capture tab with the preset chip row and the
+  **Set mount reference** affordance in the D6 panel;
+  `r6_02_preset_light` / `r6_03_preset_full` — a preset applied, with its
+  what-changed line and (for Full) the modest-device caution;
+  `r6_04_settings_log` — the Settings capture-log card with path, live tail,
+  Export and Clear; `r6_06_replay_recording` — a live recording with the preset
+  row still present and the chip reading `BUILDING MAP…`;
+  `r6_05_session_summary` — the summary reading *"Saved to
+  /storage/…/synthetic-replay-demo-20c7b9.lscan — it is in the Projects tab
+  now."*
+* **One bug the emulator caught that no test would have**: `sealPending` was
+  declared *below* `init {}`, so the new `captureState` collector dereferenced a
+  null `AtomicBoolean` on the first emission and the app died on entering
+  Capture. Kotlin initialisation order; fixed by moving the declaration above
+  `init`, and the whole class was then re-audited programmatically for other
+  forward references from `init` (none).
+
+### 9. Explicitly NOT verified
+
+No D6, no Mid-360, no RTK rover and **no ARCore-capable device**. So: item 1's
+crash not recurring on a real phone, item 5's trim against a real bracket, item
+3's live-map improvement on real D6 data, and the recovery of the owner's actual
+lost captures (the recovery logic is proven on synthetic and on real
+engine-written manifests, but not on his phone's specific directories) are all
+verified by construction, by unit test, and — for item 2 — against the **real
+native engine on device**, which is as close as this environment gets. The two
+that would repay a bench hour first are (a) enabling the AR overlay on a Pixel
+and confirming the inline error path rather than a crash, and (b) a D6 walk with
+the mount reference set, watching the chip go `BUILDING MAP…` → `LIVE MAP · 3D`.

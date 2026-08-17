@@ -61,6 +61,7 @@ import com.lidarscan.app.ui.theme.MonoMeta
 import com.lidarscan.app.ui.theme.PoseBlue
 import com.lidarscan.app.ui.theme.ScanTeal
 import com.lidarscan.app.ui.theme.SemGood
+import com.lidarscan.app.ui.theme.SemWarn
 import com.lidarscan.core.model.SensorType
 import com.lidarscan.core.store.Project
 
@@ -294,6 +295,15 @@ private fun ProjectCard(
                 text = manifest.profile.displayName.uppercase(),
                 showDot = true,
             )
+            // ROUND 6 (owner item 20): a capture whose app-side metadata was
+            // destroyed by the pre-0.3.0 `manifest.json` collision with the
+            // engine's own container manifest, and which `FileProjectStore`
+            // rebuilt so it is listable again. Its POINTS are intact; its
+            // name/sensor/profile are a reconstruction, and saying so is the
+            // difference between honest recovery and a quiet lie.
+            if (manifest.recovered) {
+                ScanChip(text = "RECOVERED", color = SemWarn, showDot = true)
+            }
             if (manifest.crsEpsg != null && manifest.crsEpsg != 0) {
                 ScanChip(text = "GEOREF ✓", color = SemGood, showDot = true)
             }

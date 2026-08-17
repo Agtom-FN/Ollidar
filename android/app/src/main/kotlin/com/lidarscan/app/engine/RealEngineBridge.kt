@@ -44,7 +44,22 @@ import kotlinx.coroutines.withContext
 class RealEngineBridge(
     private val connectionRegistry: D6UsbConnectionRegistry,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+    /**
+     * ROUND 6 (owner item 21): how big the engine's live `PageStore` is on THIS
+     * phone. B2 through 0.2.1 passed `0, 0` here, i.e. "use the engine's
+     * defaults" — which are a desktop's 16 MB pages and a 1 GB ceiling, and
+     * which a two-stream D6 capture exhausts in about a minute of walking. See
+     * [com.lidarscan.core.render.LivePageStoreSizing] for the full mechanism.
+     */
+    private val pageStoreSizing: com.lidarscan.core.render.LivePageStoreSizing =
+        com.lidarscan.core.render.LivePageStoreSizing.forTier(com.lidarscan.core.capture.DeviceTier.STANDARD),
 ) : EngineBridge, ScanEngineNative.EngineEventListener, NativePointCloudProvider {
+
+    /** ROUND 6: the live-store ceiling the capture screen watches for, in pages. */
+    val livePageBudget: Int get() = pageStoreSizing.maxPages
+
+    /** ROUND 6: the sizing actually handed to `scan_engine_create`, for the inline "map is full" note. */
+    val livePageStoreSizing: com.lidarscan.core.render.LivePageStoreSizing get() = pageStoreSizing
 
     private val _connectionState = MutableStateFlow(ConnectionState.DISCONNECTED)
     override val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
@@ -90,9 +105,7 @@ class RealEngineBridge(
         _events.emit(EngineEvent.StatusMessage("Connecting to D6 on $devicePath…"))
 
         if (engineHandle == 0L) {
-            engineHandle = ScanEngineNative.nativeCreateEngine(
-                "lidarscan-android", LOG_LEVEL_INFO, 0, 0, 0,
-            )
+            engineHandle = createEngineHandle()
             if (engineHandle == 0L) {
                 _connectionState.value = ConnectionState.ERROR
                 val message = "scan_engine_create failed: ${ScanEngineNative.nativeLastError()}"
@@ -167,7 +180,7 @@ class RealEngineBridge(
         _events.emit(EngineEvent.StatusMessage("Adding Mid-360 $lidarIp → host $hostIp…"))
 
         if (engineHandle == 0L) {
-            engineHandle = ScanEngineNative.nativeCreateEngine("lidarscan-android", LOG_LEVEL_INFO, 0, 0, 0)
+            engineHandle = createEngineHandle()
             if (engineHandle == 0L) {
                 _connectionState.value = ConnectionState.ERROR
                 val message = "scan_engine_create failed: ${ScanEngineNative.nativeLastError()}"
@@ -376,6 +389,20 @@ class RealEngineBridge(
     fun attachPoseSink(setHandle: (Long) -> Unit) {
         setHandle(engineHandle)
     }
+
+    /**
+     * ROUND 6 (owner item 21): one call site for `scan_engine_create`, so the
+     * phone-sized page store cannot be applied on the D6 path and forgotten on
+     * the Mid-360 one (which is exactly the shape the two copies of this call
+     * had before).
+     */
+    private fun createEngineHandle(): Long = ScanEngineNative.nativeCreateEngine(
+        "lidarscan-android",
+        LOG_LEVEL_INFO,
+        pageStoreSizing.pageCapacityPoints,
+        pageStoreSizing.maxPages,
+        0,
+    )
 
     private fun activeConnection() = lastDevicePath?.let { connectionRegistry.get(it) }
 

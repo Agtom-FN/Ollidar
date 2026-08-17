@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -147,6 +148,29 @@ class CaptureViewModel(
     private val requestLocationPermission: (suspend () -> Boolean)? = null,
     /** ROUND 5.2: records phone fixes into the live `.lscan` (see `PhoneGeorefRecorder`). */
     private val phoneGeorefRecorder: com.lidarscan.app.gnss.PhoneGeorefRecorder? = null,
+    /**
+     * ROUND 6 (owner item 20): one line per capture-survival event, into the
+     * persistent on-device log (`com.lidarscan.app.debug.CaptureLog`). A lambda
+     * rather than the class so this ViewModel stays constructible in a bare-JVM
+     * test — which is what the new seal test needs.
+     */
+    private val logEvent: (String, String) -> Unit = { _, _ -> },
+    /**
+     * ROUND 6 (owner items 21 + 22): what this phone can carry. Drives the
+     * preset table's per-device numbers and the conservative defaults that
+     * replaced 0.2.1's "every control at its maximum".
+     */
+    private val deviceTier: com.lidarscan.core.capture.DeviceTier =
+        com.lidarscan.core.capture.DeviceTier.STANDARD,
+    /** ROUND 6: this display's real refresh ceiling in Hz, so a preset can never select a rate it cannot reach. */
+    private val displayCeilingHz: Int = 60,
+    /** ROUND 6 (owner item 21): the live `PageStore` sizing this session's engine was created with. */
+    private val pageStoreSizing: com.lidarscan.core.render.LivePageStoreSizing =
+        com.lidarscan.core.render.LivePageStoreSizing.forTier(com.lidarscan.core.capture.DeviceTier.STANDARD),
+    /** ROUND 6 (owner item 22): the preset persisted for this device profile, or null for a fresh install. */
+    private val loadPersistedPreset: suspend () -> com.lidarscan.core.capture.PerformancePreset? = { null },
+    /** ROUND 6 (owner item 22): persists the operator's preset choice against this device profile. */
+    private val persistPreset: suspend (com.lidarscan.core.capture.PerformancePreset) -> Unit = {},
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<CaptureUiState>(CaptureUiState.Loading)
@@ -190,12 +214,63 @@ class CaptureViewModel(
     // join point size / colour / LOD, which already existed. All of them apply
     // to the pre-record preview and stay live during a recording.
 
+    // --- ROUND 6 (owner items 21 + 22): presets and conservative defaults ----
+    //
+    // Every live-view default below used to be the MAXIMUM its control offered:
+    // refresh "Max" (uncapped — 120 Hz on the owner's phone), LOD budget 20 M
+    // (the top of its own 2–20 M slider), keyframes on at 3 fps, trail at its
+    // full 600-point ring. Together that is "run everything flat out on a phone
+    // that is also driving ARCore, a USB reader and a SLAM session, while being
+    // carried" — item 21's complaint, and a fair one.
+    //
+    // The defaults are now `PerformancePresets.tuningFor(OPTIMAL, tier, ceiling)`
+    // — genuinely mid-tier on every axis, per device class. The preset is a
+    // starting point, never a cap: every individual control below stays
+    // settable afterwards and moving one flips the chip row to CUSTOM.
+
+    /** The tuning [PerformancePreset.OPTIMAL] resolves to on THIS device — the seed for every default below. */
+    private val defaultTuning: com.lidarscan.core.capture.CaptureTuning =
+        com.lidarscan.core.capture.PerformancePresets.tuningFor(
+            com.lidarscan.core.capture.PerformancePresets.DEFAULT,
+            deviceTier,
+            displayCeilingHz,
+        )
+
+    private val _preset = MutableStateFlow(com.lidarscan.core.capture.PerformancePresets.DEFAULT)
+    val preset: StateFlow<com.lidarscan.core.capture.PerformancePreset> = _preset.asStateFlow()
+
+    /**
+     * ROUND 6 (item 22): "switching preset shows what it changed" — one line
+     * per parameter the switch actually moved, cleared on the next change or
+     * when the operator moves a control themselves.
+     */
+    private val _presetChangeNote = MutableStateFlow<String?>(null)
+    val presetChangeNote: StateFlow<String?> = _presetChangeNote.asStateFlow()
+
+    /** ROUND 6 (item 22): the inline caution for a preset this device will struggle with, or null. */
+    val presetCaution: StateFlow<String?> = _preset
+        .map { com.lidarscan.core.capture.PerformancePresets.cautionFor(it, deviceTier) }
+        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Companion.WhileSubscribed(5_000), null)
+
+    val deviceTierLabel: String get() = deviceTier.displayName
+
+    /**
+     * ROUND 6 (item 22, LIGHT): whether the viewport draws the registered /
+     * pushbroom-resolved map at all, or only the sensor's own raw returns.
+     * Never touches the recording — see [com.lidarscan.core.capture.CaptureTuning.liveMapEnabled].
+     */
+    private val _liveMapEnabled = MutableStateFlow(defaultTuning.liveMapEnabled)
+    val liveMapEnabled: StateFlow<Boolean> = _liveMapEnabled.asStateFlow()
+
     /**
      * Viewport refresh cap in fps (0 = uncapped). A *display* throttle: the
      * engine keeps decoding and writing at full rate either way — see
      * `PointCloudRenderer.setMaxRefreshHz`.
+     *
+     * ROUND 6: defaults to the OPTIMAL preset's cap for this device (30 fps on
+     * a standard/flagship phone), not `0` ("Max").
      */
-    private val _refreshHz = MutableStateFlow(0)
+    private val _refreshHz = MutableStateFlow(defaultTuning.refreshHz)
     val refreshHz: StateFlow<Int> = _refreshHz.asStateFlow()
 
     /**
@@ -271,11 +346,16 @@ class CaptureViewModel(
      * Gates [com.lidarscan.app.ar.KeyframeRecorder] mid-session; the written
      * count freezes rather than resetting when this goes off.
      */
-    private val _keyframesEnabled = MutableStateFlow(true)
+    private val _keyframesEnabled = MutableStateFlow(defaultTuning.keyframesEnabled)
     val keyframesEnabled: StateFlow<Boolean> = _keyframesEnabled.asStateFlow()
 
-    /** §3.5's 2–5 fps cadence, as the sheet's 2 / 3 / 5 row. */
-    private val _keyframeRateFps = MutableStateFlow(3)
+    /**
+     * §3.5's 2–5 fps cadence, as the sheet's 2 / 3 / 5 row.
+     *
+     * ROUND 6: seeded from the OPTIMAL preset (2 fps on a standard phone,
+     * 3 on a flagship) rather than being pinned at 3 everywhere.
+     */
+    private val _keyframeRateFps = MutableStateFlow(defaultTuning.keyframeRateFps)
     val keyframeRateFps: StateFlow<Int> = _keyframeRateFps.asStateFlow()
 
     /**
@@ -288,7 +368,7 @@ class CaptureViewModel(
      * but reads out in **M points**, which is the number the renderer obeys.
      * A percentage would have been a nicer-looking lie.
      */
-    private val _lodBudgetMPoints = MutableStateFlow(20)
+    private val _lodBudgetMPoints = MutableStateFlow(defaultTuning.lodBudgetMPoints)
     val lodBudgetMPoints: StateFlow<Int> = _lodBudgetMPoints.asStateFlow()
 
     /**
@@ -570,7 +650,12 @@ class CaptureViewModel(
      * Fed from the ARCore frame stream, which the round-5 pose pump keeps running
      * in both view modes.
      */
-    private val trailRecorder = com.lidarscan.app.capture.TrajectoryTrailRecorder()
+    private val trailRecorder = com.lidarscan.app.capture.TrajectoryTrailRecorder(
+        // ROUND 6 (item 21): the ring used to be created at its full 600-point
+        // default on every device. Sized by preset/tier now, like everything
+        // else the live view spends.
+        com.lidarscan.core.capture.TrajectoryTrail(capacity = defaultTuning.trailPoints),
+    )
     val trailPoints: StateFlow<List<com.lidarscan.core.capture.TrajectoryTrail.NormalizedPoint>> =
         trailRecorder.points
     val trailLengthM: StateFlow<Float> = trailRecorder.pathLengthM
@@ -605,6 +690,259 @@ class CaptureViewModel(
         _refreshDownshiftNote.value =
             "Live view eased to $easedToHz fps — this phone could not sustain the requested rate on this " +
                 "cloud. Recording is unaffected."
+    }
+
+    // --- ROUND 6 (owner item 20): saving is loud when it fails ---------------
+
+    /**
+     * Non-null when this capture's **seal** did not complete cleanly — the
+     * manifest could not be written, or it was written and could not be read
+     * back. 0.2.1 swallowed both (`updateManifest` returned null and nothing
+     * looked at it), which is how a whole field session could end with a
+     * confident session-summary sheet and nothing in Projects.
+     *
+     * Shown as a loud inline banner on the capture screen and repeated in the
+     * session summary; cleared only by [dismissSaveError] or the next Start.
+     */
+    /**
+     * ROUND 6 (owner item 20): true from a successful Start until that
+     * session's seal has actually run.
+     *
+     * The Capture tab is not the only thing that can end a session. The replay
+     * bridge stops itself when the synthetic file runs out; a future engine
+     * fault could do the same. Before this, a session that ended WITHOUT the
+     * Stop button being pressed was never sealed at all — the manifest kept
+     * whatever it had at creation, and the operator was told nothing. Watching
+     * the capture state and sealing on any transition out of a live session is
+     * the belt to [stopCapture]'s braces, and it is the same rule the whole
+     * item is about: a capture that happened must end up saved.
+     */
+    private val sealPending = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val sealMutex = kotlinx.coroutines.sync.Mutex()
+
+    private val _saveError = MutableStateFlow<String?>(null)
+    val saveError: StateFlow<String?> = _saveError.asStateFlow()
+
+    fun dismissSaveError() {
+        _saveError.value = null
+    }
+
+    /**
+     * ROUND 6: where the last completed capture actually landed, for the
+     * summary sheet. A path on screen is the cheapest possible answer to "is it
+     * saved?", and it is the thing the owner could not get last time.
+     */
+    private val _lastSavedProject = MutableStateFlow<String?>(null)
+    val lastSavedProject: StateFlow<String?> = _lastSavedProject.asStateFlow()
+
+    // --- ROUND 6 (owner item 21): the D6 live map ----------------------------
+
+    /**
+     * True once `pushbroom_enable(true)` has been accepted for this session,
+     * i.e. once the engine is resolving D6 fan returns into world-frame points
+     * on `SCAN_STREAM_SLAM_MAP`.
+     *
+     * **This is what the viewport's stream filter must key off**, and it not
+     * being so was the "the point are not really aligned" bug: the filter was
+     * `StreamFilter.forSession(liveSlam)`, and on the Capture tab `liveSlam`
+     * is `false` until somebody opens the settings sheet and toggles it (the
+     * manifest's own default is only read on the project-scoped route). So a
+     * D6 session ran `RAW_ONLY`, which by construction rejects
+     * `SCAN_STREAM_SLAM_MAP` — the viewport drew the raw sensor-frame fan, in
+     * the sensor's own frame, and never once drew the pushbroom-resolved cloud
+     * the whole D6 pipeline exists to produce. `liveSlam` is a Mid-360 concept
+     * (`CaptureDefaults`' own words); the D6's live map is gated on the
+     * pushbroom, so that is what gates its filter now.
+     */
+    private val _pushbroomActive = MutableStateFlow(false)
+    val pushbroomActive: StateFlow<Boolean> = _pushbroomActive.asStateFlow()
+
+    /**
+     * Whether the viewport should draw the registered/pushbroom map rather than
+     * raw sensor pages. `liveMapEnabled` is the Light preset's off-switch;
+     * beyond that it is live SLAM (Mid-360) or the pushbroom (D6).
+     */
+    val liveMapRequested: StateFlow<Boolean> =
+        kotlinx.coroutines.flow.combine(_liveMapEnabled, _liveSlam, _pushbroomActive) { enabled, slam, pushbroom ->
+            enabled && (slam || pushbroom)
+        }.stateIn(
+            viewModelScope,
+            kotlinx.coroutines.flow.SharingStarted.Companion.WhileSubscribed(5_000),
+            false,
+        )
+
+    /**
+     * ROUND 6 (owner item 21): non-null once the engine's live `PageStore` has
+     * filled and the map has stopped growing.
+     *
+     * `PageStore::append()` returns `kCapacityExceeded` and stores **nothing**
+     * once `max_pages` pages exist — its own header says so, and points to a
+     * future LOD/eviction policy that does not exist yet. Until it does, the
+     * only honest thing is to see it and say it, which is what this is:
+     * `pageCount()` reaching the ceiling the app itself chose
+     * ([com.lidarscan.core.render.LivePageStoreSizing]) is a reliable,
+     * engine-change-free detection.
+     *
+     * The line is emphatic that this costs the preview and not the scan —
+     * record-always has already written the raw streams to the `.lscan`, and
+     * post-processing reads those, not this buffer.
+     */
+    private val _liveMapFullNote = MutableStateFlow<String?>(null)
+    val liveMapFullNote: StateFlow<String?> = _liveMapFullNote.asStateFlow()
+
+    // --- ROUND 6 (owner item 23): the one-tap mount re-zero -------------------
+
+    /**
+     * The session's mount trim: how the D6 was actually sitting on the phone
+     * for THIS scan, composed on top of `BracketNominals.cadNominal(COIN_D6)`.
+     * Null until the operator taps "Set mount reference".
+     */
+    private val _mountTrim = MutableStateFlow<com.lidarscan.core.calib.MountTrim?>(null)
+    val mountTrim: StateFlow<com.lidarscan.core.calib.MountTrim?> = _mountTrim.asStateFlow()
+
+    /** The last re-zero's outcome as one sentence — the confirmation or the refusal. */
+    private val _mountTrimNote = MutableStateFlow<String?>(null)
+    val mountTrimNote: StateFlow<String?> = _mountTrimNote.asStateFlow()
+
+    /**
+     * ROUND 6 (item 23): captures the current phone attitude as this session's
+     * mount reference, or refuses and says why.
+     *
+     * Averages ~1 s of the pose stream that is already running (see
+     * [com.lidarscan.core.calib.MountTrimSampler]) — no extra ARCore work, no
+     * new sensor subscription — and rejects a window in which the rig moved or
+     * tracking dropped, because a trim taken mid-wobble is worse than none.
+     *
+     * Applies immediately to a live pushbroom session as well as to the next
+     * one: `set_mount_extrinsics` is legal mid-session (`scan_engine_pushbroom_enable`'s
+     * own note), so a re-zero during a walk takes effect from the next resolved
+     * point rather than at the next Start.
+     */
+    fun setMountReference() {
+        val controller = arController
+        if (controller == null) {
+            _mountTrimNote.value = "Mount reference needs phone tracking, which this session does not have."
+            return
+        }
+        val result = com.lidarscan.core.calib.MountTrimSampler.capture(
+            samples = controller.poseWindow(),
+            nowMillis = clock(),
+            sensor = _sensor.value,
+        )
+        when (result) {
+            is com.lidarscan.core.calib.MountTrimResult.Rejected -> {
+                _mountTrimNote.value = result.reason.message
+                logEvent(LOG_TAG_AR, "mount re-zero refused: ${result.reason.name}")
+            }
+            is com.lidarscan.core.calib.MountTrimResult.Captured -> {
+                _mountTrim.value = result.trim
+                _mountTrimNote.value =
+                    "Mount reference set — %.1f° from the bracket nominal, held to %.2f° over %d samples."
+                        .format(result.trim.magnitudeDeg, result.trim.spreadDeg, result.trim.sampleCount)
+                logEvent(
+                    LOG_TAG_AR,
+                    "mount re-zero captured: magnitude=%.2fdeg spread=%.2fdeg samples=%d"
+                        .format(result.trim.magnitudeDeg, result.trim.spreadDeg, result.trim.sampleCount),
+                )
+                applyMountExtrinsicNow()
+                // A trim taken mid-session belongs to the project being recorded.
+                (_uiState.value as? CaptureUiState.Loaded)?.project?.let { project ->
+                    viewModelScope.launch(Dispatchers.IO) {
+                        projectStore.updateManifest(project.id) { it.copy(mountTrim = result.trim) }
+                    }
+                }
+            }
+        }
+    }
+
+    /** Drops the session trim, going back to the bare CAD nominal. */
+    fun clearMountReference() {
+        _mountTrim.value = null
+        _mountTrimNote.value = "Mount reference cleared — back to the bracket's CAD nominal."
+        applyMountExtrinsicNow()
+    }
+
+    fun dismissMountTrimNote() {
+        _mountTrimNote.value = null
+    }
+
+    // --- ROUND 6 (owner item 22): the Light / Optimal / Full chips ------------
+
+    /**
+     * Applies a preset, prefilling every parameter it owns and reporting what
+     * moved.
+     *
+     * Item 22's contract in one method: the preset is a **starting point**. It
+     * writes the same `_`-flows the sheet's own controls write, so every value
+     * stays individually editable afterwards; moving any of them flips
+     * [preset] to [com.lidarscan.core.capture.PerformancePreset.CUSTOM] without
+     * reverting anything.
+     */
+    fun setPreset(next: com.lidarscan.core.capture.PerformancePreset) {
+        if (!next.isSelectable) return
+        val before = currentTuning()
+        val after = com.lidarscan.core.capture.PerformancePresets.tuningFor(next, deviceTier, displayCeilingHz)
+        applyTuning(after)
+        _preset.value = next
+        val changes = com.lidarscan.core.capture.PerformancePresets.changes(before, after)
+        _presetChangeNote.value = if (changes.isEmpty()) {
+            "${next.displayName}: nothing changed — you were already on these settings."
+        } else {
+            "${next.displayName}: ${changes.joinToString(" · ")}"
+        }
+        logEvent(LOG_TAG_SESSION, "preset=$next tier=$deviceTier changes=${changes.joinToString("; ")}")
+        viewModelScope.launch { runCatching { persistPreset(next) } }
+    }
+
+    fun dismissPresetChangeNote() {
+        _presetChangeNote.value = null
+    }
+
+    /**
+     * ROUND 6: the trail's ring size, tracked as state rather than read back
+     * off the recorder — [currentTuning] compares against
+     * [com.lidarscan.core.capture.PerformancePresets.tuningFor]'s whole value,
+     * so a field that never moves would make `match()` permanently report
+     * CUSTOM and every preset switch claim a spurious "trail length" change.
+     */
+    private val _trailPoints = MutableStateFlow(defaultTuning.trailPoints)
+
+    private fun currentTuning() = com.lidarscan.core.capture.CaptureTuning(
+        liveMapEnabled = _liveMapEnabled.value,
+        refreshHz = _refreshHz.value,
+        lodBudgetMPoints = _lodBudgetMPoints.value,
+        keyframesEnabled = _keyframesEnabled.value,
+        keyframeRateFps = _keyframeRateFps.value,
+        trailEnabled = true,
+        trailPoints = _trailPoints.value,
+    )
+
+    private fun applyTuning(tuning: com.lidarscan.core.capture.CaptureTuning) {
+        _liveMapEnabled.value = tuning.liveMapEnabled
+        _refreshHz.value = tuning.refreshHz
+        _refreshRequestToken.value++
+        _lodBudgetMPoints.value = tuning.lodBudgetMPoints
+        _keyframesEnabled.value = tuning.keyframesEnabled
+        keyframeRecorder?.setEnabled(tuning.keyframesEnabled)
+        _keyframeRateFps.value = tuning.keyframeRateFps
+        keyframeRecorder?.setTargetFps(tuning.keyframeRateFps.toDouble())
+        _trailPoints.value = tuning.trailPoints
+        trailRecorder.setCapacity(tuning.trailPoints)
+    }
+
+    /**
+     * Called by every individual control's setter. Item 22 again: an advanced
+     * user moving one slider must keep that value and simply stop being "on" a
+     * preset — never have their edit snapped back.
+     */
+    private fun markCustomIfDiverged() {
+        _presetChangeNote.value = null
+        val matched = com.lidarscan.core.capture.PerformancePresets.match(
+            currentTuning(),
+            deviceTier,
+            displayCeilingHz,
+        )
+        _preset.value = matched
     }
 
     private var keyframeRecorder: com.lidarscan.app.ar.KeyframeRecorder? = null
@@ -723,6 +1061,43 @@ class CaptureViewModel(
             }
         }
 
+        // ROUND 6 (item 22): the preset persisted for this device profile. Applied
+        // rather than merely recorded, so a phone the operator has already set
+        // to Light opens on Light — including its defaults, not OPTIMAL's.
+        viewModelScope.launch {
+            val persisted = runCatching { loadPersistedPreset() }.getOrNull() ?: return@launch
+            if (!persisted.isSelectable || persisted == _preset.value) return@launch
+            applyTuning(
+                com.lidarscan.core.capture.PerformancePresets.tuningFor(persisted, deviceTier, displayCeilingHz),
+            )
+            _preset.value = persisted
+        }
+
+        // ROUND 6 (item 21): watch for the engine's live PageStore filling. Once
+        // it does, `PageStore::append()` stores nothing more (its own header:
+        // "When full it appends nothing") and the live map silently stops
+        // growing — which is a large part of "its bearly maping". Polled at
+        // 1 Hz: it is one JNI call returning an int, and the transition is a
+        // once-per-session event, not a per-frame one.
+        viewModelScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(LIVE_MAP_WATCH_MS)
+                val source = _pointCloudSource.value ?: continue
+                if (!source.isAvailable) continue
+                val pages = runCatching { source.pageCount() }.getOrDefault(0)
+                if (pages >= pageStoreSizing.maxPages && _liveMapFullNote.value == null) {
+                    _liveMapFullNote.value =
+                        com.lidarscan.core.render.LivePageStoreSizing.fullNote(pageStoreSizing)
+                    logEvent(
+                        LOG_TAG_STORE,
+                        "live page store FULL at $pages/${pageStoreSizing.maxPages} pages " +
+                            "(${pageStoreSizing.residentPointCeiling} point ceiling) — live map stops growing; " +
+                            "recording unaffected",
+                    )
+                }
+            }
+        }
+
         // The manual panel's Mid-360 fields open on the last auto-detected pair.
         viewModelScope.launch {
             val defaults = runCatching { manualMid360Defaults() }.getOrNull() ?: return@launch
@@ -733,6 +1108,23 @@ class CaptureViewModel(
         engineBridge.events
             .filterIsInstance<EngineEvent.CaptureStats>()
             .onEach(::onCaptureStats)
+            .launchIn(viewModelScope)
+
+        // ROUND 6 (item 20): the safety net. Any transition into a non-live
+        // capture state with a seal still pending means the session ended
+        // without Stop being pressed — seal it anyway, uncancellably, and log
+        // that this is what happened.
+        engineBridge.captureState
+            .onEach { state ->
+                if (state == CaptureState.RECORDING || state == CaptureState.PAUSED) return@onEach
+                if (state == CaptureState.STOPPING) return@onEach
+                if (!sealPending.get()) return@onEach
+                logEvent(LOG_TAG_SEAL, "session ended without Stop (state=$state) — sealing anyway")
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                    runCatching { sealAndStop() }
+                        .onFailure { logEvent(LOG_TAG_SEAL, "auto-seal THREW: ${it.javaClass.name}: ${it.message}") }
+                }
+            }
             .launchIn(viewModelScope)
 
         engineBridge.connectionState
@@ -814,16 +1206,37 @@ class CaptureViewModel(
         // ROUND 5.3: one walk, one trail — the preview's framing path is not part
         // of the recorded walkthrough.
         trailRecorder.clear()
+        // ROUND 6 (item 20): a new attempt clears the previous one's verdict.
+        _saveError.value = null
+        _lastSavedProject.value = null
+        _liveMapFullNote.value = null
         viewModelScope.launch {
             val project = (_uiState.value as? CaptureUiState.Loaded)?.project
                 ?: createProjectForThisScan()
                 ?: return@launch
+            logEvent(
+                LOG_TAG_SESSION,
+                "start: project=${project.id} sensor=${project.manifest.sensor} " +
+                    "profile=${project.manifest.profile} preset=${_preset.value} tier=$deviceTier " +
+                    "liveSlam=${_liveSlam.value} dir=${project.directory.absolutePath}",
+            )
             val started = engineBridge.startCapture(
                 project.directory.absolutePath,
                 _liveSlam.value,
                 com.lidarscan.core.model.CaptureDefaults.engineProfileString(project.manifest.profile),
             )
-            if (started.isFailure) return@launch
+            if (started.isFailure) {
+                // ROUND 6: this used to be a bare `return@launch`. The project
+                // directory exists at this point but nothing will ever be
+                // written into it, and the operator was shown nothing at all.
+                val why = started.exceptionOrNull()
+                _saveError.value =
+                    "The scan did not start (${why?.message ?: "the engine refused"}). Nothing is being " +
+                        "recorded — check the sensor connection and press Start again."
+                logEvent(LOG_TAG_SEAL, "engine startCapture FAILED for ${project.id}: ${why?.message}")
+                return@launch
+            }
+            sealPending.set(true)
             startArPipelines(project)
             startPhoneGeorefIfNeeded(project)
         }
@@ -903,7 +1316,18 @@ class CaptureViewModel(
         )
         val created = runCatching {
             projectStore.create(name, _sensor.value, _profile.value)
-        }.getOrNull() ?: return@withContext null
+        }.getOrElse { e ->
+            // ROUND 6 (owner item 20): this used to be `.getOrNull() ?: return
+            // null`, and `startCapture` then returned without a word. A Start
+            // that silently does nothing is exactly the class of failure the
+            // owner had no way to report — say it, log it, and let the record
+            // button stay honest.
+            _saveError.value =
+                "Could not create the scan folder on this phone (${e.javaClass.simpleName}: ${e.message}). " +
+                    "Nothing was recorded. Check free space and storage permissions."
+            logEvent(LOG_TAG_SEAL, "project create FAILED for \"$name\": ${e.javaClass.simpleName}: ${e.message}")
+            return@withContext null
+        }
 
         // The detected Mid-360 addresses are what this capture is actually being
         // taken with, and §3.1's "save per project" is what makes a .lscan
@@ -969,26 +1393,7 @@ class CaptureViewModel(
         val handle = engineHandleProvider()
         controller.engineHandle = handle
 
-        val measured = project.manifest.mountCalibration
-            ?: mountCalibrationFor(project.manifest.sensor)
-        val nominalMatrix = com.lidarscan.core.calib.BracketNominals.cadNominal(project.manifest.sensor)
-        val matrix = measured
-            ?.let { com.lidarscan.core.calib.Mat4(it.cameraFromLidar.copyOf()) }
-            ?.takeIf { it.isRigid(1e-4) }
-            ?: nominalMatrix
-        val usingNominal = measured == null ||
-            !com.lidarscan.core.calib.Mat4(measured.cameraFromLidar.copyOf()).isRigid(1e-4)
-
-        if (handle != 0L) {
-            val err = com.lidarscan.app.engine.ScanEngineNative
-                .nativeSetMountExtrinsics(handle, matrix.m)
-            if (err == com.lidarscan.app.engine.ScanEngineNative.ErrorCode.OK) {
-                com.lidarscan.app.engine.ScanEngineNative.nativePushbroomEnable(handle, true)
-                _mountCalibrationApplied.value = measured
-                _mountIsNominal.value = usingNominal
-                pushbroomEnabled = true
-            }
-        }
+        applyMountExtrinsic(handle, project.manifest.sensor, project.manifest.mountCalibration)
 
         keyframeRecorder = com.lidarscan.app.ar.KeyframeRecorder(
             motion = controller.motion,
@@ -1014,10 +1419,139 @@ class CaptureViewModel(
         }
     }
 
+    /**
+     * ROUND 6 (owner item 23): resolves the extrinsic this session's pushbroom
+     * runs on and pushes it into the engine, then enables the pushbroom.
+     *
+     * The ladder, most-trusted first:
+     *  1. a **measured** mount calibration (the wizard's), if it is rigid;
+     *  2. otherwise the bracket's **CAD nominal**, with the session's
+     *     [mountTrim] composed on top when the operator has re-zeroed;
+     *  3. the bare nominal.
+     *
+     * The trim is composed onto the nominal and NOT onto a measured
+     * calibration: a measured extrinsic already contains the real geometry of
+     * the bracket as it was when it was solved, and multiplying a fresh
+     * attitude re-zero into it would double-count the part the solve already
+     * knows. A re-zero is what you have *instead of* a calibration, not on top
+     * of one — and [mountIsNominal] is exactly the flag that says which.
+     *
+     * Split out of [startArPipelines] so a mid-session re-zero can call it too:
+     * `scan_engine_set_mount_extrinsics` is legal while a session runs, so a
+     * trim taken during a walk applies from the next resolved point.
+     */
+    private fun applyMountExtrinsic(
+        handle: Long,
+        sensor: com.lidarscan.core.model.SensorType,
+        projectCalibration: com.lidarscan.core.calib.MountCalibration?,
+    ) {
+        val measured = projectCalibration ?: mountCalibrationFor(sensor)
+        val measuredMatrix = measured
+            ?.let { com.lidarscan.core.calib.Mat4(it.cameraFromLidar.copyOf()) }
+            ?.takeIf { it.isRigid(1e-4) }
+        val nominalMatrix = com.lidarscan.core.calib.BracketNominals.cadNominal(sensor)
+        val trim = _mountTrim.value?.takeIf { it.sensor == sensor }
+        val matrix = measuredMatrix
+            ?: trim?.composedWith(nominalMatrix)
+            ?: nominalMatrix
+        val usingNominal = measuredMatrix == null
+
+        if (handle == 0L) {
+            _mountIsNominal.value = usingNominal
+            return
+        }
+        val err = com.lidarscan.app.engine.ScanEngineNative.nativeSetMountExtrinsics(handle, matrix.m)
+        if (err == com.lidarscan.app.engine.ScanEngineNative.ErrorCode.OK) {
+            val enableErr = com.lidarscan.app.engine.ScanEngineNative.nativePushbroomEnable(handle, true)
+            val enabled = enableErr == com.lidarscan.app.engine.ScanEngineNative.ErrorCode.OK
+            _mountCalibrationApplied.value = measured
+            _mountIsNominal.value = usingNominal
+            pushbroomEnabled = pushbroomEnabled || enabled
+            _pushbroomActive.value = pushbroomEnabled
+            logEvent(
+                LOG_TAG_PUSHBROOM,
+                "extrinsic applied: source=${if (usingNominal) "nominal" else "measured"} " +
+                    "trim=${trim?.let { "%.2fdeg".format(it.magnitudeDeg) } ?: "none"} " +
+                    "pushbroomEnabled=$enabled",
+            )
+        } else {
+            logEvent(LOG_TAG_PUSHBROOM, "set_mount_extrinsics FAILED err=$err — no live 3D map this session")
+        }
+    }
+
+    /** Re-applies the extrinsic to whatever session is live right now (used by the re-zero). */
+    private fun applyMountExtrinsicNow() {
+        val handle = engineHandleProvider()
+        if (handle == 0L) return
+        val project = (_uiState.value as? CaptureUiState.Loaded)?.project
+        applyMountExtrinsic(handle, project?.manifest?.sensor ?: _sensor.value, project?.manifest?.mountCalibration)
+    }
+
     fun pauseCapture() = viewModelScope.launch { engineBridge.pauseCapture() }
     fun resumeCapture() = viewModelScope.launch { engineBridge.resumeCapture() }
 
+    /**
+     * ROUND 6 (owner item 20) — **the seal is now uncancellable, verified and
+     * loud.**
+     *
+     * Three things were wrong with the 0.2.1 version of this method, and all
+     * three end the same way: a capture the operator watched complete, with
+     * nothing in Projects afterwards.
+     *
+     *  1. **The whole seal ran in `viewModelScope`.** Stop is the one moment a
+     *     walkthrough operator is most likely to also leave the screen, put the
+     *     phone away, or have the process trimmed — and `viewModelScope` is
+     *     cancelled the instant the ViewModel clears. Every `withContext` and
+     *     every suspend call below is a cancellation point, so the sequence
+     *     could stop halfway with the manifest never written. The body is now
+     *     wrapped in [kotlinx.coroutines.NonCancellable]: once Stop is pressed,
+     *     sealing runs to completion or reports why it did not.
+     *  2. **`updateManifest`'s failure was discarded.** Its result was not even
+     *     assigned. It returns null both when the project directory is gone and
+     *     when the manifest cannot be parsed — which, because of the
+     *     `manifest.json` collision this round also fixes
+     *     (`FileProjectStore`'s header), it always was after a real capture.
+     *     The capture ended, the summary sheet said "12.4 M points", and the
+     *     project was invisible.
+     *  3. **Nothing verified the result.** A seal that is not read back is a
+     *     hope. This one re-opens the project through the same store the
+     *     Projects tab lists with, and if it cannot be found there, it says so
+     *     in the UI and writes it to the on-device log.
+     */
     fun stopCapture() = viewModelScope.launch {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+            try {
+                sealAndStop()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (e: Throwable) {
+                // ROUND 6 (item 20): anything thrown in here — a JNI call, a
+                // storage failure, a listener — used to escape into
+                // `viewModelScope` and be swallowed by the scope's handler, so
+                // the seal simply stopped happening and the operator was told
+                // nothing whatsoever. That is the exact shape of the field
+                // report. A crash on Stop is now a loud, on-screen, logged
+                // failure with the on-disk path attached.
+                val where = (_uiState.value as? CaptureUiState.Loaded)?.project?.directory?.absolutePath
+                _saveError.value =
+                    "Saving the scan failed (${e.javaClass.simpleName}: ${e.message}). " +
+                        (where?.let { "Its raw data is at $it — do not delete it. " } ?: "") +
+                        "The capture log in Settings has the full trace."
+                logEvent(LOG_TAG_SEAL, "SEAL THREW: ${e.javaClass.name}: ${e.message}")
+                pushbroomEnabled = false
+                _pushbroomActive.value = false
+            }
+        }
+    }
+
+    private suspend fun sealAndStop() = sealMutex.withLock {
+        // A session seals exactly once, whether the operator pressed Stop or the
+        // engine ended the session on its own (see [sealPending]).
+        if (!sealPending.compareAndSet(true, false)) return@withLock
+        sealAndStopLocked()
+    }
+
+    private suspend fun sealAndStopLocked() {
         val finalStats = _stats.value
         // ROUND 5.2: the phone-GNSS fallback belongs to the session, so it stops
         // with it — before the engine handle goes away, since the recorder pushes
@@ -1079,11 +1613,18 @@ class CaptureViewModel(
         }
 
         if (activeId == null) {
+            // ROUND 6: there is no project to seal into. Before this, the method
+            // simply returned and the operator was told nothing at all.
             pushbroomEnabled = false
-            return@launch
+            _pushbroomActive.value = false
+            _saveError.value =
+                "This session had no scan project to save into, so nothing was written. " +
+                    "Press Start (not Stop) to begin a scan."
+            logEvent(LOG_TAG_SEAL, "stop with NO active project — nothing sealed")
+            return
         }
 
-        withContext(Dispatchers.IO) {
+        val sealed = withContext(Dispatchers.IO) {
             projectStore.updateManifest(activeId) { manifest ->
                 manifest.copy(
                     pointCountEstimate = finalStats.pointsCaptured.takeIf { it > 0 } ?: manifest.pointCountEstimate,
@@ -1094,10 +1635,38 @@ class CaptureViewModel(
                     // any change made *during* the recording, which is why it is
                     // written here as well as at creation.
                     displayParams = displayParams.value,
+                    // ROUND 6 (item 23): the trim the pushbroom actually ran on,
+                    // so post-processing uses the same one.
+                    mountTrim = _mountTrim.value ?: manifest.mountTrim,
                 )
             }
         }
+
+        // ROUND 6 (item 20): VERIFY. Re-open through the same store the Projects
+        // tab lists with — that is the only question worth asking here, and the
+        // one nobody was asking.
+        val verified = withContext(Dispatchers.IO) { runCatching { projectStore.open(activeId) }.getOrNull() }
+        if (sealed == null || verified == null) {
+            _saveError.value =
+                "The scan finished but could not be saved to the project list. Its raw data IS on the phone at " +
+                    "${projectDir?.absolutePath ?: activeId} — do not delete it; the capture log in Settings has " +
+                    "the details."
+            logEvent(
+                LOG_TAG_SEAL,
+                "SEAL FAILED id=$activeId sealedManifest=${sealed != null} readback=${verified != null} " +
+                    "points=${finalStats.pointsCaptured} dir=${projectDir?.absolutePath}",
+            )
+        } else {
+            _lastSavedProject.value = verified.directory.absolutePath
+            logEvent(
+                LOG_TAG_SEAL,
+                "sealed OK id=$activeId name=\"${verified.manifest.name}\" " +
+                    "points=${finalStats.pointsCaptured} elapsedMs=${finalStats.elapsedMillis} " +
+                    "listable=true dir=${verified.directory.absolutePath}",
+            )
+        }
         pushbroomEnabled = false
+        _pushbroomActive.value = false
         // ROUND 5 AUDIT bugfix (multi-cycle recording): on the Capture tab
         // (`projectId == null` — item 9's "Start creates the project"),
         // `startCapture()` treats `_uiState is Loaded` as "record into THIS
@@ -1176,6 +1745,13 @@ class CaptureViewModel(
     fun setRefreshHz(hz: Int) {
         _refreshHz.value = if (hz > 0) hz else 0
         _refreshRequestToken.value++
+        markCustomIfDiverged()
+    }
+
+    /** ROUND 6 (item 22, Light): draw the registered/pushbroom map, or only raw sensor pages. */
+    fun setLiveMapEnabled(enabled: Boolean) {
+        _liveMapEnabled.value = enabled
+        markCustomIfDiverged()
     }
 
     fun setGamma(value: Float) {
@@ -1211,17 +1787,20 @@ class CaptureViewModel(
     fun setKeyframesEnabled(enabled: Boolean) {
         _keyframesEnabled.value = enabled
         keyframeRecorder?.setEnabled(enabled)
+        markCustomIfDiverged()
     }
 
     /** Sheet: 2 / 3 / 5 fps. Applies to a live recorder immediately. */
     fun setKeyframeRateFps(fps: Int) {
         _keyframeRateFps.value = fps
         keyframeRecorder?.setTargetFps(fps.toDouble())
+        markCustomIfDiverged()
     }
 
     /** Sheet: §3.12's LOD budget, in millions of points. */
     fun setLodBudgetMPoints(mPoints: Int) {
         _lodBudgetMPoints.value = mPoints.coerceIn(1, 200)
+        markCustomIfDiverged()
     }
 
     override fun onCleared() {
@@ -1240,6 +1819,16 @@ class CaptureViewModel(
     }
 
     private companion object {
+        /** ROUND 6 log tags — mirrors `com.lidarscan.app.debug.CaptureLog`'s, without depending on it. */
+        const val LOG_TAG_SESSION = "session"
+        const val LOG_TAG_SEAL = "seal"
+        const val LOG_TAG_AR = "ar"
+        const val LOG_TAG_PUSHBROOM = "pushbroom"
+        const val LOG_TAG_STORE = "store"
+
+        /** ROUND 6 (item 21): how often the live page-store ceiling is checked. */
+        const val LIVE_MAP_WATCH_MS = 1_000L
+
         /** How often the motion hint is re-evaluated (ROUND 5.3 item 18). */
         const val MOTION_HINT_TICK_MS = 500L
 

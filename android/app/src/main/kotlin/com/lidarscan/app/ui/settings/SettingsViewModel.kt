@@ -21,7 +21,39 @@ class SettingsViewModel(
     private val settingsRepository: SettingsRepository,
     private val projectStore: ProjectStore,
     val storageLocation: String,
+    /**
+     * ROUND 6 (owner item 20): the persistent on-device capture log. Surfaced
+     * here — path, size, live tail, export, clear — because the previous field
+     * failure arrived with no evidence at all and there was nowhere on the
+     * device to go and get any.
+     */
+    private val captureLog: com.lidarscan.app.debug.CaptureLog? = null,
+    /** Where an exported copy is staged before the share sheet; the app's own cache. */
+    private val shareCacheDir: java.io.File? = null,
+    private val shareFile: ((java.io.File) -> Unit)? = null,
 ) : ViewModel() {
+
+    val captureLogPath: String get() = captureLog?.path ?: "(capture log unavailable)"
+
+    val captureLogLastLine: StateFlow<String?> =
+        captureLog?.lastLine ?: kotlinx.coroutines.flow.MutableStateFlow(null)
+
+    fun captureLogSizeBytes(): Long = captureLog?.sizeBytes() ?: 0L
+
+    /** Stages the retained log in the cache and hands it to the system share sheet. */
+    fun shareCaptureLog() {
+        val log = captureLog ?: return
+        val cache = shareCacheDir ?: return
+        val share = shareFile ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            val file = log.exportTo(cache) ?: return@launch
+            withContext(Dispatchers.Main) { share(file) }
+        }
+    }
+
+    fun clearCaptureLog() {
+        captureLog?.clear()
+    }
 
     val settings: StateFlow<AppSettings> = settingsRepository.settings.stateIn(
         scope = viewModelScope,

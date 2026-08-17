@@ -80,7 +80,26 @@ class ArCameraBackgroundRenderer(
     )
     private val quadTexCoords: FloatBuffer = floatBuffer(FloatArray(8))
 
+    /**
+     * ROUND 6 (owner item 19): set once anything on this renderer's GL thread
+     * has failed. Every entry point below becomes a no-op afterwards, so a
+     * broken driver produces one reported failure and a black quad rather than
+     * a throw per frame — and never an uncaught exception on a non-UI thread,
+     * which is what "the AR overlay crush the app when enable" actually was.
+     */
+    @Volatile
+    private var degraded = false
+
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
+        try {
+            createGlResources()
+        } catch (e: Throwable) {
+            degraded = true
+            controller.reportArFailure("the AR camera view could not start", e)
+        }
+    }
+
+    private fun createGlResources() {
         GLES20.glClearColor(0f, 0f, 0f, 1f)
 
         val textures = IntArray(1)
@@ -100,18 +119,38 @@ class ArCameraBackgroundRenderer(
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
-        GLES20.glViewport(0, 0, width, height)
-        controller.setDisplayGeometry(null, width, height)
+        if (degraded) return
+        runCatching {
+            GLES20.glViewport(0, 0, width, height)
+            controller.setDisplayGeometry(null, width, height)
+        }.onFailure {
+            degraded = true
+            controller.reportArFailure("the AR camera view could not be sized", it)
+        }
     }
 
     override fun onDrawFrame(gl: GL10?) {
-        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT or GLES20.GL_DEPTH_BUFFER_BIT)
-        if (textureId >= 0) controller.setCameraTextureName(textureId, owner)
+        if (degraded) return
+        // ROUND 6 (owner item 19): ONE try/catch around the whole GL frame.
+        // `GLSurfaceView`'s render thread has no exception handler of its own —
+        // anything escaping this method reaches the default handler and takes
+        // the process with it. Nothing in here is worth a crash: a failed AR
+        // frame costs a black backdrop and an inline message.
+        try {
+            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT or GLES20.GL_DEPTH_BUFFER_BIT)
+            if (textureId >= 0) controller.setCameraTextureName(textureId, owner)
 
-        val frame = controller.onFrame(owner) ?: return
-        if (frame.hasDisplayGeometryChanged()) updateTexCoords(frame)
-        drawBackground()
-        onFrame(frame)
+            // `onFrame` is itself gated + guarded (see CaptureArController):
+            // null here means "not my turn", "not resumed yet", or "already
+            // degraded" — all of which are ordinary, not errors.
+            val frame = controller.onFrame(owner) ?: return
+            if (frame.hasDisplayGeometryChanged()) updateTexCoords(frame)
+            drawBackground()
+            onFrame(frame)
+        } catch (e: Throwable) {
+            degraded = true
+            controller.reportArFailure("the AR camera view stopped drawing", e)
+        }
     }
 
     private fun updateTexCoords(frame: Frame) {
@@ -184,6 +223,14 @@ class ArCameraBackgroundRenderer(
         GLES20.glLinkProgram(id)
         GLES20.glDeleteShader(vertex)
         GLES20.glDeleteShader(fragment)
+        // ROUND 6: link failures were never checked. A driver that refuses
+        // `GL_OES_EGL_image_external` (or refuses it in this EGL config) links a
+        // zero program, every later `glUseProgram` is a GL error, and the first
+        // symptom is a black screen rather than a reported failure. Checked
+        // here, where the message can name the actual reason.
+        val linked = IntArray(1)
+        GLES20.glGetProgramiv(id, GLES20.GL_LINK_STATUS, linked, 0)
+        check(linked[0] != 0) { "camera background program link failed: ${GLES20.glGetProgramInfoLog(id)}" }
         return id
     }
 

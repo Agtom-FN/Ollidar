@@ -64,6 +64,7 @@ fun SettingsRoute(
     onBack: () -> Unit,
     onReplaySyntheticCapture: (projectId: String) -> Unit = {},
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     val viewModel: SettingsViewModel = viewModel(
         factory = viewModelFactory {
             initializer {
@@ -71,15 +72,34 @@ fun SettingsRoute(
                     settingsRepository = container.settingsRepository,
                     projectStore = container.projectStore,
                     storageLocation = container.projectsRootDir.absolutePath,
+                    captureLog = container.captureLog,
+                    shareCacheDir = java.io.File(context.cacheDir, "shared"),
+                    shareFile = { file ->
+                        com.lidarscan.app.share.ShareTargets.shareFile(
+                            context,
+                            file,
+                            "text/plain",
+                            "Share capture log",
+                        )
+                    },
                 )
             }
         },
     )
     val settings by viewModel.settings.collectAsStateWithLifecycle()
+    // ROUND 6 (item 20): the log's own live tail, so the screen shows that
+    // logging is genuinely happening rather than just naming a path.
+    val captureLogLastLine by viewModel.captureLogLastLine.collectAsStateWithLifecycle()
+    val captureLogSize = remember(captureLogLastLine) { viewModel.captureLogSizeBytes() }
 
     SettingsScreen(
         settings = settings,
         storageLocation = viewModel.storageLocation,
+        captureLogPath = viewModel.captureLogPath,
+        captureLogSizeBytes = captureLogSize,
+        captureLogLastLine = captureLogLastLine,
+        onShareCaptureLog = viewModel::shareCaptureLog,
+        onClearCaptureLog = viewModel::clearCaptureLog,
         nativeEngineAvailable = com.lidarscan.app.engine.ScanEngineNative.isAvailable,
         onUnitsChange = viewModel::setUnits,
         onThemeModeChange = viewModel::setThemeMode,
@@ -110,6 +130,12 @@ fun SettingsRoute(
 fun SettingsScreen(
     settings: AppSettings,
     storageLocation: String,
+    /** ROUND 6 (owner item 20): where the on-device capture log lives, and its size. */
+    captureLogPath: String = "",
+    captureLogSizeBytes: Long = 0L,
+    captureLogLastLine: String? = null,
+    onShareCaptureLog: () -> Unit = {},
+    onClearCaptureLog: () -> Unit = {},
     nativeEngineAvailable: Boolean,
     onUnitsChange: (Units) -> Unit,
     onThemeModeChange: (ThemeMode) -> Unit,
@@ -175,6 +201,60 @@ fun SettingsScreen(
                     onUseFakeEngineChange = onUseFakeEngineChange,
                     onReplaySyntheticCapture = onReplaySyntheticCapture,
                 )
+            }
+
+            // ROUND 6 (owner item 20): the field-evidence section. The last
+            // capture failure arrived with no stack trace and no logcat,
+            // because logcat on a phone in the field is gone by the time
+            // anyone asks. This is the persistent copy, its path, and a share
+            // button — so the NEXT report can carry the trace with it.
+            SettingsSection("Capture log") {
+                ScanCard {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Folder, contentDescription = null, tint = Ember)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                captureLogPath,
+                                style = MonoMeta,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.testTag("captureLogPath"),
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            Hint(
+                                "Project creation, session start/stop, pushbroom, and every seal — written " +
+                                    "here and kept across restarts (${captureLogSizeBytes / 1024} KB, rolling). " +
+                                    "Attach it to a bug report.",
+                                color = InkFaint,
+                            )
+                            if (captureLogLastLine != null) {
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    captureLogLastLine,
+                                    style = MonoLabel,
+                                    color = InkFaint,
+                                    maxLines = 2,
+                                    modifier = Modifier.testTag("captureLogLastLine"),
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SecondaryPill(
+                            text = "Export log",
+                            height = 46.dp,
+                            onClick = onShareCaptureLog,
+                            modifier = Modifier.weight(1f).testTag("exportCaptureLogButton"),
+                        )
+                        SecondaryPill(
+                            text = "Clear",
+                            height = 46.dp,
+                            onClick = onClearCaptureLog,
+                            modifier = Modifier.weight(1f).testTag("clearCaptureLogButton"),
+                        )
+                    }
+                }
             }
 
             SettingsSection("Storage location") {

@@ -31,6 +31,13 @@ import kotlinx.coroutines.flow.asStateFlow
 class TrajectoryTrailRecorder(
     private val trail: TrajectoryTrail = TrajectoryTrail(),
 ) {
+    /** ROUND 6 (item 22): the preset's trail length, applied live. */
+    fun setCapacity(points: Int) {
+        trail.capacity = points
+        _points.value = trail.normalized()
+        _pathLengthM.value = trail.pathLengthM()
+    }
+
     private val _points = MutableStateFlow<List<TrajectoryTrail.NormalizedPoint>>(emptyList())
 
     /** The fitted trail, 0..1, screen-oriented (y down). Republished only when a point is actually kept. */

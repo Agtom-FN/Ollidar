@@ -55,10 +55,57 @@ class AppContainer(context: Context) {
      */
     val projectsRootDir: File = File(appContext.getExternalFilesDir(null) ?: appContext.filesDir, "Projects")
 
+    /**
+     * ROUND 6 (owner item 20): the persistent on-device capture log. Created
+     * before the project store, because the store's own create/seal/recovery
+     * events are the first thing worth recording.
+     */
+    val captureLog = com.lidarscan.app.debug.CaptureLog(appContext)
+
     val projectStore: ProjectStore = FileProjectStore(
         rootDir = projectsRootDir,
         appVersion = BuildConfig.VERSION_NAME,
+        onDiagnostic = { line -> captureLog.log(com.lidarscan.app.debug.CaptureLog.TAG_PROJECT, line) },
     )
+
+    /**
+     * ROUND 6 (owner items 21 + 22): what this phone can carry, from what the
+     * platform will tell us for free. Read once — RAM and core count do not
+     * change, and the display ceiling only changes across a config change that
+     * would rebuild the screens reading it anyway.
+     */
+    val deviceTier: com.lidarscan.core.capture.DeviceTier = run {
+        val am = appContext.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
+        val memInfo = android.app.ActivityManager.MemoryInfo().also { info ->
+            runCatching { am?.getMemoryInfo(info) }
+        }
+        val totalRamMb = (memInfo.totalMem / (1024L * 1024L)).coerceAtLeast(0L)
+        val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
+        val ceilingHz = com.lidarscan.app.render.displayRefreshCeilingHz(appContext)
+        com.lidarscan.core.capture.PerformancePresets.tierFor(totalRamMb, cores, ceilingHz).also { tier ->
+            captureLog.log(
+                com.lidarscan.app.debug.CaptureLog.TAG_STORE,
+                "device tier=$tier ram=${totalRamMb}MB cores=$cores displayCeiling=${ceilingHz}Hz",
+            )
+        }
+    }
+
+    /**
+     * ROUND 6 (owner item 21): the live `PageStore` sizing handed to
+     * `scan_engine_create`, instead of B2's `0, 0` ("give me the desktop's
+     * 16 MB pages and 1 GB ceiling"). See
+     * [com.lidarscan.core.render.LivePageStoreSizing] for why that default made
+     * a D6 live map stop growing after about a minute.
+     */
+    val livePageStoreSizing: com.lidarscan.core.render.LivePageStoreSizing =
+        com.lidarscan.core.render.LivePageStoreSizing.forTier(deviceTier)
+
+    /**
+     * ROUND 6: the device profile key the performance preset is persisted
+     * under. Model + tier, so the same account on a different phone does not
+     * inherit a preset chosen for stronger hardware.
+     */
+    val deviceProfileKey: String = "${android.os.Build.MANUFACTURER}/${android.os.Build.MODEL}/$deviceTier"
 
     /** D6 USB device discovery, permission flow and open-connection registry (B2). */
     val d6UsbConnectionRegistry = D6UsbConnectionRegistry(appContext)
@@ -130,7 +177,7 @@ class AppContainer(context: Context) {
         val persistedUseFake = runBlocking { settingsRepository.settings.first().useFakeEngine }
         val forceFake = BuildConfig.FORCE_FAKE_ENGINE || persistedUseFake
         val bridge: EngineBridge = if (!forceFake && ScanEngineNative.isAvailable) {
-            RealEngineBridge(d6UsbConnectionRegistry, containerScope)
+            RealEngineBridge(d6UsbConnectionRegistry, containerScope, livePageStoreSizing)
         } else {
             FakeEngineBridge()
         }

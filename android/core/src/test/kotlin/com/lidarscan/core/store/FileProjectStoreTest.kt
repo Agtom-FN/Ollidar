@@ -34,7 +34,11 @@ class FileProjectStoreTest {
 
         assertTrue(project.directory.isDirectory)
         assertTrue(project.id.endsWith(".lscan"))
-        assertTrue(File(project.directory, "manifest.json").isFile)
+        // ROUND 6 (owner item 20): the app's record is `project.json`.
+        // `manifest.json` is the ENGINE's container manifest and the app writing
+        // there is what made real captures vanish — see FileProjectStore's
+        // header and ProjectManifestCollisionTest.
+        assertTrue(File(project.directory, FileProjectStore.APP_MANIFEST_FILE_NAME).isFile)
         assertTrue(File(project.directory, "streams").isDirectory)
         assertTrue(File(project.directory, "streams/frames").isDirectory)
         assertTrue(File(project.directory, "processed").isDirectory)

@@ -81,11 +81,16 @@ fun ArPosePumpView(
             }
         },
         onRelease = {
-            it.onPause()
+            // ROUND 6: the surface is going away with this view, so the gate is
+            // told that specifically (it is the "surface destroyed mid-claim"
+            // case ArSessionGate's tests pin). Guarded because `onPause()` on a
+            // GLSurfaceView whose thread already died can throw on some OEM
+            // builds, and a throw out of `onRelease` is a Compose-thread crash.
+            runCatching { it.onPause() }
             // Only relinquishes if the pump still owns it — see
             // `releaseRenderer`'s own doc for why an out-of-order release must
             // not undo a newer claim from the overlay switching in.
-            controller.releaseRenderer(CaptureArController.RendererOwner.POSE_PUMP)
+            controller.onRendererSurfaceDestroyed(CaptureArController.RendererOwner.POSE_PUMP)
         },
     )
 }

@@ -39,7 +39,12 @@ data class RigMotionEstimate(
  * scale from the other direction: a 1.3 Hz vertical bob puts 185 µm of lerp
  * error across one 33 ms ARCore interval.
  *
- * Not thread-safe; B8's recorder feeds it from one thread.
+ * ROUND 6 (owner item 23): every method is now `@Synchronized`. The tracker is
+ * still written from exactly one thread (the GL thread, via
+ * `CaptureArController.publishPose`), but the one-tap mount re-zero reads
+ * [snapshot] from the UI thread, and iterating an `ArrayDeque` while another
+ * thread appends to it is a `ConcurrentModificationException` waiting for a
+ * field session. The lock is uncontended ~30 times a second and once per tap.
  */
 class RigMotionTracker(
     private val windowNs: Long = 100_000_000L,
@@ -47,6 +52,14 @@ class RigMotionTracker(
 ) {
     private val samples = ArrayDeque<PoseSample>()
 
+    /**
+     * ROUND 6: the retained window, oldest first, as an immutable copy —
+     * [com.lidarscan.core.calib.MountTrimSampler]'s input for the mount re-zero.
+     */
+    @Synchronized
+    fun snapshot(): List<PoseSample> = samples.toList()
+
+    @Synchronized
     fun add(sample: PoseSample) {
         // Out-of-order poses are dropped rather than sorted in: the engine
         // rejects them too (`scan_engine_push_pose` returns
@@ -59,10 +72,13 @@ class RigMotionTracker(
         while (samples.size > capacity) samples.removeFirst()
     }
 
+    @Synchronized
     fun latest(): PoseSample? = samples.lastOrNull()
 
+    @Synchronized
     fun size(): Int = samples.size
 
+    @Synchronized
     fun clear() = samples.clear()
 
     /**
@@ -105,6 +121,7 @@ class RigMotionTracker(
      * just added" — naturally gets a **backward** difference over the
      * available window instead of a permanent zero.
      */
+    @Synchronized
     fun estimateAt(tMonoNs: Long): RigMotionEstimate {
         val after = samples.lastOrNull { it.tMonoNs <= tMonoNs + windowNs }
             ?: return RigMotionEstimate(0f, 0f, false)

@@ -26,8 +26,20 @@ class TrajectoryTrail(
      */
     private val minSpacingM: Float = 0.15f,
     /** Ring capacity. The oldest points fall off rather than the trail growing forever. */
-    private val capacity: Int = 600,
+    capacity: Int = 600,
 ) {
+    /**
+     * ROUND 6 (owner items 21 + 22): settable, because the Light / Optimal /
+     * Full presets size it. Shrinking drops the OLDEST points immediately —
+     * keeping the newest is what a walkthrough operator glancing at "where have
+     * I just been" actually wants.
+     */
+    var capacity: Int = capacity.coerceAtLeast(2)
+        set(value) {
+            field = value.coerceAtLeast(2)
+            while (points.size > field) points.removeFirst()
+        }
+
     /** x/z metres in the pose frame, plus whether tracking was good when it was taken. */
     data class Point(val x: Float, val z: Float, val tracking: Boolean)
 
