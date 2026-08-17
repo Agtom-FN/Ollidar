@@ -282,3 +282,17 @@ both closed × keyframes on / off. Screenshots: `redesign-exports/fix-r4-*.png`.
     Follow; and Follow is now a THIRD-PERSON camera (behind, above, pitched
     down, heading from the trajectory not phone yaw) because the D6's fan paints
     a ring around the operator and never anything ahead.
+
+### round 9 (owner, on 0.5.0 — "much better")
+32. Never declare data unrescuable: legacy (pre-0.5.0) scans get a rescue path on the
+    roadmap (trajectory recovery from camera keyframes via SfM/VIO). First-principles.
+33. Capture flow: entering Capture = a new-scan context; leaving WITHOUT recording
+    leaves nothing behind (no empty projects, prune 0-point strays); record+stop =>
+    keep + redirect to Projects (as shipped).
+34. OUTPUT IS LEFT-RIGHT MIRRORED. Owner's exact mount: D6 on the BACK of the phone,
+    0° direction facing UP, top of the lidar facing FORWARD (walk direction).
+    Stored extrinsic det=+1 (proper rotation) => suspect fan-angle spin-direction
+    convention. Fix from datasheet + this mount truth; falsifiable chirality test.
+35. Pose/lidar rate sync (owner insight): ARCore poses ~30 Hz vs lidar slices ~6 ms —
+    densify poses with phone IMU (gyro/accel) between ARCore samples for gait-frequency
+    motion; record the phone IMU stream so offline re-resolve benefits too.
