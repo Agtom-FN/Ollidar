@@ -1,0 +1,47 @@
+2026-08-17 22:51:35.487 [store] device tier=STANDARD ram=11573MB cores=9 displayCeiling=60Hz
+2026-08-17 22:51:35.843 [project] RECOVERED project scan-001-2026-08-17-1926-6a87dd.lscan from an engine-written manifest.json (pre-0.3.0 filename collision) — name="Scan-001-2026-08-17-1926"
+2026-08-17 22:51:35.849 [project] RECOVERED project scan-002-2026-08-17-1928-0da20a.lscan from an engine-written manifest.json (pre-0.3.0 filename collision) — name="Scan-002-2026-08-17-1928"
+2026-08-17 22:51:35.854 [project] RECOVERED project scan-003-2026-08-17-1938-182eee.lscan from an engine-written manifest.json (pre-0.3.0 filename collision) — name="Scan-003-2026-08-17-1938"
+2026-08-17 22:51:35.863 [project] RECOVERED project scan-004-2026-08-17-2020-04b5c3.lscan from an engine-written manifest.json (pre-0.3.0 filename collision) — name="Scan-004-2026-08-17-2020"
+2026-08-17 22:51:35.868 [project] RECOVERED project scan-005-2026-08-17-2025-9ccd8d.lscan from an engine-written manifest.json (pre-0.3.0 filename collision) — name="Scan-005-2026-08-17-2025"
+2026-08-17 22:51:35.871 [project] RECOVERED project scan-006-2026-08-17-2026-c10163.lscan from an engine-written manifest.json (pre-0.3.0 filename collision) — name="Scan-006-2026-08-17-2026"
+2026-08-17 22:51:35.874 [project] RECOVERED project scan-007-2026-08-17-2027-c3076d.lscan from an engine-written manifest.json (pre-0.3.0 filename collision) — name="Scan-007-2026-08-17-2027"
+2026-08-17 22:52:14.042 [ar] mount re-zero refused: MOVING
+2026-08-17 22:52:19.088 [ar] mount re-zero refused: MOVING
+2026-08-17 22:52:53.331 [ar] mount re-zero refused: MOVING
+2026-08-17 22:52:55.254 [ar] mount re-zero refused: MOVING
+2026-08-17 22:52:56.345 [ar] mount re-zero captured: magnitude=134.61deg spread=0.72deg samples=37
+2026-08-17 22:52:56.351 [pushbroom] extrinsic applied: source=nominal trim=134.61deg pushbroomEnabled=true
+2026-08-17 22:52:59.650 [ar] mount re-zero refused: MOVING
+2026-08-17 22:53:04.713 [ar] mount re-zero captured: magnitude=132.44deg spread=0.47deg samples=37
+2026-08-17 22:53:04.714 [pushbroom] extrinsic applied: source=nominal trim=132.44deg pushbroomEnabled=true
+2026-08-17 22:53:05.520 [ar] mount re-zero captured: magnitude=132.61deg spread=0.59deg samples=37
+2026-08-17 22:53:05.521 [pushbroom] extrinsic applied: source=nominal trim=132.61deg pushbroomEnabled=true
+2026-08-17 22:53:06.208 [ar] mount re-zero captured: magnitude=132.81deg spread=0.57deg samples=36
+2026-08-17 22:53:06.210 [pushbroom] extrinsic applied: source=nominal trim=132.81deg pushbroomEnabled=true
+2026-08-17 22:53:09.361 [project] project created: id=scan-008-2026-08-17-2253-3b527c.lscan name="Scan-008-2026-08-17-2253" sensor=COIN_D6 dir=/storage/emulated/0/Android/data/com.lidarscan.app.debug/files/Projects/scan-008-2026-08-17-2253-3b527c.lscan
+2026-08-17 22:53:09.388 [session] start: project=scan-008-2026-08-17-2253-3b527c.lscan sensor=COIN_D6 profile=QUICK_SCAN preset=OPTIMAL tier=STANDARD liveSlam=false dir=/storage/emulated/0/Android/data/com.lidarscan.app.debug/files/Projects/scan-008-2026-08-17-2253-3b527c.lscan
+2026-08-17 22:53:09.459 [pushbroom] extrinsic applied: source=nominal trim=132.81deg pushbroomEnabled=true
+2026-08-17 22:53:40.166 [seal] sealed OK id=scan-008-2026-08-17-2253-3b527c.lscan name="Scan-008-2026-08-17-2253" points=216653 elapsedMs=30543 listable=true dir=/storage/emulated/0/Android/data/com.lidarscan.app.debug/files/Projects/scan-008-2026-08-17-2253-3b527c.lscan
+2026-08-17 22:54:06.776 [project] project created: id=scan-009-2026-08-17-2254-59450e.lscan name="Scan-009-2026-08-17-2254" sensor=COIN_D6 dir=/storage/emulated/0/Android/data/com.lidarscan.app.debug/files/Projects/scan-009-2026-08-17-2254-59450e.lscan
+2026-08-17 22:54:06.782 [session] start: project=scan-009-2026-08-17-2254-59450e.lscan sensor=COIN_D6 profile=QUICK_SCAN preset=OPTIMAL tier=STANDARD liveSlam=false dir=/storage/emulated/0/Android/data/com.lidarscan.app.debug/files/Projects/scan-009-2026-08-17-2254-59450e.lscan
+2026-08-17 22:54:06.875 [pushbroom] extrinsic applied: source=nominal trim=none pushbroomEnabled=true
+2026-08-17 22:54:16.559 [seal] sealed OK id=scan-009-2026-08-17-2254-59450e.lscan name="Scan-009-2026-08-17-2254" points=0 elapsedMs=0 listable=true dir=/storage/emulated/0/Android/data/com.lidarscan.app.debug/files/Projects/scan-009-2026-08-17-2254-59450e.lscan
+2026-08-17 22:54:41.854 [ar] mount re-zero refused: MOVING
+2026-08-17 22:54:56.879 [store] device tier=STANDARD ram=11573MB cores=9 displayCeiling=60Hz
+2026-08-17 22:55:03.164 [session] preset=FULL tier=STANDARD changes=live refresh 30 fps → Max; point budget 5 M → 20 M; keyframe rate 2 → 5 fps; trail length 400 → 600 points
+2026-08-17 22:55:07.667 [session] preset=OPTIMAL tier=STANDARD changes=live refresh Max → 30 fps; point budget 20 M → 5 M; keyframe rate 5 → 2 fps; trail length 600 → 400 points
+2026-08-17 22:55:08.711 [session] preset=LIGHT tier=STANDARD changes=live 3D map off (raw preview only); live refresh 30 fps → 15 fps; point budget 5 M → 2 M; camera keyframes off; trail length 400 → 200 points
+2026-08-17 22:55:10.921 [session] preset=OPTIMAL tier=STANDARD changes=live 3D map on; live refresh 15 fps → 30 fps; point budget 2 M → 5 M; camera keyframes on; trail length 200 → 400 points
+2026-08-17 22:55:11.902 [session] preset=LIGHT tier=STANDARD changes=live 3D map off (raw preview only); live refresh 30 fps → 15 fps; point budget 5 M → 2 M; camera keyframes off; trail length 400 → 200 points
+2026-08-17 22:55:13.599 [session] preset=OPTIMAL tier=STANDARD changes=live 3D map on; live refresh 15 fps → 30 fps; point budget 2 M → 5 M; camera keyframes on; trail length 200 → 400 points
+2026-08-17 22:55:17.281 [ar] mount re-zero refused: MOVING
+2026-08-17 22:55:21.741 [ar] mount re-zero refused: MOVING
+2026-08-17 22:55:22.458 [ar] mount re-zero refused: MOVING
+2026-08-17 22:55:24.283 [ar] mount re-zero refused: MOVING
+2026-08-17 22:55:35.607 [ar] mount re-zero captured: magnitude=87.29deg spread=0.82deg samples=37
+2026-08-17 22:55:35.611 [pushbroom] extrinsic applied: source=nominal trim=87.29deg pushbroomEnabled=true
+2026-08-17 22:55:44.578 [project] project created: id=scan-010-2026-08-17-2255-c8c958.lscan name="Scan-010-2026-08-17-2255" sensor=COIN_D6 dir=/storage/emulated/0/Android/data/com.lidarscan.app.debug/files/Projects/scan-010-2026-08-17-2255-c8c958.lscan
+2026-08-17 22:55:44.657 [session] start: project=scan-010-2026-08-17-2255-c8c958.lscan sensor=COIN_D6 profile=QUICK_SCAN preset=OPTIMAL tier=STANDARD liveSlam=false dir=/storage/emulated/0/Android/data/com.lidarscan.app.debug/files/Projects/scan-010-2026-08-17-2255-c8c958.lscan
+2026-08-17 22:55:44.682 [pushbroom] extrinsic applied: source=nominal trim=87.29deg pushbroomEnabled=true
+2026-08-17 22:56:31.860 [seal] sealed OK id=scan-010-2026-08-17-2255-c8c958.lscan name="Scan-010-2026-08-17-2255" points=346570 elapsedMs=46954 listable=true dir=/storage/emulated/0/Android/data/com.lidarscan.app.debug/files/Projects/scan-010-2026-08-17-2255-c8c958.lscan

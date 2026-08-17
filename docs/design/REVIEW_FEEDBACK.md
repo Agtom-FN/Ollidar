@@ -215,3 +215,14 @@ both closed × keyframes on / off. Screenshots: `redesign-exports/fix-r4-*.png`.
 23. D6 mount re-zero: one-tap "set mount reference" while holding the rig still before
     a scan — records the current phone-IMU/AR orientation as the session's mount trim on
     top of the nominal bracket extrinsic (mount shifts between sessions).
+
+### round 7 (owner — D6 scan quality is THE core purpose; macOS on hold)
+24. D6 = 2D lidar acting as 3D via phone pose; phone held vertically, D6 on its back,
+    operator walks the room. Scans must be stable with STRAIGHT walls (reference: "$8
+    lidar → wireless 3D mapper" video). Origin per capture is fine; visible section
+    misalignment is not.
+25. AR function ARCHIVED for now (UI entry hidden; pose tracking stays — it drives the
+    scan). Revive later.
+26. From owner log: mount trim LOST on next capture (trim=none) — must persist until
+    re-zeroed; and scan-009 recorded 0 points silently — no-data captures must scream
+    during capture, never seal quietly empty.
