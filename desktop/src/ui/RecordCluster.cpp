@@ -58,15 +58,10 @@ RecordCluster::RecordCluster(QWidget* parent) : QWidget(parent) {
   h->setContentsMargins(16, 12, 16, 12);
   h->setSpacing(12);
 
-  // 1. Test device -----------------------------------------------------
-  test_ = new QPushButton("Test device", this);
-  test_->setCursor(Qt::PointingHandCursor);
-  test_->setMinimumHeight(38);
-  test_->setToolTip("Pre-capture self-test — step 1 of the capture sequence");
-  connect(test_, &QPushButton::clicked, this, &RecordCluster::testRequested);
-  h->addWidget(test_);
-
-  // 2. the large pill --------------------------------------------------
+  // 1. the large pill --------------------------------------------------
+  //
+  // Round 5: this is the FIRST control in the cluster now. The "Test device"
+  // button that used to precede it is gone with the self-test gate.
   main_ = new QPushButton(this);
   main_->setCursor(Qt::PointingHandCursor);
   main_->setFixedHeight(48);
@@ -80,16 +75,16 @@ RecordCluster::RecordCluster(QWidget* parent) : QWidget(parent) {
   connect(main_, &QPushButton::clicked, this, [this] {
     if (state_ == State::kRecording || state_ == State::kPaused) {
       Q_EMIT stopRequested();
-    } else if (state_ == State::kArmed) {
+    } else {
+      // Every non-recording state asks to start. kNoDevice/kNoData leave the
+      // button disabled so this cannot fire from them, and CaptureWindow::
+      // onStart() re-checks anyway (it will arm a device first if it has to).
       Q_EMIT startRequested();
     }
-    // In every other state the button is disabled, so this is unreachable —
-    // the gate is not enforced here, it is enforced by CaptureWindow::onRecord()
-    // refusing any phase but kReady. This widget just cannot ASK.
   });
   h->addWidget(main_);
 
-  // 3. the clock -------------------------------------------------------
+  // 2. the clock -------------------------------------------------------
   auto* clockBox = new QWidget(this);
   auto* ch = new QHBoxLayout(clockBox);
   ch->setContentsMargins(4, 0, 4, 0);
@@ -124,7 +119,7 @@ RecordCluster::RecordCluster(QWidget* parent) : QWidget(parent) {
   ch->addWidget(clockCol);
   h->addWidget(clockBox);
 
-  // 4. Pause / Resume --------------------------------------------------
+  // 3. Pause / Resume --------------------------------------------------
   pause_ = new QPushButton("Pause", this);
   pause_->setCursor(Qt::PointingHandCursor);
   pause_->setMinimumHeight(38);
@@ -132,7 +127,7 @@ RecordCluster::RecordCluster(QWidget* parent) : QWidget(parent) {
   connect(pause_, &QPushButton::clicked, this, &RecordCluster::pauseResumeRequested);
   h->addWidget(pause_);
 
-  // 5. the reason, pushed right ----------------------------------------
+  // 4. what the app is doing, pushed right ------------------------------
   h->addStretch(1);
   why_ = new QLabel(this);
   why_->setWordWrap(true);
@@ -156,9 +151,11 @@ RecordCluster::RecordCluster(QWidget* parent) : QWidget(parent) {
   badge_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   h->addWidget(badge_, 0, Qt::AlignVCenter);
 
-  // The cluster is the widest thing in the capture window, and it is meant to
-  // stay on ONE row: Test | pill | clock | Pause | reason | badge.
-  setMinimumWidth(880);
+  // One row: pill | clock | Pause | sentence | badge. 880 px was the C2 dialog's
+  // own width; the round-5 panel is a dock inside the shell, and a 880 px floor
+  // would force the whole dock that wide, so the floor is now what the row
+  // actually needs with the Test button gone.
+  setMinimumWidth(520);
 
   refresh();
 }
@@ -166,13 +163,10 @@ RecordCluster::RecordCluster(QWidget* parent) : QWidget(parent) {
 void RecordCluster::setState(State s) {
   if (state_ == s) return;
   state_ = s;
-  if (s == State::kUntested || s == State::kFailed || s == State::kTesting) elapsed_s_ = 0.0;
-  refresh();
-}
-
-void RecordCluster::setTransportIsD6(bool d6) {
-  if (d6_ == d6) return;
-  d6_ = d6;
+  if (s == State::kNoDevice || s == State::kNoData || s == State::kArming ||
+      s == State::kLive) {
+    elapsed_s_ = 0.0;
+  }
   refresh();
 }
 
@@ -181,17 +175,16 @@ void RecordCluster::setElapsedSeconds(double s) {
   clock_->setText(mmss(s));
 }
 
-QString RecordCluster::gateSentence() const {
+QString RecordCluster::stateSentence() const {
   switch (state_) {
-    case State::kTesting:
-      return "Self-test running — Start unlocks when it passes.";
-    case State::kFailed:
-      return "Self-test failed. Fix the link, then test the device again.";
-    case State::kUntested:
-      return QString("Run <b>Test device</b> first — %1 unlocks Start.")
-          .arg(d6_ ? "≥ 3,000 pts/s over a 3 s window" : "the first packet within 8 s");
-    case State::kArmed:
-      return "Self-test passed — the engine is armed and ready to record.";
+    case State::kArming:
+      return "Arming the device — live preview starts on the first packet.";
+    case State::kNoData:
+      return "No data from the device. Check the link, then <b>Reconnect</b>.";
+    case State::kNoDevice:
+      return "Looking for a device — auto-detect fills the link in by itself.";
+    case State::kLive:
+      return "Live preview. <b>Start</b> creates a new project and records into it.";
     case State::kRecording:
     case State::kPaused:
       return "Recording is open — the engine keeps every raw byte, paused or not.";
@@ -199,33 +192,26 @@ QString RecordCluster::gateSentence() const {
   return QString();
 }
 
-QString RecordCluster::gateTooltip() const {
-  return QString("Start recording is locked until the pre-capture self-test passes (%1).")
-      .arg(d6_ ? "≥ 3,000 pts/s over 3 s" : "first packet within 8 s");
-}
-
 void RecordCluster::refresh() {
   const bool live = state_ == State::kRecording || state_ == State::kPaused;
   const bool paused = state_ == State::kPaused;
-  const bool gated = state_ == State::kUntested || state_ == State::kTesting ||
-                     state_ == State::kFailed;
+  const bool startable = state_ == State::kLive;
 
   // --- the main pill ---
   main_->setText(live ? "  Stop recording" : "  Start recording");
   main_->setProperty("accent", live ? "danger" : "ember");
-  main_->setEnabled(live || state_ == State::kArmed);
+  main_->setEnabled(live || startable);
   main_->setIcon(recGlyph(live, live ? QColor("#FF6B6B") : QColor("#1A0D08"),
                           devicePixelRatioF()));
-  main_->setToolTip(live ? "Stop recording and write the session summary"
-                         : gated ? gateTooltip()
-                                 : "Start recording into the .lscan project");
+  main_->setToolTip(live ? "Stop recording and seal the project"
+                         : startable
+                               ? "Create a new .lscan project (auto-named if you left the "
+                                 "name empty) and start recording into it"
+                               : "No device is streaming yet — nothing to record");
   // A property change needs an explicit re-polish; QSS is matched at polish
   // time, not on every paint.
   main_->style()->unpolish(main_);
   main_->style()->polish(main_);
-
-  // --- Test device ---
-  test_->setEnabled(state_ == State::kUntested || state_ == State::kFailed);
 
   // --- Pause / Resume ---
   pause_->setText(paused ? "Resume" : "Pause");
@@ -244,16 +230,22 @@ void RecordCluster::refresh() {
   dot_->setDotPulsing(state_ == State::kRecording);
 
   // --- the sentence and the badge ---
-  why_->setText(gateSentence());
+  why_->setText(stateSentence());
   if (live) {
     badge_->setText(paused ? "PAUSED" : "REC");
     badge_->setProperty("tone", "bad");
-  } else if (gated) {
-    badge_->setText("SELF-TEST REQUIRED");
-    badge_->setProperty("tone", "warn");
-  } else {
-    badge_->setText("ARMED");
+  } else if (state_ == State::kLive) {
+    badge_->setText("LIVE");
     badge_->setProperty("tone", "good");
+  } else if (state_ == State::kArming) {
+    badge_->setText("ARMING");
+    badge_->setProperty("tone", "warn");
+  } else if (state_ == State::kNoData) {
+    badge_->setText("NO DATA");
+    badge_->setProperty("tone", "bad");
+  } else {
+    badge_->setText("NO DEVICE");
+    badge_->setProperty("tone", "warn");
   }
   badge_->style()->unpolish(badge_);
   badge_->style()->polish(badge_);

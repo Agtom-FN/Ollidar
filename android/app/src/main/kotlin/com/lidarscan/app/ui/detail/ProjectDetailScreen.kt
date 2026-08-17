@@ -57,7 +57,6 @@ fun ProjectDetailRoute(
     container: AppContainer,
     projectId: String,
     onBack: () -> Unit,
-    onOpenCapture: (String) -> Unit,
     onOpenMountCalibration: (String) -> Unit,
     onOpenMid360Connect: (String) -> Unit = {},
     onOpenProcessing: (String) -> Unit = {},
@@ -75,7 +74,6 @@ fun ProjectDetailRoute(
     ProjectDetailScreen(
         uiState = uiState,
         onBack = onBack,
-        onOpenCapture = onOpenCapture,
         onOpenMountCalibration = onOpenMountCalibration,
         onOpenMid360Connect = onOpenMid360Connect,
         onOpenProcessing = onOpenProcessing,
@@ -90,7 +88,6 @@ fun ProjectDetailRoute(
 fun ProjectDetailScreen(
     uiState: ProjectDetailUiState,
     onBack: () -> Unit,
-    onOpenCapture: (String) -> Unit = {},
     onOpenMountCalibration: (String) -> Unit = {},
     onOpenMid360Connect: (String) -> Unit = {},
     onOpenProcessing: (String) -> Unit = {},
@@ -129,7 +126,6 @@ fun ProjectDetailScreen(
             is ProjectDetailUiState.Loaded -> ProjectDetailContent(
                 project = uiState.project,
                 modifier = Modifier.padding(padding),
-                onOpenCapture = { onOpenCapture(uiState.project.id) },
                 onOpenMountCalibration = { onOpenMountCalibration(uiState.project.id) },
                 onOpenMid360Connect = { onOpenMid360Connect(uiState.project.id) },
                 onOpenProcessing = { onOpenProcessing(uiState.project.id) },
@@ -145,7 +141,6 @@ fun ProjectDetailScreen(
 private fun ProjectDetailContent(
     project: Project,
     modifier: Modifier = Modifier,
-    onOpenCapture: () -> Unit,
     onOpenMountCalibration: () -> Unit,
     onOpenMid360Connect: () -> Unit,
     onOpenProcessing: () -> Unit,
@@ -165,8 +160,11 @@ private fun ProjectDetailContent(
         Text("Workspace", style = MaterialTheme.typography.titleSmall)
         Spacer(Modifier.height(8.dp))
 
+        // ROUND 5 (item 9): the Capture card is gone from here. Every Start
+        // creates a NEW project, so "capture into this project" is not an action
+        // the app has any more — the Capture tab is the only way in, and it is a
+        // tab, not a card behind a project.
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            CaptureNavCard(onClick = onOpenCapture)
             if (project.manifest.sensor == SensorType.MID360) {
                 Mid360ConnectNavCard(
                     settings = project.manifest.mid360,
@@ -260,39 +258,6 @@ private fun ManifestRow(label: String, value: String) {
     }
 }
 
-@Composable
-private fun CaptureNavCard(onClick: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        onClick = onClick,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
-    ) {
-        Column(Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.CameraAlt, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.width(12.dp))
-                Text("Capture", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-            }
-            Spacer(Modifier.height(6.dp))
-            HorizontalDivider()
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "Connect the sensor, start/stop a recording session, and watch the cloud build in the live 3D or " +
-                    "AR view. Live-SLAM vs Record-only starts from this project's workflow profile.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-/**
- * B3: Device setup -> Mid-360 connect. Only shown for a Mid-360 project —
- * the card exists to surface the SAVED addresses without opening the wizard,
- * because "which host IP was this capture taken with" is the first question
- * asked when a .lscan turns out empty, and a wrong host IP is the failure
- * that produces no error at all.
- */
 @Composable
 private fun Mid360ConnectNavCard(
     settings: com.lidarscan.core.net.Mid360Settings?,

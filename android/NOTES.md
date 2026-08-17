@@ -3267,3 +3267,298 @@ BUILD SUCCESSFUL
   `UsbSerialPort.read()` runtime paths were not exercised live. That is the
   same posture the rest of this file records for B2/B3's own USB/Ethernet
   code.
+
+## ROUND 5 REDESIGN — one Capture tab, a phone-tracked 3D D6, and no wizards
+
+Owner review rounds 5, 5.1, 5.2 and 5.3 (`docs/design/REVIEW_FEEDBACK.md` items
+7–11 plus the three mockup-review additions and contract items 17–18), scoped to
+`android/**`. `engine/**` was read-only for this task; every place the C ABI did
+not reach is recorded in §9 rather than worked around silently.
+
+### 1. What the app looks like now
+
+**Projects tab = list + preview.** Tapping a card no longer navigates — it
+*selects*, and the card expands in place: the same `ProjectThumbnail` at 260 dp
+instead of 108, with the chips and the mono meta line under it. Two quiet doors
+live inside the selected card and nowhere else (`Open in viewer` → Review,
+`Details, jobs & export` → the detail screen, which still owns processing,
+export, mount calibration, RTK and merge). The **New scan** pill is gone; the
+empty state points at the Capture tab instead, which is the one exception
+(a tab whose only message is "go elsewhere" with no way to go there is a dead
+end, so the empty state carries a `Go to Capture` shortcut).
+
+**Capture tab = creating new scans, and nothing else.** One route
+(`Routes.CAPTURE_NEW`, no project id) and one screen:
+
+```
+  app bar (New scan · profile · state)      ← no project yet
+  georeference + RTK chips                  ← round 5.2
+  ── pre-capture strip (collapses at record) ─────────────────
+  scan name  [ Scan-014-2026-08-17-1932 ]   ← placeholder = the auto name
+  auto-detect status line + Retry / Enter manually
+  inline manual panel (opens ITSELF when nothing is found)
+  D6 mount hint + tracking chip
+  ── always ──────────────────────────────────────────────────
+  live viewport (points before recording), trail inset, chips
+  four mono stats
+  Live-view switch · pause · Start new scan
+```
+
+Removed outright, because each was a step: the **new-project screen**
+(`ui/newproject/**` — name/sensor/profile), the **capture project picker**
+(`PickPurpose.CAPTURE`), the **D6 connect wizard** (`ui/connect/ConnectWizard*`),
+the project-scoped `project/{id}/capture` route and the project-less Mid-360
+wizard route. The Mid-360 wizard survives per project (it is the only place
+addresses can be saved into a manifest); `MountCalibration` survives and is now
+reached from the capture screen's own "Calibrate mount" link when a D6 is running
+on the CAD nominal.
+
+**The flow, end to end.** Open Capture → `CaptureAutoConnectController` races a
+D6 USB signature probe against a Mid-360 heartbeat listen → first to answer wins
+→ `engineBridge.connect` → **live preview streaming, not recording** → adjust any
+display parameter against real points → **Start creates the project** and begins
+recording into it. No self-test gate anywhere: round 5 item 7 is explicit that
+live points are the proof, so the wizard's health panel became the viewport.
+
+### 2. Auto-naming and the project store
+
+`ScanAutoName` (`:core`) formats `Scan-<series>-<yyyy-MM-dd>-<HHmm>` —
+`Scan-014-2026-08-17-1932` for the owner's own example. Filesystem-safe on
+purpose: the name is slugified into a directory by `FileProjectStore` *and*
+travels on an exported `.lscan` to a Windows desktop, where `:` is illegal, so it
+is never typed in the first place. The series counter is device-level and
+**monotonic**, persisted in DataStore (`SettingsRepository.nextScanSeries()`,
+read-modify-write inside one `edit {}` so a double-tapped Start cannot spend the
+same number twice) — deliberately not "number of projects on disk", because
+deleting a project must not make the next scan re-use its name.
+
+Projects created by Start go through `container.projectStore` — the same
+`FileProjectStore` instance the Projects tab lists, so an auto-created scan
+appears there with no plumbing of its own.
+
+### 3. D6 = a 3D scanner via the phone — and the bug that made it 2D
+
+Round 5 item 11 is the substantive one. Three things were wrong or missing:
+
+**(a) Poses were only pumped in AR view.** `CaptureArController.onFrame()` — the
+one call that runs `Session.update()`, publishes the pose and calls
+`scan_engine_push_pose` — is driven exclusively by
+`ArCameraBackgroundRenderer.onDrawFrame`, which only exists while `ArOverlayView`
+is composed, i.e. only in `CameraMode.AR`. In the **default 3D-orbit view** the
+ARCore session was created and resumed and then *nothing ever updated it*: zero
+poses pushed, zero keyframes (B8's recorder is fed from the same frame listener),
+and a pushbroom with no trajectory to interpolate against. The AR overlay was a
+*view* option and the entire pose pipeline was silently riding on it. Fixed with
+`ArPosePumpView`: a 2 dp `GLSurfaceView` running the same
+`ArCameraBackgroundRenderer`, mounted whenever poses are required and the AR
+overlay is **not** the renderer on screen (never both — two pumps would call
+`Session.update()` from two threads). Why 2 dp of real surface rather than a
+headless EGL pbuffer context: `Session.update()` needs a GL context and a camera
+texture, and a hand-rolled EGL context is exactly the code that works on one
+driver and not another — **no ARCore device was available to this task**, so this
+reuses the arrangement B7 already shipped. One call site; swapping in an offscreen
+pump later touches nothing else.
+
+**(b) No calibration meant no pushbroom.** `startArPipelines` only called
+`pushbroom_enable` when a measured `MountCalibration` existed, so a fresh phone
+recorded fan slices plus poses that nothing ever combined. Now a D6 session with
+no measured calibration applies **`BracketNominals.cadNominal(COIN_D6)`** — the
+CAD extrinsic for exactly the owner's mount (scanner on the phone's back, scan
+plane vertical) — and `mountIsNominal` says so inline with a `Calibrate mount`
+link. A nominal extrinsic costs millimetres of registration; not enabling the
+pushbroom costs the third dimension. `stopCapture`'s flush was also gated on the
+*calibration* being non-null and is now gated on `pushbroomEnabled`, or every
+nominal-extrinsic session would have skipped the flush that resolves its points.
+
+**(c) The copy called it a 2D-ish device.** Diagnostics printed the sensor badge
+in the IMU row (reading as "the D6 has an IMU called COIN-D6"); it now reads
+`none on device · phone IMU via ARCore`. The detection line says `3D scan ·
+phone-tracked (ARCore VIO supplies the pose)`, and the capture screen carries the
+mount hint ("D6 flat on the BACK of the phone, scan fan VERTICAL, walk forward").
+No "2D" anywhere.
+
+**What a phone D6 capture writes into the `.lscan` now:** D6 packets (engine,
+record-always), the ARCore pose stream (`scan_engine_push_pose` at camera rate,
+with `tracking_lost` and per-pose sigma), B8 camera keyframes + `frames.idx` when
+keyframes are on, the pushbroom's resolved 3D points (nominal or measured
+extrinsic), plus round 5.2's GNSS epochs. Tracking quality is inline on the
+viewport (`3D TRACKING` / `TRACKING…` / `TRACKING LOST` / `NO TRACKING`) because
+for this sensor it *is* the state of the third dimension, and the numbers (poses
+pushed, extrinsic provenance, georef source) are three new Diagnostics rows.
+
+### 4. Round 5.1 — the manual fallback, point size, persistence
+
+* **Auto-detect → manual, automatically.** `CaptureAutoConnectState.manualEntryOpen`
+  is set by the controller itself when nothing is found, when a connect fails, or
+  when the transport drops mid-preview: the fields are already open with the
+  last-known addresses by the time the operator looks up. `Enter manually` stays
+  reachable at every phase, including a successful detect (a rig with two devices
+  can auto-detect the wrong one). The panel is inline, capped at 260 dp and
+  scrolling — never a dialog.
+* **Point size is 0.1 – 3.0 px in 0.1 steps** everywhere it is set
+  (`DisplayLimits`, snapped in the ViewModel so the slider, the read-out and the
+  manifest cannot disagree). This required relaxing the Kotlin `clamped()` floor
+  from A14's 0.5 px — see §9.
+* **Preview settings carry into the recording and into the project.** The sheet is
+  ViewModel-scoped, so nothing resets at Start; `displayParams` is written into
+  the manifest at creation *and* at stop, so the scan re-opens in Review framed
+  the way it was recorded.
+
+### 5. Round 5.2 — phone-location georeferencing when there is no rover
+
+`GeorefSourcePolicy` (`:core`, 11 tests) ranks strictly: a rover fix always wins,
+otherwise the phone's own location, otherwise nothing. No blending — centimetres
+and metres averaged together describe neither — and no hand-over state machine: a
+rover that connects mid-session simply wins the next evaluation and the chip
+upgrades from `PHONE GPS ±4.2 m` to `RTK FIXED ±2 cm`.
+
+`PhoneLocationSource` uses the **platform** `LocationManager`
+(`FUSED_PROVIDER` on API 31+, else GPS — never `NETWORK_PROVIDER`, which is
+hundreds of metres and worse than no georeference) because
+`play-services-location` is not a dependency of this project and the build runs
+offline. Every fix carries `Location.getAccuracy()` verbatim as 1-sigma; a fix
+with no accuracy is **dropped** rather than emitted with a zero, because zero
+sigma reads downstream as "perfect".
+
+Fixes reach the engine as **synthesized NMEA** (`PhoneFixNmea`: GGA → GST → RMC,
+one shared UTC, 12 tests) pushed through `scan_engine_push_nmea`. That is not a
+workaround — it is the only GNSS *ingest* call the C ABI has (§9.1) — and it is
+the better door: the bytes land in the `.lscan` as `kGnssNmea` chunks under
+record-always, A4 time-syncs them from `Location.elapsedRealtimeNanos`
+(CLOCK_BOOTTIME, already the engine's domain), and `getAccuracy()` travels in the
+GST fields A10's fusion actually weights by. GGA quality is `1` (single), never
+4/5; geoid separation and unknown vertical sigma are left **empty** rather than
+zeroed.
+
+Permission: `ACCESS_FINE_LOCATION` is requested **at Start, once, and only when no
+rover fix is present** — never on app launch, never on opening the tab. Denial
+records a flag, shows one quiet inline line, and the capture proceeds in its own
+local frame.
+
+### 6. Round 5.3 — refresh ceiling, the crash path, walkthrough-first
+
+* **The refresh control's max is the hardware's.** `RefreshGovernor.optionsFor()`
+  builds the option list from `Display.getRefreshRate()`, so a 60 Hz phone never
+  sees 120. When measured intervals between *rendered* frames sustain a >1.35×
+  overrun for 2 s, the governor eases the live view **one notch** down the ladder
+  (120/90/60/45/30/20/15/10), publishes an inline note, and never raises the cap
+  on its own (an oscillating renderer measures nothing). Recording is untouched —
+  the note says so in words.
+* **Bounded uploads.** `syncPointCloud` previously re-uploaded every grown page in
+  one frame; a burst (a replay decoding ahead of the display, a stream-filter flip
+  admitting a backlog) queued an unbounded number of `setBufferAt` calls into a
+  single Filament frame. Now capped at **4 MB of vertices and 24 new pages per
+  frame**, with the remainder resuming next frame from the same offset, and
+  `setGeometryAt` bound to `gpu.uploaded` rather than `page.count` so points that
+  have not been uploaded yet are never drawn from uninitialised GPU memory.
+* **Walkthrough-first.** `keepScreenOn` for the duration of a recording (scoped to
+  RECORDING/PAUSED, not to the screen); Stop grows 64 → 76 dp and pause 52 → 64 dp
+  while live; a **trajectory trail** (`TrajectoryTrail` in `:core`, 11 tests;
+  `TrajectoryTrailRecorder` in `:app`) drawn as a small top-down inset from the
+  ARCore pose stream during preview *and* capture, faint where tracking was poor
+  (those are the stretches the pushbroom excludes); and a gentle inline
+  "moving/turning too fast" hint derived from ARCore's `EXCESSIVE_MOTION` and B8's
+  motion-gate skip counter — the *hint* is inline, the *numbers* stay in
+  Diagnostics, per round 3.
+
+### 7. One UX bug the emulator caught
+
+Entering the Capture tab used to fire the **system camera-permission dialog**
+immediately (B7's unconditional `LaunchedEffect`), which pauses the Activity —
+the smoke test found it as "No compose hierarchies found" while trying to walk the
+tab. Beyond breaking the test it is a modal interruption in front of the screen
+whose whole point is that it has no steps, and on a Mid-360 walk the camera may
+never be needed. The ARCore session is now created (and the permission asked for)
+only when a phone-tracked D6 is previewing, the AR view is selected, or a
+recording is running.
+
+A second layout bug from the same session: with the manual panel open, the
+pre-capture strip squeezed the live viewport to a sliver — the one thing round 5
+says must always be on screen. The strip is now capped at 46 % of the screen and
+scrolls internally.
+
+### 8. Files
+
+New (`:core`): `capture/ScanAutoName.kt`, `capture/CaptureAutoConnect.kt`,
+`capture/TrajectoryTrail.kt`, `gnss/PhoneFix.kt`, `gnss/GeorefSourcePolicy.kt`,
+`render/DisplayLimits.kt`, `render/RefreshGovernor.kt` (+ 6 test files).
+New (`:app`): `capture/CaptureSensorDetectors.kt`,
+`capture/TrajectoryTrailRecorder.kt`, `ar/ArPosePumpView.kt`,
+`gnss/PhoneLocationSource.kt`, `gnss/PhoneGeorefRecorder.kt`.
+Rewritten: `ui/capture/CaptureScreen.kt`, heavily extended
+`ui/capture/CaptureViewModel.kt` and `ui/capture/CaptureSheets.kt`,
+`ui/projects/ProjectsListScreen.kt`, `ui/nav/{LidarScanApp,Routes,ScanTabBar}.kt`,
+`render/{PointCloudRenderer,PointCloudView}.kt`, `data/Settings*.kt`,
+`ui/detail/ProjectDetailScreen.kt`, `ui/pick/ProjectPickerScreen.kt`,
+`AndroidManifest.xml`, `androidTest/.../ReplayCaptureSmokeTest.kt`.
+Deleted: `ui/newproject/**`, `ui/connect/ConnectWizardScreen.kt`,
+`ui/connect/ConnectWizardViewModel.kt`.
+
+`com.lidarscan.core.engine.D6ConnectController` now has **no production caller**
+(its wizard is gone; the Capture tab uses `CaptureAutoConnectController`). It and
+its tests were kept rather than deleted — it is the state machine any future
+device-setup flow would rebuild, and deleting a tested `:core` class in the same
+change that redesigned the UI on top of it would have been two decisions dressed
+as one. Flagged here so it is a decision and not an oversight.
+
+### 9. Engine seams this round needed and did not have
+
+1. **No fix-shaped GNSS ingest.** `scan_engine_push_nmea` is the only way in;
+   there is no `scan_engine_push_fix(lat, lon, h, sigma…)`. Round 5.2 therefore
+   synthesizes NMEA. Works, and is arguably better (record-always + A4 + A10 for
+   free), but a decoded-fix entry point would remove a text-formatting step from
+   the hot path of every phone-georeferenced capture.
+2. **No device *kind* for a phone GNSS source.** `scan_add_rtk_rover_device` is
+   the only NMEA-capable factory, so a phone fix enters as a "rover". A
+   `SCAN_DEVICE_PHONE_GNSS` kind (or a source tag on the push) would let the
+   engine and a desktop tell a 4 m phone epoch from a 2 cm rover epoch without
+   inferring it from the GGA quality digit.
+3. **No live-trajectory getter.** The trail is built from ARCore poses because the
+   C ABI exposes no "last N poses" for A6's LIO output (`scan_engine_pose_gate_at`
+   answers a different question). On a Mid-360 walk the trail therefore only
+   appears when ARCore is also running.
+4. **`clamp_display_params()`'s 0.5 px floor.** The owner's live point-size range
+   starts at 0.1 px, so `:core`'s `clamped()` now floors at 0.1 and diverges from
+   `display_params.cpp`. If these params are ever handed to the engine's own
+   clamp, sizes below 0.5 px come back as 0.5.
+5. Everything B3 §8 listed (device-config gaps, one `prebound_fd` for two
+   sources, `SCAN_EVENT_DEVICE_HEALTH` not surviving `convert_event()`) still
+   stands and still bites the same way.
+
+### 10. Verification
+
+```
+$ ./gradlew :core:test        # 299 tests, 0 failures (5 skipped, pre-existing)
+$ ./gradlew :app:assembleDebug
+BUILD SUCCESSFUL
+$ ./gradlew :app:connectedDebugAndroidTest   # b4_test AVD, API 34, arm64-v8a
+Starting 4 tests on b4_test(AVD) - 14 … BUILD SUCCESSFUL
+```
+
+* **`:core:test` — 299 (was 218).** New: `ScanAutoNameTest` (10),
+  `CaptureAutoConnectControllerTest` (19 — including the manual-fallback and
+  first-detector-wins cases), `GeorefSourcePolicyTest` (11),
+  `PhoneFixNmeaTest` (12), `DisplayLimitsTest` (7), `RefreshGovernorTest` (7),
+  `TrajectoryTrailTest` (10).
+* **Emulator — 4/4 green**, including the new
+  `captureTabIsANewScanWithAutoDetectAndAnInlineManualFallback`, which walks
+  Projects → Capture tab, asserts the name field + auto-detect line + a disabled
+  `Start new scan`, waits out the detect window and asserts the manual panel
+  **opened itself** with both transports on it. The replay test now also opens the
+  Capture-settings sheet mid-session and drags the point-size slider to its 0.1 px
+  minimum while points are still landing, then asserts the count did not go
+  backwards.
+* **Screenshots** (emulator, `scratchpad/r5_*.png`): the empty Projects state
+  pointing at Capture, the Capture tab mid-fallback with the inline manual panel,
+  and the Diagnostics sheet showing `IMU — none on device · phone IMU via ARCore`.
+
+### 11. Explicitly NOT verified
+
+No D6, no Mid-360, no RTK rover and **no ARCore-capable device** were available.
+So: the pose pump, the nominal-extrinsic pushbroom path, the phone-GNSS NMEA
+actually being parsed by the engine's `GnssSource`, the auto-detect *success*
+path and the refresh governor's real downshift are verified by construction and
+by unit test against fakes — not on hardware. The two that would repay a bench
+hour first are (a) that the 2 dp pose pump really does keep `Session.update()`
+running in 3D-orbit view on a physical phone, and (b) that a synthesized GGA/GST
+burst produces a non-zero `scan_engine_last_fix` with the phone's own accuracy.

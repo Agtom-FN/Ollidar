@@ -85,7 +85,7 @@ QString EngineHost::versionString() const {
 }
 
 bool EngineHost::startSession(const QString& lscan_dir, const QString& profile, bool record,
-                              QString* err) {
+                              QString* err, bool live_slam) {
   if (!engine_) {
     if (err) *err = create_error_;
     return false;
@@ -94,6 +94,7 @@ bool EngineHost::startSession(const QString& lscan_dir, const QString& profile, 
   cfg.lscan_dir = lscan_dir.toStdString();
   cfg.profile = profile.toStdString();
   cfg.record = record;
+  cfg.live_slam = live_slam;
   const auto st = engine_->start_session(cfg);
   if (!st.ok()) {
     if (err) {

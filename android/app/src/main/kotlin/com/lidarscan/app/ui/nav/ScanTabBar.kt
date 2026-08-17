@@ -63,7 +63,7 @@ enum class ScanTab(val label: String, val icon: ImageVector) {
 fun tabForRoute(route: String?): ScanTab = when {
     route == null -> ScanTab.PROJECTS
     route == Routes.SETTINGS -> ScanTab.SETTINGS
-    route == Routes.CAPTURE_PICK -> ScanTab.CAPTURE
+    route == Routes.CAPTURE_NEW -> ScanTab.CAPTURE
     route == Routes.JOBS_PICK -> ScanTab.JOBS
     route.endsWith("/capture") || route.endsWith("/capture/replay") -> ScanTab.CAPTURE
     route.endsWith("/processing") -> ScanTab.JOBS

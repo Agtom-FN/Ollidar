@@ -21,7 +21,6 @@ import com.lidarscan.app.net.UdpMid360Detector
 import com.lidarscan.app.processing.ProcessingRepository
 import com.lidarscan.app.rtk.RtkManager
 import com.lidarscan.app.usb.D6UsbConnectionRegistry
-import com.lidarscan.core.engine.D6ConnectController
 import com.lidarscan.core.engine.EngineBridge
 import com.lidarscan.core.engine.EngineBridgeProvider
 import com.lidarscan.core.engine.FakeEngineBridge
@@ -139,8 +138,20 @@ class AppContainer(context: Context) {
         EngineBridgeProvider.get()
     }
 
-    /** Pure-Kotlin D6 connect-wizard state machine (`:core`), driving [engineBridge]. */
-    val d6ConnectController = D6ConnectController(engineBridge, containerScope)
+    /**
+     * ROUND 5.2: the phone's own location, used to georeference a capture when no
+     * RTK rover is connected. Container-level because it is a device capability,
+     * not a screen's — but it is **cold**: nothing touches the GPS until a capture
+     * actually starts and the policy says no rover is present (see
+     * `com.lidarscan.core.gnss.GeorefSourcePolicy`).
+     */
+    val phoneLocationSource = com.lidarscan.app.gnss.PhoneLocationSource(appContext)
+
+    // ROUND 5: `D6ConnectController` is no longer constructed here — the standalone
+    // connect wizard it drove is gone, and the Capture tab's own
+    // `CaptureAutoConnectController` owns detect → connect → preview instead. The
+    // class and its tests stay in `:core` (see android/NOTES.md's ROUND 5 section
+    // for why it was kept rather than deleted).
 
     /**
      * B6/B11/B12: A15's job queue, A12's plan extractor and A13's merger, behind

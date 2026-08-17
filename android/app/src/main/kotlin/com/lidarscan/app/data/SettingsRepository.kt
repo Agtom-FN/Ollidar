@@ -48,6 +48,7 @@ class SettingsRepository(private val context: Context) {
         val LAST_MID360_LIDAR_IP = stringPreferencesKey("last_mid360_lidar_ip")
         val LAST_MID360_HOST_IP = stringPreferencesKey("last_mid360_host_ip")
         val LAST_MID360_SN = stringPreferencesKey("last_mid360_serial_number")
+        val SCAN_SERIES = intPreferencesKey("scan_series_counter")
     }
 
     val settings: Flow<AppSettings> = context.settingsDataStore.data.map { prefs ->
@@ -75,7 +76,26 @@ class SettingsRepository(private val context: Context) {
             lastDetectedMid360LidarIp = prefs[Keys.LAST_MID360_LIDAR_IP],
             lastDetectedMid360HostIp = prefs[Keys.LAST_MID360_HOST_IP],
             lastDetectedMid360SerialNumber = prefs[Keys.LAST_MID360_SN],
+            scanSeriesCounter = prefs[Keys.SCAN_SERIES] ?: 0,
         )
+    }
+
+    /**
+     * ROUND 5: claims the next scan series number, atomically.
+     *
+     * Read-modify-write **inside one `edit {}`** rather than "read the flow, add
+     * one, write it back": DataStore serialises the transform, so two Starts
+     * racing (a double-tap, or a Start while the previous project is still being
+     * created) cannot both be handed the same number. Returns the number that was
+     * just claimed, which is the one the project gets named with.
+     */
+    suspend fun nextScanSeries(): Int {
+        var claimed = 1
+        context.settingsDataStore.edit { prefs ->
+            claimed = (prefs[Keys.SCAN_SERIES] ?: 0) + 1
+            prefs[Keys.SCAN_SERIES] = claimed
+        }
+        return claimed
     }
 
     suspend fun setUnits(units: Units) {

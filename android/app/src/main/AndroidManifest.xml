@@ -68,6 +68,26 @@
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
     <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
 
+    <!-- ROUND 5.2 — phone-location georeferencing fallback.
+         When no RTK rover is connected, a capture georeferences itself from the
+         phone's own location at the accuracy Android reports (see
+         com.lidarscan.app.gnss.PhoneLocationSource and
+         com.lidarscan.core.gnss.GeorefSourcePolicy). FINE, not COARSE: a
+         network-derived fix is hundreds of metres and would be worse than no
+         georeference at all, and COARSE would silently give us exactly that.
+
+         The permission is requested at the moment a capture STARTS and only when
+         no rover fix is present — never on app launch and never on opening the
+         Capture tab. Denial is not fatal: the scan records in its own local frame
+         and says so once. This is also why the comment above about "a survey app
+         asking for the phone's location" no longer applies unchanged — with a
+         rover attached, nothing here ever asks.
+
+         Not FOREGROUND_SERVICE_LOCATION / background location: capture is a
+         foreground, screen-on activity, and the fallback stops with it. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+
     <application
         android:name=".LidarScanApplication"
         android:allowBackup="true"

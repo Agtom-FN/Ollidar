@@ -144,12 +144,25 @@ fun DisplayParams.clamped(): DisplayParams {
     fun f(v: Float, default: Float, lo: Float, hi: Float): Float =
         if (!v.isFinite()) default else v.coerceIn(lo, hi)
 
+    val pointSizeFloor = DisplayLimits.POINT_SIZE_MIN_PX
+
     val ps = pointSize.let { p ->
-        val minPx = f(p.adaptiveMinPx, 1f, 0.5f, 64f)
-        val maxPx = f(p.adaptiveMaxPx, 6f, 0.5f, 64f)
+        // ROUND 5: the floor is **0.1 px**, not A14's 0.5.
+        //
+        // `display_params.cpp`'s `clamp_display_params()` clamps every point-size
+        // field to [0.5, 64]; the owner's round-5 review asks for a 0.1 – 3.0 px
+        // range on the capture screen's point-size control (dense indoor clouds
+        // at 3 px read as a solid wall). Keeping the engine's 0.5 floor here
+        // would silently clamp the bottom half of that slider back up, so the
+        // floor is relaxed on the Android side and the divergence is recorded in
+        // android/NOTES.md's ROUND 5 section as an engine seam: if these same
+        // params are ever handed to `clamp_display_params()`, sizes below 0.5 px
+        // come back as 0.5. The ceiling is left at A14's 64.
+        val minPx = f(p.adaptiveMinPx, 1f, pointSizeFloor, 64f)
+        val maxPx = f(p.adaptiveMaxPx, 6f, pointSizeFloor, 64f)
         PointSizeParams(
             mode = p.mode,
-            fixedPx = f(p.fixedPx, 2f, 0.5f, 64f),
+            fixedPx = f(p.fixedPx, 2f, pointSizeFloor, 64f),
             adaptiveMinPx = minOf(minPx, maxPx),
             adaptiveMaxPx = maxOf(minPx, maxPx),
             adaptiveReferenceM = f(p.adaptiveReferenceM, 5f, 0.01f, 1000f),

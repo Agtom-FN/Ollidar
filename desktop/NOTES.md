@@ -3041,3 +3041,318 @@ sliced listen, `canceled`), `src/app/CaptureWindow.h`,
 `src/app/CaptureWindow.cpp` (both-ways exclusion, status line, non-modal
 progress, stderr log), `src/main.cpp` (suppression, chaining,
 `--auto-detect-cancel-selftest`). No `engine/**` change.
+
+## 17. Round 5 — the capture workflow redesign (no popups, fewer steps)
+
+`docs/design/REVIEW_FEEDBACK.md`'s 2026-08-17 **round 5**, after the owner's
+first full hardware session with both sensors, plus two follow-up messages the
+same day (5.1's items 1-4 and 5.3's items 17-18). Everything below is desktop
+only; `engine/**` was not touched, and every place the engine could not give
+this pass what it needed is named in §17.6 rather than papered over.
+
+### 17.1 The flow, as it now is
+
+1. **Open the Capture workspace** (rail, `Cmd-2`, or `--workspace capture`).
+   The capture panel is a **QDockWidget across the foot of the shell**, not a
+   `QDialog` floating over it: the live viewport it drives is directly above it
+   and the A14 DISPLAY dock is beside it. Opening it starts an **inline**
+   auto-detect pass — a phase label ("Listening for Mid-360 heartbeat…" /
+   "Probing serial ports…", pushed by the worker) plus an indeterminate bar in
+   the panel. The `QDialog` progress window is gone.
+2. **Found → armed → live.** A Mid-360 that answers has its addresses filled in
+   and is **armed automatically** into a live-preview session
+   (`startSession(lscan_dir="", record=false, live_slam=true)`); points stream
+   into the viewport, nothing hits disk. The old "Test device" button and the
+   SELF-TEST REQUIRED gate are retired — live points ARE the proof.
+3. **Nothing found → the manual row opens by itself** (follow-up item 1): lidar
+   IP + host IP + **Connect**, inline, in the same panel, with a sentence saying
+   why it opened. A **Manual setup** toggle sits next to Auto-detect at all
+   times, including when detection succeeded.
+4. **Adjust the live view while it streams** — refresh rate, point size, gamma,
+   brightness, colour mode, colormap inline in the panel; the full A14 set
+   (clipping, adaptive sizing, EDL, overlays, background) in the DISPLAY dock
+   beside it. One `DisplayParamsController` behind both, so they cannot
+   disagree. Everything stays live **during** recording, and is **saved with the
+   project** when the scan is sealed (follow-up item 3).
+5. **One field, one button.** "Project name (optional)" + **Start recording**.
+   Start always creates a NEW project; an empty name auto-names it
+   `Scan-014 2026-08-17 19-32.lscan` from a series number persisted in
+   `QSettings("capture/seriesNumber")` (bumped when the directory is created, so
+   a crash cannot reuse a number). A hint line shows the exact path it will
+   create, before the click.
+6. **Stop seals and hands over.** The project is sealed, the panel drops back to
+   live preview (the next scan is one click away), and `captureStopped(dir)`
+   makes the Projects workspace **save the current display parameters into the
+   new project, open it and preview it** — it is in the library immediately.
+7. **Walkthrough-first** (item 18): the walked path is drawn live in the
+   viewport (ember trail, white head) during preview AND recording, the panel
+   reads out "Walking 0.42 m/s · 12.6 m of path · 126 poses" and turns that into
+   a gentle "ease off a little" above 1.5 m/s, and the display is kept awake for
+   as long as a device is armed.
+
+**Tab roles** (item 8). Capture creates scans and does nothing else — no project
+list, no replay, no file picker. Projects is the library + the selected scan's
+preview + what you can DO with the selection; the engine/app log moved to its
+own `LOG` dock (hidden, View-toggleable), and "New…"/"Import raw D6…" left the
+panel (new scans are captures now; the raw import is still in the File menu).
+
+**No separate Processing/Merge tabs** (follow-up item 4). Those two rail buttons
+are gone. The library is multi-select: **one** project selected enables
+`Process…` (raises the A15 job queue dock, project set) and `Export…`; **two or
+more** enable `Merge N selected…`, which loads each one through the same
+`MergeSessionLoader` "Add from open project" uses and raises the merge
+workbench. `Item::kMerge`/`kJobs` still exist as PANEL identities, so the View
+menu, `Cmd-5`/`Cmd-6` and `--workspace jobs|merge` all still work — they now
+mean "Projects, with that panel raised". Neither dock's own code changed.
+
+**D6 is phone-only** (item 11). The COIN-D6 tab, its serial port picker, its
+`QSerialPort` read path and its `D6Config` wiring are gone from the capture
+panel; desktop capture is Mid-360 (+ the RTK/UM982 fields auto-detect fills).
+The serial probe still runs — it is the same sweep that finds the UM982 — and a
+D6 hit renders as a passive line: *"COIN-D6 detected on … — capture it with the
+PHONE app. The D6 has no IMU, so the phone's ARCore supplies the 6-DoF
+trajectory and the A8 pushbroom builds the 3D cloud. This desktop still replays
+and post-processes D6 projects."* Nothing in replay / post-processing / merge /
+`importRawD6` was touched, and a D6 project still post-processes and merges
+(§17.5).
+
+### 17.2 §16's concurrency semantics — preserved, with one new case
+
+The discovery↔device serialization (§16.7) is untouched in substance:
+`DiscoveryGate`'s sliced listen, `cancelAndWaitForSockets()` blocking until the
+socket is provably closed, `stopDiscoveryForDeviceUse()` in front of every
+engine call that can arm a device (now `armPreview()`, `onStart()`,
+`onPauseResume()`), a canceled pass applying nothing and emitting no
+`autoDetectFinished()`, and `--mid360-selftest` suppressing the on-open pass.
+
+What round 5 ADDED is the case the new flow creates. After auto-arm the panel is
+normally in `kPreview`, and §16's "refuse while `phase_ != kIdle`" would mean an
+operator who plugs the Ethernet cable in properly could never re-run
+auto-detect. So a click while merely **previewing** now disarms the preview
+first, takes the port, runs the pass and re-arms; a **recording** is still
+refused outright. `--auto-detect-cancel-selftest`'s second half therefore prints
+`live preview stopped — auto-detect needs UDP 56201` where it used to print
+`auto-detect skipped`. Both directions were re-verified (§17.5c).
+
+### 17.3 What the CLI hooks mean now
+
+* `--mid360-selftest HOST:LIDAR` — unchanged contract, new implementation: it
+  fills the addresses in and **arms** (the same `armPreview()` an auto-detect hit
+  calls). `selfTestFinished(true)` = first packet. There is no gate behind it any
+  more; PASS simply means live preview came up.
+* `--mid360-record-into DIR` — unchanged: the one way an explicit project path
+  enters the flow now that there is no file picker.
+* `--auto-detect-selftest` / `--auto-detect-shot` — unchanged signal, inline
+  status instead of a dialog. Also suppresses the new auto-arm, so a pure
+  discovery evidence run does not start a device.
+* `--auto-detect-cancel-selftest`, `--quit-after`, `--workspace`,
+  `--capture-cluster-demo` (state names kept for continuity) — still work.
+* **New**: `--capture-flow-demo PREFIX` (the whole round-5 flow, driven through
+  the shipped widgets), `--projects-actions-demo PREFIX` (the folded Projects
+  actions), `--live-refresh FPS` (set the live cap through the real slider).
+* No D6-capture-specific CLI hook existed, so none was removed.
+
+### 17.4 Items 17-18: the refresh cap and the walkthrough
+
+**Item 17 — hardware-derived, never crashes.**
+* CEILING: `MainWindow` reads `QScreen::refreshRate()` for the viewport's screen
+  and hands it to both `ViewportWindow::setRefreshCeiling()` (which clamps) and
+  the panel's slider (`SliderRow::setRange`, added for this). Asking for more
+  than the panel can present is not a cap.
+* MEASURED FLOOR: the viewport watches two signals per 0.4 s stats window and
+  steps the cap one notch down (120/90/60/48/30/24/15/10/5) after ~2 s of
+  sustained overrun, emitting `refreshDownshifted()`, which the panel renders as
+  a quiet inline note and a slider move. Never upward on its own.
+  Two signals, because either alone lies: p95 frame CPU catches an expensive
+  frame, but the throttle SKIPS ticks and a skipped tick's cost is never
+  sampled — measured on the resize storm: **18.9 fps delivered against the cap
+  with cpu p95 0.24 ms**. Delivered-rate-vs-cap is what catches that.
+* NO QUEUEING: the throttle returns from the display-link tick BEFORE
+  `PagedCloudRenderer::sync()`, so a skipped frame skips its uploads rather than
+  deferring them, and the trail's buffers are rebuilt at most once per PRESENTED
+  frame however many poses arrived. Nothing accumulates per-frame work.
+* RECORDING IS NEVER THROTTLED: every line of this is in `ViewportWindow` and
+  the panel's display column; the engine's decode/record threads are not touched
+  by any of it. The panel's own copy says so, twice.
+
+**Item 18 — walkthrough-first.**
+* Capture sessions now run with `SessionConfig::live_slam = true` (new optional
+  parameter on `EngineHost::startSession`, default false so replay/C4/C5/C6
+  callers are unchanged): a walked scan has to be registered as it goes, and
+  `Engine::live_slam()->poses()` is where the trail comes from. If LIO refuses to
+  start, the capture does NOT fail with it — it falls back to Record-only and
+  says so once. Record-always outranks the overlay.
+* The trail is drawn by `ViewportWindow` as a point-sampled polyline (5 cm
+  spacing, ember, white head) through a third overlay `MaterialInstance` — the
+  same forced-RGB/fixed-size treatment the measure tool uses, so display
+  parameters cannot recolour or shrink it — gated on `DisplayParams::show_trajectory`.
+* Speed and the "ease off" hint are DERIVED in the app from consecutive poses
+  (see §17.6): there is no motion-gate event on this path.
+* `app/DisplayAwake.{h,cpp}` keeps the display awake while a device is armed.
+  **macOS: real** (IOKit `PreventUserIdleDisplaySleep`, verified in the log).
+  **Windows: real** (`SetThreadExecutionState`, compiled but not run here).
+  **Linux: NOT IMPLEMENTED** — it says so in `reason()` and in the log rather
+  than pretending; the honest fix is a DBus inhibit or `systemd-inhibit`.
+
+### 17.5 Verification (2026-08-17, Apple M4, macOS 26.5.1, arm64 Release)
+
+`scripts/verify_round5.sh` runs everything below in one go and writes
+`evidence/verify_round5.log`; the individual commands are quoted here so a field
+Mac can run any one of them alone.
+
+**Build.** Every file under `desktop/src` recompiled from scratch: **zero
+warnings** (`-Wall -Wextra`), zero errors — in the normal arm64 tree AND in a
+fresh `LIDARSCAN_COMPILE_ONLY=ON` object-library tree (the Windows/Linux CI
+legs' code path). The only warnings in either tree come from the vendored Livox
+SDK2 and Filament's bundled fmt headers, as before.
+
+**Where new projects go.** `~/Documents/LidarScan Projects` (QStandardPaths), and
+that default is a bug fix found by this verification: the first default was
+`~/LidarScan`, which on a case-insensitive macOS filesystem is the SAME
+DIRECTORY as a checkout named `~/lidarscan` — the first run wrote eight .lscan
+projects into the middle of the source tree. They were removed and the default
+moved to Documents.
+
+**(a) The whole new flow, against the S2 simulator.**
+`mid360_sim --lidar-ip 127.0.0.1 --host-ip 127.0.0.1` +
+`lidarscan --capture-flow-demo evidence/18 --mid360-selftest 127.000.000.001:127.0.0.1`:
+
+```
+capture-flow-demo: inline auto-detect done (Mid-360 not seen, D6 not seen, UM982 not seen) — arming
+[capture] display sleep inhibited — macOS: IOKit PreventUserIdleDisplaySleep assertion held
+[capture] live preview up: first packet after 2.16 s
+mid360-selftest PASSED — first packet after 2.16 s
+capture-flow-demo: live controls — refresh 12 fps (viewport cap 12) then 24 fps (viewport cap 24), point size 2.50 px (A14 model)
+capture-flow-demo: TRAIL shot | synthetic 41-vertex path | ember pixels 0 -> 3578 | TRAIL DRAWN
+[capture] recording started -> /Users/admin/LidarScan/Scan-006 2026-08-17 20-22.lscan  (auto-named)
+[capture] Sealed Scan-006 … — 2.5 s recording · 5651 chunks / 7.0 MB written · 0 drops
+capture-flow-demo: sealed … valid=yes, 5651 chunks, 7144980 bytes, 2.47 s, sealed=true, profile quickscan
+capture-flow-demo:   stream lidar (Mid-360 packets): 5156 chunks / stream imu: 495 chunks
+capture-flow-demo: in the library: yes · previewed as the open project: yes
+capture-flow-demo: display params saved with the project: yes (…/processed/display_params.json)
+```
+
+i.e. inline auto-detect → auto-arm → live preview → display parameters moved on
+the live model → **Start with an EMPTY name** → auto-named project recorded and
+sealed → in the Projects list, opened and previewed, with the capture's display
+parameters saved as its default view. Screenshots:
+`evidence/18-preview-window.png` (preview state), `18-recording-window.png`
+(recording state, REC badge + ticking clock + `Fixed (px) 2.5` showing in the
+A14 dock), `18-trail-window.png`, `18-projects-window.png`.
+
+**(b) Headless CI hooks still pass.**
+`--mid360-selftest … --mid360-record-into DIR --quit-after 15`:
+`PASSED — first packet after 1.55 s`, then `7207 chunks, 9112740 bytes, 3.16 s
+span, sealed=true` (lidar 6576 chunks + imu 631). Quitting **mid-recording**
+(`--quit-after 6`) exits 0 and the manifest still reads `sealed = True` — the
+panel's destructor seals.
+
+**(c) Discovery/device serialization, both directions**
+(`--auto-detect-cancel-selftest --mid360-selftest`):
+
+```
+[capture] auto-detect canceled so live preview can have UDP 56201 — port released
+[capture] auto-detect: canceled before completion — nothing applied
+mid360-selftest PASSED — first packet after 1.49 s
+auto-detect-cancel-selftest: clicking Auto-detect with the device armed …
+[capture] live preview stopped — auto-detect needs UDP 56201
+[capture] auto-detect: Mid-360 found, D6 not seen (phone-only), UM982 not seen
+```
+
+**(d) Inline auto-detect against the REAL captured heartbeat**
+(`scripts/replay_mid360_heartbeat.py` + `--auto-detect-selftest --auto-detect-shot`):
+`Mid-360 FOUND` twice (on-open pass and an explicit click), rendering *"Found
+Mid-360 SN ARMCP7K0034759, fw 35010108, at 192.168.1.159"* plus the ifconfig fix
+line and its Copy button, the passive D6 line and the UM982 line — all inline,
+no dialog: `evidence/18-autodetect-inline.png`.
+
+**(e) The refresh cap under real load** (`--live-refresh 60 --resize-storm 12`,
+with a capture live):
+
+```
+[capture] live refresh auto-downshift -> 48 fps (delivered 37.1 fps against a 60 fps cap, frame cpu p95 0.22 ms of a 16.7 ms budget); recording untouched
+[capture] live refresh auto-downshift -> 30 fps (delivered 34.6 fps against a 48 fps cap …); recording untouched
+resize storm: 12.0 s, 1297 resize events -> 636 swapchain recreates, still rendering at 29.1 fps
+```
+
+It settled at 30 fps — the rate the machine was actually delivering — the
+capture stayed up throughout (`mid360-selftest PASSED` during the storm), and
+the inline note is visible in `evidence/18-refresh-downshift-window.png`.
+
+**(f) The folded Projects actions** (`--projects-actions-demo`):
+
+```
+selected 1 — Process enabled · Export enabled · Merge disabled · panel: none
+Process…    — panel: processing
+selected 2 — Process disabled · Export disabled · Merge enabled ("Merge 2 selected…")
+Merge selected… — panel: merge · merge workbench holds 2 sessions
+```
+
+Screenshots `evidence/18-projects-actions-{one-selected,processing,merge}-window.png`.
+Selecting two Mid-360-only projects reports honestly instead of silently doing
+nothing: *"this project has no D6 raw chunks. record/replay.h only forwards
+ChunkType::kD6Raw today…"* — the same pre-existing limit `startReplay()` already
+enforces (§17.6).
+
+**(g) No regressions in the other workstreams' hooks.** `--workspace
+projects|capture|review|plan|merge|jobs` all exit 0; `--post-e2e` on the C4
+fixture still runs a real A15 job to `DONE — 83228 points`, and on a project
+recorded by the NEW flow it also completes (`DONE — 112160 points`), which is
+the folded `Process…` button's own path with real data.
+
+### 17.6 Engine seams that were missing (worked around, not edited)
+
+`engine/**` was read-only for this task. Five things it does not offer:
+
+1. **No bulk read of the LIO pose ring.** `LioPoseSource` exposes `latest()`,
+   `size()`, `pose_at()` and `trajectory_length_m()` but no way to enumerate the
+   ring, so the trail cannot be reconstructed from the engine. The panel polls
+   `latest()` at 10 Hz (LIO's own rate) and accumulates the path itself, with a
+   2 cm minimum step and a 2000-vertex cap. A missed poll loses a corner of the
+   OVERLAY, never a byte of the capture.
+2. **No motion-gate event.** `EventType` has nothing for "moving too fast" (the
+   A8 skipped-turning counters belong to the phone-only D6 path), so the walking
+   speed is derived from consecutive poses in the app and the hint says what it
+   measured rather than claiming to be the engine's gate. Threshold 1.5 m/s.
+3. **A14 clamps point size at 0.5 px.** The owner asked for a 0.1-3.0 px range
+   (follow-up item 2) and the slider has it, but
+   `clamp_display_params()` (`engine/src/cloud/display_params.cpp:206`) clamps
+   `fixed_px` to `[0.5, 64.0]`, so anything under 0.5 comes back as 0.5 — which
+   the readout then shows, because the panel re-reads the model rather than
+   trusting what it sent. The full A14 dock keeps its 0.5-64 spin box, so no
+   value became unreachable.
+4. **No GNSS serial seam** (unchanged from §16.2): `GnssSource` is fed NMEA bytes
+   already in hand, so the RTK/UM982 fields still only HOLD what auto-detect
+   found and say so.
+5. **`record/replay.h` forwards only `ChunkType::kD6Raw`**, so a Mid-360-only
+   project cannot be replayed or loaded as a merge session. Pre-existing, and now
+   surfaced through the new Merge entry point's own error line.
+
+### 17.7 Not verified / deferred
+
+* **Auto-arm from a REAL beacon.** The arm path is the same function either way
+  (`armPreview()`), and both halves are evidenced separately — the beacon→fields
+  step against the real captured heartbeat (§17.5d), the arm→preview step against
+  the simulator (§17.5a) — but no single run does beacon→arm end to end, because
+  the replayed real beacon names a 192.168.1.x lidar that is not on this machine
+  and the simulator emits no unsolicited heartbeat at all (§16.5).
+* **The LIVE trail against a moving rig.** The simulator is stationary, so the
+  live trail is ~0.5 m of LIO drift (visible in the panel readout: "Walking
+  0.33 m/s · 0.5 m of path · 16 poses"). The RENDERING is proven with a
+  synthetic 41-vertex path pushed through the panel's own trail buffer
+  (0 → 3578 ember pixels, `evidence/18-trail-window.png`); a real walked trail
+  needs hardware.
+* **Windows/Linux**: compile-only, as with every other UI pass here.
+  `DisplayAwake`'s Windows body has never been RUN; its Linux body is a
+  documented no-op.
+* **The auto-downshift's upward path**: there is none by design.
+* **`--capture-cluster-demo`'s armed/recording/paused shots** still work (re-run
+  end to end against the simulator: gated / armed / recording / paused, plus the
+  viewport badge grabs) but are named for states that no longer exist ("gated");
+  the file names were kept so older CI expectations do not break.
+* **Packaging comments are stale**: `packaging/windows/lidarscan.nsi` and
+  `packaging/linux/99-lidarscan.rules` still describe "CaptureWindow's port
+  picker" and its CH340 guidance. The CH340 udev rule/driver pointer is still
+  right for the USB-serial devices this app probes (the UM982, and a D6 someone
+  plugs in to check), but the sentence about a picker in the capture window is
+  not. Left alone rather than half-rewritten in a UI pass.

@@ -30,9 +30,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -65,8 +67,10 @@ import com.lidarscan.core.store.Project
 @Composable
 fun ProjectsListRoute(
     container: AppContainer,
+    onSelectProject: (String) -> Unit,
     onOpenProject: (String) -> Unit,
-    onNewProject: () -> Unit,
+    onOpenReview: (String) -> Unit,
+    onNewScan: () -> Unit,
     onSettings: () -> Unit,
 ) {
     val viewModel: ProjectsListViewModel = viewModel(
@@ -76,31 +80,47 @@ fun ProjectsListRoute(
     )
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
+    // ROUND 5: the tab is a list + a preview, so the list has to be fresh when
+    // the Capture tab has just created a project behind it.
+    LaunchedEffect(Unit) { viewModel.refresh() }
+
     ProjectsListScreen(
         uiState = uiState,
+        onSelectProject = onSelectProject,
         onOpenProject = onOpenProject,
-        onNewProject = onNewProject,
+        onOpenReview = onOpenReview,
+        onNewScan = onNewScan,
         onSettings = onSettings,
         onDeleteProject = viewModel::delete,
     )
 }
 
 /**
- * The redesign's Projects screen: a hero header over cloud-thumbnail cards and
- * one ember action.
+ * ROUND 5 (item 8): the Projects tab is **the list of projects plus a preview of
+ * the selected scan**, and nothing else.
  *
- * The header's second line is the mockup's aggregate — project count,
- * georeferenced count, total points — computed from the manifests already in
- * memory, not a second query.
+ * What that changed: tapping a card no longer navigates away — it *selects*, and
+ * the card expands into an inline preview (a bigger cloud, the capture's own
+ * numbers) right where it sits. The "New scan" pill is gone: creating scans is
+ * the Capture tab's only job now (item 8), so the empty state points there rather
+ * than duplicating it.
+ *
+ * Two quiet doors survive inside the selected card, and they are deliberate: the
+ * **viewer** (Review) is the full-fidelity version of the preview this tab is for,
+ * and **details** is where processing, export, calibration and merge live. Both
+ * are about a scan that already exists; neither creates one.
  */
 @Composable
 fun ProjectsListScreen(
     uiState: ProjectsUiState,
+    onSelectProject: (String) -> Unit,
     onOpenProject: (String) -> Unit,
-    onNewProject: () -> Unit,
+    onOpenReview: (String) -> Unit,
+    onNewScan: () -> Unit,
     onSettings: () -> Unit,
     onDeleteProject: (String) -> Unit,
 ) {
+    var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
     Column(
         Modifier
             .fillMaxSize()
@@ -133,7 +153,7 @@ fun ProjectsListScreen(
                     CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                 }
 
-                uiState.projects.isEmpty() -> EmptyProjectsState(onNewProject)
+                uiState.projects.isEmpty() -> EmptyProjectsState(onNewScan)
 
                 else -> LazyColumn(
                     modifier = Modifier.fillMaxSize().testTag("projectsList"),
@@ -148,21 +168,23 @@ fun ProjectsListScreen(
                     items(uiState.projects, key = { it.id }) { project ->
                         ProjectCard(
                             project = project,
-                            onClick = { onOpenProject(project.id) },
+                            selected = selectedId == project.id,
+                            onClick = {
+                                // Select (and preview) rather than navigate —
+                                // round 5 item 8. Tapping the selected card again
+                                // collapses it.
+                                selectedId = if (selectedId == project.id) null else project.id
+                                onSelectProject(project.id)
+                            },
+                            onOpenViewer = { onOpenReview(project.id) },
+                            onOpenDetails = { onOpenProject(project.id) },
                             onDelete = { onDeleteProject(project.id) },
                         )
                     }
                     item {
                         Spacer(Modifier.height(2.dp))
-                        PrimaryPill(
-                            text = "New scan",
-                            icon = Icons.Filled.Add,
-                            onClick = onNewProject,
-                            modifier = Modifier.fillMaxWidth().testTag("newScanButton"),
-                        )
-                        Spacer(Modifier.height(10.dp))
                         Hint(
-                            "Long-press a card to delete it.",
+                            "Tap a scan to preview it · long-press to delete · new scans start in the Capture tab.",
                             color = InkFaint,
                             modifier = Modifier.padding(horizontal = 4.dp),
                         )
@@ -200,7 +222,10 @@ private fun aggregateLine(projects: List<Project>): String {
 @Composable
 private fun ProjectCard(
     project: Project,
+    selected: Boolean,
     onClick: () -> Unit,
+    onOpenViewer: () -> Unit,
+    onOpenDetails: () -> Unit,
     onDelete: () -> Unit,
 ) {
     var showDeleteConfirm by remember { mutableStateOf(false) }
@@ -211,15 +236,26 @@ private fun ProjectCard(
         Modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.surfaceContainer, shape)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
+            .border(
+                1.dp,
+                if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                shape,
+            )
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = { showDeleteConfirm = true },
                 onLongClickLabel = "Delete ${manifest.name}",
             )
-            .padding(10.dp),
+            .padding(10.dp)
+            .testTag(if (selected) "projectCardSelected" else "projectCard"),
     ) {
-        ProjectThumbnail(project = project, modifier = Modifier.fillMaxWidth().height(108.dp))
+        // ROUND 5 (item 8): the preview IS the selection. A selected card gives
+        // its cloud two and a half times the height — enough to read the shape of
+        // a scan — instead of opening another screen to do it.
+        ProjectThumbnail(
+            project = project,
+            modifier = Modifier.fillMaxWidth().height(if (selected) 260.dp else 108.dp),
+        )
 
         Row(
             Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 11.dp),
@@ -271,6 +307,22 @@ private fun ProjectCard(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(start = 4.dp, end = 4.dp, top = 9.dp, bottom = 3.dp),
         )
+
+        if (selected) {
+            // The two quiet doors — see the screen's KDoc for why exactly these
+            // two and no capture action.
+            Row(
+                Modifier.fillMaxWidth().padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                TextButton(onClick = onOpenViewer, modifier = Modifier.testTag("openViewerButton")) {
+                    Text("Open in viewer")
+                }
+                TextButton(onClick = onOpenDetails, modifier = Modifier.testTag("openDetailsButton")) {
+                    Text("Details, jobs & export")
+                }
+            }
+        }
     }
 
     if (showDeleteConfirm) {
@@ -313,7 +365,7 @@ private fun metaLine(project: Project): String {
 }
 
 @Composable
-private fun EmptyProjectsState(onNewProject: () -> Unit) {
+private fun EmptyProjectsState(onNewScan: () -> Unit) {
     Box(
         Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 24.dp),
         contentAlignment = Alignment.Center,
@@ -327,12 +379,19 @@ private fun EmptyProjectsState(onNewProject: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Spacer(Modifier.height(10.dp))
-            Hint("Start a new project to capture with the COIN-D6 or Mid-360.")
+            Hint(
+                "Scans are created in the Capture tab: plug in the COIN-D6 or the Mid-360 and it connects " +
+                    "itself, then Start records into a new project.",
+            )
             Spacer(Modifier.height(22.dp))
+            // The one exception to "Projects never creates a scan": with no
+            // projects at all, a tab that only says "go somewhere else" is a dead
+            // end, so this is a shortcut TO the Capture tab, not a second way to
+            // create a project.
             PrimaryPill(
-                text = "New scan",
+                text = "Go to Capture",
                 icon = Icons.Filled.Add,
-                onClick = onNewProject,
+                onClick = onNewScan,
                 modifier = Modifier.testTag("newScanButton"),
             )
         }

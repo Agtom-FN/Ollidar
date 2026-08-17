@@ -109,7 +109,7 @@ TEST_CASE("clamp/point_size_ranges") {
   p.point_size.adaptive_reference_m = 0.0f;
   clamp_display_params(p);
 
-  CHECK(p.point_size.fixed_px == doctest::Approx(0.5f));
+  CHECK(p.point_size.fixed_px == doctest::Approx(0.1f));  // floor lowered per owner round 5.1
   // adaptive_min_px (999) clamps to 64.0, adaptive_max_px (1.0) stays 1.0,
   // then the inverted pair is swapped: min=1.0, max=64.0.
   CHECK(p.point_size.adaptive_min_px == doctest::Approx(1.0f));

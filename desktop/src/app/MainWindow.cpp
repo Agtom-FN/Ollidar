@@ -23,12 +23,15 @@
 #include <QFile>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QScreen>
 #include <QSettings>
 #include <QSplitter>
 #include <QStatusBar>
 #include <QTreeWidget>
 #include <QUrl>
 #include <QVBoxLayout>
+
+#include <cstdio>
 
 #include "app/CaptureWindow.h"
 #include "app/DisplayParamsDock.h"
@@ -165,7 +168,34 @@ void MainWindow::buildUi() {
 
   buildRail();
 
-  // --- left dock: projects + replay + log ---
+  // --- LOG dock (round 5 item 8) ------------------------------------------
+  //
+  // Built BEFORE the projects dock because half of buildUi()/the constructor
+  // appends to log_. Hidden by default: it is the app's diagnostics pane, not
+  // part of the Projects or Capture workspace, and the owner's round-5 note is
+  // explicit that Projects carries the library and the preview and nothing else.
+  {
+    log_dock_ = new QDockWidget("LOG", this);
+    log_dock_->setObjectName("logDock");
+    log_ = new QPlainTextEdit();
+    log_->setReadOnly(true);
+    log_->setMaximumBlockCount(2000);
+    log_->setMinimumHeight(120);
+    log_dock_->setWidget(log_);
+    addDockWidget(Qt::BottomDockWidgetArea, log_dock_);
+    log_dock_->hide();
+  }
+
+  // --- left dock: the project library + the selected scan's preview --------
+  //
+  // Round 5 item 8, verbatim: "Projects = list of projects + preview of the
+  // selected scan, nothing else." So: the library list, the selected project's
+  // own card (manifest/streams/reader warnings — the preview's metadata), and
+  // the replay transport that PUTS that scan in the viewport. What left: the
+  // "New…" button (a new project is a capture now — the Capture workspace owns
+  // creation), "Import raw D6…" (a File-menu conversion, not library browsing;
+  // still there), and the log pane (its own dock, above). "Open…" stays: adding
+  // an existing project on disk to the list IS list management.
   {
     auto* dock = new QDockWidget("PROJECTS", this);
     projects_dock_ = dock;
@@ -175,33 +205,71 @@ void MainWindow::buildUi() {
     auto* libBox = new QGroupBox("Library");
     auto* lv = new QVBoxLayout(libBox);
     recents_ = new QListWidget();
-    recents_->setToolTip("Recently opened .lscan projects");
+    recents_->setToolTip(
+        "The .lscan project library. Click one to preview it; Cmd/Ctrl- or "
+        "Shift-click two or more to unlock Merge.");
     recents_->setSpacing(2);
-    // Single click opens, matching the mockup's `.lrow`; double click still
-    // works because it fires a click first.
-    connect(recents_, &QListWidget::itemClicked, this, [this](QListWidgetItem* it) {
-      const QString dir = it->data(Qt::UserRole).toString();
-      if (dir == project_.dir) return;
+    // Multi-select, because the merge entry point is now "select 2+ projects"
+    // (round-5 follow-up item 4) rather than a workspace of its own.
+    recents_->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    // Selection, not clicks, drives everything: a Cmd-click that ADDS to a
+    // multi-selection must not also swap the previewed project out from under
+    // it, so a project is opened only when it is the ONLY one selected.
+    connect(recents_, &QListWidget::itemSelectionChanged, this, [this] {
+      const QStringList sel = selectedProjectDirs();
+      updateProjectSelectionActions();
+      if (sel.size() != 1 || sel.first() == project_.dir) return;
       QString err;
-      if (!openProject(dir, &err)) {
+      if (!openProject(sel.first(), &err)) {
         QMessageBox::warning(this, "Open project", err);
       }
     });
     lv->addWidget(recents_);
-    auto* brow = new QWidget();
-    auto* bl = new QHBoxLayout(brow);
-    bl->setContentsMargins(0, 0, 0, 0);
     auto* openBtn = new QPushButton("Open…");
-    auto* newBtn = new QPushButton("New…");
-    auto* importBtn = new QPushButton("Import raw D6…");
+    openBtn->setToolTip("Add an existing .lscan project on disk to this list.");
     connect(openBtn, &QPushButton::clicked, this, &MainWindow::onOpenProject);
-    connect(newBtn, &QPushButton::clicked, this, &MainWindow::onNewProject);
-    connect(importBtn, &QPushButton::clicked, this, &MainWindow::onImportRaw);
-    bl->addWidget(openBtn);
-    bl->addWidget(newBtn);
-    bl->addWidget(importBtn);
-    lv->addWidget(brow);
+    lv->addWidget(openBtn);
+    auto* newHint = new QLabel("New scans are created in the Capture workspace.");
+    newHint->setWordWrap(true);
+    newHint->setProperty("role", "hint");
+    lv->addWidget(newHint);
     v->addWidget(libBox);
+
+    // --- what you can DO with the selection (round-5 follow-up item 4) ------
+    //
+    // The Processing and Merge workspaces are gone from the rail; these are
+    // their entry points, next to the preview they act on. Nothing about the
+    // job queue or the merge workbench changed — only where you start them.
+    {
+      auto* actBox = new QGroupBox("Selected scan");
+      auto* av = new QVBoxLayout(actBox);
+      auto* row = new QWidget();
+      auto* rl = new QHBoxLayout(row);
+      rl->setContentsMargins(0, 0, 0, 0);
+      process_btn_ = new QPushButton("Process…");
+      process_btn_->setToolTip(
+          "Open the job queue for this project — A15's kPostProcess/kColorize/"
+          "kExport/kCloudSubmit jobs, the same queue and worker as before.");
+      export_btn_ = new QPushButton("Export…");
+      export_btn_->setToolTip("Export the cloud currently in the viewport (PLY / LAS / PCD).");
+      connect(process_btn_, &QPushButton::clicked, this, &MainWindow::onProcessSelected);
+      connect(export_btn_, &QPushButton::clicked, this, &MainWindow::onExport);
+      rl->addWidget(process_btn_);
+      rl->addWidget(export_btn_);
+      av->addWidget(row);
+      merge_btn_ = new QPushButton("Merge selected…");
+      merge_btn_->setToolTip(
+          "Select two or more projects in the library to merge them: each one is "
+          "loaded as a merge session (MergeSessionLoader) and the merge workbench "
+          "opens on them.");
+      connect(merge_btn_, &QPushButton::clicked, this, &MainWindow::onMergeSelected);
+      av->addWidget(merge_btn_);
+      selection_hint_ = new QLabel();
+      selection_hint_->setWordWrap(true);
+      selection_hint_->setProperty("role", "hint");
+      av->addWidget(selection_hint_);
+      v->addWidget(actBox);
+    }
 
     auto* infoBox = new QGroupBox("Project");
     auto* iv = new QVBoxLayout(infoBox);
@@ -220,7 +288,10 @@ void MainWindow::buildUi() {
     iv->addWidget(warnings_label_);
     v->addWidget(infoBox);
 
-    auto* replayBox = new QGroupBox("Replay (D6 raw → engine → viewport)");
+    // The preview transport for the selected scan: replay decodes its D6 raw
+    // chunks back through the engine and into the viewport, which is what
+    // "preview of the selected scan" means for a recorded project.
+    auto* replayBox = new QGroupBox("Preview this scan (replay → viewport)");
     auto* rv = new QVBoxLayout(replayBox);
     auto* speedRow = new QWidget();
     auto* sl = new QHBoxLayout(speedRow);
@@ -254,12 +325,7 @@ void MainWindow::buildUi() {
     rl->addWidget(replay_stop_);
     rv->addWidget(rrow);
     v->addWidget(replayBox);
-
-    log_ = new QPlainTextEdit();
-    log_->setReadOnly(true);
-    log_->setMaximumBlockCount(2000);
-    log_->setMinimumHeight(120);
-    v->addWidget(log_, 1);
+    v->addStretch(1);
 
     dock->setWidget(w);
     dock->setMinimumWidth(360);
@@ -281,6 +347,7 @@ void MainWindow::buildUi() {
   connect(params_dock_, &DisplayParamsDock::changed, this, [this] {
     viewport_->setDisplayParams(params_->get());
     if (inspector_) inspector_->refreshFromModel();
+    if (capture_) capture_->refreshDisplayControls();
   });
   addDockWidget(Qt::RightDockWidgetArea, params_dock_);
 
@@ -322,6 +389,7 @@ void MainWindow::buildUi() {
   connect(inspector_, &InspectorCard::changed, this, [this] {
     viewport_->setDisplayParams(params_->get());
     params_dock_->refreshFromModel();
+    if (capture_) capture_->refreshDisplayControls();
   });
   connect(inspector_, &InspectorCard::exportRequested, this, &MainWindow::onExport);
   connect(inspector_, &InspectorCard::moreRequested, this, [this] {
@@ -392,11 +460,26 @@ void MainWindow::buildRail() {
 void MainWindow::onRailActivated(IconRail::Item item) {
   switch (item) {
     case IconRail::Item::kCapture:
-      captureWindow()->setProjectDir(project_.dir);
-      captureWindow()->show();
-      captureWindow()->raise();
-      captureWindow()->activateWindow();
+      // Round 5 item 7: no popup. The capture panel is a dock across the foot of
+      // this window, so switching to the workspace IS opening it — and the live
+      // preview it drives is the viewport directly above it.
+      captureWindow();
       showWorkspace(IconRail::Item::kCapture);
+      return;
+    case IconRail::Item::kJobs:
+    case IconRail::Item::kMerge:
+      // No rail button leads here any more (round-5 follow-up item 4), but the
+      // View menu, Cmd-5/Cmd-6 and `--workspace jobs|merge` still do — and they
+      // now mean "Projects, with that panel raised", which is where those two
+      // live. Nothing in ProcessingDock/MergeDock changed.
+      projects_panel_ = item;
+      showWorkspace(IconRail::Item::kProjects);
+      return;
+    case IconRail::Item::kProjects:
+      // Coming back to Projects from elsewhere shows the library and its
+      // preview; a sub-panel is raised only by its own action.
+      projects_panel_ = IconRail::Item::kProjects;
+      showWorkspace(IconRail::Item::kProjects);
       return;
     case IconRail::Item::kTransfer:
       // The transfer bundle has no dock — it is two dialogs (C7). Export
@@ -429,21 +512,126 @@ void MainWindow::onRailActivated(IconRail::Item item) {
   }
 }
 
+QStringList MainWindow::selectedProjectDirs() const {
+  QStringList dirs;
+  if (!recents_) return dirs;
+  for (QListWidgetItem* it : recents_->selectedItems()) {
+    const QString d = it->data(Qt::UserRole).toString();
+    if (!d.isEmpty()) dirs << d;
+  }
+  return dirs;
+}
+
+void MainWindow::updateProjectSelectionActions() {
+  if (!process_btn_) return;
+  const QStringList sel = selectedProjectDirs();
+  const bool one = sel.size() == 1;
+  const bool many = sel.size() >= 2;
+  process_btn_->setEnabled(one);
+  export_btn_->setEnabled(one);
+  merge_btn_->setEnabled(many);
+  merge_btn_->setText(many ? QString("Merge %1 selected…").arg(sel.size())
+                           : QString("Merge selected…"));
+  if (sel.isEmpty()) {
+    selection_hint_->setText("Select a scan to preview, process or export it.");
+  } else if (one) {
+    selection_hint_->setText(
+        "Process runs the A15 job queue on this scan; Export writes the cloud in the "
+        "viewport. Select a second scan to unlock Merge.");
+  } else {
+    selection_hint_->setText(
+        QString("%1 scans selected — Merge loads each one as a session in the merge "
+                "workbench.")
+            .arg(sel.size()));
+  }
+}
+
+int MainWindow::selectRecentProjectsForCli(int n) {
+  if (!recents_) return 0;
+  recents_->clearSelection();
+  const int count = qMin(n, recents_->count());
+  for (int i = 0; i < count; ++i) recents_->item(i)->setSelected(true);
+  return count;
+}
+
+QString MainWindow::projectActionStateForCli() const {
+  if (!process_btn_) return QStringLiteral("no projects panel");
+  return QString("%1 selected · Process %2 · Export %3 · Merge %4 (\"%5\") · panel: %6")
+      .arg(selectedProjectDirs().size())
+      .arg(process_btn_->isEnabled() ? "enabled" : "disabled")
+      .arg(export_btn_->isEnabled() ? "enabled" : "disabled")
+      .arg(merge_btn_->isEnabled() ? "enabled" : "disabled")
+      .arg(merge_btn_->text())
+      .arg(projects_panel_ == IconRail::Item::kJobs
+               ? "processing"
+               : projects_panel_ == IconRail::Item::kMerge ? "merge" : "none");
+}
+
+void MainWindow::onProcessSelected() {
+  const QStringList sel = selectedProjectDirs();
+  if (sel.size() != 1) return;
+  processing_dock_->setProjectDir(sel.first());
+  processing_dock_->setCurrentStore(host_->points());
+  projects_panel_ = IconRail::Item::kJobs;
+  showWorkspace(IconRail::Item::kProjects);
+  processing_dock_->raise();
+  log_->appendPlainText("processing panel opened for " + sel.first());
+}
+
+void MainWindow::onMergeSelected() {
+  const QStringList sel = selectedProjectDirs();
+  if (sel.size() < 2) return;
+  int added = 0;
+  for (const QString& dir : sel) {
+    QString err;
+    // The SAME loader "Add from open project" / "Import .lscan project…" use —
+    // a private Engine + unpaced ReplaySource over the project's raw chunks.
+    if (merge_dock_->addFromProject(dir, QFileInfo(dir).completeBaseName(), &err)) {
+      ++added;
+    } else {
+      // stderr as well as the log dock: a headless evidence run has to be able
+      // to see WHY a session was refused (the common case is a Mid-360-only
+      // project — record/replay.h forwards ChunkType::kD6Raw and nothing else,
+      // the same limit MainWindow::startReplay() reports).
+      log_->appendPlainText("merge: could not add " + dir + ": " + err);
+      std::fprintf(stderr, "[lidarscan] merge: could not add %s: %s\n", dir.toUtf8().constData(),
+                   err.toUtf8().constData());
+    }
+  }
+  projects_panel_ = IconRail::Item::kMerge;
+  showWorkspace(IconRail::Item::kProjects);
+  merge_dock_->raise();
+  log_->appendPlainText(QString("merge workbench: %1 of %2 selected projects added as sessions")
+                            .arg(added)
+                            .arg(sel.size()));
+}
+
 void MainWindow::showWorkspace(IconRail::Item item) {
   workspace_ = item;
 
   // Review is the only full-bleed workspace: nothing but the viewport, its
   // chips and the floating inspector.
   const bool review = item == IconRail::Item::kReview;
-  projects_dock_->setVisible(item == IconRail::Item::kProjects ||
-                             item == IconRail::Item::kCapture);
+  const bool capture = item == IconRail::Item::kCapture;
+  // Round 5 item 8: the two workspaces no longer share the projects panel.
+  // Capture creates scans and shows nothing else; Projects lists and previews.
+  projects_dock_->setVisible(item == IconRail::Item::kProjects);
+  if (capture_) capture_->setVisible(capture);
 
-  // Exactly one right-hand dock, so Qt draws no tab bar.
-  params_dock_->setVisible(false);
+  // Exactly one right-hand dock, so Qt draws no tab bar — except in Capture,
+  // where the A14 display panel is deliberately up: round 5 item 10 asks for
+  // ALL display parameters to be adjustable while the preview streams, and this
+  // is the panel that owns the ~30 of them the capture column has no room for
+  // (clipping, adaptive sizing, EDL, overlays, background).
+  params_dock_->setVisible(capture);
   measure_dock_->setVisible(false);
-  processing_dock_->setVisible(item == IconRail::Item::kJobs);
   plan_dock_->setVisible(item == IconRail::Item::kPlan);
-  merge_dock_->setVisible(item == IconRail::Item::kMerge);
+  // Round-5 follow-up item 4: the job queue and the merge workbench are PANELS
+  // OF THE PROJECTS WORKSPACE now, raised by that workspace's own actions
+  // (Process… / Merge selected…), not destinations of their own.
+  const bool projects = item == IconRail::Item::kProjects;
+  processing_dock_->setVisible(projects && projects_panel_ == IconRail::Item::kJobs);
+  merge_dock_->setVisible(projects && projects_panel_ == IconRail::Item::kMerge);
 
   // Each workspace gets the width its dock actually needs. Under the old
   // tabbed group all five shared ONE width — whatever the user had dragged
@@ -455,11 +643,24 @@ void MainWindow::showWorkspace(IconRail::Item item) {
   int wantWidth = 0;
   switch (item) {
     case IconRail::Item::kPlan: shown = plan_dock_; wantWidth = 620; break;
-    case IconRail::Item::kMerge: shown = merge_dock_; wantWidth = 720; break;
-    case IconRail::Item::kJobs: shown = processing_dock_; wantWidth = 560; break;
+    case IconRail::Item::kCapture: shown = params_dock_; wantWidth = 380; break;
+    case IconRail::Item::kProjects:
+      if (projects_panel_ == IconRail::Item::kMerge) {
+        shown = merge_dock_;
+        wantWidth = 720;
+      } else if (projects_panel_ == IconRail::Item::kJobs) {
+        shown = processing_dock_;
+        wantWidth = 560;
+      }
+      break;
     default: break;
   }
   if (shown) resizeDocks({shown}, {qMin(wantWidth, width() / 2)}, Qt::Horizontal);
+  // The capture panel is four columns and a control bar; it needs its height,
+  // and the viewport above it needs the rest.
+  if (capture && capture_) {
+    resizeDocks({capture_}, {qMin(430, height() / 2)}, Qt::Vertical);
+  }
 
   applyInspectorPlacement();
   rail_->setCurrent(item);
@@ -625,7 +826,7 @@ void MainWindow::buildMenus() {
   file->addAction("E&xit", QKeySequence::Quit, qApp, &QApplication::quit);
 
   auto* capture = menuBar()->addMenu("&Capture");
-  capture->addAction("Open capture window…", this,
+  capture->addAction("Capture workspace (new scan)", this,
                      [this] { onRailActivated(IconRail::Item::kCapture); });
 
   auto* view = menuBar()->addMenu("&View");
@@ -652,8 +853,10 @@ void MainWindow::buildMenus() {
       {"&Capture", IconRail::Item::kCapture, "Ctrl+2"},
       {"&Review", IconRail::Item::kReview, "Ctrl+3"},
       {"&Floor plan", IconRail::Item::kPlan, "Ctrl+4"},
-      {"&Merge", IconRail::Item::kMerge, "Ctrl+5"},
-      {"Pr&ocessing", IconRail::Item::kJobs, "Ctrl+6"},
+      // These two are panels INSIDE Projects now (round-5 follow-up item 4);
+      // the menu entries stay as the keyboard route to them.
+      {"&Merge (in Projects)", IconRail::Item::kMerge, "Ctrl+5"},
+      {"Pr&ocessing (in Projects)", IconRail::Item::kJobs, "Ctrl+6"},
   };
   for (const auto& w : kWs) {
     const IconRail::Item it = w.item;
@@ -670,6 +873,7 @@ void MainWindow::buildMenus() {
   view->addAction(plan_dock_->toggleViewAction());
   view->addAction(merge_dock_->toggleViewAction());
   view->addAction(projects_dock_->toggleViewAction());
+  view->addAction(log_dock_->toggleViewAction());
 
   auto* tools = menuBar()->addMenu("&Tools");
   tools->addAction("Load synthetic building fixture (C5 test fixture)…", this,
@@ -694,18 +898,79 @@ void MainWindow::buildMenus() {
 
 CaptureWindow* MainWindow::captureWindow() {
   if (!capture_) {
-    capture_ = new CaptureWindow(host_, this);
+    // ONE display model for the whole app (NOTES.md §1.7): the capture panel's
+    // inline live controls bind the same DisplayParamsController the A14 dock
+    // and the inspector card do.
+    capture_ = new CaptureWindow(host_, params_.get(), this);
+    addDockWidget(Qt::BottomDockWidgetArea, capture_);
+    capture_->hide();  // shown by showWorkspace(kCapture)
+    connect(capture_, &CaptureWindow::logLine, this,
+            [this](const QString& l) { log_->appendPlainText(l); });
+    connect(capture_, &CaptureWindow::previewStarted, this, [this] {
+      // The live preview IS the viewport's cloud from here on.
+      viewport_->setPointStore(host_->points());
+    });
     connect(capture_, &CaptureWindow::captureStarted, this, [this](const QString& d) {
       log_->appendPlainText("capture started into " + d);
       viewport_->setPointStore(host_->points());
     });
-    connect(capture_, &CaptureWindow::captureStopped, this,
-            [this] { log_->appendPlainText("capture stopped"); });
-    // The RECORDING / PAUSED badge rides the MAIN window's viewport (redesign
-    // brief item 4) even though capture is its own window, because the main
-    // viewport is what is actually showing the cloud being recorded.
+    // Round 5 item 9: "Stop = seal -> project appears in Projects tab". The
+    // display parameters the operator was capturing with are persisted into the
+    // new project FIRST, so opening it below reads exactly what was on screen
+    // instead of resetting to the profile defaults.
+    connect(capture_, &CaptureWindow::captureStopped, this, [this](const QString& dir) {
+      log_->appendPlainText("capture stopped" + (dir.isEmpty() ? QString() : " — sealed " + dir));
+      if (dir.isEmpty()) return;
+      QString perr;
+      if (!params_dock_->saveToProject(dir, &perr)) {
+        log_->appendPlainText("could not persist display parameters into " + dir + ": " + perr);
+      }
+      QString err;
+      if (!openProject(dir, &err)) {
+        log_->appendPlainText("just-recorded project could not be opened: " + err);
+        addRecent(dir);  // it still belongs in the library, readable or not
+      }
+    });
+    connect(capture_, &CaptureWindow::displayParamsChanged, this, [this] {
+      viewport_->setDisplayParams(params_->get());
+      params_dock_->refreshFromModel();
+      if (inspector_) inspector_->refreshFromModel();
+    });
+    connect(capture_, &CaptureWindow::liveRefreshHzChanged, this, [this](double hz) {
+      viewport_->setMaxFps(hz);
+      log_->appendPlainText(QString("live viewport refresh cap: %1 fps").arg(hz, 0, 'f', 0));
+    });
+    // Round-5 item 18: the walked path, drawn in the viewport during preview AND
+    // recording. The panel accumulates it (the engine's LioPoseSource cannot be
+    // enumerated — see CaptureWindow::pollTrajectory), the viewport draws it.
+    connect(capture_, &CaptureWindow::trajectoryTrailChanged, this,
+            [this](const std::vector<std::array<float, 3>>& path) {
+              viewport_->setTrajectoryTrail(path);
+            });
+    // Round-5 item 17: the viewport measured that this machine cannot sustain the
+    // current live refresh and stepped down; the panel says so, quietly, inline.
+    connect(viewport_, &ViewportWindow::refreshDownshifted, capture_,
+            [this](double hz, const QString& why) { capture_->noteRefreshDownshift(hz, why); });
+    // ...and the CEILING is the screen's own refresh rate. QScreen is only
+    // meaningful once the window exists, which by here it does (MainWindow's
+    // viewport was created in buildUi and shown by main()).
+    {
+      double ceiling = 60.0;
+      if (QScreen* s = viewport_->screen()) {
+        if (s->refreshRate() > 1.0) ceiling = s->refreshRate();
+      }
+      viewport_->setRefreshCeiling(ceiling);
+      capture_->setLiveRefreshCeiling(ceiling);
+      log_->appendPlainText(QString("live refresh ceiling: %1 Hz (this display)")
+                                .arg(ceiling, 0, 'f', 0));
+    }
+    // The RECORDING / PAUSED badge rides the viewport (redesign brief item 4),
+    // which since round 5 is directly above the panel that owns the phase.
     connect(capture_, &CaptureWindow::recordingStateChanged, this,
             &MainWindow::setCaptureBadge);
+    // The panel restored the persisted refresh cap in its constructor, before
+    // the connect above existed; this is what hands it to the viewport.
+    capture_->applyLiveRefreshRate();
   }
   return capture_;
 }
@@ -962,6 +1227,7 @@ void MainWindow::refreshRecents() {
     recents_->setItemWidget(it, card);
     if (d == project_.dir) it->setSelected(true);
   }
+  updateProjectSelectionActions();
 }
 
 void MainWindow::addRecent(const QString& dir) {

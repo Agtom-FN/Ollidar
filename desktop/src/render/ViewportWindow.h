@@ -26,6 +26,7 @@
 #include <QString>
 #include <QWindow>
 
+#include <array>
 #include <memory>
 #include <vector>
 
@@ -98,6 +99,52 @@ class ViewportWindow : public QWindow {
   void setVsync(bool on);
   bool vsync() const { return vsync_; }
 
+  // --- live refresh-rate throttle (REVIEW_FEEDBACK round 5 item 10) --------
+  //
+  // "before recording, stream live with all display parameters adjustable —
+  // live refresh rate, point size, gamma, brightness". Everything on that list
+  // except the refresh rate is an A14 DisplayParams field; the refresh rate is
+  // not a display parameter at all, it is how often this window presents, so it
+  // lives here. The DisplayLink still ticks at the display's own cadence (that
+  // is the OS's clock, not ours to slow down); a tick that arrives sooner than
+  // one throttle interval after the last PRESENTED frame returns without
+  // syncing the cloud or touching the swapchain, which is where the CPU/GPU
+  // cost of a frame actually is. 0 = uncapped, the C1 behaviour and still the
+  // default — nothing outside the capture panel sets this.
+  void setMaxFps(double fps);
+  double maxFps() const { return max_fps_; }
+
+  // --- item 17: the cap is HARDWARE-DERIVED and must never take the app down --
+  //
+  // Two halves. The CEILING is what the screen can present
+  // (QScreen::refreshRate, set by MainWindow — this class only clamps to it), and
+  // the FLOOR under load is measured: if a presented frame's p95 CPU time keeps
+  // overrunning the budget the current cap implies, the cap is downshifted one
+  // notch and refreshDownshifted() says so, quietly, in the capture panel. It
+  // never shifts back up on its own — a display that oscillates between rates is
+  // worse than one that settled low, and the operator can always drag the slider.
+  //
+  // WHAT THIS PROTECTS AGAINST is the classic flood: the render loop asking the
+  // renderer to upload another PageStore delta every display tick while the GPU
+  // is still behind. Nothing here queues — the throttle RETURNS from the tick
+  // before PagedCloudRenderer::sync(), so a skipped frame skips its uploads
+  // entirely rather than deferring them. Recording is never involved: it runs on
+  // the engine's own threads and is never throttled by anything in this file.
+  void setRefreshCeiling(double hz);
+  double refreshCeiling() const { return refresh_ceiling_; }
+
+  // --- item 18: the live trajectory trail ---------------------------------
+  //
+  // The walking path, in the session's local metric frame — the same frame the
+  // cloud is in. Drawn as a point-sampled polyline through the SAME material the
+  // measure tool uses (forced RGB, fixed marker size), so it cannot be recoloured
+  // or shrunk away by the display parameters. Gated on
+  // DisplayParams::show_trajectory. Rebuilt at most once per PRESENTED frame
+  // (dirty flag, not a rebuild per call), so a 10 Hz pose poll costs at most one
+  // buffer rebuild per frame and never one per pose.
+  void setTrajectoryTrail(const std::vector<std::array<float, 3>>& path);
+  void clearTrajectoryTrail();
+
   // Frame the whole cloud (or a unit box if there is none yet).
   void fitView();
   void setAutoOrbit(bool on) { auto_orbit_ = on; }
@@ -153,6 +200,9 @@ class ViewportWindow : public QWindow {
   void statusChanged(const QString& text);
   void initFailed(const QString& reason);
   void measurementsChanged();
+  // The live refresh cap was lowered because this machine could not sustain the
+  // previous one (item 17). `why` carries the measured numbers.
+  void refreshDownshifted(double newHz, const QString& why);
 
  protected:
   void exposeEvent(QExposeEvent*) override;
@@ -178,6 +228,16 @@ class ViewportWindow : public QWindow {
   void rebuildMeasureGeometry();
   void destroyMeasureGeometry();
   void pushMarkerMaterialParams();
+  // One overlay instance (measure markers, trajectory trail) configured to the
+  // forced-RGB / fixed-size treatment at `marker_px`.
+  void pushOverlayMaterialParams(filament::MaterialInstance* mi, float marker_px);
+
+  // trajectory trail (item 18)
+  void rebuildTrailGeometry();
+  void destroyTrailGeometry();
+  // One notch down the hardware-derived ladder (item 17). Returns `from` when
+  // there is nowhere lower to go.
+  static double nextLowerRefreshNotch(double from);
 
   QWidget* top_level_ = nullptr;
 
@@ -221,6 +281,20 @@ class ViewportWindow : public QWindow {
   bool initialized_ = false;
   QString init_error_;
   bool vsync_ = true;
+  // Live refresh-rate throttle; see setMaxFps(). `last_presented_s_` is on the
+  // same clock_ every other timing figure in this class uses.
+  double max_fps_ = 0.0;
+  double last_presented_s_ = 0.0;
+  double refresh_ceiling_ = 0.0;      // 0 = unknown/unclamped (QScreen not asked yet)
+  int overrun_windows_ = 0;           // consecutive 0.4 s stats windows over budget
+
+  // trajectory trail
+  filament::MaterialInstance* trail_material_ = nullptr;
+  filament::VertexBuffer* trail_vb_ = nullptr;
+  filament::IndexBuffer* trail_ib_ = nullptr;
+  utils::Entity trail_entity_;
+  std::vector<std::array<float, 3>> trail_path_;
+  bool trail_dirty_ = false;
 
   // resize coalescing
   bool resize_pending_ = true;

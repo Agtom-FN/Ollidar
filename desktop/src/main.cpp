@@ -38,6 +38,7 @@
 #include <QFileInfo>
 #include <QMessageBox>
 #include <QMouseEvent>
+#include <QSettings>
 #include <QTimer>
 
 #include <algorithm>
@@ -48,6 +49,7 @@
 #include <vector>
 
 #include "app/CaptureWindow.h"
+#include "app/DisplayParamsDock.h"  // paramsPathFor — --capture-flow-demo's saved-view check
 #include "app/EngineHost.h"
 #include "app/MainWindow.h"
 #include "app/MergeDock.h"
@@ -66,6 +68,58 @@
 #include "scanengine/jobs/job_queue.h"
 #include "scanengine/poses/se3.h"
 #include "scanengine/record/zip.h"
+
+namespace {
+
+// Mean ABSOLUTE per-pixel difference between two screenshots, plus the fraction
+// of the frame that changed by more than a noise threshold. Used by two evidence
+// hooks that must prove "this control actually changed what is on screen":
+// --inspector-demo (point size) and --capture-flow-demo (the trajectory trail).
+// Absolute, not signed: growing points or drawing a trail can make a frame
+// DARKER (near surfaces occluding far ones), and a brightness test would call
+// that a failure.
+double frameDelta(const QString& a, const QString& b, double* changedFrac) {
+  QImage ia(a), ib(b);
+  if (ia.isNull() || ib.isNull() || ia.size() != ib.size()) return -1.0;
+  ia = ia.convertToFormat(QImage::Format_Grayscale8);
+  ib = ib.convertToFormat(QImage::Format_Grayscale8);
+  double sum = 0.0;
+  qint64 changed = 0;
+  for (int y = 0; y < ia.height(); ++y) {
+    const uchar* ra = ia.constScanLine(y);
+    const uchar* rb = ib.constScanLine(y);
+    for (int x = 0; x < ia.width(); ++x) {
+      const int d = std::abs(int(ra[x]) - int(rb[x]));
+      sum += d;
+      if (d > 16) ++changed;
+    }
+  }
+  const double n = double(ia.width()) * ia.height();
+  if (changedFrac) *changedFrac = double(changed) / n;
+  return sum / n;
+}
+
+// How many pixels in this shot are the trajectory trail's EMBER, i.e. strongly
+// red-dominant? The cloud renders through a grayscale/intensity colormap, so
+// r-b is ~0 for every cloud pixel and the count is a decisive test that the
+// trail geometry reached the swapchain — unlike a frame delta, which a live
+// capture's own growing cloud can produce all by itself.
+qint64 countEmberPixels(const QString& path) {
+  QImage im(path);
+  if (im.isNull()) return -1;
+  im = im.convertToFormat(QImage::Format_RGB32);
+  qint64 n = 0;
+  for (int y = 0; y < im.height(); ++y) {
+    const QRgb* row = reinterpret_cast<const QRgb*>(im.constScanLine(y));
+    for (int x = 0; x < im.width(); ++x) {
+      const QRgb c = row[x];
+      if (qRed(c) > 120 && int(qRed(c)) - int(qBlue(c)) > 60) ++n;
+    }
+  }
+  return n;
+}
+
+}  // namespace
 
 int main(int argc, char** argv) {
   QApplication app(argc, argv);
@@ -315,12 +369,42 @@ int main(int argc, char** argv) {
   parser.addOption(optInspectorDemo);
   QCommandLineOption optCaptureClusterDemo(
       "capture-cluster-demo",
-      "Redesign evidence hook: PREFIX — open the capture window and shoot the "
-      "record cluster in each state the C2 machine can be in without hardware "
-      "(untested / testing), then, if --mid360-selftest also ran, armed / "
+      "Redesign evidence hook: PREFIX — open the capture panel and shoot the "
+      "record cluster in each state the capture machine can be in without hardware "
+      "(no device / arming), then, if --mid360-selftest also ran, live / "
       "recording / paused.",
       "prefix");
   parser.addOption(optCaptureClusterDemo);
+  QCommandLineOption optCaptureFlowDemo(
+      "capture-flow-demo",
+      "Round-5 evidence hook: PREFIX — drive the WHOLE redesigned capture flow and "
+      "shoot it. Selects the Capture workspace (a dock, no popup), lets the inline "
+      "auto-detect pass run, then arms the addresses --mid360-selftest supplies (the "
+      "same armPreview() an auto-detect hit calls), moves the live refresh-rate and "
+      "point-size controls, shoots the PREVIEW state, presses Start with the name "
+      "field EMPTY (so the project is auto-named Scan-NNN date time), shoots the "
+      "RECORDING state, Stops, and prints the sealed project's readProject() summary "
+      "plus whether it landed in the library. Requires --mid360-selftest.",
+      "prefix");
+  parser.addOption(optCaptureFlowDemo);
+  QCommandLineOption optLiveRefresh(
+      "live-refresh",
+      "Set the capture panel's live viewport refresh cap (fps) at startup, through the "
+      "real slider. Clamped to this display's refresh rate (round-5 item 17). Also the "
+      "way an evidence run picks a known starting rate, since the panel persists the "
+      "last one.",
+      "fps");
+  parser.addOption(optLiveRefresh);
+  QCommandLineOption optProjectsActionsDemo(
+      "projects-actions-demo",
+      "Round-5 follow-up evidence hook: PREFIX — in the Projects workspace, select ONE "
+      "library row (Process + Export unlock, Merge stays locked), shoot it, press "
+      "Process… (the A15 job queue opens as a PANEL OF PROJECTS, not a tab of its own), "
+      "shoot it, then select TWO rows (Merge unlocks), press Merge selected… (each "
+      "project is loaded as a merge session) and shoot that. Prints the action state at "
+      "every step.",
+      "prefix");
+  parser.addOption(optProjectsActionsDemo);
   QCommandLineOption optWorkspace(
       "workspace",
       "Select a workspace at startup, the same way clicking the icon rail does: "
@@ -654,33 +738,6 @@ int main(int argc, char** argv) {
   if (parser.isSet(optInspectorDemo)) {
     const QString prefix = QFileInfo(parser.value(optInspectorDemo)).absoluteFilePath();
     QDir().mkpath(QFileInfo(prefix).absolutePath());
-    // Mean ABSOLUTE per-pixel difference between the two shots, not a
-    // brightness comparison. Growing the points does not simply "add light":
-    // at 12 px the near surfaces occlude the far ones, so this fixture gets
-    // measurably DARKER (53.5 -> 35.9 mean luma on the first run of this
-    // hook). A signed brightness test would have called that a failure. What
-    // is actually being asserted is that the frame changed at all, and by how
-    // much of the frame.
-    auto frameDelta = [](const QString& a, const QString& b, double* changedFrac) -> double {
-      QImage ia(a), ib(b);
-      if (ia.isNull() || ib.isNull() || ia.size() != ib.size()) return -1.0;
-      ia = ia.convertToFormat(QImage::Format_Grayscale8);
-      ib = ib.convertToFormat(QImage::Format_Grayscale8);
-      double sum = 0.0;
-      qint64 changed = 0;
-      for (int y = 0; y < ia.height(); ++y) {
-        const uchar* ra = ia.constScanLine(y);
-        const uchar* rb = ib.constScanLine(y);
-        for (int x = 0; x < ia.width(); ++x) {
-          const int d = std::abs(int(ra[x]) - int(rb[x]));
-          sum += d;
-          if (d > 16) ++changed;
-        }
-      }
-      const double n = double(ia.width()) * ia.height();
-      if (changedFrac) *changedFrac = double(changed) / n;
-      return sum / n;
-    };
     win.showWorkspaceNamed("review");
     const int t0 = int(parser.value(optShotDelay).toDouble() * 1000.0);
     QTimer::singleShot(t0, &win, [&win, prefix] {
@@ -698,7 +755,7 @@ int main(int argc, char** argv) {
                    "%.2f px (viewport params %.2f px)\n",
                    applied, win.viewport()->displayParams().point_size.fixed_px);
     });
-    QTimer::singleShot(t0 + 2000, &win, [&win, prefix, frameDelta] {
+    QTimer::singleShot(t0 + 2000, &win, [&win, prefix] {
       win.viewport()->captureScreenshot(prefix + "-after.png");
       double changedFrac = 0.0;
       const double d = frameDelta(prefix + "-before.png", prefix + "-after.png", &changedFrac);
@@ -737,26 +794,48 @@ int main(int argc, char** argv) {
   const bool cancelProbe = parser.isSet(optAutoDetectCancelSelftest);
   const bool chainToSelftest =
       cliArmsDevice && parser.isSet(optAutoDetectSelftest) && !cancelProbe;
+  // Round 5: an auto-detect HIT now arms the device by itself (that is the whole
+  // point of the new flow). A CLI hook that arms the device explicitly must
+  // therefore switch that off, or two things race for UDP 56201 and for the same
+  // phase machine. --capture-flow-demo is the one hook that wants BOTH a real
+  // inline discovery pass and a deterministic arm, so it too suppresses the
+  // auto-arm and chains the arm itself.
+  const bool flowDemo = parser.isSet(optCaptureFlowDemo);
+  if (cliArmsDevice || parser.isSet(optAutoDetectSelftest)) {
+    win.captureWindow()->suppressAutoArmForCli();
+  }
   // Filled in by the --mid360-selftest block below; called by the auto-detect
   // block's completion handler when both hooks are set. Populated before the
   // event loop runs, so the timer-driven chain always sees it.
   auto* chainedDeviceSelftest = new std::function<void()>();
-  if (cliArmsDevice) win.captureWindow()->suppressSilentAutoDetectForCli();
+  // --capture-flow-demo deliberately does NOT suppress the on-open pass: the
+  // inline auto-detect status row is part of what it is photographing, and it
+  // arms only after that pass has finished and released the port.
+  if (cliArmsDevice && !flowDemo) win.captureWindow()->suppressSilentAutoDetectForCli();
+
+  if (parser.isSet(optLiveRefresh)) {
+    lidarscan::CaptureWindow* cap = win.captureWindow();
+    const double applied = cap->setLiveRefreshHzForCli(parser.value(optLiveRefresh).toDouble());
+    std::fprintf(stderr, "[lidarscan] live-refresh: panel %.0f fps, viewport cap %.0f fps\n",
+                 applied, win.viewport()->maxFps());
+  }
 
   if (parser.isSet(optCaptureClusterDemo)) {
     const QString prefix = QFileInfo(parser.value(optCaptureClusterDemo)).absoluteFilePath();
     QDir().mkpath(QFileInfo(prefix).absolutePath());
     lidarscan::CaptureWindow* cap = win.captureWindow();
     cap->setProjectDir(parser.value(optProject));
-    cap->show();
-    cap->raise();
+    // Round 5: showing the panel means showing its workspace — it is a dock in
+    // the shell now, not a window of its own.
+    win.showWorkspaceNamed("capture");
     auto shot = [cap](const QString& path, const char* label) {
       const bool ok = cap->grab().save(path);
       std::fprintf(stderr, "[lidarscan] capture-cluster-demo: %s %s -> %s\n", label,
                    ok ? "OK" : "FAILED", path.toUtf8().constData());
     };
-    // The gated state needs no hardware at all — that IS the state the owner
-    // said was missing, so it is shot first and unconditionally.
+    // The no-device state needs no hardware at all, so it is shot first and
+    // unconditionally. (Named -01-gated.png for continuity with the round-1
+    // evidence this hook was written for; the gate itself is gone — round 5.)
     QTimer::singleShot(600, cap, [shot, prefix] { shot(prefix + "-01-gated.png", "gated"); });
     QObject::connect(cap, &lidarscan::CaptureWindow::selfTestFinished, &app,
                      [shot, prefix](bool passed, const QString&) {
@@ -770,8 +849,8 @@ int main(int argc, char** argv) {
                      [cap, shot, prefix, &win](const QString&) {
                        QTimer::singleShot(1400, cap, [cap, shot, prefix, &win] {
                          shot(prefix + "-03-recording.png", "recording");
-                         // The badge lives on the MAIN window's viewport, not
-                         // in the capture dialog, so it needs its own grab.
+                         // The badge rides the viewport, which is a native
+                         // surface above this dock, so it needs its own grab.
                          const bool ok = win.grab().save(prefix + "-03-badge-recording.png");
                          std::fprintf(stderr,
                                       "[lidarscan] capture-cluster-demo: viewport RECORDING badge "
@@ -803,8 +882,7 @@ int main(int argc, char** argv) {
   if (parser.isSet(optAutoDetectSelftest)) {
     lidarscan::CaptureWindow* cap = win.captureWindow();
     if (!projectDir.isEmpty()) cap->setProjectDir(projectDir);
-    cap->show();
-    cap->raise();
+    win.showWorkspaceNamed("capture");  // the panel is a dock; this is how it opens
     // Without a device-arming hook, showEvent() may ALSO fire the silent
     // on-open pass (if this project has never had Mid-360 settings saved)
     // racing this hook's own explicit trigger a few lines down —
@@ -911,29 +989,248 @@ int main(int argc, char** argv) {
       // The deliberate collision: a pass starts, and 400 ms later — well
       // inside its first 1 s listen slice — the device arms. CaptureWindow
       // must cancel the pass, WAIT for the socket, and then start the device.
-      cap->show();
-      cap->raise();
+      win.showWorkspaceNamed("capture");
       std::fprintf(stderr,
                    "[lidarscan] auto-detect-cancel-selftest: starting a discovery pass, "
-                   "then Test device 400 ms into it\n");
+                   "then arming the device 400 ms into it\n");
       QTimer::singleShot(500, cap, [cap] { cap->triggerAutoDetectForCli(); });
       QTimer::singleShot(900, cap, [chainedDeviceSelftest] { (*chainedDeviceSelftest)(); });
-      // ...and the other direction of the same exclusion: with the device now
-      // armed, a click on "Auto-detect devices" must be REFUSED, not queued
-      // and not run. 5 s is well after the self-test has settled either way.
+      // ...and the other direction of the same exclusion. Round 5 changed what
+      // "the other direction" MEANS for a live PREVIEW: a click with the device
+      // merely previewing now disarms the preview, takes the port, runs the pass
+      // and re-arms (see CaptureWindow::onAutoDetectClicked — refusing here
+      // would leave an auto-armed operator unable to ever re-detect). The
+      // exclusion itself is unchanged: never two holders of 56201 at once, and a
+      // RECORDING is still refused outright.
       QTimer::singleShot(5000, cap, [cap] {
         std::fprintf(stderr,
                      "[lidarscan] auto-detect-cancel-selftest: clicking Auto-detect with "
-                     "the device armed — must be refused\n");
+                     "the device armed — the preview must step aside, not overlap\n");
         cap->triggerAutoDetectForCli();
       });
     } else if (chainToSelftest) {
       std::fprintf(stderr,
                    "[lidarscan] mid360-selftest: chained behind --auto-detect-selftest "
                    "(no concurrent UDP 56201 listener)\n");
+    } else if (flowDemo) {
+      // --capture-flow-demo owns the arm: it fires once the inline on-open
+      // discovery pass has finished and released UDP 56201 (see its block
+      // below), so the two never overlap.
+      std::fprintf(stderr,
+                   "[lidarscan] mid360-selftest: chained behind --capture-flow-demo's "
+                   "inline auto-detect pass\n");
     } else {
       QTimer::singleShot(500, cap, [chainedDeviceSelftest] { (*chainedDeviceSelftest)(); });
     }
+  }
+
+  // --- round-5 workflow evidence: the whole capture flow, end to end -------
+  //
+  // Everything this hook drives is the SHIPPED path: the workspace switch is the
+  // rail's own, the discovery pass is the panel's own on-open pass, the arm is
+  // armPreview() (what an auto-detect hit calls), the display controls go through
+  // their real sliders, and Start/Stop are the record cluster's own slots. The
+  // only substitution is WHERE the addresses come from — the S2 simulator is on
+  // loopback and the replayed real beacon names a 192.168.1.x lidar, so the
+  // addresses are supplied by --mid360-selftest instead of by the beacon. See
+  // NOTES.md §17.
+  if (flowDemo) {
+    if (!cliArmsDevice) {
+      std::fprintf(stderr,
+                   "[lidarscan] --capture-flow-demo needs --mid360-selftest HOST:LIDAR for "
+                   "the addresses to arm\n");
+      return 6;
+    }
+    const QString prefix = QFileInfo(parser.value(optCaptureFlowDemo)).absoluteFilePath();
+    QDir().mkpath(QFileInfo(prefix).absolutePath());
+    lidarscan::CaptureWindow* cap = win.captureWindow();
+    win.showWorkspaceNamed("capture");
+
+    // 1. the inline auto-detect pass (no dialog) -> then arm.
+    QObject::connect(cap, &lidarscan::CaptureWindow::autoDetectFinished, &app,
+                     [chainedDeviceSelftest, cap](bool mid360, bool d6, bool um982) {
+                       std::fprintf(stderr,
+                                    "[lidarscan] capture-flow-demo: inline auto-detect done "
+                                    "(Mid-360 %s, D6 %s, UM982 %s) — arming\n",
+                                    mid360 ? "FOUND" : "not seen", d6 ? "detected" : "not seen",
+                                    um982 ? "FOUND" : "not seen");
+                       QTimer::singleShot(200, cap, [chainedDeviceSelftest] {
+                         (*chainedDeviceSelftest)();
+                       });
+                     });
+
+    // 2. live preview up -> move the live display controls, shoot the PREVIEW
+    //    state (viewport + panel composited by captureScreenshot's -window.png).
+    QObject::connect(
+        cap, &lidarscan::CaptureWindow::selfTestFinished, &app,
+        [cap, prefix, &win](bool passed, const QString& detail) {
+          std::fprintf(stderr, "[lidarscan] capture-flow-demo: arm %s — %s\n",
+                       passed ? "LIVE" : "FAILED", detail.toUtf8().constData());
+          if (!passed) return;
+          QTimer::singleShot(1200, cap, [cap, prefix, &win] {
+            // TWO moves, deliberately: the rate is persisted in QSettings, so a
+            // single move to a fixed value is a no-op on the run after the one
+            // that set it (which is exactly how the missing applyLiveRefreshRate()
+            // hop was found). Two different targets guarantee a real change, and
+            // the viewport's own cap is read back after each.
+            const double hz1 = cap->setLiveRefreshHzForCli(12.0);
+            const double cap1 = win.viewport()->maxFps();
+            const double hz2 = cap->setLiveRefreshHzForCli(24.0);
+            const double px = cap->setPointSizeForCli(2.5);
+            std::fprintf(stderr,
+                         "[lidarscan] capture-flow-demo: live controls — refresh %.0f fps "
+                         "(viewport cap %.0f) then %.0f fps (viewport cap %.0f), point "
+                         "size %.2f px (A14 model)\n",
+                         hz1, cap1, hz2, win.viewport()->maxFps(), px);
+            QTimer::singleShot(900, cap, [cap, prefix, &win] {
+              win.viewport()->captureScreenshot(prefix + "-preview.png");
+              std::fprintf(stderr,
+                           "[lidarscan] capture-flow-demo: PREVIEW shot -> %s (+ -window.png)\n",
+                           (prefix + "-preview.png").toUtf8().constData());
+
+              // 2b. THE TRAJECTORY TRAIL (item 18), measured rather than
+              // asserted. The live LIO trail against a STATIONARY simulator is
+              // half a metre long inside a 20 m cloud — real, but too small to
+              // see in a screenshot — so this pushes a metre-scale synthetic
+              // path through the SAME ViewportWindow::setTrajectoryTrail() the
+              // panel drives, shoots it, and reports how much of the frame
+              // changed. The synthetic path is labelled as such in the log and
+              // is dropped immediately afterwards; the panel's next 10 Hz poll
+              // puts the real (live) trail back.
+              // Deliberately ABOVE the cloud: a path at floor height inside a
+              // scanned room is depth-tested behind the ceiling from this
+              // camera, which is correct rendering but useless as evidence.
+              std::vector<std::array<float, 3>> synth;
+              for (int i = 0; i <= 40; ++i) {
+                const float t = float(i) / 40.0f;
+                synth.push_back({-4.0f + 8.0f * t, -3.0f + 6.0f * t * t, 4.0f + 2.0f * t});
+              }
+              cap->injectTrailForCli(synth);
+              QTimer::singleShot(700, cap, [cap, prefix, &win] {
+                win.viewport()->captureScreenshot(prefix + "-trail.png");
+                double changedFrac = 0.0;
+                const double d =
+                    frameDelta(prefix + "-preview.png", prefix + "-trail.png", &changedFrac);
+                const qint64 emberBefore = countEmberPixels(prefix + "-preview.png");
+                const qint64 emberAfter = countEmberPixels(prefix + "-trail.png");
+                std::fprintf(stderr,
+                             "[lidarscan] capture-flow-demo: TRAIL shot -> %s | synthetic "
+                             "41-vertex path | ember pixels %lld -> %lld | mean |delta| %.4f "
+                             "over %.2f%% of the frame — %s\n",
+                             (prefix + "-trail.png").toUtf8().constData(),
+                             (long long)emberBefore, (long long)emberAfter, d, changedFrac * 100.0,
+                             (emberAfter > emberBefore + 200)
+                                 ? "TRAIL DRAWN"
+                                 : "NO TRAIL PIXELS (investigate)");
+                cap->injectTrailForCli({});
+
+                // 3. Start with an EMPTY name — the auto-naming path.
+                const QString dir = cap->triggerStartWithAutoNameForCli();
+                std::fprintf(stderr,
+                             "[lidarscan] capture-flow-demo: Start pressed with an EMPTY name "
+                             "-> %s\n",
+                             dir.toUtf8().constData());
+              });
+            });
+          });
+        });
+
+    // 4. recording -> shoot the RECORDING state, Stop, report what was sealed.
+    QObject::connect(
+        cap, &lidarscan::CaptureWindow::captureStarted, &app,
+        [cap, prefix, &win](const QString& dir) {
+          QTimer::singleShot(2500, cap, [cap, prefix, &win, dir] {
+            win.viewport()->captureScreenshot(prefix + "-recording.png");
+            std::fprintf(stderr,
+                         "[lidarscan] capture-flow-demo: RECORDING shot -> %s (+ -window.png)\n",
+                         (prefix + "-recording.png").toUtf8().constData());
+            cap->triggerStopForCli();
+            QTimer::singleShot(600, cap, [prefix, &win, dir] {
+              const lidarscan::ProjectInfo info = lidarscan::readProject(dir);
+              std::fprintf(stderr,
+                           "[lidarscan] capture-flow-demo: sealed %s — valid=%s, %llu chunks, "
+                           "%llu bytes, %.2f s, sealed=%s, profile %s\n",
+                           dir.toUtf8().constData(), info.valid ? "yes" : "no",
+                           (unsigned long long)info.total_chunks,
+                           (unsigned long long)info.total_bytes, info.duration_s,
+                           info.sealed ? "true" : "false", info.profile.toUtf8().constData());
+              for (const auto& s : info.streams) {
+                std::fprintf(stderr, "[lidarscan] capture-flow-demo:   stream %s: %llu chunks\n",
+                             s.name.toUtf8().constData(), (unsigned long long)s.chunks);
+              }
+              // Did it land in the LIBRARY (round 5 item 9: "project appears in
+              // the Projects tab")? The library is QSettings("recentProjects"),
+              // and the open project is what the Projects panel previews.
+              const QStringList recents = QSettings().value("recentProjects").toStringList();
+              std::fprintf(stderr,
+                           "[lidarscan] capture-flow-demo: in the library: %s · previewed as "
+                           "the open project: %s\n",
+                           recents.contains(dir) ? "yes" : "NO",
+                           win.project().dir == dir ? "yes" : "NO");
+              // And the display parameters the operator set during the capture
+              // are the project's saved default view (round-5 follow-up item 3).
+              const QString pp = lidarscan::DisplayParamsDock::paramsPathFor(dir);
+              std::fprintf(stderr,
+                           "[lidarscan] capture-flow-demo: display params saved with the "
+                           "project: %s (%s)\n",
+                           QFileInfo::exists(pp) ? "yes" : "NO", pp.toUtf8().constData());
+              win.showWorkspaceNamed("projects");
+              QTimer::singleShot(500, &win, [prefix, &win] {
+                win.viewport()->captureScreenshot(prefix + "-projects.png");
+                std::fprintf(stderr,
+                             "[lidarscan] capture-flow-demo: PROJECTS shot -> %s (+ -window.png)\n",
+                             (prefix + "-projects.png").toUtf8().constData());
+              });
+            });
+          });
+        });
+  }
+
+  // --- round-5 follow-up item 4: Processing and Merge folded into Projects ---
+  //
+  // Drives the REAL selection model and the REAL action buttons' slots, so what
+  // is proven is the shipped gating (one project -> Process/Export; two or more
+  // -> Merge), not a parallel harness. ProcessingDock and MergeDock are the same
+  // docks doing the same work — only their entry point moved.
+  if (parser.isSet(optProjectsActionsDemo)) {
+    const QString prefix = QFileInfo(parser.value(optProjectsActionsDemo)).absoluteFilePath();
+    QDir().mkpath(QFileInfo(prefix).absolutePath());
+    win.showWorkspaceNamed("projects");
+    QTimer::singleShot(900, &win, [&win, prefix] {
+      const int one = win.selectRecentProjectsForCli(1);
+      std::fprintf(stderr, "[lidarscan] projects-actions-demo: selected %d — %s\n", one,
+                   win.projectActionStateForCli().toUtf8().constData());
+      win.viewport()->captureScreenshot(prefix + "-one-selected.png");
+      QTimer::singleShot(600, &win, [&win, prefix] {
+        win.triggerProcessSelectedForCli();
+        std::fprintf(stderr, "[lidarscan] projects-actions-demo: Process… — %s\n",
+                     win.projectActionStateForCli().toUtf8().constData());
+        win.viewport()->captureScreenshot(prefix + "-processing.png");
+        QTimer::singleShot(600, &win, [&win, prefix] {
+          const int two = win.selectRecentProjectsForCli(2);
+          std::fprintf(stderr, "[lidarscan] projects-actions-demo: selected %d — %s\n", two,
+                       win.projectActionStateForCli().toUtf8().constData());
+          if (two < 2) {
+            std::fprintf(stderr,
+                         "[lidarscan] projects-actions-demo: fewer than two projects in the "
+                         "library — Merge cannot be exercised on this machine\n");
+            return;
+          }
+          win.triggerMergeSelectedForCli();
+          QTimer::singleShot(2500, &win, [&win, prefix] {
+            std::fprintf(stderr, "[lidarscan] projects-actions-demo: Merge selected… — %s\n",
+                         win.projectActionStateForCli().toUtf8().constData());
+            if (const auto* rep = win.mergeDock()->reportOrNull()) {
+              std::fprintf(stderr,
+                           "[lidarscan] projects-actions-demo: merge workbench holds %zu "
+                           "sessions\n",
+                           rep->sessions.size());
+            }
+            win.viewport()->captureScreenshot(prefix + "-merge.png");
+          });
+        });
+      });
+    });
   }
 
   // C4 evidence hook: a REAL A15 kPostProcess job through ProcessingDock's own

@@ -204,6 +204,21 @@ void SliderRow::setValue(double v) {
   refreshReadout();
 }
 
+void SliderRow::setRange(double lo, double hi, double step) {
+  const double keep = value();
+  lo_ = lo;
+  hi_ = hi > lo ? hi : lo + (step > 0 ? step : 0.1);
+  step_ = step > 0 ? step : 0.1;
+  const int steps = int(std::lround((hi_ - lo_) / step_));
+  updating_ = true;
+  slider_->setRange(0, qMax(1, steps));
+  slider_->setPageStep(qMax(1, steps / 10));
+  const int idx = int(std::lround((qBound(lo_, keep, hi_) - lo_) / step_));
+  slider_->setValue(qBound(slider_->minimum(), idx, slider_->maximum()));
+  updating_ = false;
+  refreshReadout();
+}
+
 void SliderRow::setFormat(const QString& fmt) {
   fmt_ = fmt;
   refreshReadout();

@@ -23,11 +23,9 @@ import com.lidarscan.app.di.AppContainer
 import com.lidarscan.app.ui.components.ScanDims
 import com.lidarscan.app.ui.calib.MountCalibrationRoute
 import com.lidarscan.app.ui.capture.CaptureRoute
-import com.lidarscan.app.ui.connect.ConnectWizardRoute
 import com.lidarscan.app.ui.connect.Mid360ConnectRoute
 import com.lidarscan.app.ui.detail.ProjectDetailRoute
 import com.lidarscan.app.ui.merge.MergeRoute
-import com.lidarscan.app.ui.newproject.NewProjectRoute
 import com.lidarscan.app.ui.pick.PickPurpose
 import com.lidarscan.app.ui.pick.ProjectPickerRoute
 import com.lidarscan.app.ui.plan.PlanRoute
@@ -41,20 +39,24 @@ import com.lidarscan.app.ui.settings.SettingsRoute
  * The redesign's navigation shell: one `NavHost` under one floating capsule
  * tab bar.
  *
- * **What changed and why.** Capture and Jobs used to live only behind a
- * project's detail screen. The tab bar promotes them, which needs one piece of
- * state the old graph did not have — *which* project a bare "Capture" tap
- * means. That is [activeProjectId]: set whenever the user opens a project,
- * starts a capture or opens a queue, and read by the tab bar to pick between
- * `project/{id}/capture` and the [Routes.CAPTURE_PICK] picker. It is
- * `rememberSaveable`, so it survives rotation and back-stack churn but not
- * process death — after a cold start the first Capture tap lands on the picker,
- * which is the honest answer rather than resuming a project the user may not
- * have meant.
+ * **ROUND 5's tab roles** (items 8 + 9), which is what this graph now encodes:
  *
- * Secondary screens (detail, review, plan, merge, RTK, the wizards, new
- * project) keep their own back arrow and light their parent tab, per
- * [tabForRoute].
+ *  * **Projects** — the list, and a preview of the selected scan. It never
+ *    starts a capture; selecting a card sets [activeProjectId] (for the Jobs tab)
+ *    and opens the inline preview.
+ *  * **Capture** — creating new scan projects, and nothing else. One destination
+ *    ([Routes.CAPTURE_NEW]) with no project id and no picker in front of it,
+ *    because Start is what creates the project.
+ *  * **Jobs** — still per project (a queue is a queue *for* a project), so it
+ *    keeps [Routes.JOBS_PICK] for the no-active-project case.
+ *
+ * [activeProjectId] survives rotation and back-stack churn (`rememberSaveable`)
+ * but not process death; after a cold start the first Jobs tap lands on the
+ * picker, which is the honest answer rather than resuming a project the user may
+ * not have meant.
+ *
+ * Secondary screens (detail, review, plan, merge, RTK, the wizards) keep their own
+ * back arrow and light their parent tab, per [tabForRoute].
  */
 @Composable
 fun LidarScanApp(
@@ -87,27 +89,24 @@ fun LidarScanApp(
             composable(Routes.PROJECTS) {
                 ProjectsListRoute(
                     container = container,
+                    onSelectProject = { activeProjectId = it },
                     onOpenProject = ::openProject,
-                    onNewProject = { navController.navigate(Routes.NEW_PROJECT) },
+                    onOpenReview = { navController.navigate(Routes.review(it)) },
+                    // ROUND 5 (item 8): Projects does not create scans any more —
+                    // it points at the tab that does.
+                    onNewScan = { goTab(Routes.CAPTURE_NEW) },
                     onSettings = { goTab(Routes.SETTINGS) },
                 )
             }
 
-            // Capture as a top-level tab with no active project: pick one, or
-            // start a new scan. Choosing here also sets the active project, so
-            // the next Capture tap goes straight to the viewport.
-            composable(Routes.CAPTURE_PICK) {
-                ProjectPickerRoute(
+            // ROUND 5 (items 8 + 9): the Capture tab. No project id, no picker —
+            // Start creates a new project and records into it.
+            composable(Routes.CAPTURE_NEW) {
+                CaptureRoute(
                     container = container,
-                    purpose = PickPurpose.CAPTURE,
-                    onPick = { pid ->
-                        activeProjectId = pid
-                        navController.navigate(Routes.capture(pid)) {
-                            popUpTo(Routes.CAPTURE_PICK) { inclusive = true }
-                        }
-                    },
-                    onNewProject = { navController.navigate(Routes.NEW_PROJECT) },
+                    projectId = null,
                     onBack = { goTab(Routes.PROJECTS) },
+                    onOpenMountCalibration = { pid -> navController.navigate(Routes.mountCalibration(pid)) },
                 )
             }
 
@@ -121,24 +120,9 @@ fun LidarScanApp(
                             popUpTo(Routes.JOBS_PICK) { inclusive = true }
                         }
                     },
-                    onNewProject = { navController.navigate(Routes.NEW_PROJECT) },
+                    onNewProject = { goTab(Routes.CAPTURE_NEW) },
                     onBack = { goTab(Routes.PROJECTS) },
                 )
-            }
-
-            composable(Routes.NEW_PROJECT) {
-                UnderTabBar {
-                    NewProjectRoute(
-                        container = container,
-                        onCreated = { projectId ->
-                            activeProjectId = projectId
-                            navController.navigate(Routes.projectDetail(projectId)) {
-                                popUpTo(Routes.PROJECTS)
-                            }
-                        },
-                        onCancel = { navController.popBackStack() },
-                    )
-                }
             }
 
             composable(
@@ -152,10 +136,10 @@ fun LidarScanApp(
                         container = container,
                         projectId = pid,
                         onBack = { navController.popBackStack() },
-                        onOpenCapture = {
-                            activeProjectId = it
-                            navController.navigate(Routes.capture(it))
-                        },
+                        // ROUND 5: no capture door here. A capture always creates a
+                        // new project (item 9), so "record more into this one" is
+                        // not an action the app offers any more — the Capture tab
+                        // is the only way in, and it starts a new scan.
                         onOpenMountCalibration = { navController.navigate(Routes.mountCalibration(it)) },
                         onOpenMid360Connect = { navController.navigate(Routes.mid360Connect(it)) },
                         onOpenProcessing = {
@@ -241,26 +225,15 @@ fun LidarScanApp(
                         container = container,
                         projectId = pid,
                         onBack = { navController.popBackStack() },
-                        onContinueToCapture = {
-                            activeProjectId = pid
-                            navController.navigate(Routes.capture(pid))
-                        },
+                        // ROUND 5: "continue" lands on the Capture tab, which
+                        // starts a NEW scan (item 9). The addresses this wizard
+                        // just saved are also stored device-level, so the new
+                        // project picks them up without being this project.
+                        onContinueToCapture = { goTab(Routes.CAPTURE_NEW) },
                     )
                 }
             }
 
-            // Same wizard with no project behind it — reachable from the generic
-            // connect wizard, where it is purely a transport check and there is
-            // nothing to save into.
-            composable(Routes.MID360_CONNECT_NO_PROJECT) {
-                UnderTabBar {
-                    Mid360ConnectRoute(
-                        container = container,
-                        projectId = null,
-                        onBack = { navController.popBackStack() },
-                    )
-                }
-            }
 
             // B7: the mount-calibration wizard (S6 WIZARD.md's five screens).
             composable(
@@ -288,21 +261,6 @@ fun LidarScanApp(
                 )
             }
 
-            composable(
-                route = Routes.CAPTURE,
-                arguments = listOf(navArgument(Routes.PROJECT_ID_ARG) { type = NavType.StringType }),
-            ) { backStackEntry ->
-                val encodedId = backStackEntry.arguments?.getString(Routes.PROJECT_ID_ARG).orEmpty()
-                val pid = Uri.decode(encodedId)
-                CaptureRoute(
-                    container = container,
-                    projectId = pid,
-                    onBack = { navController.popBackStack() },
-                    onConnectDevice = { navController.navigate(Routes.CONNECT_WIZARD) },
-                    onOpenMid360Connect = { navController.navigate(Routes.mid360Connect(pid)) },
-                )
-            }
-
             // B4: "Replay synthetic capture" debug-drawer acceptance path — same
             // CaptureRoute, isReplay = true (backed by ReplayEngineBridge, no
             // connect wizard involved).
@@ -316,20 +274,9 @@ fun LidarScanApp(
                     projectId = Uri.decode(encodedId),
                     isReplay = true,
                     onBack = { navController.popBackStack() },
-                    onConnectDevice = {},
                 )
             }
 
-            composable(Routes.CONNECT_WIZARD) {
-                UnderTabBar {
-                    ConnectWizardRoute(
-                        container = container,
-                        onBack = { navController.popBackStack() },
-                        onConnected = { navController.popBackStack() },
-                        onOpenMid360 = { navController.navigate(Routes.MID360_CONNECT_NO_PROJECT) },
-                    )
-                }
-            }
         }
 
         ScanTabBar(
@@ -337,7 +284,10 @@ fun LidarScanApp(
             onSelect = { tab ->
                 val target = when (tab) {
                     ScanTab.PROJECTS -> Routes.PROJECTS
-                    ScanTab.CAPTURE -> activeProjectId?.let { Routes.capture(it) } ?: Routes.CAPTURE_PICK
+                    // ROUND 5 (item 8): one destination, always. The Capture tab
+                    // creates new scans, so there is nothing for an "active
+                    // project" to change about where it lands.
+                    ScanTab.CAPTURE -> Routes.CAPTURE_NEW
                     ScanTab.JOBS -> activeProjectId?.let { Routes.processing(it) } ?: Routes.JOBS_PICK
                     ScanTab.SETTINGS -> Routes.SETTINGS
                 }

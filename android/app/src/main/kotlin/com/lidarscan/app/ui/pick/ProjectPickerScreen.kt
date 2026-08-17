@@ -55,10 +55,9 @@ import com.lidarscan.core.store.Project
 
 /** What the picker is standing in front of — only the copy differs. */
 enum class PickPurpose(val title: String, val prompt: String) {
-    CAPTURE(
-        title = "Capture",
-        prompt = "Capture records into a project. Pick the one to record into, or start a new scan.",
-    ),
+    // ROUND 5 (item 8): the CAPTURE purpose is gone. The Capture tab creates a
+    // new project on Start, so there is nothing to pick in front of it — this
+    // picker now stands in front of Jobs only.
     JOBS(
         title = "Processing",
         prompt = "A queue belongs to a project. Pick the one whose jobs you want to see.",
@@ -66,14 +65,15 @@ enum class PickPurpose(val title: String, val prompt: String) {
 }
 
 /**
- * The Capture and Jobs tabs' landing screen when no project is active yet.
+ * The **Jobs** tab's landing screen when no project is active yet.
  *
- * It exists because both tabs are per-project underneath: the engine records
- * into one `.lscan` and A15's queue is scoped to a project directory. A tab
- * that silently picked the newest project would eventually record into the
- * wrong one, and one that opened onto an empty screen would be a dead tab —
- * so this asks, once, and then the tab remembers (see `LidarScanApp`'s
- * `activeProjectId`).
+ * It exists because a queue is per-project underneath: A15's queue is scoped to a
+ * project directory. A tab that silently picked the newest project would
+ * eventually process the wrong one, and one that opened onto an empty screen would
+ * be a dead tab — so this asks, once, and then the tab remembers (see
+ * `LidarScanApp`'s `activeProjectId`).
+ *
+ * ROUND 5: Capture no longer comes through here — it creates its own project.
  */
 @Composable
 fun ProjectPickerRoute(

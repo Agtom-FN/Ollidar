@@ -10,22 +10,19 @@ import android.net.Uri
  */
 object Routes {
     const val PROJECTS = "projects"
-    const val NEW_PROJECT = "new_project"
     const val SETTINGS = "settings"
 
     /**
-     * Redesign: Capture and Jobs are **top-level tabs**, but both are
-     * inherently per-project — the engine records into one `.lscan`, and a job
-     * queue is a queue *for* a project. These two routes are what the tab
-     * lands on when there is no active project yet: a picker that lists the
-     * projects and offers "New scan", rather than a tab that opens onto
-     * nothing or silently invents a project.
+     * ROUND 5 (item 8): **the Capture tab creates new scans and nothing else.**
      *
-     * Once a project is active the tab navigates straight to
-     * [capture]/[processing] for it, and `tabForRoute` lights the same tab
-     * either way.
+     * It takes no project id — Start creates the project (item 9) — so there is
+     * no picker in front of it any more and no "which project did you mean"
+     * state to carry. The redesign's `CAPTURE_PICK` is gone with it.
+     *
+     * Jobs is still inherently per-project (a queue is a queue *for* a project),
+     * so it keeps its picker for the no-active-project case.
      */
-    const val CAPTURE_PICK = "capture"
+    const val CAPTURE_NEW = "capture"
     const val JOBS_PICK = "jobs"
 
     private const val PROJECT_DETAIL_PATTERN = "project/{projectId}"
@@ -34,9 +31,11 @@ object Routes {
 
     fun projectDetail(projectId: String): String = "project/${Uri.encode(projectId)}"
 
-    private const val CAPTURE_PATTERN = "project/{projectId}/capture"
-    const val CAPTURE = CAPTURE_PATTERN
-    fun capture(projectId: String): String = "project/${Uri.encode(projectId)}/capture"
+    // ROUND 5: the project-scoped capture route is GONE. Every Start creates a new
+    // project (item 9), so "capture into this existing project" is not a state the
+    // app has any more — and a route nothing can reach is worse than no route.
+    // REPLAY_CAPTURE below still carries a project id, which is what keeps
+    // CaptureViewModel's project-scoped path exercised.
 
     // B4: the "Replay synthetic capture" debug-drawer acceptance path — same
     // Capture screen, backed by a ReplayEngineBridge instead of
@@ -47,15 +46,16 @@ object Routes {
     const val REPLAY_CAPTURE = REPLAY_CAPTURE_PATTERN
     fun replayCapture(projectId: String): String = "project/${Uri.encode(projectId)}/capture/replay"
 
-    const val CONNECT_WIZARD = "connect_wizard"
+    // ROUND 5 (item 7): the standalone D6 connect wizard is GONE. Its two jobs —
+    // find the device, and let the operator pick one by hand — are now the Capture
+    // tab's auto-detect line and its inline manual panel, with the live preview as
+    // the proof of life that the wizard's health panel used to be.
 
-    // B3: the Mid-360 (Ethernet) connect wizard. Reachable two ways, and the
-    // route takes an OPTIONAL project id for that reason: from Project Detail
-    // (where the settings can be saved into that project's manifest, per
-    // §3.1's "Save per project"), and from the D6/global connect wizard,
-    // where there may be no project yet and the wizard is purely a transport
-    // check.
-    const val MID360_CONNECT_NO_PROJECT = "mid360_connect"
+    // B3: the Mid-360 (Ethernet) connect wizard, per project — the entry point
+    // that can save the addresses into that project's manifest (§3.1's "Save per
+    // project"). ROUND 5: its project-less variant went with the D6 wizard; the
+    // Capture tab's own inline manual panel covers the "no project yet" case, and
+    // the addresses it uses are stored device-level anyway.
     private const val MID360_CONNECT_PATTERN = "project/{projectId}/mid360_connect"
     const val MID360_CONNECT = MID360_CONNECT_PATTERN
     fun mid360Connect(projectId: String): String = "project/${Uri.encode(projectId)}/mid360_connect"

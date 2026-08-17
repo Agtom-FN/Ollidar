@@ -203,9 +203,9 @@ void clamp_display_params(DisplayParams& p) noexcept {
   if (static_cast<std::uint8_t>(ps.mode) > static_cast<std::uint8_t>(PointSizeMode::kWorldSize)) {
     ps.mode = PointSizeMode::kAdaptive;
   }
-  ps.fixed_px = clampf(sanitize(ps.fixed_px, 2.0f), 0.5f, 64.0f);
-  ps.adaptive_min_px = clampf(sanitize(ps.adaptive_min_px, 1.0f), 0.5f, 64.0f);
-  ps.adaptive_max_px = clampf(sanitize(ps.adaptive_max_px, 6.0f), 0.5f, 64.0f);
+  ps.fixed_px = clampf(sanitize(ps.fixed_px, 2.0f), 0.1f, 64.0f);
+  ps.adaptive_min_px = clampf(sanitize(ps.adaptive_min_px, 1.0f), 0.1f, 64.0f);
+  ps.adaptive_max_px = clampf(sanitize(ps.adaptive_max_px, 6.0f), 0.1f, 64.0f);
   if (ps.adaptive_min_px > ps.adaptive_max_px) std::swap(ps.adaptive_min_px, ps.adaptive_max_px);
   ps.adaptive_reference_m = clampf(sanitize(ps.adaptive_reference_m, 5.0f), 0.01f, 1000.0f);
   ps.world_size_m = clampf(sanitize(ps.world_size_m, 0.01f), 0.0005f, 1.0f);

@@ -279,6 +279,7 @@ set(LIDARSCAN_SOURCES
     src/app/DisplayParamsDock.cpp
     src/app/CaptureWindow.cpp
     src/app/DeviceDiscovery.cpp
+    src/app/DisplayAwake.cpp
     src/app/MeasureDock.cpp
     src/app/ExportDialog.cpp
     src/app/ProcessingDock.cpp

@@ -105,8 +105,15 @@ IconRail::IconRail(QWidget* parent) : QWidget(parent) {
   addButton(Item::kCapture, icons::Glyph::kRadar, "Capture", v);
   addButton(Item::kReview, icons::Glyph::kRotate3d, "Review", v);
   addButton(Item::kPlan, icons::Glyph::kLayout, "Floor plan", v);
-  addButton(Item::kMerge, icons::Glyph::kGitMerge, "Merge", v);
-  addButton(Item::kJobs, icons::Glyph::kLayers, "Processing", v);
+  // NO Merge and NO Processing button any more (round-5 follow-up, owner:
+  // "there are NO separate Processing/Merge tabs — fold them into the Projects
+  // tab"). Both docks still exist, unchanged, and both are still reachable —
+  // from the PROJECTS panel's own selection-driven actions (one project selected
+  // -> Process/Export; two or more -> Merge), from the View menu, and from
+  // --workspace jobs|merge, which now lands on Projects with that panel raised.
+  // Item::kMerge/Item::kJobs therefore stay in the enum: they name a panel
+  // inside Projects rather than a rail destination. See
+  // MainWindow::onRailActivated().
 
   v->addStretch(1);
 

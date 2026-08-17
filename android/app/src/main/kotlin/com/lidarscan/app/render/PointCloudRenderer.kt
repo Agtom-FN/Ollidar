@@ -172,6 +172,36 @@ class PointCloudRenderer(
 
     private var streamFilter: StreamFilter = StreamFilter.ALL
 
+    /**
+     * ROUND 5 (item 10): the live-view refresh cap, in frames per second. 0 means
+     * "every vsync", which is the pre-round-5 behaviour and stays the default.
+     *
+     * This is a **viewport throttle, not a capture throttle** — the engine keeps
+     * decoding and recording at full rate; only the page sync + Filament frame
+     * are skipped. That distinction is why it is safe to expose as a live
+     * display control: turning the preview down to 10 fps on a hot phone during
+     * a long walk costs preview smoothness and nothing in the `.lscan`.
+     * §3.12's "degrade via LOD, never framerate" is about *automatic*
+     * degradation; this is the operator asking.
+     */
+    private var maxRefreshHz: Int = 0
+
+    /** Frame-time of the last rendered frame, for [maxRefreshHz]'s interval check. */
+    private var lastRenderedFrameNs: Long = 0L
+
+    /**
+     * ROUND 5.3 (item 17): the hardware-derived ceiling and the auto-downshift.
+     *
+     * The governor is pure policy in `:core` (unit-tested); this class only feeds
+     * it measured intervals between **rendered** frames and applies its verdict.
+     * Recording is never involved: the engine's decode/write threads do not know
+     * this exists.
+     */
+    private var governor: com.lidarscan.core.render.RefreshGovernor? = null
+
+    /** Called (on the UI thread) when the governor eases the live view down a notch. */
+    var onRefreshDownshift: ((Int) -> Unit)? = null
+
     /** True once a `SCAN_STREAM_SLAM_MAP` page has been seen — see [StreamFilter.MAPPED_ONLY]'s fallback. */
     private var mappedPageSeen = false
     private var lastStats = PointCloudRenderStats()
@@ -279,13 +309,50 @@ class PointCloudRenderer(
     }
 
     fun setPointSizePx(px: Float) {
-        pointSizePx = px.coerceIn(0.5f, 32f)
+        // ROUND 5: floor 0.1 px, not 0.5 — the owner's live point-size range is
+        // 0.1 – 3.0 px, and a 0.5 floor here would have silently swallowed the
+        // bottom of that slider. See DisplayLimits.
+        pointSizePx = px.coerceIn(com.lidarscan.core.render.DisplayLimits.POINT_SIZE_MIN_PX, 32f)
         applyDynamicMaterialParams()
     }
 
     fun setCameraMode(mode: CameraMode) {
         cameraMode = mode
     }
+
+    /**
+     * ROUND 5: caps how often the live view repaints (see [maxRefreshHz]).
+     * `0` means uncapped — the Choreographer's own rate, i.e. the panel's.
+     *
+     * ROUND 5.3: the cap is no longer clamped at 59 — a 120 Hz phone can ask for
+     * 90, and the *hardware* ceiling is what bounds the choice (the control's
+     * options come from `RefreshGovernor.optionsFor`). Setting it also resets the
+     * governor, because an explicit choice outranks an automatic downshift.
+     */
+    fun setMaxRefreshHz(hz: Int) {
+        if (hz == maxRefreshHz) return
+        maxRefreshHz = if (hz > 0) hz else 0
+        governor?.request(maxRefreshHz)
+    }
+
+    /**
+     * ROUND 5.3 (item 17): the device's real display ceiling, from
+     * `Display.getRefreshRate()`. Sets up the governor that eases the live view
+     * down when this phone cannot sustain what was asked for.
+     */
+    fun setDeviceRefreshCeilingHz(ceilingHz: Int) {
+        val current = governor
+        if (current != null && governorCeilingHz == ceilingHz) return
+        governorCeilingHz = ceilingHz
+        governor = com.lidarscan.core.render.RefreshGovernor(deviceCeilingHz = ceilingHz).also {
+            it.request(maxRefreshHz)
+        }
+    }
+
+    private var governorCeilingHz: Int = 0
+
+    /** The cap actually in force, after any auto-downshift — for the inline note. */
+    fun effectiveRefreshHz(): Int = governor?.effectiveHz ?: maxRefreshHz
 
     /**
      * B10: bind a whole [DisplayParams] (Tech Spec §3.9's render-settings
@@ -598,6 +665,22 @@ class PointCloudRenderer(
         val count = src.pageCount()
         var resident = 0L
         var pagesDrawn = 0
+        // ROUND 5.3 (item 17, the crash path): per-frame upload work is BOUNDED.
+        //
+        // Before this, every page whose `count` had grown since the last frame was
+        // re-uploaded in the same frame — so a live capture that produced a burst
+        // (or a replay that decoded faster than the display drew) queued an
+        // unbounded number of `setBufferAt` calls into one Filament frame. That is
+        // the shape of the failure the owner asked to be guarded: the driver's
+        // command buffer and the staging allocations grow until something gives.
+        //
+        // The budget below is deliberately in BYTES, not pages: one page can be
+        // 64 k points (1 MB) or a few hundred. Work not done this frame is not
+        // lost — `gpu.uploaded` still trails `page.count`, so the next frame picks
+        // up exactly where this one stopped, which is "coalesce/drop render frames
+        // under pressure" rather than "drop points".
+        var uploadBudgetBytes = MAX_UPLOAD_BYTES_PER_FRAME
+        var newPagesThisFrame = 0
 
         for (i in 0 until count) {
             val pageId = src.pageIdAt(i)
@@ -628,6 +711,11 @@ class PointCloudRenderer(
 
             var gpu = gpuPages[pageId]
             if (gpu == null) {
+                // Creating a page is a VertexBuffer allocation plus an entity; a
+                // capture that suddenly exposes 200 new pages (a replay seek, a
+                // stream filter flip) must not do all of it in one frame.
+                if (newPagesThisFrame >= MAX_NEW_PAGES_PER_FRAME) continue
+                newPagesThisFrame++
                 val capacity = max(page.capacity, page.count)
                 val vb = VertexBuffer.Builder()
                     .bufferCount(1)
@@ -667,20 +755,34 @@ class PointCloudRenderer(
                 gpuPages[pageId] = gpu
             }
 
-            if (page.count > gpu.uploaded) {
-                val newPoints = page.count - gpu.uploaded
+            if (page.count > gpu.uploaded && uploadBudgetBytes > 0) {
+                // Clamp this page's slice to what is left of the frame's budget.
+                // The remainder is uploaded next frame from the same offset.
+                val wantedPoints = page.count - gpu.uploaded
+                val affordablePoints = (uploadBudgetBytes / POINT_STRIDE_BYTES).coerceAtLeast(1)
+                val newPoints = minOf(wantedPoints, affordablePoints)
+                val uploadTo = gpu.uploaded + newPoints
+                uploadBudgetBytes -= newPoints * POINT_STRIDE_BYTES
+
                 val newBytes = page.buffer
-                newBytes.position(gpu.uploaded * 16)
-                newBytes.limit(page.count * 16)
-                gpu.vertexBuffer.setBufferAt(engine, 0, newBytes.slice(), gpu.uploaded * 16, newPoints * 16)
-                gpu.uploaded = page.count
+                newBytes.position(gpu.uploaded * POINT_STRIDE_BYTES)
+                newBytes.limit(uploadTo * POINT_STRIDE_BYTES)
+                gpu.vertexBuffer.setBufferAt(
+                    engine, 0, newBytes.slice(),
+                    gpu.uploaded * POINT_STRIDE_BYTES, newPoints * POINT_STRIDE_BYTES,
+                )
+                gpu.uploaded = uploadTo
 
                 val rm = engine.renderableManager
                 val instance = rm.getInstance(gpu.entity)
                 if (instance != 0) {
+                    // `gpu.uploaded`, not `page.count`: with the round-5.3 upload
+                    // budget the two can differ for a frame or two, and drawing
+                    // points that have not been uploaded yet renders whatever
+                    // uninitialised GPU memory happens to be there.
                     rm.setGeometryAt(
                         instance, 0, RenderableManager.PrimitiveType.POINTS,
-                        gpu.vertexBuffer, gpu.indexBuffer, 0, page.count,
+                        gpu.vertexBuffer, gpu.indexBuffer, 0, gpu.uploaded,
                     )
                     rm.setAxisAlignedBoundingBox(
                         instance,
@@ -839,6 +941,31 @@ class PointCloudRenderer(
         override fun doFrame(frameTimeNanos: Long) {
             choreographer.postFrameCallback(this)
             if (!::uiHelper.isInitialized || !uiHelper.isReadyToRender) return
+            // ROUND 5: the refresh cap. Checked before syncPointCloud() so a
+            // throttled frame also skips the page upload, which is where the
+            // work actually is — a cap that still uploaded pages every vsync
+            // would save nothing but the composite.
+            //
+            // ROUND 5.3: the cap in force is the governor's, which starts at what
+            // the operator asked for and eases down when this phone cannot hold
+            // it. Only frames we actually DRAW are measured — a frame skipped by
+            // the cap is not evidence of a slow phone.
+            val cap = governor?.effectiveHz ?: maxRefreshHz
+            if (cap > 0) {
+                val minIntervalNs = 1_000_000_000L / cap
+                // A 10 % tolerance, because vsync lands on a 16.7 ms grid: a
+                // strict comparison against a 30 Hz interval (33.3 ms) drops
+                // every other 16.7 ms frame *and* then the next one, yielding
+                // ~20 fps rather than the 30 asked for.
+                if (frameTimeNanos - lastRenderedFrameNs < minIntervalNs - minIntervalNs / 10) return
+            }
+            val previousFrameNs = lastRenderedFrameNs
+            lastRenderedFrameNs = frameTimeNanos
+            if (previousFrameNs != 0L) {
+                governor?.onFrameInterval(frameTimeNanos, frameTimeNanos - previousFrameNs)?.let { eased ->
+                    onRefreshDownshift?.invoke(eased)
+                }
+            }
             syncPointCloud()
             updateCamera()
             materialInstance?.setParameter(
@@ -875,5 +1002,21 @@ class PointCloudRenderer(
         // or the depth range differs from the camera image's implied one.
         const val AR_NEAR_M = 0.05
         const val AR_FAR_M = 100.0
+
+        /** `PointVertex`: float3 position + RGBA8 = 16 bytes. */
+        const val POINT_STRIDE_BYTES = 16
+
+        /**
+         * ROUND 5.3: the per-frame vertex-upload ceiling — 4 MB, i.e. 262 144
+         * points. Comfortably more than a 10 Hz D6 or a 200 kpts/s Mid-360
+         * produces between two frames (so a live capture never actually hits it),
+         * and small enough that a burst — a replay decoding ahead of the display,
+         * a stream-filter flip that admits a backlog — is spread over frames
+         * instead of queued into one.
+         */
+        const val MAX_UPLOAD_BYTES_PER_FRAME = 4 * 1024 * 1024
+
+        /** Companion bound for allocations, not bytes: new pages created in one frame. */
+        const val MAX_NEW_PAGES_PER_FRAME = 24
     }
 }

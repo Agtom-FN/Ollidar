@@ -22,6 +22,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
@@ -116,6 +117,32 @@ fun CaptureSettingsSheet(
     colormap: Colormap,
     pointSizePx: Float,
     lodBudgetMPoints: Int,
+    // ── ROUND 5 additions ────────────────────────────────────────────────────
+    /** Item 10: viewport refresh cap in fps, 0 = uncapped. */
+    refreshHz: Int,
+    /**
+     * ROUND 5.3 (item 17): the refresh choices **this device** can actually reach —
+     * `RefreshGovernor.optionsFor(Display.getRefreshRate())`. A 60 Hz phone never
+     * sees a 120 fps option.
+     */
+    refreshOptions: List<Int>,
+    /** Item 10: A14 scalar gamma / brightness, live against the preview. */
+    gamma: Float,
+    brightness: Float,
+    /**
+     * Item 10 + owner addition 3: this sheet is the SAME sheet before and during a
+     * recording, so it also carries the session settings that used to sit on the
+     * capture body — Live SLAM, and (pre-record only) the workflow profile the new
+     * project will be created with.
+     */
+    liveSlam: Boolean,
+    liveSlamEditable: Boolean,
+    profile: com.lidarscan.core.model.WorkflowProfile?,
+    onRefreshHzChange: (Int) -> Unit,
+    onGammaChange: (Float) -> Unit,
+    onBrightnessChange: (Float) -> Unit,
+    onLiveSlamChange: (Boolean) -> Unit,
+    onProfileChange: (com.lidarscan.core.model.WorkflowProfile) -> Unit,
     onCameraModeChange: (CameraMode) -> Unit,
     onKeyframesEnabledChange: (Boolean) -> Unit,
     onKeyframeRateChange: (Int) -> Unit,
@@ -243,18 +270,79 @@ fun CaptureSettingsSheet(
                     Spacer(Modifier.height(12.dp))
                 }
 
+                // ROUND 5 (owner addition 2): 0.1 – 3.0 px in 0.1 steps. The
+                // snapping itself lives in the ViewModel/DisplayLimits so the
+                // slider, the read-out and the manifest cannot disagree.
                 SheetRowLabel(
                     label = "Point size",
-                    hint = "0.5 – 12 px",
+                    hint = "0.1 – 3.0 px · 0.1 steps",
                     readout = "%.1f px".format(pointSizePx),
                 )
                 SheetSlider(
                     value = pointSizePx,
-                    range = 0.5f..12f,
+                    range = com.lidarscan.core.render.DisplayLimits.POINT_SIZE_MIN_PX..
+                        com.lidarscan.core.render.DisplayLimits.POINT_SIZE_MAX_PX,
+                    steps = com.lidarscan.core.render.DisplayLimits.POINT_SIZE_STEPS,
                     onValueChange = onPointSizeChange,
                     contentDescription = "Point size",
+                    modifier = Modifier.testTag("pointSizeSlider"),
                 )
                 Spacer(Modifier.height(8.dp))
+
+                // ROUND 5 (item 10): gamma + brightness. A14's rule is that the
+                // scalar block only applies in HEIGHT/INTENSITY — in RGB the
+                // shader reads the identity block — so in RGB these rows dim
+                // rather than lying about having an effect.
+                val toneActive = colorMode == ColorMode.HEIGHT || colorMode == ColorMode.INTENSITY
+                SheetRowLabel(
+                    label = "Gamma",
+                    hint = if (toneActive) "0.1 – 4.0" else "height / intensity only",
+                    readout = "%.2f".format(gamma),
+                    readoutColor = if (toneActive) MaterialTheme.colorScheme.onSurface else InkFaint,
+                )
+                SheetSlider(
+                    value = gamma,
+                    range = com.lidarscan.core.render.DisplayLimits.GAMMA_MIN..
+                        com.lidarscan.core.render.DisplayLimits.GAMMA_MAX,
+                    onValueChange = onGammaChange,
+                    contentDescription = "Gamma",
+                    modifier = Modifier.alpha(if (toneActive) 1f else 0.5f).testTag("gammaSlider"),
+                )
+                Spacer(Modifier.height(8.dp))
+
+                SheetRowLabel(
+                    label = "Brightness",
+                    hint = if (toneActive) "0.1 – 3.0" else "height / intensity only",
+                    readout = "%.2f".format(brightness),
+                    readoutColor = if (toneActive) MaterialTheme.colorScheme.onSurface else InkFaint,
+                )
+                SheetSlider(
+                    value = brightness,
+                    range = com.lidarscan.core.render.DisplayLimits.BRIGHTNESS_MIN..
+                        com.lidarscan.core.render.DisplayLimits.BRIGHTNESS_MAX,
+                    onValueChange = onBrightnessChange,
+                    contentDescription = "Brightness",
+                    modifier = Modifier.alpha(if (toneActive) 1f else 0.5f).testTag("brightnessSlider"),
+                )
+                Spacer(Modifier.height(12.dp))
+
+                // ROUND 5 (item 10): the live refresh rate. A viewport throttle
+                // and nothing else — the caption says so, because "refresh rate"
+                // next to a record button otherwise reads as the sensor's.
+                SheetRowLabel(
+                    label = "Live refresh",
+                    hint = "this phone's own range · recording unaffected",
+                    readout = com.lidarscan.core.render.DisplayLimits.refreshLabel(refreshHz),
+                )
+                SegmentedPill(
+                    options = refreshOptions.map {
+                        it to com.lidarscan.core.render.DisplayLimits.refreshLabel(it)
+                    },
+                    selected = refreshHz,
+                    onSelect = onRefreshHzChange,
+                    modifier = Modifier.testTag("refreshRateRow"),
+                )
+                Spacer(Modifier.height(12.dp))
 
                 SheetRowLabel(
                     label = "LOD budget",
@@ -268,6 +356,42 @@ fun CaptureSettingsSheet(
                     onValueChange = { onLodChange(it.toInt()) },
                     contentDescription = "LOD budget",
                 )
+                Spacer(Modifier.height(8.dp))
+
+                // ── ROUND 5: session settings, in the same sheet ──────────────
+                //
+                // Live SLAM came off the transport row (where round 5's Live
+                // *view* toggle now sits) and the workflow profile came off the
+                // deleted new-project screen. Both belong with the rest of what
+                // this capture is configured with, one tap from the viewport.
+                SheetSection("Session")
+
+                SheetSwitchRow(
+                    title = "Live SLAM",
+                    subtitle = if (liveSlamEditable) {
+                        "registered map while recording · editable while idle"
+                    } else {
+                        "locked during a session"
+                    },
+                    checked = liveSlam,
+                    enabled = liveSlamEditable,
+                    onCheckedChange = onLiveSlamChange,
+                    modifier = Modifier.testTag("liveSlamSwitch"),
+                )
+
+                if (profile != null) {
+                    SheetRowLabel(
+                        label = "Workflow profile",
+                        hint = "stamped on the project Start creates",
+                        readout = profile.displayName,
+                    )
+                    SegmentedPill(
+                        options = com.lidarscan.core.model.WorkflowProfile.entries.map { it to it.displayName },
+                        selected = profile,
+                        onSelect = onProfileChange,
+                        modifier = Modifier.testTag("profileRow"),
+                    )
+                }
                 Spacer(Modifier.height(14.dp))
             }
 
@@ -329,6 +453,11 @@ fun DiagnosticsSheet(
                 DiagRow("Skipped (turning too fast)", ar.skippedTurning)
                 DiagRow("Rolling shutter", ar.rollingShutter, valueColor = MaterialTheme.colorScheme.onSurfaceVariant)
 
+                SheetSection("3D + georeference")
+                DiagRow("Poses pushed to engine", ar.posesPushed, testTag = "diagPosesPushed")
+                DiagRow("Mount extrinsic", ar.mountExtrinsic, valueColor = ar.mountExtrinsicColor)
+                DiagRow("Georeference source", ar.georefSource, testTag = "diagGeorefSource")
+
                 Spacer(Modifier.height(10.dp))
                 Hint(
                     "Read-only. The capture settings that drive these — camera keyframes and their rate — " +
@@ -379,6 +508,17 @@ data class ArDiagnostics(
     val trackingLossEpisodes: String,
     val skippedTurning: String,
     val rollingShutter: String,
+    /**
+     * ROUND 5: the two numbers that say whether a phone-tracked D6 capture is
+     * actually producing 3D — poses pushed into the engine, and whether the
+     * extrinsic behind the pushbroom was measured or assumed — plus round 5.2's
+     * georeference source. Read-only rows, per round 3: the *hint* is inline on
+     * the capture screen, the numbers live here.
+     */
+    val posesPushed: String,
+    val mountExtrinsic: String,
+    val mountExtrinsicColor: Color,
+    val georefSource: String,
 )
 
 private fun viewLabel(mode: CameraMode) = when (mode) {

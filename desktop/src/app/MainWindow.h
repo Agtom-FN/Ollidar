@@ -60,8 +60,10 @@ class MainWindow : public QMainWindow {
   ~MainWindow() override;
 
   ViewportWindow* viewport() { return viewport_; }
-  // Lazily creates the capture window exactly like the "Capture" menu does.
-  // Public so main.cpp's --mid360-selftest CLI hook can drive it headlessly.
+  // Lazily creates the capture PANEL (a dock across the foot of this window
+  // since round 5 — it is not a popup any more) exactly like the rail's Capture
+  // button does. Public so main.cpp's --mid360-selftest CLI hook can drive it
+  // headlessly.
   CaptureWindow* captureWindow();
   // Public so main.cpp's C4/C5 evidence hooks can drive the processing queue
   // and the floor-plan workspace headlessly, the same posture captureWindow()
@@ -112,6 +114,19 @@ class MainWindow : public QMainWindow {
   // viewport (redesign brief item 4) even though capture is its own window.
   void setCaptureBadge(bool recording, bool paused);
 
+  // --- CLI evidence hooks for the folded Projects tab (round-5 follow-up item
+  // 4) ---------------------------------------------------------------------
+  //
+  // Selects the first `n` rows of the library through QListWidget's own
+  // selection model — the same path a Cmd-click takes, so the selection-driven
+  // action gating is exercised rather than asserted. Returns how many were
+  // selected (fewer if the library is shorter).
+  int selectRecentProjectsForCli(int n);
+  // One line naming what the selection unlocked, for --projects-actions-demo.
+  QString projectActionStateForCli() const;
+  void triggerProcessSelectedForCli() { onProcessSelected(); }
+  void triggerMergeSelectedForCli() { onMergeSelected(); }
+
  protected:
   void closeEvent(QCloseEvent* event) override;
   void dragEnterEvent(QDragEnterEvent* event) override;
@@ -141,6 +156,25 @@ class MainWindow : public QMainWindow {
   void onExportMerged();
   void persistDisplayParamsIfProjectOpen();
 
+  // --- Projects-tab actions (round-5 follow-up item 4) ---------------------
+  //
+  // "There are NO separate Processing/Merge tabs. Fold them into the Projects
+  // tab: selecting one project shows Process + Export actions with the preview;
+  // selecting 2+ unlocks Merge." These reposition the ENTRY POINTS only — the
+  // job queue (ProcessingDock/A15) and the merge workbench (MergeDock/A13) are
+  // the same docks doing the same work.
+  QStringList selectedProjectDirs() const;
+  void updateProjectSelectionActions();
+  void onProcessSelected();
+  void onMergeSelected();
+  // Which panel is raised inside the Projects workspace: kProjects (none),
+  // kJobs or kMerge.
+  IconRail::Item projects_panel_ = IconRail::Item::kProjects;
+  QPushButton* process_btn_ = nullptr;
+  QPushButton* export_btn_ = nullptr;
+  QPushButton* merge_btn_ = nullptr;
+  QLabel* selection_hint_ = nullptr;
+
   EngineHost* host_ = nullptr;
   ViewportWindow* viewport_ = nullptr;
   ViewportHost* viewport_host_ = nullptr;
@@ -157,6 +191,11 @@ class MainWindow : public QMainWindow {
   IconRail* rail_ = nullptr;
   QDockWidget* rail_dock_ = nullptr;
   QDockWidget* projects_dock_ = nullptr;
+  // The engine/app log used to live at the foot of the PROJECTS panel. Round 5
+  // item 8 ("Projects = list of projects + preview of the selected scan,
+  // nothing else") moved it into its own dock, hidden by default and reachable
+  // from View — it is diagnostics, not part of either workspace's job.
+  QDockWidget* log_dock_ = nullptr;
   InspectorCard* inspector_ = nullptr;
   QDockWidget* inspector_dock_ = nullptr;  // only used below 880 px
   bool inspector_visible_ = true;

@@ -20,11 +20,17 @@
 // IT ADDS NO STATE. Every transition is still CaptureWindow::Phase's; this
 // widget renders a Phase and emits an intent. It cannot start, stop or gate
 // anything by itself, which is what makes it safe to drop onto a shipped
-// capture flow — the self-test gate is still evaluateSelfTest()'s
-// >= 3,000 pts/s over 3 s (D6) / first packet within 8 s (Mid-360), and this
-// widget only says so out loud.
+// capture flow.
 //
-// Owner: redesign pass.
+// ROUND 5 (REVIEW_FEEDBACK 2026-08-17 items 7/10) RETIRED THE SELF-TEST GATE.
+// "Live preview showing points IS the proof a device works", so the "Test
+// device" button, the SELF-TEST REQUIRED badge and the "Start unlocks when the
+// self-test passes" sentence are gone: the states below are the live-preview
+// machine (no device -> arming -> live -> recording/paused), Start is enabled
+// the moment a device is streaming, and the sentence says what the app is doing
+// rather than what the operator must do first.
+//
+// Owner: redesign pass / round-5 workflow pass.
 #pragma once
 
 #include <QString>
@@ -41,13 +47,13 @@ class RecordCluster : public QWidget {
   Q_OBJECT
  public:
   // A 1:1 rendering of CaptureWindow::Phase, plus the one distinction the
-  // phase enum does not carry: a failed self-test also lands in kIdle, and the
-  // gate sentence has to say something different about it.
+  // phase enum does not carry: an arm that produced no packets also lands in
+  // kIdle, and the sentence has to say something different about it.
   enum class State {
-    kUntested,   // Phase::kIdle,   no self-test has passed yet
-    kTesting,    // Phase::kTesting
-    kFailed,     // Phase::kIdle,   after a self-test failed
-    kArmed,      // Phase::kReady
+    kNoDevice,   // Phase::kIdle,    nothing armed (auto-detect has not found one yet)
+    kArming,     // Phase::kArming
+    kNoData,     // Phase::kIdle,    armed but no packet arrived — the honest failure
+    kLive,       // Phase::kPreview, streaming into the viewport, not recording
     kRecording,  // Phase::kRecording
     kPaused,     // Phase::kPaused
   };
@@ -57,30 +63,23 @@ class RecordCluster : public QWidget {
   void setState(State s);
   State state() const { return state_; }
 
-  // Selects the D6 or Mid-360 wording of the gate sentence and tooltip.
-  void setTransportIsD6(bool d6);
-
   // Seconds spent in the Recording state; rendered MM:SS, floored, zero
   // padded. CaptureWindow feeds this from the same accumulator the session
   // summary uses, so the clock and the summary can never disagree.
   void setElapsedSeconds(double s);
 
  Q_SIGNALS:
-  void testRequested();
   void startRequested();
   void pauseResumeRequested();
   void stopRequested();
 
  private:
   void refresh();
-  QString gateSentence() const;
-  QString gateTooltip() const;
+  QString stateSentence() const;
 
-  State state_ = State::kUntested;
-  bool d6_ = true;
+  State state_ = State::kNoDevice;
   double elapsed_s_ = 0.0;
 
-  QPushButton* test_ = nullptr;
   QPushButton* main_ = nullptr;   // Start recording / Stop recording
   QPushButton* pause_ = nullptr;  // Pause / Resume
   Chip* dot_ = nullptr;

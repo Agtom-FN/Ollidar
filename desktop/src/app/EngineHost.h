@@ -56,7 +56,15 @@ class EngineHost : public QObject {
 
   QString versionString() const;
 
-  bool startSession(const QString& lscan_dir, const QString& profile, bool record, QString* err);
+  // `live_slam` starts one LioOdometry for the session's Mid-360 stream
+  // (SessionConfig::live_slam): its registered map is published on
+  // StreamId::kSlamMap through this Engine's PageStore and its trajectory is
+  // Engine::live_slam()->poses(). Round-5 item 18 (walkthrough-first) needs both
+  // — a walked scan has to be registered as it goes, and the live trail is drawn
+  // from those poses. Default false keeps every other caller (replay, C4/C5/C6
+  // fixtures) on the Record-only path they were verified with.
+  bool startSession(const QString& lscan_dir, const QString& profile, bool record, QString* err,
+                    bool live_slam = false);
   bool stopSession(QString* err);
   bool sessionActive() const;
   QString sessionDir() const { return session_dir_; }

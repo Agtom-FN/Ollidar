@@ -66,6 +66,13 @@ class SliderRow : public QWidget {
   double value() const;
   void setValue(double v);  // does not emit valueChanged()
 
+  // Re-range an existing row, keeping the current value where it still fits and
+  // clamping it where it does not. Added for the live refresh-rate row, whose
+  // MAXIMUM is not a design constant but this machine's own display refresh rate
+  // (round-5 item 17) — which is only known once there is a window on a screen.
+  // Does not emit valueChanged().
+  void setRange(double lo, double hi, double step);
+
   // "px" -> "2.0 px", "M" -> "8 M", "m" -> "3.20 m", "1"/"2"/"3" -> fixed
   // decimals, "i" -> integer. Matches the mockup's fmtVal().
   void setFormat(const QString& fmt);

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -29,13 +30,16 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -65,6 +69,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.lidarscan.app.ar.ArOverlayView
+import com.lidarscan.app.ar.ArPosePumpView
 import com.lidarscan.app.di.AppContainer
 import com.lidarscan.app.engine.ScanEngineNative
 import com.lidarscan.app.render.CameraMode
@@ -84,6 +89,7 @@ import com.lidarscan.app.ui.theme.DisplayFontFamily
 import com.lidarscan.app.ui.theme.Ember
 import com.lidarscan.app.ui.theme.InkFaint
 import com.lidarscan.app.ui.theme.MonoLabel
+import com.lidarscan.app.ui.theme.MonoMeta
 import com.lidarscan.app.ui.theme.OnEmber
 import com.lidarscan.app.ui.theme.PoseBlue
 import com.lidarscan.app.ui.theme.ScanTeal
@@ -91,28 +97,46 @@ import com.lidarscan.app.ui.theme.SemBad
 import com.lidarscan.app.ui.theme.SemGood
 import com.lidarscan.app.ui.theme.SemWarn
 import com.lidarscan.app.ui.theme.ViewportGround
+import com.lidarscan.core.capture.CaptureAutoConnectState
 import com.lidarscan.core.engine.CaptureState
 import com.lidarscan.core.engine.ConnectionState
 import com.lidarscan.core.engine.DeviceHealth
+import com.lidarscan.core.gnss.GeorefSourceState
 import com.lidarscan.core.gnss.GnssFixSnapshot
-import com.lidarscan.core.gnss.NtripState
 import com.lidarscan.core.gnss.NtripStatsSnapshot
 import com.lidarscan.core.model.SensorType
+import com.lidarscan.core.model.WorkflowProfile
 import com.lidarscan.core.render.ColorMode
 import com.lidarscan.core.render.Colormap
+import kotlinx.coroutines.flow.first
 
+/**
+ * ROUND 5's Capture tab.
+ *
+ * [projectId] is **null** for the tab itself: the tab exists to create new scan
+ * projects (item 8), and Start is what creates one (item 9). The replay/deep-link
+ * path passes an id and records into (or replays from) a project that already
+ * exists — the only remaining caller that does.
+ */
 @Composable
 fun CaptureRoute(
     container: AppContainer,
-    projectId: String,
+    projectId: String? = null,
     isReplay: Boolean = false,
     onBack: () -> Unit,
-    onConnectDevice: () -> Unit,
-    /** B3: opens the Mid-360 wizard for this project. No-op default keeps the replay route unchanged. */
-    onOpenMid360Connect: () -> Unit = {},
+    /** Optional door to the mount-calibration wizard, for a D6 running on the CAD nominal. */
+    onOpenMountCalibration: ((String) -> Unit)? = null,
 ) {
+    // ROUND 5.2: the fine-location prompt, hoisted here because only an Activity
+    // context can ask. The ViewModel calls `requestLocationPermission` at Start;
+    // this bridges that suspend call to the launcher's callback.
+    val locationPermissionRequest = remember { PermissionRequestBridge() }
+    val locationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted -> locationPermissionRequest.complete(granted) }
+
     val viewModel: CaptureViewModel = viewModel(
-        key = "capture-$projectId-$isReplay",
+        key = "capture-${projectId ?: "new"}-$isReplay",
         factory = viewModelFactory {
             initializer {
                 val bridge = if (isReplay) container.newReplayEngineBridge() else container.engineBridge
@@ -139,6 +163,58 @@ fun CaptureRoute(
                     georefSnapshotProvider = { handle ->
                         if (isReplay) null else container.rtkManager.georefRecord(handle)
                     },
+                    // ROUND 5 (item 7): auto-detect on entry. Both probes, raced.
+                    autoDetectors = if (isReplay) {
+                        emptyList()
+                    } else {
+                        listOf(
+                            com.lidarscan.app.capture.D6UsbAutoDetector(container.d6UsbConnectionRegistry),
+                            com.lidarscan.app.capture.Mid360HeartbeatAutoDetector(
+                                detector = container.mid360HeartbeatDetector,
+                                ethernetMonitor = container.ethernetMonitor,
+                                onFound = { lidarIp, hostIp, sn ->
+                                    // AUTO-DETECT §3: last-detected addresses become
+                                    // this device's capture defaults.
+                                    container.settingsRepository.setLastDetectedMid360(lidarIp, hostIp, sn)
+                                },
+                            ),
+                        )
+                    },
+                    claimSeriesNumber = { container.settingsRepository.nextScanSeries() },
+                    peekSeriesNumber = {
+                        container.settingsRepository.settings.first().scanSeriesCounter + 1
+                    },
+                    attachedSerialDevices = {
+                        container.d6UsbConnectionRegistry.findDrivers().map { driver ->
+                            ManualSerialDevice(
+                                path = driver.device.deviceName,
+                                label = "${driver.device.deviceName.substringAfterLast('/')} · " +
+                                    "VID ${driver.device.vendorId}/PID ${driver.device.productId}",
+                            )
+                        }
+                    },
+                    openSerialPort = { path ->
+                        com.lidarscan.app.capture.openSerialPortByPath(container.d6UsbConnectionRegistry, path)
+                    },
+                    manualMid360Defaults = {
+                        val s = container.settingsRepository.settings.first()
+                        (s.lastDetectedMid360LidarIp ?: com.lidarscan.core.net.Mid360Settings.DEFAULT_LIDAR_IP) to
+                            (s.lastDetectedMid360HostIp ?: com.lidarscan.core.net.Mid360Settings.DEFAULT_HOST_IP)
+                    },
+                    // ROUND 5.2: georeference source — rover first, phone second.
+                    rtkFix = if (isReplay) null else container.rtkManager.fix,
+                    phoneLocationFixes = if (isReplay) null else ({ container.phoneLocationSource.fixes() }),
+                    hasLocationPermission = container.phoneLocationSource::hasPermission,
+                    requestLocationPermission = if (isReplay) {
+                        null
+                    } else {
+                        {
+                            locationPermissionRequest.await {
+                                locationLauncher.launch(android.Manifest.permission.ACCESS_FINE_LOCATION)
+                            }
+                        }
+                    },
+                    phoneGeorefRecorder = if (isReplay) null else com.lidarscan.app.gnss.PhoneGeorefRecorder(),
                 )
             }
         },
@@ -155,19 +231,44 @@ fun CaptureRoute(
     val pointSizePx by viewModel.pointSizePx.collectAsStateWithLifecycle()
     val cameraMode by viewModel.cameraMode.collectAsStateWithLifecycle()
     val liveSlam by viewModel.liveSlam.collectAsStateWithLifecycle()
+    val liveView by viewModel.liveView.collectAsStateWithLifecycle()
+    val refreshHz by viewModel.refreshHz.collectAsStateWithLifecycle()
+    val gamma by viewModel.gamma.collectAsStateWithLifecycle()
+    val brightness by viewModel.brightness.collectAsStateWithLifecycle()
     val keyframeStats by viewModel.keyframeStats.collectAsStateWithLifecycle()
     val keyframesEnabled by viewModel.keyframesEnabled.collectAsStateWithLifecycle()
     val keyframeRateFps by viewModel.keyframeRateFps.collectAsStateWithLifecycle()
     val lodBudgetMPoints by viewModel.lodBudgetMPoints.collectAsStateWithLifecycle()
     val displayParams by viewModel.displayParams.collectAsStateWithLifecycle()
     val sensor by viewModel.sensor.collectAsStateWithLifecycle()
-    val mid360Endpoint by viewModel.mid360Endpoint.collectAsStateWithLifecycle()
+    val profile by viewModel.profile.collectAsStateWithLifecycle()
+    val scanName by viewModel.scanName.collectAsStateWithLifecycle()
+    val autoConnectState = viewModel.autoConnectState?.collectAsStateWithLifecycle()?.value
+    val manualDevices by viewModel.manualDevices.collectAsStateWithLifecycle()
+    val manualLidarIp by viewModel.manualLidarIp.collectAsStateWithLifecycle()
+    val manualHostIp by viewModel.manualHostIp.collectAsStateWithLifecycle()
+    val mountIsNominal by viewModel.mountIsNominal.collectAsStateWithLifecycle()
+    val trailPoints by viewModel.trailPoints.collectAsStateWithLifecycle()
+    val trailLengthM by viewModel.trailLengthM.collectAsStateWithLifecycle()
+    val motionHint by viewModel.motionHint.collectAsStateWithLifecycle()
+    val refreshDownshiftNote by viewModel.refreshDownshiftNote.collectAsStateWithLifecycle()
+    val georefSource by viewModel.georefSource.collectAsStateWithLifecycle()
+    val georefNote by viewModel.georefNote.collectAsStateWithLifecycle()
     val arStatus = viewModel.arStatus?.collectAsStateWithLifecycle()?.value
 
     // B9: the fix strip. A replay session has no rover, so it shows the same
     // "no fix" chips a disconnected one does — which is the truth, not a gap.
     val fix by container.rtkManager.fix.collectAsStateWithLifecycle()
     val ntrip by container.rtkManager.ntrip.collectAsStateWithLifecycle()
+
+    // ROUND 5: the Mid-360 heartbeat detector prefers the Ethernet link's own
+    // Network when one exists, so the monitor runs while this screen is up (and
+    // only while it is up — an always-registered NetworkCallback is a battery cost
+    // on the projects list).
+    DisposableEffect(isReplay) {
+        if (!isReplay) container.ethernetMonitor.start()
+        onDispose { if (!isReplay) container.ethernetMonitor.stop() }
+    }
 
     // B7: the AR session belongs to the whole app (one ARCore Session per
     // process), so the Capture screen resumes and pauses it around its own
@@ -176,8 +277,25 @@ fun CaptureRoute(
         ActivityResultContracts.RequestPermission(),
     ) { granted -> if (granted) container.arController.createSession() }
 
-    LaunchedEffect(viewModel.arAvailable) {
-        if (!viewModel.arAvailable) return@LaunchedEffect
+    // ROUND 5: the camera permission is asked for **when the camera is actually
+    // needed**, not on entering the tab.
+    //
+    // Before this, opening Capture immediately threw up the system camera dialog —
+    // which is a modal interruption in front of a screen whose whole point is that
+    // it has no steps, and on a Mid-360 walk the camera may never be needed at all.
+    // Now it is requested when one of three things is true: a phone-tracked D6 is
+    // connected (its 3D depends on the pose stream), the AR view is selected, or a
+    // recording is running with keyframes on. Caught by the emulator smoke test,
+    // which found the dialog covering the Capture tab it was trying to walk.
+    val needsArSession = viewModel.arAvailable && (
+        cameraMode == CameraMode.AR ||
+            (viewModel.poseTrackingRequired && autoConnectState?.isPreviewing == true) ||
+            captureState == CaptureState.RECORDING ||
+            captureState == CaptureState.PAUSED
+        )
+
+    LaunchedEffect(needsArSession) {
+        if (!needsArSession) return@LaunchedEffect
         container.arController.refreshAvailability()
         if (!container.hasCameraPermission()) {
             permissionLauncher.launch(android.Manifest.permission.CAMERA)
@@ -186,8 +304,20 @@ fun CaptureRoute(
             container.arController.resume()
         }
     }
-    DisposableEffect(viewModel.arAvailable) {
+    DisposableEffect(needsArSession) {
         onDispose { if (viewModel.arAvailable) container.arController.pause() }
+    }
+
+    // ROUND 5.3 (item 18): the screen stays awake while a capture is running.
+    // A walkthrough is minutes of walking with the phone in one hand and nothing
+    // being touched — the default screen timeout would black it out mid-walk, and
+    // on some OEM skins that also stops the camera the D6's pose stream depends on.
+    // Scoped to the recording, not the screen: an idle Capture tab still sleeps.
+    val view = androidx.compose.ui.platform.LocalView.current
+    val keepAwake = captureState == CaptureState.RECORDING || captureState == CaptureState.PAUSED
+    DisposableEffect(keepAwake) {
+        view.keepScreenOn = keepAwake
+        onDispose { view.keepScreenOn = false }
     }
 
     CaptureScreen(
@@ -198,6 +328,8 @@ fun CaptureRoute(
         health = health,
         fix = fix,
         ntrip = ntrip,
+        georefSource = georefSource,
+        georefNote = georefNote,
         sessionSummary = sessionSummary,
         pointCloudSource = pointCloudSource,
         colorMode = colorMode,
@@ -207,16 +339,34 @@ fun CaptureRoute(
         displayParams = displayParams,
         cameraMode = cameraMode,
         liveSlam = liveSlam,
+        liveView = liveView,
+        refreshHz = refreshHz,
+        gamma = gamma,
+        brightness = brightness,
         isReplaySession = viewModel.isReplaySession,
         arAvailable = viewModel.arAvailable,
         arTracking = arStatus?.tracking == true,
+        arSessionRunning = arStatus?.sessionRunning == true,
         arTrackingHint = arStatus?.trackingHint,
         arTrackingLossEpisodes = arStatus?.trackingLossEpisodes ?: 0,
+        posesPushed = arStatus?.posesPushed ?: 0L,
+        poseTrackingRequired = viewModel.poseTrackingRequired,
+        mountIsNominal = mountIsNominal,
         keyframeStats = keyframeStats,
         keyframesEnabled = keyframesEnabled,
         keyframeRateFps = keyframeRateFps,
         sensor = sensor,
-        mid360Endpoint = mid360Endpoint,
+        profile = profile,
+        scanName = scanName,
+        autoConnectState = autoConnectState,
+        manualDevices = manualDevices,
+        manualLidarIp = manualLidarIp,
+        manualHostIp = manualHostIp,
+        trailPoints = trailPoints,
+        trailLengthM = trailLengthM,
+        motionHint = motionHint,
+        refreshDownshiftNote = refreshDownshiftNote,
+        onRefreshAutoDownshift = viewModel::onRefreshAutoDownshift,
         arOverlay = { modifier ->
             ArOverlayView(
                 controller = container.arController,
@@ -227,20 +377,30 @@ fun CaptureRoute(
                 modifier = modifier,
             )
         },
+        // ROUND 5 (item 11): the pose pump. Mounted alongside the 3D-orbit view so
+        // a D6 capture records poses in EITHER view mode — see ArPosePumpView for
+        // the bug this closes.
+        arPosePump = { modifier -> ArPosePumpView(controller = container.arController, modifier = modifier) },
         onBack = onBack,
-        onConnectDevice = onConnectDevice,
-        onConnectMid360 = {
-            // Not connected yet and no saved endpoint -> the wizard; saved
-            // endpoint -> just connect. Two very different actions behind one
-            // button, chosen by what the project actually has.
-            if (mid360Endpoint == null) onOpenMid360Connect() else viewModel.connectMid360()
-        },
         onStart = viewModel::startCapture,
         onPause = viewModel::pauseCapture,
         onResume = viewModel::resumeCapture,
         onStop = viewModel::stopCapture,
         onDismissSummary = viewModel::dismissSessionSummary,
+        onScanNameChange = viewModel::setScanName,
+        onRetryAutoDetect = viewModel::retryAutoDetect,
+        onShowManualEntry = viewModel::showManualEntry,
+        onHideManualEntry = { viewModel.hideManualEntry() },
+        onManualDeviceConnect = viewModel::connectManualD6,
+        onManualLidarIpChange = viewModel::setManualLidarIp,
+        onManualHostIpChange = viewModel::setManualHostIp,
+        onManualMid360Connect = viewModel::connectManualMid360,
+        onLiveViewChange = viewModel::setLiveView,
         onLiveSlamChange = viewModel::setLiveSlam,
+        onProfileChange = viewModel::setProfile,
+        onRefreshHzChange = viewModel::setRefreshHz,
+        onGammaChange = viewModel::setGamma,
+        onBrightnessChange = viewModel::setBrightness,
         onColorModeChange = viewModel::setColorMode,
         onColormapChange = viewModel::setColormap,
         onPointSizeChange = viewModel::setPointSizePx,
@@ -248,23 +408,29 @@ fun CaptureRoute(
         onCameraModeChange = viewModel::setCameraMode,
         onKeyframesEnabledChange = viewModel::setKeyframesEnabled,
         onKeyframeRateChange = viewModel::setKeyframeRateFps,
+        onOpenMountCalibration = (uiState as? CaptureUiState.Loaded)?.project?.id?.let { pid ->
+            onOpenMountCalibration?.let { open -> { open(pid) } }
+        },
     )
 }
 
 /**
- * The redesign's Capture screen (mockup v7).
+ * ROUND 5's Capture screen — one screen, no wizard, no dialogs.
  *
- * Read top to bottom it is: app bar → RTK chip strip → **hero viewport (~50 %
- * of the screen)** → four mono stats → transport. Nothing else. The five-row
- * "AR + camera keyframes" telemetry block that used to sit under the stats is
- * gone from the body entirely — it lives in the Diagnostics sheet behind the
- * viewport's health chip (round 3's item 4), and the height it freed went to
- * the live cloud and to the record cluster's clearance over the tab bar.
+ * Top to bottom: app bar → georeference + RTK chips → **the pre-capture strip**
+ * (name field, auto-detect status, the inline manual fallback, the D6 mount hint)
+ * → hero viewport → four mono stats → transport. The strip collapses to nothing
+ * once a recording is running, so a live capture looks exactly like it did in
+ * round 4 apart from the Live toggle.
  *
- * Two doors on the viewport, and only ever one open at a time:
- *  * the **48 dp Display button** opens Capture settings (view + AR/camera +
- *    display), which live-applies to the view behind it;
- *  * the **health chip**, hung on a 44 dp hit target, opens Diagnostics.
+ * What used to be steps and is not any more:
+ *  * the **new-project screen** (name/sensor/profile) — the name is one inline
+ *    field with an auto-name placeholder, the sensor is whatever auto-detect
+ *    found, and the profile lives in the settings sheet;
+ *  * the **project picker** — the tab never records into an existing project;
+ *  * the **connect wizards** — auto-detect connects and shows points, and when it
+ *    finds nothing the manual fields are *already open* under the status line;
+ *  * the **self-test gate** — round 5 item 7: live points are the proof.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -276,6 +442,8 @@ fun CaptureScreen(
     health: DeviceHealth?,
     fix: GnssFixSnapshot,
     ntrip: NtripStatsSnapshot,
+    georefSource: GeorefSourceState,
+    georefNote: String?,
     sessionSummary: CaptureStats?,
     pointCloudSource: PointCloudSource?,
     colorMode: ColorMode,
@@ -285,34 +453,61 @@ fun CaptureScreen(
     displayParams: com.lidarscan.core.render.DisplayParams,
     cameraMode: CameraMode,
     liveSlam: Boolean,
+    liveView: Boolean,
+    refreshHz: Int,
+    gamma: Float,
+    brightness: Float,
     isReplaySession: Boolean,
     arAvailable: Boolean,
     arTracking: Boolean,
+    arSessionRunning: Boolean,
     arTrackingHint: String?,
     arTrackingLossEpisodes: Int,
+    posesPushed: Long,
+    /** ROUND 5 item 11: true when this sensor's 3D depends on the phone's pose stream (the D6). */
+    poseTrackingRequired: Boolean,
+    /** True while the pushbroom is running on the CAD nominal rather than a measured calibration. */
+    mountIsNominal: Boolean,
     keyframeStats: com.lidarscan.app.ar.KeyframeRecorder.Stats,
     keyframesEnabled: Boolean,
     keyframeRateFps: Int,
-    /**
-     * B3: this project's sensor. Two things depend on it — which connect
-     * wizard the Connect button opens, and whether Pause is offered at all
-     * (a Mid-360 cannot pause; see RealEngineBridge.pauseCapture for why
-     * faking it would truncate the recording).
-     */
     sensor: SensorType,
-    /** B3: `"<lidarIp>|<hostIp>"` saved in the manifest, or null if the wizard has not been run. */
-    mid360Endpoint: String?,
+    profile: WorkflowProfile,
+    scanName: String,
+    autoConnectState: CaptureAutoConnectState?,
+    manualDevices: List<ManualSerialDevice>,
+    manualLidarIp: String,
+    manualHostIp: String,
+    /** ROUND 5.3 (item 18): the walked path, fitted to 0..1, drawn over the live view. */
+    trailPoints: List<com.lidarscan.core.capture.TrajectoryTrail.NormalizedPoint>,
+    trailLengthM: Float,
+    /** ROUND 5.3 (item 18): the gentle "slow down" line — inline; the numbers stay in Diagnostics. */
+    motionHint: String?,
+    /** ROUND 5.3 (item 17): non-null once the live view has been auto-eased down a notch. */
+    refreshDownshiftNote: String?,
+    onRefreshAutoDownshift: (Int) -> Unit,
     arOverlay: @Composable (Modifier) -> Unit,
+    arPosePump: @Composable (Modifier) -> Unit,
     onBack: () -> Unit,
-    onConnectDevice: () -> Unit,
-    /** B3: connects the engine to the saved Mid-360 endpoint (no USB permission dance to run first). */
-    onConnectMid360: () -> Unit,
     onStart: () -> Unit,
     onPause: () -> Unit,
     onResume: () -> Unit,
     onStop: () -> Unit,
     onDismissSummary: () -> Unit,
+    onScanNameChange: (String) -> Unit,
+    onRetryAutoDetect: () -> Unit,
+    onShowManualEntry: () -> Unit,
+    onHideManualEntry: () -> Unit,
+    onManualDeviceConnect: (ManualSerialDevice) -> Unit,
+    onManualLidarIpChange: (String) -> Unit,
+    onManualHostIpChange: (String) -> Unit,
+    onManualMid360Connect: () -> Unit,
+    onLiveViewChange: (Boolean) -> Unit,
     onLiveSlamChange: (Boolean) -> Unit,
+    onProfileChange: (WorkflowProfile) -> Unit,
+    onRefreshHzChange: (Int) -> Unit,
+    onGammaChange: (Float) -> Unit,
+    onBrightnessChange: (Float) -> Unit,
     onColorModeChange: (ColorMode) -> Unit,
     onColormapChange: (Colormap) -> Unit,
     onPointSizeChange: (Float) -> Unit,
@@ -320,6 +515,7 @@ fun CaptureScreen(
     onCameraModeChange: (CameraMode) -> Unit,
     onKeyframesEnabledChange: (Boolean) -> Unit,
     onKeyframeRateChange: (Int) -> Unit,
+    onOpenMountCalibration: (() -> Unit)? = null,
 ) {
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     var sheet by remember { mutableStateOf(CaptureSheet.NONE) }
@@ -327,8 +523,19 @@ fun CaptureScreen(
     val diagSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     val project = (uiState as? CaptureUiState.Loaded)?.project
+    val newScan = uiState as? CaptureUiState.NewScan
     val connected = connectionState == ConnectionState.CONNECTED
     val recording = captureState == CaptureState.RECORDING
+    val paused = captureState == CaptureState.PAUSED
+    val live = recording || paused
+    val poseState = poseTrackingState(
+        required = poseTrackingRequired,
+        arAvailable = arAvailable,
+        sessionRunning = arSessionRunning,
+        tracking = arTracking,
+        posesPushed = posesPushed,
+        lossEpisodes = arTrackingLossEpisodes,
+    )
 
     Column(
         Modifier
@@ -338,9 +545,11 @@ fun CaptureScreen(
             .navigationBarsPadding(),
     ) {
         BackBar(
-            title = project?.manifest?.name ?: if (isReplaySession) "Capture — Replay" else "Capture",
-            subtitle = project?.let {
-                "${it.manifest.profile.displayName} · ${captureStateLabel(captureState)}"
+            title = project?.manifest?.name
+                ?: if (isReplaySession) "Capture — Replay" else "New scan",
+            subtitle = when {
+                project != null -> "${project.manifest.profile.displayName} · ${captureStateLabel(captureState)}"
+                else -> "${profile.displayName} · ${captureStateLabel(captureState)}"
             },
             onBack = onBack,
             actions = {
@@ -357,7 +566,7 @@ fun CaptureScreen(
             },
         )
 
-        FixChipStrip(fix = fix, ntrip = ntrip)
+        FixChipStrip(fix = fix, ntrip = ntrip, georefSource = georefSource)
 
         // Weighted, not fillMaxSize: a `fillMaxSize` child of a Column takes
         // the FULL incoming height, not the height left over after the app bar
@@ -370,7 +579,7 @@ fun CaptureScreen(
                     Text("Project not found", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
 
-                is CaptureUiState.Loaded -> {
+                else -> {
                     val body: @Composable () -> Unit = {
                         StatPanel(
                             stats = listOf(
@@ -391,10 +600,10 @@ fun CaptureScreen(
                         TransportRow(
                             captureState = captureState,
                             connected = connected,
-                            liveSlam = liveSlam,
+                            liveView = liveView,
                             isReplaySession = isReplaySession,
                             pauseSupported = !isReplaySession && sensor != SensorType.MID360,
-                            onLiveSlamChange = onLiveSlamChange,
+                            onLiveViewChange = onLiveViewChange,
                             onStart = onStart,
                             onPause = onPause,
                             onResume = onResume,
@@ -407,11 +616,13 @@ fun CaptureScreen(
                             modifier = modifier,
                             connected = connected,
                             isReplaySession = isReplaySession,
-                            source = pointCloudSource,
+                            source = pointCloudSource.takeIf { liveView },
+                            liveView = liveView,
                             colorMode = colorMode,
                             colormap = colormap,
                             pointSizePx = pointSizePx,
                             displayParams = displayParams,
+                            refreshHz = refreshHz,
                             cameraMode = cameraMode,
                             liveSlam = liveSlam,
                             recording = recording,
@@ -419,13 +630,82 @@ fun CaptureScreen(
                             arAvailable = arAvailable,
                             arTrackingHint = arTrackingHint,
                             arOverlay = arOverlay,
+                            arPosePump = arPosePump,
+                            poseTrackingRequired = poseTrackingRequired,
+                            poseState = poseState,
                             health = health,
                             keyframesEnabled = keyframesEnabled,
                             keyframesWritten = keyframeStats.keyframesWritten,
+                            trailPoints = trailPoints,
+                            trailLengthM = trailLengthM,
+                            onRefreshAutoDownshift = onRefreshAutoDownshift,
                             onOpenSettings = { sheet = CaptureSheet.SETTINGS },
                             onOpenDiagnostics = { sheet = CaptureSheet.DIAGNOSTICS },
                             onCameraModeChange = onCameraModeChange,
                         )
+                    }
+
+                    // ROUND 5: everything that used to be a wizard, inline and
+                    // collapsible — and gone entirely once recording starts.
+                    val preCapture: @Composable () -> Unit = {
+                        if (!live && !isReplaySession) {
+                            // Capped and scrollable: with the manual panel open the
+                            // strip would otherwise squeeze the live viewport to a
+                            // sliver — seen on a booted emulator, which is exactly
+                            // the failure mode round 5 is trying to avoid (the
+                            // points ARE the proof, so they must stay on screen).
+                            PreCaptureStrip(
+                                maxHeight = LocalConfiguration.current.screenHeightDp.dp * 0.46f,
+                                autoName = newScan?.autoName,
+                                scanName = scanName,
+                                autoConnectState = autoConnectState,
+                                sensor = sensor,
+                                poseTrackingRequired = poseTrackingRequired,
+                                poseState = poseState,
+                                sensorStreaming = connected,
+                                mountIsNominal = mountIsNominal,
+                                manualDevices = manualDevices,
+                                manualLidarIp = manualLidarIp,
+                                manualHostIp = manualHostIp,
+                                onScanNameChange = onScanNameChange,
+                                onRetryAutoDetect = onRetryAutoDetect,
+                                onShowManualEntry = onShowManualEntry,
+                                onHideManualEntry = onHideManualEntry,
+                                onManualDeviceConnect = onManualDeviceConnect,
+                                onManualLidarIpChange = onManualLidarIpChange,
+                                onManualHostIpChange = onManualHostIpChange,
+                                onManualMid360Connect = onManualMid360Connect,
+                                onOpenMountCalibration = onOpenMountCalibration,
+                            )
+                        }
+                        // ROUND 5.2 / 5.3: the two quiet inline lines. Both are
+                        // one sentence, both clear themselves, and neither is ever
+                        // a dialog — mid-walk, a modal is the worst possible
+                        // interruption.
+                        if (georefNote != null) {
+                            Hint(
+                                georefNote,
+                                color = InkFaint,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
+                                    .testTag("georefDeniedNote"),
+                            )
+                        }
+                        if (refreshDownshiftNote != null) {
+                            Hint(
+                                refreshDownshiftNote,
+                                color = InkFaint,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
+                                    .testTag("refreshDownshiftNote"),
+                            )
+                        }
+                        if (motionHint != null) {
+                            Hint(
+                                motionHint,
+                                color = SemWarn,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
+                                    .testTag("motionHint"),
+                            )
+                        }
                     }
 
                     if (isLandscape) {
@@ -438,21 +718,20 @@ fun CaptureScreen(
                                     .verticalScroll(rememberScrollState())
                                     .padding(bottom = ScanDims.TabBarClearance),
                             ) {
-                                if (!connected && !isReplaySession) {
-                                    ConnectPrompt(sensor, mid360Endpoint, onConnectDevice, onConnectMid360)
-                                }
+                                preCapture()
                                 body()
                             }
                         }
                     } else {
                         Column(Modifier.fillMaxSize()) {
-                            if (!connected && !isReplaySession) {
-                                ConnectPrompt(sensor, mid360Endpoint, onConnectDevice, onConnectMid360)
-                            }
-                            // ~50 % of the screen, and it takes every pixel the
-                            // rest of the column does not claim — the reclaimed
-                            // telemetry block went here.
-                            viewport(Modifier.fillMaxWidth().weight(1f).padding(horizontal = 14.dp))
+                            preCapture()
+                            // The hero cloud takes every pixel the rest of the
+                            // column does not claim, with a floor so the inline
+                            // manual panel can never squeeze it to nothing.
+                            viewport(
+                                Modifier.fillMaxWidth().weight(1f).heightIn(min = 140.dp)
+                                    .padding(horizontal = 14.dp),
+                            )
                             Spacer(Modifier.height(12.dp))
                             body()
                             Spacer(Modifier.height(ScanDims.TabBarClearance))
@@ -469,7 +748,7 @@ fun CaptureScreen(
             sheetState = settingsSheetState,
             cameraMode = cameraMode,
             arAvailable = arAvailable,
-            arTrackingLabel = arTrackingLabel(arAvailable, arTracking, cameraMode, keyframesEnabled),
+            arTrackingLabel = arTrackingLabel(arAvailable, arTracking, cameraMode, keyframesEnabled, poseTrackingRequired),
             arTrackingIsGood = arTracking,
             keyframesEnabled = keyframesEnabled,
             keyframeRateFps = keyframeRateFps,
@@ -477,6 +756,24 @@ fun CaptureScreen(
             colormap = colormap,
             pointSizePx = pointSizePx,
             lodBudgetMPoints = lodBudgetMPoints,
+            refreshHz = refreshHz,
+            // ROUND 5.3 (item 17): the ceiling is the panel's, read from the
+            // display this composable is actually on.
+            refreshOptions = com.lidarscan.core.render.RefreshGovernor.optionsFor(
+                com.lidarscan.app.render.displayRefreshCeilingHz(androidx.compose.ui.platform.LocalContext.current),
+            ),
+            gamma = gamma,
+            brightness = brightness,
+            liveSlam = liveSlam,
+            liveSlamEditable = !live && connected,
+            // The profile is only settable while the project does not exist yet —
+            // afterwards it is a property of the .lscan, not a control.
+            profile = if (project == null && !isReplaySession) profile else null,
+            onRefreshHzChange = onRefreshHzChange,
+            onGammaChange = onGammaChange,
+            onBrightnessChange = onBrightnessChange,
+            onLiveSlamChange = onLiveSlamChange,
+            onProfileChange = onProfileChange,
             onCameraModeChange = onCameraModeChange,
             onKeyframesEnabledChange = onKeyframesEnabledChange,
             onKeyframeRateChange = onKeyframeRateChange,
@@ -498,6 +795,10 @@ fun CaptureScreen(
                 keyframeRateFps = keyframeRateFps,
                 keyframeStats = keyframeStats,
                 trackingLossEpisodes = arTrackingLossEpisodes,
+                poseTrackingRequired = poseTrackingRequired,
+                posesPushed = posesPushed,
+                mountIsNominal = mountIsNominal,
+                georefSource = georefSource,
             ),
             onDismiss = { sheet = CaptureSheet.NONE },
         )
@@ -515,6 +816,266 @@ fun CaptureScreen(
     }
 }
 
+// ── pre-capture strip (ROUND 5) ─────────────────────────────────────────────
+
+/**
+ * Everything the operator needs *before* pressing Start, in one strip: the name,
+ * what auto-detect found, the inline manual fallback when it found nothing, and
+ * the D6 mount hint.
+ *
+ * Deliberately not a card stack and not a sheet: it is the top of the same screen
+ * the live preview is on, so a device that connects while you are reading it
+ * shows points behind the text you are reading.
+ */
+@Composable
+private fun PreCaptureStrip(
+    maxHeight: androidx.compose.ui.unit.Dp,
+    autoName: String?,
+    scanName: String,
+    autoConnectState: CaptureAutoConnectState?,
+    sensor: SensorType,
+    poseTrackingRequired: Boolean,
+    poseState: PoseTrackingState,
+    /** True once a sensor is actually connected and streaming into the preview. */
+    sensorStreaming: Boolean,
+    mountIsNominal: Boolean,
+    manualDevices: List<ManualSerialDevice>,
+    manualLidarIp: String,
+    manualHostIp: String,
+    onScanNameChange: (String) -> Unit,
+    onRetryAutoDetect: () -> Unit,
+    onShowManualEntry: () -> Unit,
+    onHideManualEntry: () -> Unit,
+    onManualDeviceConnect: (ManualSerialDevice) -> Unit,
+    onManualLidarIpChange: (String) -> Unit,
+    onManualHostIpChange: (String) -> Unit,
+    onManualMid360Connect: () -> Unit,
+    onOpenMountCalibration: (() -> Unit)?,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(max = maxHeight)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 14.dp),
+    ) {
+        if (autoName != null) {
+            OutlinedTextField(
+                value = scanName,
+                onValueChange = onScanNameChange,
+                singleLine = true,
+                label = { Text("Scan name — optional") },
+                placeholder = { Text(autoName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                modifier = Modifier.fillMaxWidth().testTag("scanNameField"),
+            )
+            Spacer(Modifier.height(6.dp))
+        }
+
+        if (autoConnectState != null) {
+            AutoDetectLine(
+                state = autoConnectState,
+                onRetry = onRetryAutoDetect,
+                onShowManual = onShowManualEntry,
+                onHideManual = onHideManualEntry,
+            )
+
+            if (autoConnectState.manualEntryOpen) {
+                ManualEntryPanel(
+                    devices = manualDevices,
+                    lidarIp = manualLidarIp,
+                    hostIp = manualHostIp,
+                    busy = autoConnectState.phase == CaptureAutoConnectState.Phase.CONNECTING,
+                    onDeviceConnect = onManualDeviceConnect,
+                    onLidarIpChange = onManualLidarIpChange,
+                    onHostIpChange = onManualHostIpChange,
+                    onMid360Connect = onManualMid360Connect,
+                )
+            }
+        }
+
+        // ROUND 5 item 11: the mount hint. Short, and only for the sensor it
+        // applies to — the D6's geometry is the whole reason the capture is 3D.
+        if (poseTrackingRequired && sensor == SensorType.COIN_D6) {
+            Spacer(Modifier.height(4.dp))
+            Hint(
+                "Mount the D6 flat on the BACK of the phone with its scan fan VERTICAL, then walk forward — " +
+                    "the phone's camera + IMU supply the 6-DoF path and the engine sweeps the fan into 3D.",
+                color = InkFaint,
+                modifier = Modifier.testTag("d6MountHint"),
+            )
+            // The tracking chip belongs to a session that exists: with nothing
+            // connected, "TRACKING · INITIALISING" is a status about a scan that
+            // is not happening.
+            if (poseState != PoseTrackingState.NOT_REQUIRED && sensorStreaming) {
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    ScanChip(
+                        text = poseState.chipLabel,
+                        color = poseState.chipColor,
+                        showDot = true,
+                        modifier = Modifier.testTag("poseTrackingChip"),
+                    )
+                    if (mountIsNominal && onOpenMountCalibration != null) {
+                        Spacer(Modifier.width(8.dp))
+                        TextButton(onClick = onOpenMountCalibration) { Text("Calibrate mount") }
+                    }
+                }
+                if (poseState == PoseTrackingState.UNAVAILABLE) {
+                    Hint(
+                        "Without phone tracking the D6 can only record flat fan slices — grant the camera " +
+                            "permission (or install ARCore) for a 3D scan.",
+                        color = SemWarn,
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+    }
+}
+
+/** The auto-detect status line: what is happening, plus Retry / Enter manually. */
+@Composable
+private fun AutoDetectLine(
+    state: CaptureAutoConnectState,
+    onRetry: () -> Unit,
+    onShowManual: () -> Unit,
+    onHideManual: () -> Unit,
+) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        if (state.isBusy) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(16.dp),
+                strokeWidth = 2.dp,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Spacer(Modifier.width(8.dp))
+        }
+        Text(
+            state.statusLine(),
+            style = MonoMeta,
+            color = when (state.phase) {
+                CaptureAutoConnectState.Phase.PREVIEW -> SemGood
+                CaptureAutoConnectState.Phase.FAILED -> SemWarn
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f).testTag("autoDetectStatus"),
+        )
+    }
+    state.detection?.detail?.let {
+        Text(it, style = MonoLabel, color = InkFaint, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        if (state.phase == CaptureAutoConnectState.Phase.FAILED) {
+            TextButton(onClick = onRetry, modifier = Modifier.testTag("retryAutoDetectButton")) { Text("Retry") }
+        }
+        // "Enter manually" stays reachable at every phase, including a successful
+        // detect (owner addition 1) — a rig with two devices can auto-detect the
+        // wrong one.
+        TextButton(
+            onClick = if (state.manualEntryOpen) onHideManual else onShowManual,
+            modifier = Modifier.testTag("manualEntryToggle"),
+        ) {
+            Text(if (state.manualEntryOpen) "Hide manual entry" else "Enter manually")
+        }
+    }
+}
+
+/**
+ * The inline manual fallback (owner addition 1). Both transports, because at this
+ * point the app does not know which one the operator has: a tap-to-connect list of
+ * attached serial ports for the D6, and the two addresses for the Mid-360.
+ *
+ * A panel on the screen, never a dialog (item 7). Its own height is capped and it
+ * scrolls, so a rig with six serial devices cannot push the live viewport off the
+ * bottom of the screen.
+ */
+@Composable
+private fun ManualEntryPanel(
+    devices: List<ManualSerialDevice>,
+    lidarIp: String,
+    hostIp: String,
+    busy: Boolean,
+    onDeviceConnect: (ManualSerialDevice) -> Unit,
+    onLidarIpChange: (String) -> Unit,
+    onHostIpChange: (String) -> Unit,
+    onMid360Connect: () -> Unit,
+) {
+    val shape = RoundedCornerShape(ScanDims.TileRadius)
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(max = 260.dp)
+            .background(MaterialTheme.colorScheme.surfaceContainer, shape)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
+            .verticalScroll(rememberScrollState())
+            .padding(12.dp)
+            .testTag("manualEntryPanel"),
+    ) {
+        Text("COIN-D6 · USB", style = MonoLabel, color = Ember)
+        Spacer(Modifier.height(6.dp))
+        if (devices.isEmpty()) {
+            Hint("No serial device attached. Plug the D6 into USB-C OTG — it appears here as soon as it does.")
+        } else {
+            devices.forEach { device ->
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        device.label,
+                        style = MonoMeta,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    TextButton(
+                        enabled = !busy,
+                        onClick = { onDeviceConnect(device) },
+                        modifier = Modifier.testTag("manualConnectDevice"),
+                    ) { Text("Connect") }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+        Text("LIVOX MID-360 · ETHERNET", style = MonoLabel, color = Ember)
+        Spacer(Modifier.height(6.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = lidarIp,
+                onValueChange = onLidarIpChange,
+                singleLine = true,
+                label = { Text("Lidar IP") },
+                modifier = Modifier.weight(1f).testTag("manualLidarIpField"),
+            )
+            OutlinedTextField(
+                value = hostIp,
+                onValueChange = onHostIpChange,
+                singleLine = true,
+                label = { Text("This phone") },
+                modifier = Modifier.weight(1f).testTag("manualHostIpField"),
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        SecondaryPill(
+            text = "Connect Mid-360",
+            height = 46.dp,
+            enabled = !busy,
+            onClick = onMid360Connect,
+            modifier = Modifier.fillMaxWidth().testTag("manualConnectMid360"),
+        )
+        Spacer(Modifier.height(2.dp))
+        Hint(
+            "No self-test step: the live view above is the proof. If points appear, the device works.",
+            color = InkFaint,
+        )
+    }
+}
+
 // ── viewport ────────────────────────────────────────────────────────────────
 
 @Composable
@@ -523,10 +1084,12 @@ private fun CaptureViewport(
     connected: Boolean,
     isReplaySession: Boolean,
     source: PointCloudSource?,
+    liveView: Boolean,
     colorMode: ColorMode,
     colormap: Colormap,
     pointSizePx: Float,
     displayParams: com.lidarscan.core.render.DisplayParams,
+    refreshHz: Int,
     cameraMode: CameraMode,
     liveSlam: Boolean,
     recording: Boolean,
@@ -534,9 +1097,15 @@ private fun CaptureViewport(
     arAvailable: Boolean,
     arTrackingHint: String?,
     arOverlay: @Composable (Modifier) -> Unit,
+    arPosePump: @Composable (Modifier) -> Unit,
+    poseTrackingRequired: Boolean,
+    poseState: PoseTrackingState,
     health: DeviceHealth?,
     keyframesEnabled: Boolean,
     keyframesWritten: Int,
+    trailPoints: List<com.lidarscan.core.capture.TrajectoryTrail.NormalizedPoint>,
+    trailLengthM: Float,
+    onRefreshAutoDownshift: (Int) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenDiagnostics: () -> Unit,
     onCameraModeChange: (CameraMode) -> Unit,
@@ -570,23 +1139,49 @@ private fun CaptureViewport(
                 // DisplayParams. Passing the block also owns colour and point
                 // size, which is why they are assembled together in the VM.
                 displayParams = displayParams,
+                // ROUND 5 (item 10): the operator's own refresh cap.
+                maxRefreshHz = refreshHz,
+                // ROUND 5.3 (item 17): the ceiling is the panel's own, and the
+                // renderer eases down from it rather than hitching.
+                onRefreshDownshift = onRefreshAutoDownshift,
                 modifier = Modifier.fillMaxSize(),
             )
         } else {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    if (connected) {
-                        "3D view needs the real engine (simulated-engine build)"
-                    } else if (isReplaySession) {
-                        "Starting the replay engine…"
-                    } else {
-                        "Connect a device to see the live 3D view"
+                    when {
+                        !liveView -> "Live view is off — the recording is unaffected"
+                        connected -> "3D view needs the real engine (simulated-engine build)"
+                        isReplaySession -> "Starting the replay engine…"
+                        else -> "Connect a sensor to see the live 3D view"
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(28.dp),
                 )
             }
+        }
+
+        // ROUND 5.3 (item 18): the trail — where this walk has already been,
+        // drawn over whatever renderer is underneath. Top-down, aspect-preserved,
+        // and dimmed where tracking was poor, so a stretch the engine will exclude
+        // is visibly a stretch you should walk again.
+        if (trailPoints.size >= 2) {
+            TrajectoryTrailOverlay(
+                points = trailPoints,
+                lengthM = trailLengthM,
+                modifier = Modifier.align(Alignment.BottomCenter)
+                    .padding(bottom = 10.dp)
+                    .size(width = 108.dp, height = 84.dp),
+            )
+        }
+
+        // ROUND 5 (item 11): the pose pump, when poses are needed and the AR
+        // overlay (which pumps ARCore itself) is not the renderer on screen.
+        // Two pumps would call Session.update() from two threads, so this is an
+        // either/or by construction.
+        if (poseTrackingRequired && arAvailable && cameraMode != CameraMode.AR) {
+            arPosePump(Modifier.align(Alignment.BottomStart).padding(start = 2.dp, bottom = 2.dp))
         }
 
         // ── top-left: the keyframe counter ──────────────────────────────
@@ -629,8 +1224,23 @@ private fun CaptureViewport(
             }
         }
 
-        // ── AR tracking hint, when the AR renderer is up ────────────────
-        if (cameraMode == CameraMode.AR && arTrackingHint != null) {
+        // ── tracking quality, inline, because 3D quality depends on it ──
+        //
+        // ROUND 5 item 11: for a phone-tracked D6 this is not a diagnostic, it is
+        // the state of the third dimension, so it rides the viewport during a
+        // recording rather than living only in the diagnostics sheet.
+        // Only once something is streaming: a tracking state on a viewport with no
+        // sensor behind it is a status about a scan that is not happening. Short
+        // labels, because this chip shares the top band with the camera control.
+        if (poseTrackingRequired && poseState != PoseTrackingState.NOT_REQUIRED && connected) {
+            ScanChip(
+                text = poseState.chipLabel,
+                color = poseState.chipColor,
+                showDot = true,
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 12.dp)
+                    .testTag("poseTrackingViewportChip"),
+            )
+        } else if (cameraMode == CameraMode.AR && arTrackingHint != null) {
             ScanChip(
                 text = arTrackingHint,
                 color = SemWarn,
@@ -643,7 +1253,8 @@ private fun CaptureViewport(
             text = if (liveSlam) "LIVE MAP · SLAM" else "RAW · ${sensor.badgeLabel.uppercase()}",
             color = PoseBlue,
             showDot = true,
-            modifier = Modifier.align(Alignment.BottomStart).padding(12.dp),
+            modifier = Modifier.align(Alignment.BottomStart).padding(start = 12.dp, bottom = 12.dp, end = 12.dp)
+                .padding(start = 6.dp),
         )
 
         // ── bottom-right: the health chip, and the door to Diagnostics ──
@@ -683,12 +1294,71 @@ private fun CaptureViewport(
     }
 }
 
+/**
+ * ROUND 5.3 (item 18): the walked path, as a small top-down inset on the
+ * viewport.
+ *
+ * A Compose `Canvas`, not a Filament overlay: the trail is 2D, it changes at ~5 Hz
+ * (one point per 15 cm of walk), and drawing it in the 3D scene would mean a
+ * second material, a second geometry upload path and a per-frame rebuild of a line
+ * strip — for a picture that is intentionally *not* in the cloud's own frame. The
+ * inset is deliberately small and bottom-centre: a walkthrough operator glances at
+ * it, they do not study it.
+ *
+ * Points where ARCore was not tracking are drawn faint — those are the stretches
+ * whose lidar returns the pushbroom flags and excludes by default (Tech Spec §3.3),
+ * so "faint on the trail" and "missing from the cloud" are the same thing.
+ */
+@Composable
+private fun TrajectoryTrailOverlay(
+    points: List<com.lidarscan.core.capture.TrajectoryTrail.NormalizedPoint>,
+    lengthM: Float,
+    modifier: Modifier = Modifier,
+) {
+    val shape = RoundedCornerShape(ScanDims.TileRadius)
+    Box(
+        modifier
+            .background(MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.72f), shape)
+            .border(1.dp, MaterialTheme.colorScheme.outline, shape)
+            .testTag("trajectoryTrail"),
+    ) {
+        androidx.compose.foundation.Canvas(Modifier.fillMaxSize().padding(6.dp)) {
+            val w = size.width
+            val h = size.height
+            var previous: androidx.compose.ui.geometry.Offset? = null
+            var previousTracking = true
+            points.forEach { p ->
+                val here = androidx.compose.ui.geometry.Offset(p.x * w, p.y * h)
+                previous?.let { from ->
+                    drawLine(
+                        color = if (previousTracking && p.tracking) ScanTeal else SemBad.copy(alpha = 0.5f),
+                        start = from,
+                        end = here,
+                        strokeWidth = 3f,
+                        cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                    )
+                }
+                previous = here
+                previousTracking = p.tracking
+            }
+            // Where you are NOW — the one thing worth finding at a glance.
+            previous?.let { drawCircle(color = Ember, radius = 4.5f, center = it) }
+        }
+        Text(
+            "%.0f m".format(lengthM),
+            style = MonoLabel.copy(fontSize = 9.sp),
+            color = InkFaint,
+            modifier = Modifier.align(Alignment.TopEnd).padding(4.dp),
+        )
+    }
+}
+
 // ── transport ───────────────────────────────────────────────────────────────
 
 /**
- * Live-SLAM switch on the left, pause circle and the 64 dp ember record button
- * on the right. This is the last thing on the screen, so it carries the tab
- * bar's clearance the removed telemetry body used to provide.
+ * ROUND 5: **Live** switch on the left (viewport streaming, default on — item 10),
+ * pause circle and the 64 dp ember record button on the right. Live SLAM moved
+ * into the settings sheet with the rest of the session configuration.
  *
  * The record button's `contentDescription` is what names the action for
  * accessibility *and* for the emulator smoke test — the button itself is a
@@ -698,16 +1368,15 @@ private fun CaptureViewport(
 private fun TransportRow(
     captureState: CaptureState,
     connected: Boolean,
-    liveSlam: Boolean,
+    liveView: Boolean,
     isReplaySession: Boolean,
     pauseSupported: Boolean,
-    onLiveSlamChange: (Boolean) -> Unit,
+    onLiveViewChange: (Boolean) -> Unit,
     onStart: () -> Unit,
     onPause: () -> Unit,
     onResume: () -> Unit,
     onStop: () -> Unit,
 ) {
-    val idle = captureState == CaptureState.IDLE
     val recording = captureState == CaptureState.RECORDING
     val paused = captureState == CaptureState.PAUSED
     val live = recording || paused
@@ -720,23 +1389,22 @@ private fun TransportRow(
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Switch(
-                    checked = liveSlam,
-                    // §3.1's toggle binds scan_session_config.live_slam, which
-                    // is read once when the session starts — so it is editable
-                    // while idle and locked during a session, and the caption
-                    // says which.
-                    enabled = idle && connected,
-                    onCheckedChange = onLiveSlamChange,
+                    checked = liveView,
+                    // Always editable, before AND during a recording: that is the
+                    // whole point of item 10's "capture itself also runs with live
+                    // view" — the operator decides, mid-walk, whether the phone
+                    // should keep drawing.
+                    onCheckedChange = onLiveViewChange,
                     colors = SwitchDefaults.colors(
                         checkedThumbColor = Color.White,
                         checkedTrackColor = Ember,
                         checkedBorderColor = Ember,
                     ),
-                    modifier = Modifier.testTag("liveSlamSwitch"),
+                    modifier = Modifier.testTag("liveViewSwitch"),
                 )
                 Spacer(Modifier.width(10.dp))
                 Text(
-                    if (liveSlam) "Live SLAM" else "Record-only",
+                    if (liveView) "Live view" else "Live view off",
                     fontFamily = DisplayFontFamily,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 15.sp,
@@ -747,7 +1415,7 @@ private fun TransportRow(
             }
             Spacer(Modifier.height(2.dp))
             Text(
-                if (idle) "editable while idle" else "locked during a session",
+                "display only · recording unaffected",
                 style = MonoLabel.copy(fontSize = 9.5.sp, letterSpacing = 0.06.em),
                 color = InkFaint,
             )
@@ -757,10 +1425,14 @@ private fun TransportRow(
         // in ReplaySource (B4) and a Mid-360 cannot pause without truncating the
         // recording on resume (B2/B3) — so it is present and dimmed rather than
         // absent, which keeps the transport's shape stable across sensors.
+        // ROUND 5.3 (item 18): mid-walk, one-handed, the two controls that matter
+        // grow. 52 → 64 dp pause and 64 → 76 dp stop while a session is live: a
+        // thumb reaching across a phone that is also carrying a lidar is not the
+        // same thumb that set the scan up on a bench.
         val pauseEnabled = live && pauseSupported && !stopping
         Box(
             Modifier
-                .size(52.dp)
+                .size(if (live) 64.dp else 52.dp)
                 .alpha(if (pauseEnabled) 1f else 0.3f)
                 .background(MaterialTheme.colorScheme.surfaceContainerHigh, CircleShape)
                 .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
@@ -780,14 +1452,17 @@ private fun TransportRow(
 
         Spacer(Modifier.width(12.dp))
 
+        // ROUND 5 item 9: Start creates a NEW project, and the label says so —
+        // there is no state in which this button records into something that
+        // already existed (bar the replay path, which says "replay").
         val recordLabel = when {
             live -> "Stop recording"
             isReplaySession -> "Start replay"
-            else -> "Start recording"
+            else -> "Start new scan"
         }
         Box(
             Modifier
-                .size(64.dp)
+                .size(if (live) 76.dp else 64.dp)
                 .alpha(if (connected && !stopping) 1f else 0.45f)
                 .shadow(16.dp, CircleShape, ambientColor = Ember, spotColor = Ember)
                 .background(Ember, CircleShape)
@@ -803,17 +1478,17 @@ private fun TransportRow(
             // reads as one control.
             Box(
                 Modifier
-                    .size(if (live) 24.dp else 26.dp)
+                    .size(if (live) 30.dp else 26.dp)
                     .background(OnEmber, if (live) RoundedCornerShape(7.dp) else CircleShape),
             )
         }
     }
 }
 
-// ── the RTK chip strip ──────────────────────────────────────────────────────
+// ── the RTK / georeference chip strip ───────────────────────────────────────
 
 @Composable
-private fun FixChipStrip(fix: GnssFixSnapshot, ntrip: NtripStatsSnapshot) {
+private fun FixChipStrip(fix: GnssFixSnapshot, ntrip: NtripStatsSnapshot, georefSource: GeorefSourceState) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -821,49 +1496,32 @@ private fun FixChipStrip(fix: GnssFixSnapshot, ntrip: NtripStatsSnapshot) {
             .padding(horizontal = 14.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(7.dp),
     ) {
+        // ROUND 5.2: the georeference source chip comes FIRST, because it is the
+        // one that says whether this scan is centimetres or metres. "RTK FIXED
+        // ±2 cm" with a rover, "PHONE GPS ±4.2 m" on the automatic fallback — the
+        // wording never lets the two be mistaken for each other.
         ScanChip(
-            text = fixChipText(fix),
-            color = if (fix.hasFix) fixColor(fix.fix) else SemBad,
-            showDot = true,
-        )
-        ScanChip(text = "NTRIP ${ntrip.state.name}")
-        ScanChip(
-            text = if (ntrip.receiving) "CORRECTIONS LIVE" else "NO RTCM",
-            color = if (ntrip.receiving) SemGood else null,
-        )
-        if (fix.hasFix) {
-            ScanChip(text = "${fix.satellites} SATS")
-        }
-    }
-}
-
-// ── connect prompt (unchanged behaviour, restyled) ──────────────────────────
-
-@Composable
-private fun ConnectPrompt(
-    sensor: SensorType,
-    mid360Endpoint: String?,
-    onConnectDevice: () -> Unit,
-    onConnectMid360: () -> Unit,
-) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp)) {
-        Hint(
-            when {
-                sensor == SensorType.MID360 && mid360Endpoint == null ->
-                    "Run the Mid-360 connect wizard first — capture needs both a lidar IP and a host IP, " +
-                        "and neither has a safe default."
-                sensor == SensorType.MID360 -> "Connect the Mid-360 ($mid360Endpoint) to start recording."
-                else -> "Connect a D6 to start recording."
+            text = georefSource.chipLabel,
+            color = when {
+                georefSource.isRtk -> if (fix.hasFix) fixColor(fix.fix) else SemGood
+                georefSource.isPhoneFallback -> SemWarn
+                else -> null
             },
+            showDot = true,
+            modifier = Modifier.testTag("georefSourceChip"),
         )
-        Spacer(Modifier.height(8.dp))
-        SecondaryPill(
-            text = if (sensor == SensorType.MID360 && mid360Endpoint == null) "Set up Mid-360" else "Connect",
-            height = 46.dp,
-            onClick = if (sensor == SensorType.MID360) onConnectMid360 else onConnectDevice,
-            modifier = Modifier.testTag("connectDeviceButton"),
-        )
-        Spacer(Modifier.height(6.dp))
+        if (!georefSource.isRtk) {
+            // No rover fix: say why in one word rather than showing three empty
+            // RTK chips (round 5 item 7's "fewer things on screen").
+            ScanChip(text = if (ntrip.receiving) "NTRIP LIVE" else "NO ROVER")
+        } else {
+            ScanChip(text = "NTRIP ${ntrip.state.name}")
+            ScanChip(
+                text = if (ntrip.receiving) "CORRECTIONS LIVE" else "NO RTCM",
+                color = if (ntrip.receiving) SemGood else null,
+            )
+            if (fix.hasFix) ScanChip(text = "${fix.satellites} SATS")
+        }
     }
 }
 
@@ -897,6 +1555,51 @@ private fun SessionSummaryContent(summary: CaptureStats, onDismiss: () -> Unit) 
         PrimaryPill(text = "Done", onClick = onDismiss, modifier = Modifier.fillMaxWidth())
         Spacer(Modifier.height(20.dp))
     }
+}
+
+// ── pose tracking (ROUND 5 item 11) ─────────────────────────────────────────
+
+/**
+ * The inline tracking-quality state for a phone-tracked capture.
+ *
+ * `INITIALIZING → TRACKING → LOST` mirrors what ARCore actually reports, and the
+ * labels say what it means for the *scan* rather than for the AR session, because
+ * for a D6 this is the state of the third dimension.
+ */
+enum class PoseTrackingState(val chipLabel: String, val chipColor: Color?) {
+    /** This sensor does not need phone tracking (Mid-360, replay). */
+    NOT_REQUIRED("", null),
+
+    /** No ARCore at all — the capture will be fan slices, not a cloud. */
+    UNAVAILABLE("NO TRACKING", SemBad),
+
+    /** Session up, no pose yet: move the phone slowly to let VIO converge. */
+    INITIALIZING("TRACKING…", SemWarn),
+
+    /** Poses are flowing into the engine. */
+    TRACKING("3D TRACKING", SemGood),
+
+    /** Was tracking, is not now: points from this stretch are flagged and excluded by default. */
+    LOST("TRACKING LOST", SemBad),
+}
+
+internal fun poseTrackingState(
+    required: Boolean,
+    arAvailable: Boolean,
+    sessionRunning: Boolean,
+    tracking: Boolean,
+    posesPushed: Long,
+    lossEpisodes: Int,
+): PoseTrackingState = when {
+    !required -> PoseTrackingState.NOT_REQUIRED
+    !arAvailable -> PoseTrackingState.UNAVAILABLE
+    tracking -> PoseTrackingState.TRACKING
+    // "Lost" only after it was actually held: before the first pose the honest
+    // word is initialising, and calling that "lost" would cry wolf on every
+    // single capture's first two seconds.
+    lossEpisodes > 0 || posesPushed > 0 -> PoseTrackingState.LOST
+    sessionRunning -> PoseTrackingState.INITIALIZING
+    else -> PoseTrackingState.INITIALIZING
 }
 
 // ── formatting + readouts ───────────────────────────────────────────────────
@@ -934,24 +1637,6 @@ private fun formatDuration(millis: Long): String {
 
 private fun formatMegabytes(bytes: Long): String = "${(bytes / 1_000_000.0).toInt()} MB"
 
-/**
- * The fix chip's own short form. `accuracyText()` is a full sentence built for
- * the RTK screen's strip ("±1.9 cm horizontal (measured, GST)") — correct
- * there, far too long for a chip that shares a scrolling row with three
- * others, so the chip keeps the number and drops the provenance. Tapping
- * through to the RTK screen is where the sentence still lives.
- */
-private fun fixChipText(fix: GnssFixSnapshot): String {
-    if (!fix.hasFix || fix.fix == com.lidarscan.core.gnss.FixType.NONE) return "NO FIX · no accuracy"
-    val sigma = fix.sigmaHorizontalM
-    val accuracy = when {
-        sigma <= 0f -> "accuracy unknown"
-        sigma < 1f -> "%.1f cm".format(sigma * 100)
-        else -> "%.2f m".format(sigma)
-    }
-    return "${fix.fix.label.uppercase()} · $accuracy"
-}
-
 private fun healthReadout(health: DeviceHealth?): Pair<String, Color?> = when {
     health == null -> "No data" to null
     health.state == ScanEngineNative.DeviceState.STREAMING && health.checksumPassRate >= 0.995 ->
@@ -965,17 +1650,19 @@ private fun healthReadout(health: DeviceHealth?): Pair<String, Color?> = when {
  * The AR-tracking read-out, resolved once and shown in whichever sheet is open
  * — so the Capture-settings row and the Diagnostics row can never disagree.
  *
- * `off` when the ARCore session has no reason to run at all (neither the AR
- * view nor keyframes), which is the mockup's own rule.
+ * `off` when the ARCore session has no reason to run at all — which, since round
+ * 5, also accounts for [poseTrackingRequired]: a phone-tracked D6 capture always
+ * has a reason, whether or not the AR *view* is the one on screen.
  */
 private fun arTrackingLabel(
     arAvailable: Boolean,
     tracking: Boolean,
     cameraMode: CameraMode,
     keyframesEnabled: Boolean,
+    poseTrackingRequired: Boolean,
 ): String = when {
     !arAvailable -> "unavailable"
-    cameraMode != CameraMode.AR && !keyframesEnabled -> "off"
+    cameraMode != CameraMode.AR && !keyframesEnabled && !poseTrackingRequired -> "off"
     tracking -> "TRACKING"
     else -> "LIMITED"
 }
@@ -1006,7 +1693,12 @@ private fun deviceDiagnostics(
         stateColor = stateColor,
         pointsPerSecond = formatRate(stats.pointsPerSecond),
         rotation = health?.let { "%.2f Hz".format(it.rotationHz) } ?: "—",
-        imu = sensor.badgeLabel.uppercase(),
+        // ROUND 5 item 11: the D6 has NO IMU. This row used to print the sensor's
+        // badge here, which read as "the D6 has an IMU called COIN-D6".
+        imu = when (sensor) {
+            SensorType.COIN_D6 -> "none on device · phone IMU via ARCore"
+            SensorType.MID360 -> "MID-360 built-in"
+        },
         checksum = checksum,
         checksumColor = checksumColor,
         packetLoss = if (total > 0) {
@@ -1025,8 +1717,12 @@ private fun arDiagnostics(
     keyframeRateFps: Int,
     keyframeStats: com.lidarscan.app.ar.KeyframeRecorder.Stats,
     trackingLossEpisodes: Int,
+    poseTrackingRequired: Boolean,
+    posesPushed: Long,
+    mountIsNominal: Boolean,
+    georefSource: GeorefSourceState,
 ): ArDiagnostics {
-    val label = arTrackingLabel(arAvailable, arTracking, cameraMode, keyframesEnabled)
+    val label = arTrackingLabel(arAvailable, arTracking, cameraMode, keyframesEnabled, poseTrackingRequired)
     return ArDiagnostics(
         tracking = label,
         trackingColor = when {
@@ -1048,5 +1744,40 @@ private fun arDiagnostics(
         } else {
             "not reported by this camera"
         },
+        // ROUND 5: the two numbers that say whether a phone-tracked D6 capture is
+        // actually producing 3D — poses pushed into the engine, and whether the
+        // extrinsic behind the pushbroom was measured or assumed.
+        posesPushed = if (poseTrackingRequired || posesPushed > 0) "%,d".format(posesPushed) else "not needed",
+        mountExtrinsic = if (mountIsNominal) "CAD nominal (uncalibrated)" else "measured calibration",
+        mountExtrinsicColor = if (mountIsNominal) SemWarn else SemGood,
+        georefSource = georefSource.chipLabel,
     )
+}
+
+/**
+ * ROUND 5.2: bridges a `suspend` permission request to Compose's
+ * `ActivityResultLauncher` callback, so the ViewModel can ask for fine location at
+ * the exact moment a capture starts and simply await the answer.
+ *
+ * One in-flight request at a time; a second caller while one is pending gets the
+ * same answer rather than launching a second system dialog.
+ */
+internal class PermissionRequestBridge {
+    private var pending: kotlinx.coroutines.CompletableDeferred<Boolean>? = null
+
+    suspend fun await(launch: () -> Unit): Boolean {
+        pending?.let { return it.await() }
+        val deferred = kotlinx.coroutines.CompletableDeferred<Boolean>()
+        pending = deferred
+        launch()
+        return try {
+            deferred.await()
+        } finally {
+            pending = null
+        }
+    }
+
+    fun complete(granted: Boolean) {
+        pending?.complete(granted)
+    }
 }

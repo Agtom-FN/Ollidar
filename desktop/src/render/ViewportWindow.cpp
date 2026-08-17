@@ -120,6 +120,37 @@ void ViewportWindow::setVsync(bool on) {
   resize_pending_ = true;  // reconfigure the layer on the next tick
 }
 
+double ViewportWindow::nextLowerRefreshNotch(double from) {
+  // The ladder the auto-downshift walks (item 17). Coarse on purpose: a
+  // 60 -> 57 fps step would neither help a struggling machine nor be worth an
+  // inline note about.
+  static const double kNotches[] = {120.0, 90.0, 60.0, 48.0, 30.0, 24.0, 15.0, 10.0, 5.0};
+  double best = 0.0;  // the HIGHEST notch strictly below `from`
+  for (const double n : kNotches) {
+    if (n < from - 0.01 && n > best) best = n;
+  }
+  return best > 0.0 ? best : from;  // already on the floor
+}
+
+void ViewportWindow::setRefreshCeiling(double hz) {
+  refresh_ceiling_ = hz > 1.0 ? hz : 0.0;
+  if (refresh_ceiling_ > 0.0 && max_fps_ > refresh_ceiling_) setMaxFps(refresh_ceiling_);
+}
+
+void ViewportWindow::setMaxFps(double fps) {
+  if (fps < 0.0) fps = 0.0;
+  // Hardware ceiling (item 17): asking for more than the screen can present is
+  // not a cap at all, and pretending otherwise is how a "120 fps" setting on a
+  // 60 Hz panel turns into a support question.
+  if (refresh_ceiling_ > 0.0 && fps > refresh_ceiling_) fps = refresh_ceiling_;
+  max_fps_ = fps;
+  overrun_windows_ = 0;
+  // Present the very next tick rather than making the new cap wait out the
+  // interval of the old one — a slider drag from 5 to 60 fps has to feel
+  // immediate, and the only state the throttle keeps is this timestamp.
+  last_presented_s_ = 0.0;
+}
+
 QString ViewportWindow::surfaceDescription() const {
   return surface_ ? surface_->describe() : QString("<no surface>");
 }
@@ -233,6 +264,10 @@ void ViewportWindow::initFilament() {
   }
   material_instance_ = material_->createInstance();
   measure_material_ = material_->createInstance();
+  // A THIRD instance for the trajectory trail (item 18): same forced-RGB,
+  // fixed-size treatment as the measure markers, one notch smaller so the path
+  // reads as a line rather than a string of beads.
+  trail_material_ = material_->createInstance();
 
   buildColormapTexture();
   cloud_.init(fengine_, scene_, material_instance_);
@@ -303,7 +338,9 @@ void ViewportWindow::destroyFilament() {
   if (!fengine_) return;
   cloud_.shutdown();
   destroyMeasureGeometry();
+  destroyTrailGeometry();
   if (measure_material_) fengine_->destroy(measure_material_);
+  if (trail_material_) fengine_->destroy(trail_material_);
   if (colormap_tex_) fengine_->destroy(colormap_tex_);
   if (material_instance_) fengine_->destroy(material_instance_);
   if (material_) fengine_->destroy(material_);
@@ -409,7 +446,22 @@ void ViewportWindow::pushMaterialParams() {
 // --- measure tool ------------------------------------------------------------
 
 void ViewportWindow::pushMarkerMaterialParams() {
-  if (!measure_material_) return;
+  // Both overlay instances get the same treatment at different sizes; the loop
+  // exists so a future overlay cannot be added with a half-configured instance
+  // (every parameter in points.mat must be set or Filament asserts).
+  struct Overlay {
+    filament::MaterialInstance* mi;
+    float px;
+  };
+  const Overlay overlays[] = {{measure_material_, 9.0f}, {trail_material_, 5.0f}};
+  for (const Overlay& ov : overlays) {
+    if (!ov.mi) continue;
+    pushOverlayMaterialParams(ov.mi, ov.px);
+  }
+}
+
+void ViewportWindow::pushOverlayMaterialParams(filament::MaterialInstance* mi, float marker_px) {
+  if (!mi) return;
   // A DisplayParams tuned so the marker/segment points render at a fixed,
   // legible screen size in a fixed colour regardless of whatever the dock's
   // current color mode / clipping / EDL settings are — a user placed these
@@ -419,39 +471,39 @@ void ViewportWindow::pushMarkerMaterialParams() {
   scanengine::DisplayParams mp{};
   mp.color_mode = scanengine::ColorMode::kRgb;
   mp.point_size.mode = scanengine::PointSizeMode::kFixedPixels;
-  mp.point_size.fixed_px = 9.0f;
+  mp.point_size.fixed_px = marker_px;
   mp.edl_enabled = false;
   mp.clip_height_enabled = false;
   mp.clip_box_enabled = false;
   scanengine::clamp_display_params(mp);
   const auto u = scanengine::to_uniforms(mp);
 
-  measure_material_->setParameter("colorMode", u.color_mode);
-  measure_material_->setParameter("colormap", u.colormap);
-  measure_material_->setParameter("gamma", u.gamma);
-  measure_material_->setParameter("invert", u.invert);
-  measure_material_->setParameter("valueMin", u.value_min);
-  measure_material_->setParameter("valueMax", u.value_max);
-  measure_material_->setParameter("brightness", u.brightness);
-  measure_material_->setParameter("pointSizeMode", u.point_size_mode);
-  measure_material_->setParameter("pointSizeMinPx", u.point_size_min_px);
-  measure_material_->setParameter("pointSizeMaxPx", u.point_size_max_px);
-  measure_material_->setParameter("adaptiveReferenceM", u.adaptive_reference_m);
-  measure_material_->setParameter("worldSizeM", u.world_size_m);
-  measure_material_->setParameter("clipEnabledMask", u.clip_enabled_mask);
-  measure_material_->setParameter("clipHeightMin", u.clip_height_min);
-  measure_material_->setParameter("clipHeightMax", u.clip_height_max);
-  measure_material_->setParameter(
+  mi->setParameter("colorMode", u.color_mode);
+  mi->setParameter("colormap", u.colormap);
+  mi->setParameter("gamma", u.gamma);
+  mi->setParameter("invert", u.invert);
+  mi->setParameter("valueMin", u.value_min);
+  mi->setParameter("valueMax", u.value_max);
+  mi->setParameter("brightness", u.brightness);
+  mi->setParameter("pointSizeMode", u.point_size_mode);
+  mi->setParameter("pointSizeMinPx", u.point_size_min_px);
+  mi->setParameter("pointSizeMaxPx", u.point_size_max_px);
+  mi->setParameter("adaptiveReferenceM", u.adaptive_reference_m);
+  mi->setParameter("worldSizeM", u.world_size_m);
+  mi->setParameter("clipEnabledMask", u.clip_enabled_mask);
+  mi->setParameter("clipHeightMin", u.clip_height_min);
+  mi->setParameter("clipHeightMax", u.clip_height_max);
+  mi->setParameter(
       "clipBoxMin", math::float3{u.clip_box_min[0], u.clip_box_min[1], u.clip_box_min[2]});
-  measure_material_->setParameter(
+  mi->setParameter(
       "clipBoxMax", math::float3{u.clip_box_max[0], u.clip_box_max[1], u.clip_box_max[2]});
-  measure_material_->setParameter("cameraPos", math::float3{0.f, 0.f, 0.f});
-  measure_material_->setParameter("pxPerMeterAt1m", 1.0f);
+  mi->setParameter("cameraPos", math::float3{0.f, 0.f, 0.f});
+  mi->setParameter("pxPerMeterAt1m", 1.0f);
   if (colormap_tex_) {
     TextureSampler sampler(TextureSampler::MinFilter::LINEAR, TextureSampler::MagFilter::LINEAR);
     sampler.setWrapModeS(TextureSampler::WrapMode::CLAMP_TO_EDGE);
     sampler.setWrapModeT(TextureSampler::WrapMode::CLAMP_TO_EDGE);
-    measure_material_->setParameter("colormapLut", colormap_tex_, sampler);
+    mi->setParameter("colormapLut", colormap_tex_, sampler);
   }
 }
 
@@ -571,6 +623,123 @@ void ViewportWindow::rebuildMeasureGeometry() {
   scene_->addEntity(measure_entity_);
 }
 
+// --- item 18: the live trajectory trail ------------------------------------
+
+void ViewportWindow::setTrajectoryTrail(const std::vector<std::array<float, 3>>& path) {
+  trail_path_ = path;
+  // COALESCED, not queued: the poll runs at 10 Hz and the rebuild happens at
+  // most once per presented frame (renderFrame). At a 5 fps cap that means one
+  // rebuild for every two polls, which is the point — nothing accumulates.
+  trail_dirty_ = true;
+}
+
+void ViewportWindow::clearTrajectoryTrail() {
+  trail_path_.clear();
+  trail_dirty_ = true;
+}
+
+void ViewportWindow::destroyTrailGeometry() {
+  if (!fengine_) return;
+  if (!trail_entity_.isNull()) {
+    if (scene_) scene_->remove(trail_entity_);
+    fengine_->destroy(trail_entity_);
+    utils::EntityManager::get().destroy(trail_entity_);
+    trail_entity_ = {};
+  }
+  if (trail_vb_) {
+    fengine_->destroy(trail_vb_);
+    trail_vb_ = nullptr;
+  }
+  if (trail_ib_) {
+    fengine_->destroy(trail_ib_);
+    trail_ib_ = nullptr;
+  }
+}
+
+void ViewportWindow::rebuildTrailGeometry() {
+  if (!fengine_ || !scene_ || !trail_material_) return;
+  destroyTrailGeometry();
+  // A14's own switch, so the trail obeys the display parameters like everything
+  // else on screen (it is bound in DisplayParamsDock's "Overlays" group).
+  if (!params_.show_trajectory || trail_path_.size() < 1) return;
+
+  std::vector<scanengine::PointVertex> verts;
+  const auto push = [&](float x, float y, float z, scanengine::RGBA8 c) {
+    scanengine::PointVertex v{};
+    v.x = x;
+    v.y = y;
+    v.z = z;
+    v.r = c.r;
+    v.g = c.g;
+    v.b = c.b;
+    v.a = c.a;
+    verts.push_back(v);
+  };
+  // Ember for the walked path, bright white for the head (where the operator IS
+  // — the one thing you look for while walking).
+  constexpr scanengine::RGBA8 kTrail{255, 138, 76, 255};
+  constexpr scanengine::RGBA8 kHead{255, 255, 255, 255};
+  constexpr float kSampleSpacingM = 0.05f;  // 5 cm: reads as a line, not beads
+  constexpr int kMaxSamplesPerLeg = 200;    // a teleporting pose must not blow the buffer
+  constexpr std::size_t kMaxVerts = 200000;
+
+  push(trail_path_.front()[0], trail_path_.front()[1], trail_path_.front()[2], kTrail);
+  for (std::size_t i = 1; i < trail_path_.size() && verts.size() < kMaxVerts; ++i) {
+    const auto& a = trail_path_[i - 1];
+    const auto& b = trail_path_[i];
+    const float dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
+    const float len = std::sqrt(dx * dx + dy * dy + dz * dz);
+    const int n = std::max(1, std::min(kMaxSamplesPerLeg, int(len / kSampleSpacingM)));
+    for (int k = 1; k <= n; ++k) {
+      const float t = float(k) / float(n);
+      push(a[0] + dx * t, a[1] + dy * t, a[2] + dz * t, kTrail);
+    }
+  }
+  // The head, drawn last and larger by being drawn as several coincident points
+  // is NOT how this works — one point at the head in white is enough at 5 px.
+  const auto& head = trail_path_.back();
+  push(head[0], head[1], head[2], kHead);
+
+  const std::uint32_t n = std::uint32_t(verts.size());
+  const size_t bytes = size_t(n) * sizeof(scanengine::PointVertex);
+  trail_vb_ = VertexBuffer::Builder()
+                  .vertexCount(n)
+                  .bufferCount(1)
+                  .attribute(VertexAttribute::POSITION, 0, VertexBuffer::AttributeType::FLOAT3, 0,
+                             sizeof(scanengine::PointVertex))
+                  .attribute(VertexAttribute::COLOR, 0, VertexBuffer::AttributeType::UBYTE4,
+                             offsetof(scanengine::PointVertex, r),
+                             sizeof(scanengine::PointVertex))
+                  .normalized(VertexAttribute::COLOR)
+                  .build(*fengine_);
+  auto* vmem = std::malloc(bytes);
+  std::memcpy(vmem, verts.data(), bytes);
+  trail_vb_->setBufferAt(
+      *fengine_, 0,
+      VertexBuffer::BufferDescriptor(vmem, bytes, [](void* b, size_t, void*) { std::free(b); }));
+
+  auto* idx = static_cast<std::uint32_t*>(std::malloc(sizeof(std::uint32_t) * n));
+  for (std::uint32_t i = 0; i < n; ++i) idx[i] = i;
+  trail_ib_ = IndexBuffer::Builder()
+                  .indexCount(n)
+                  .bufferType(IndexBuffer::IndexType::UINT)
+                  .build(*fengine_);
+  trail_ib_->setBuffer(*fengine_, IndexBuffer::BufferDescriptor(
+                                      idx, sizeof(std::uint32_t) * n,
+                                      [](void* b, size_t, void*) { std::free(b); }));
+
+  trail_entity_ = utils::EntityManager::get().create();
+  RenderableManager::Builder(1)
+      .boundingBox(Box{{0, 0, 0}, {1000.f, 1000.f, 1000.f}})
+      .material(0, trail_material_)
+      .geometry(0, RenderableManager::PrimitiveType::POINTS, trail_vb_, trail_ib_, 0, n)
+      .culling(false)
+      .castShadows(false)
+      .receiveShadows(false)
+      .build(*fengine_, trail_entity_);
+  scene_->addEntity(trail_entity_);
+}
+
 bool ViewportWindow::debugPickWorld(const QPointF& widgetPos, float outWorld[3]) const {
   return pickPoint(widgetPos, outWorld);
 }
@@ -661,6 +830,16 @@ void ViewportWindow::renderFrame() {
 
   applyResizeIfPending();
 
+  // The live refresh-rate throttle (setMaxFps). Deliberately AFTER the resize
+  // apply — a window being dragged must not lag behind by a throttle interval —
+  // and BEFORE the PageStore sync, because syncing and presenting is the work
+  // being throttled. The 1.5 ms slack keeps a 60 fps cap from beating against a
+  // 60 Hz display link and silently halving the rate.
+  if (max_fps_ > 0.0 && last_presented_s_ > 0.0 &&
+      (tick0 - last_presented_s_) < (1.0 / max_fps_) - 0.0015) {
+    return;
+  }
+
   // Mirror the engine's PageStore. Always a full re-read of the page counts —
   // see PagedCloudRenderer.h for why that, and not the event stream, is the
   // correct source of truth.
@@ -703,6 +882,14 @@ void ViewportWindow::renderFrame() {
     pushMaterialParams();
   }
 
+  // The trail's buffers are rebuilt HERE, at most once per presented frame, no
+  // matter how many poses arrived since the last one (item 17's "coalesce, do
+  // not queue"; item 18's trail).
+  if (trail_dirty_) {
+    trail_dirty_ = false;
+    rebuildTrailGeometry();
+  }
+
   updateCamera();
 
   // Per-frame material inputs that depend on the camera/viewport, not on the
@@ -730,6 +917,7 @@ void ViewportWindow::renderFrame() {
   const double cpu1 = clock_.nsecsElapsed() / 1e9;
   if (!drew) return;
 
+  last_presented_s_ = cpu1;
   cpu_ms_.push_back((cpu1 - tick0) * 1000.0);
   if (last_frame_start_ > 0) interval_ms_.push_back((cpu0 - last_frame_start_) * 1000.0);
   last_frame_start_ = cpu0;
@@ -768,6 +956,49 @@ void ViewportWindow::renderFrame() {
             .arg(dpr_, 0, 'f', 2)
             .arg(vsync_ ? "on" : "off")
             .arg(stats_.swapchain_recreates));
+
+    // --- item 17: measured auto-downshift --------------------------------
+    //
+    // A cap this machine cannot sustain is worse than a lower one it can: the
+    // renderer falls further behind every frame while the capture — which is
+    // NEVER throttled and never touched from here — keeps producing points. So
+    // when a presented frame's p95 CPU time has been eating most of the cap's
+    // budget across a sustained window (5 status windows ≈ 2 s, not one spike),
+    // step the cap one notch down and say so quietly. Only ever downward, and
+    // never below the 5 fps floor the notch ladder ends at.
+    if (max_fps_ > 0.0 && cpu_ms_.size() >= 8) {
+      const double budget_ms = 1000.0 / max_fps_;
+      // TWO signals, because one of them alone lies. p95 CPU catches a frame
+      // that is expensive to draw. But the throttle SKIPS ticks, and the cost of
+      // a skipped tick (a swapchain recreate during a window drag, say) is never
+      // sampled — so a machine can miss its cap badly while every frame it did
+      // present looks cheap. Measured on the resize-storm stress: 18.9 fps
+      // against a cap, with cpu p95 0.24 ms. Delivered rate versus the cap is
+      // the signal that catches that, and 0.75 is loose enough not to fire on
+      // ordinary display-link jitter.
+      const bool cpu_over = stats_.cpu_ms_p95 > budget_ms * 0.9;
+      const bool rate_under = stats_.fps > 0.0 && stats_.fps < max_fps_ * 0.75;
+      if (cpu_over || rate_under) {
+        ++overrun_windows_;
+      } else {
+        overrun_windows_ = 0;
+      }
+      if (overrun_windows_ >= 5) {
+        const double lower = nextLowerRefreshNotch(max_fps_);
+        const double was = max_fps_;
+        overrun_windows_ = 0;
+        if (lower < was) {
+          setMaxFps(lower);  // also resets the overrun counter
+          Q_EMIT refreshDownshifted(
+              lower, QString("delivered %1 fps against a %2 fps cap, frame cpu p95 %3 ms of a "
+                             "%4 ms budget")
+                         .arg(stats_.fps, 0, 'f', 1)
+                         .arg(was, 0, 'f', 0)
+                         .arg(stats_.cpu_ms_p95, 0, 'f', 2)
+                         .arg(budget_ms, 0, 'f', 1));
+        }
+      }
+    }
   }
 }
 

@@ -71,4 +71,20 @@ data class AppSettings(
     val lastDetectedMid360LidarIp: String? = null,
     val lastDetectedMid360HostIp: String? = null,
     val lastDetectedMid360SerialNumber: String? = null,
+    /**
+     * ROUND 5 (item 9): how many scans this device has auto-named so far.
+     *
+     * The Capture tab's Start always creates a NEW project, and an un-named one
+     * is called `Scan-<series>-<date>-<time>` (see
+     * [com.lidarscan.core.capture.ScanAutoName]). The counter is **device-level
+     * and monotonic** — deliberately not "number of projects currently on disk",
+     * because deleting a project must not make the next scan re-use its number:
+     * two `.lscan` directories called `Scan-014-…` on the same phone, taken
+     * weeks apart, is exactly the confusion the series exists to prevent.
+     *
+     * Incremented by [SettingsRepository.nextScanSeries] at the moment a project
+     * is created, so a series number is only ever spent on a project that
+     * actually exists.
+     */
+    val scanSeriesCounter: Int = 0,
 )

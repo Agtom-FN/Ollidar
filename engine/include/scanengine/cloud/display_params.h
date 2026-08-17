@@ -125,9 +125,9 @@ const char* to_string(PointSizeMode m) noexcept;
 
 struct PointSizeParams {
   PointSizeMode mode = PointSizeMode::kAdaptive;
-  float fixed_px = 2.0f;              // kFixedPixels; clamp [0.5, 64.0]
-  float adaptive_min_px = 1.0f;       // kAdaptive; clamp [0.5, 64.0], <= adaptive_max_px
-  float adaptive_max_px = 6.0f;       // kAdaptive; clamp [0.5, 64.0], >= adaptive_min_px
+  float fixed_px = 2.0f;              // kFixedPixels; clamp [0.1, 64.0]
+  float adaptive_min_px = 1.0f;       // kAdaptive; clamp [0.1, 64.0], <= adaptive_max_px
+  float adaptive_max_px = 6.0f;       // kAdaptive; clamp [0.1, 64.0], >= adaptive_min_px
   float adaptive_reference_m = 5.0f;  // distance (m) at which size == adaptive_min_px; clamp [0.01, 1000.0]
   float world_size_m = 0.01f;         // kWorldSize; clamp [0.0005, 1.0] (0.5 mm .. 1 m diameter)
 };

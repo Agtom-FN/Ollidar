@@ -4,12 +4,16 @@ import android.content.Intent
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeLeft
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -76,6 +80,61 @@ class ReplayCaptureSmokeTest {
         }
     }
 
+    /**
+     * ROUND 5: the reduced-step Capture tab, walked end to end with no hardware.
+     *
+     * What this actually proves on a bare emulator (no D6, no Mid-360):
+     *  * the Capture tab opens as a **new scan** — one name field with an
+     *    auto-name placeholder — rather than a picker or a new-project screen;
+     *  * auto-detect runs **unprompted** and reports its own state inline;
+     *  * when it finds nothing, the **manual panel opens by itself** (round 5's
+     *    owner addition 1) with both transports on it — no dialog, no extra tap;
+     *  * Start is present and disabled, which is the honest state with nothing
+     *    connected (the old flow would have had a wizard here).
+     *
+     * The one thing it cannot prove is a successful detect; that needs hardware
+     * and is recorded as such in android/NOTES.md.
+     */
+    @Test
+    fun captureTabIsANewScanWithAutoDetectAndAnInlineManualFallback() {
+        ActivityScenario.launch(MainActivity::class.java).use {
+            // `createEmptyComposeRule().fetchSemanticsNodes()` THROWS (rather than
+            // returning empty) while no compose hierarchy exists yet, and this test
+            // runs after one that has already torn an Activity down — so the first
+            // wait has to tolerate that window instead of failing in it.
+            composeRule.waitUntil(timeoutMillis = 20_000) {
+                runCatching {
+                    composeRule.onAllNodesWithTag("projectsAvatar").fetchSemanticsNodes().isNotEmpty()
+                }.getOrDefault(false)
+            }
+
+            composeRule.onNodeWithText("Capture").performClick()
+
+            // The tab IS the new-scan screen: name field + auto-detect line, no
+            // picker in front of it.
+            composeRule.waitUntil(timeoutMillis = 10_000) {
+                composeRule.onAllNodesWithTag("scanNameField").fetchSemanticsNodes().isNotEmpty()
+            }
+            composeRule.onNodeWithTag("autoDetectStatus").assertIsDisplayed()
+            composeRule.onNodeWithContentDescription("Start new scan").assertIsDisplayed()
+
+            // Auto-detect races a USB probe (no devices: immediate) against a 5 s
+            // Mid-360 heartbeat listen, so the failure — and with it the automatic
+            // manual fallback — lands a few seconds in.
+            composeRule.waitUntil(timeoutMillis = 30_000) {
+                composeRule.onAllNodesWithTag("manualEntryPanel").fetchSemanticsNodes().isNotEmpty()
+            }
+            composeRule.onNodeWithTag("manualLidarIpField").assertIsDisplayed()
+            composeRule.onNodeWithTag("manualHostIpField").assertIsDisplayed()
+            composeRule.onNodeWithTag("manualConnectMid360").assertIsDisplayed()
+            composeRule.onNodeWithTag("retryAutoDetectButton").assertIsDisplayed()
+
+            // "Enter manually" stays reachable (it is the toggle that is now
+            // showing "Hide manual entry"), which is the other half of addition 1.
+            composeRule.onNodeWithTag("manualEntryToggle").assertIsDisplayed()
+        }
+    }
+
     @Test
     fun replaySyntheticCaptureDecodesPointsWithoutCrashing() {
         // See com.lidarscan.app.debug.ReplayDeepLink: this extra makes
@@ -135,6 +194,36 @@ class ReplayCaptureSmokeTest {
                     "window (started at $firstSample, ended at $lastSample) — a flat count for the " +
                     "whole window would mean the replay engine stalled after the first page",
                 grew,
+            )
+
+            // ROUND 5: the display controls are adjustable against a LIVE view —
+            // that is item 10's whole point — so the sheet is opened mid-session
+            // and its new rows are exercised while points are still landing. The
+            // Live toggle is on the transport row, on by default.
+            composeRule.onNodeWithTag("liveViewSwitch").assertIsDisplayed()
+            composeRule.onNodeWithTag("captureSettingsButton").performClick()
+            composeRule.waitUntil(timeoutMillis = 10_000) {
+                composeRule.onAllNodesWithTag("captureSettingsSheet").fetchSemanticsNodes().isNotEmpty()
+            }
+            // The sheet's body scrolls (it carries view + AR/camera + display +
+            // session), so the rows below the fold are asserted to EXIST and then
+            // scrolled to — `assertIsDisplayed` on an off-screen row of a
+            // deliberately scrolling sheet would be testing the screen height.
+            composeRule.onNodeWithTag("pointSizeSlider").assertExists()
+            composeRule.onNodeWithTag("gammaSlider").assertExists()
+            composeRule.onNodeWithTag("brightnessSlider").assertExists()
+            composeRule.onNodeWithTag("refreshRateRow").assertExists()
+            composeRule.onNodeWithTag("pointSizeSlider").performScrollTo().assertIsDisplayed()
+
+            // Move point size to its round-5 minimum (0.1 px) with the sheet open
+            // and the cloud still decoding behind it: a live-applying control that
+            // takes the process down is exactly what this test exists to catch.
+            composeRule.onNodeWithTag("pointSizeSlider").performTouchInput { swipeLeft() }
+            Thread.sleep(1_000)
+            val afterSlider = currentPointsCaptured()
+            assertTrue(
+                "the session must survive a live display change (points were $lastSample, now $afterSlider)",
+                afterSlider >= lastSample,
             )
         }
     }
