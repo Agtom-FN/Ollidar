@@ -57,7 +57,7 @@ TEST_CASE("capi/smoke_sequence_from_C_with_a_synthetic_D6_capture") {
 
 TEST_CASE("capi/abi_version_and_error_strings") {
   CHECK(scan_engine_abi_version() == SCAN_ABI_VERSION);
-  CHECK(SCAN_ABI_VERSION == 7u);  // moves with scanengine::kEngineAbiVersion
+  CHECK(SCAN_ABI_VERSION == 8u);  // moves with scanengine::kEngineAbiVersion
   CHECK(std::string(scan_error_str(SCAN_OK)) == "ok");
   CHECK(std::string(scan_error_str(SCAN_ERR_CHECKSUM)) == "checksum failed");
   CHECK(std::string(scan_error_str(9999)) == "unrecognized error code");
@@ -225,9 +225,21 @@ TEST_CASE("capi/pushbroom_world_points_cross_the_abi_on_the_slam_map_stream") {
   const double kByteNs = 10.0 * 1e9 / 230400.0;
   const std::int64_t chunk_wire_ns =
       static_cast<std::int64_t>(kByteNs * static_cast<double>(bytes.size())) + 1;
+  //
+  // ROUND 9 refines this again: a return is now stamped when it was SAMPLED,
+  // not when its bytes landed. The device buffers a packet and blasts it at
+  // ~1.7x its sampling rate (60% wire duty measured against 230400 baud), so
+  // every sample predates its own transmission — the last return no longer
+  // lands exactly on the chunk's arrival stamp, it lands one packet's worth of
+  // wire time plus zero sampling periods earlier. The invariants that survive
+  // both rounds, and are the ones worth asserting, are that no point claims a
+  // time in the future of its transport, and none is absurdly older than the
+  // chunk that carried it.
+  const std::int64_t presample_ns = static_cast<std::int64_t>(255.0 * 1e9 / 4000.0);
   CHECK(st.t_first_ns <= t);
-  CHECK(st.t_first_ns >= t - chunk_wire_ns);
-  CHECK(st.t_last_ns == t);
+  CHECK(st.t_first_ns >= t - chunk_wire_ns - presample_ns);
+  CHECK(st.t_last_ns <= t);
+  CHECK(st.t_last_ns > t - chunk_wire_ns);
 
   // The assembled cloud is reachable through the ordinary page API — no new
   // accessor, because it is an ordinary stream in the ordinary store.

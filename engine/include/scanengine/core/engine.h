@@ -43,6 +43,7 @@
 #include "scanengine/gnss/gnss_source.h"
 #include "scanengine/gnss/ntrip_client.h"
 #include "scanengine/poses/external_pose_source.h"
+#include "scanengine/poses/imu_densified_pose.h"
 #include "scanengine/record/lscan.h"
 #include "scanengine/slam/lio.h"
 #include "scanengine/slam/pushbroom/pushbroom_assembler.h"
@@ -87,7 +88,14 @@ class JobQueue;
 //             field — no ABI-6 layout changed, so an ABI-6 consumer relinks
 //             unmodified and keeps the old hard-cap behaviour (eviction is
 //             opt-in). page_store.h.
-inline constexpr std::uint32_t kEngineAbiVersion = 7;
+// 8 (ROUND 9 item 35): the phone IMU becomes an input to the geometry.
+//             scan_engine_push_imu(), scan_engine_set_imu_extrinsics(),
+//             scan_engine_imu_densify_stats() + scan_imu_densify_stats, and
+//             SCAN_STREAM_IMU_PHONE. All new symbols / a new struct / a new
+//             value of an existing mirrored enum — no ABI-7 layout changed, so
+//             an ABI-7 consumer relinks unmodified and, pushing no IMU, gets
+//             byte-for-byte the ABI-7 trajectory. poses/imu_densified_pose.h.
+inline constexpr std::uint32_t kEngineAbiVersion = 8;
 const char* engine_version_string();  // "scanengine 0.1.0 (<clock backend>)"
 
 struct EngineConfig {
@@ -239,6 +247,74 @@ class Engine {
   PoseSample pose_at(std::int64_t t_mono_ns) const;
   ExternalPoseSource& poses();
   const ExternalPoseSource& poses() const;
+
+  // --- ROUND 9 item 35: the phone's IMU ------------------------------------
+  //
+  // > "lidar data and the imu position data need sync the frequency"
+  //
+  // ARCore delivers ~30 poses/s; the D6 delivers 4000 returns/s, each with its
+  // own instant. So one ARCore bracket spans ~133 returns whose orientation is
+  // whatever a slerp between two endpoints says — and the 5-15 Hz band a
+  // handheld rig actually lives in (tremor, heel strike) is not in that slerp.
+  // The phone's gyro runs at 200-400 Hz and sees all of it.
+  //
+  // Pushing samples here does TWO things, and both matter:
+  //   * they feed the `ImuDensifiedPoseSource` the pushbroom assembles
+  //     against, so every return between two ARCore poses is placed on the
+  //     gyro-integrated path rather than on the chord;
+  //   * they are RECORDED as ChunkType::kPhoneImu chunks, so the offline
+  //     re-resolve rebuilds the same geometry rather than a coarser one
+  //     (record-always, Tech Spec §3 key rule 2).
+  //
+  // `t_mono_ns` is engine time. On Android that is `SensorEvent.timestamp`
+  // verbatim — it is already CLOCK_BOOTTIME, the same domain as ARCore's pose
+  // stamps, so nothing maps it (see TimeSync::stream_has_device_clock).
+  //
+  // Safe from any thread; the densifier's ring is internally synchronized, so
+  // the SensorEventListener thread pushes here while the serial reader
+  // resolves points. A non-finite or out-of-order sample is rejected with
+  // kInvalidArgument rather than corrupting the ring.
+  //
+  // NEVER REQUIRED. With no IMU pushed, the densifier falls through to the
+  // wrapped ExternalPoseSource's plain interpolation on every query, which is
+  // exactly the pre-ROUND-9 answer (asserted in
+  // tests/test_round9_phone_imu_record.cpp).
+  Status push_phone_imu(std::int64_t t_mono_ns, const float gyro_rad_s[3],
+                        const float accel_m_s2[3]);
+
+  // Rotation taking a vector in the IMU's frame to the frame ARCore reports its
+  // pose in, as a unit quaternion (x, y, z, w). NOT identity on a real phone:
+  // Android's sensor frame is defined against the display in its natural
+  // orientation and ARCore's against the camera image, and the camera is
+  // usually mounted 90 degrees to the display
+  // (CameraCharacteristics.SENSOR_ORIENTATION). Only the app knows it, so only
+  // the app can supply it.
+  //
+  // Getting it wrong cannot corrupt the endpoints — those stay pinned to
+  // ARCore — but it distorts the path between them, which is the whole value
+  // being added. kInvalidArgument for a non-finite or zero-norm quaternion.
+  //
+  // COSTS THE BUFFERED SAMPLES. `ImuDensifyConfig` is fixed at construction
+  // (poses/imu_densified_pose.h), so applying a new extrinsic rebuilds the
+  // densifier, which drops the IMU ring and the estimated gyro bias. That is
+  // right rather than merely convenient — a bias learned under one frame
+  // convention is not a bias under another — but it means the first bracket or
+  // two after the call fall back to plain interpolation while the ring refills.
+  // Set it once, before start_session(), like the mount extrinsic.
+  Status set_imu_extrinsics(const double quat_xyzw[4]);
+
+  // Was the gyro path actually used, or did it fall back — and why? The four
+  // `fallback_*` counters are the diagnosis a field session needs: `no_imu`
+  // means nothing is pushing, `gap` means the sensor is stuttering, `bracket`
+  // means ARCore dropped poses, `closing` means the gyro and ARCore disagree
+  // by more than any real rig should (usually a wrong camera_from_imu).
+  ImuDensifyStats imu_densify_stats() const;
+
+  // The DENSIFIED interpolation, i.e. what the pushbroom actually resolves
+  // against — pose_at() above deliberately stays the raw ARCore answer, because
+  // that is what an app's overlay and the georef fusion mean by "the pose".
+  // Identical to pose_at() whenever no IMU has been pushed.
+  PoseSample densified_pose_at(std::int64_t t_mono_ns) const;
 
   // --- D6 pushbroom (A8) --------------------------------------------------
   //
@@ -465,6 +541,8 @@ class Engine {
   // ChunkType::kPoseAr chunk — record-always, finally applied to the
   // trajectory. See the long note above the definition in engine.cpp.
   void record_pose_(const Pose& pose);
+  // ROUND 9: the same thing for a phone IMU sample, as a kPhoneImu chunk.
+  void record_phone_imu_(const PhoneImuSample& s);
   void on_gnss_fix_(const GnssFix& fix);
 
   struct Impl;

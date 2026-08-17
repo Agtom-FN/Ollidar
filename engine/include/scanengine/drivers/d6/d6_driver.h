@@ -6,8 +6,13 @@
 // in, ACK handling, health model, points into the PageStore, status onto the
 // EventBus.
 //
-// Coordinate frame produced here is the SENSOR frame of a single 2D sweep:
-//   x = d·sin(θ), y = d·cos(θ), z = 0   (θ = 0 is +y, matching the S1 tools)
+// Coordinate frame produced here is the SENSOR frame of a single 2D sweep,
+// defined and computed in exactly one place — `drivers/d6/d6_fan.h`:
+//   x = -d·sin(θ), y = d·cos(θ), z = 0   (θ = 0 is +y; +z out of the BASE)
+// ROUND 9 item 34 corrected the sign of the x term. The vendor states its
+// angle convention in a LEFT-handed frame; reading it into a right-handed one
+// reverses the sweep, which mirrored every resolved cloud left-for-right.
+// d6_fan.h derives it in full. Do not re-inline the formula here.
 // The D6 is mounted VERTICALLY and the 3-D cloud comes from sweeping that
 // profile along a trajectory — that assembly is A8 (pushbroom), which will
 // replace this driver's page writes with trajectory-transformed points.

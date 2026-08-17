@@ -452,11 +452,21 @@ TEST_CASE("d6driver/round7_points_in_one_chunk_carry_their_own_arrival_time") {
   const double slice_ns = byte_ns * 64.0;
   const double observed_span_ns = static_cast<double>(t_last - t_first);
   CHECK(observed_span_ns > expected_span_ns - 4.0 * slice_ns);
-  CHECK(observed_span_ns <= expected_span_ns);
+  // ROUND 9: the span is now allowed to be slightly LARGER than the chunk's
+  // wire duration, and that is not slack — it is the correction. A sample is
+  // taken before its bytes are sent, so the first packet's earliest sample
+  // predates the chunk's first byte by up to (lsn-1) sampling periods
+  // (9 x 250 us = 2.25 ms for a 10-sample packet). The ceiling below is that
+  // allowance, not a tolerance.
+  const double sample_ns = 1e9 / 4000.0;
+  const double presample_ns = 254.0 * sample_ns;  // generous: any packet size
+  CHECK(observed_span_ns <= expected_span_ns + presample_ns);
 
   // 3. Monotonic, and never later than the chunk's own arrival — a point that
   //    claims a time in the future of its transport would make the assembler
-  //    wait for a pose that has already been superseded.
+  //    wait for a pose that has already been superseded. ROUND 9's clamp
+  //    preserves this by COMPRESSING an overlapping sample window rather than
+  //    sliding it forward; see d6::Config::per_sample_timestamps.
   for (std::size_t i = 1; i < cap.times.size(); ++i) CHECK(cap.times[i] >= cap.times[i - 1]);
   CHECK(t_last <= t_chunk_end);
 
@@ -480,6 +490,12 @@ TEST_CASE("d6driver/round7_control_one_stamp_per_chunk_smears_the_whole_read") {
   cfg.profile_sink = &ProfileCapture::sink;
   cfg.profile_sink_user_data = &cap;
   cfg.time_slice_bytes = 0;  // the pre-ROUND-7 behaviour, explicitly
+  // ROUND 9: and the pre-ROUND-9 behaviour too. Per-sample stamping works off
+  // each packet's byte OFFSET inside the reassembly buffer, so it recovers
+  // per-point structure even with slicing switched off — which is a real
+  // improvement, but it would quietly disarm this control. Turning both off is
+  // what "one stamp per chunk" now means.
+  cfg.parser.per_sample_timestamps = false;
 
   D6Driver driver(2, cfg, make_ctx(&bus, &points));
   REQUIRE(driver.start().ok());

@@ -108,6 +108,40 @@ struct D6ResolveConfig {
   // 30 Hz) because an offline pass has no memory pressure worth speaking of
   // and a ring that wraps mid-resolve silently drops trajectory.
   std::size_t pose_capacity = 262144;
+
+  // --- ROUND 9 item 35: the recorded phone IMU ----------------------------
+  //
+  // ON, because "replay == capture" (Tech Spec §3 key rule 2) is the point of
+  // this whole file and since ROUND 9 the live pass resolves through
+  // `ImuDensifiedPoseSource`. An offline resolve that ignored the recorded
+  // gyro would produce a DIFFERENT — and measurably worse — cloud than the one
+  // the operator watched, with nobody able to say which was right.
+  //
+  // A container with no kPhoneImu chunks (i.e. everything recorded before
+  // ROUND 9, and any capture on a device that never pushed one) is unaffected
+  // either way: the densifier with an empty ring falls through to the plain
+  // interpolation on every query, so the result is bit-identical to what this
+  // pipeline produced before ROUND 9.
+  //
+  // OFF is the A/B: the same container resolved both ways, which is how the
+  // gyro's contribution to a REAL capture is measured rather than asserted.
+  bool densify_with_phone_imu = true;
+
+  // IMU->camera rotation, (x, y, z, w). Only the app knows it (it comes from
+  // CameraCharacteristics.SENSOR_ORIENTATION and the rig), and the container
+  // does not carry it yet — `manifest.json` has no key for it, which is a real
+  // seam and is named as such in the ROUND 9 notes. Supply it when the caller
+  // has it; the identity default is correct for a synthetic stream and for a
+  // device where the two frames coincide, and getting it wrong distorts the
+  // path between two ARCore poses without ever moving the poses themselves.
+  bool have_imu_extrinsics = false;
+  double imu_camera_from_imu[4] = {0.0, 0.0, 0.0, 1.0};
+
+  // IMU ring capacity, in samples. The default (3200 = 8 s at 400 Hz) is the
+  // live one and is already generous — the densifier only ever integrates
+  // BACKWARD over one ARCore bracket (~33 ms), so it needs only the recent
+  // tail, and the chronological read guarantees that tail has arrived.
+  std::size_t imu_capacity = 3200;
 };
 
 struct D6ResolveStats {
@@ -118,6 +152,22 @@ struct D6ResolveStats {
   std::uint64_t points_out = 0;     // resolved world points published
   PushbroomStats pushbroom{};
   bool mount_from_manifest = false; // the extrinsic came from the container
+  // ROUND 9: the phone-IMU extrinsic came from the container's manifest
+  // ("imuCalibration") rather than from the caller.
+  bool imu_extrinsics_from_manifest = false;
+
+  // --- ROUND 9: the phone IMU ---------------------------------------------
+  // `imu_read` is kPhoneImu chunks decoded, `imu_accepted` how many the
+  // densifier took (it rejects non-finite and out-of-order samples).
+  // `imu_densified` / `imu_fallbacks` are the interpolator's own verdict: how
+  // many returns were placed on the gyro path and how many fell back to the
+  // slerp. Both zero on a pre-ROUND-9 container, and `imu_densified == 0` with
+  // `imu_read > 0` is the signal that something is wrong (a stuttering sensor,
+  // or an extrinsic so far off that every bracket trips the closing guard).
+  std::uint64_t imu_read = 0;
+  std::uint64_t imu_accepted = 0;
+  std::uint64_t imu_densified = 0;
+  std::uint64_t imu_fallbacks = 0;
 };
 
 class D6ResolvePipeline {

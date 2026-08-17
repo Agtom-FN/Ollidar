@@ -57,6 +57,9 @@ class SettingsRepository(private val context: Context) {
 
         /** ROUND 7 (time-sync): the constant D6 transport latency, milliseconds. */
         val D6_SENSOR_LATENCY_MS = intPreferencesKey("d6_sensor_latency_ms")
+
+        /** ROUND 9 (item 33): keep 0-point scans instead of pruning them. Default false. */
+        val KEEP_EMPTY_SCANS = booleanPreferencesKey("keep_empty_scans")
     }
 
     val settings: Flow<AppSettings> = context.settingsDataStore.data.map { prefs ->
@@ -87,6 +90,9 @@ class SettingsRepository(private val context: Context) {
             scanSeriesCounter = prefs[Keys.SCAN_SERIES] ?: 0,
             d6SensorLatencyMs = prefs[Keys.D6_SENSOR_LATENCY_MS]
                 ?: com.lidarscan.core.capture.D6TimeSync.DEFAULT_SENSOR_LATENCY_MS,
+            // ROUND 9 (item 33): the default IS the fix — an unset preference
+            // means empty scans are pruned.
+            keepEmptyScans = prefs[Keys.KEEP_EMPTY_SCANS] ?: false,
         )
     }
 
@@ -196,6 +202,11 @@ class SettingsRepository(private val context: Context) {
             it[Keys.CLOUD_BASE_URL] = baseUrl.trim().trimEnd('/')
             it[Keys.CLOUD_TOKEN] = token.trim()
         }
+    }
+
+    /** ROUND 9 (item 33): see [AppSettings.keepEmptyScans]. */
+    suspend fun setKeepEmptyScans(keep: Boolean) {
+        context.settingsDataStore.edit { it[Keys.KEEP_EMPTY_SCANS] = keep }
     }
 
     suspend fun setAllowPoorSyncColorize(allow: Boolean) {

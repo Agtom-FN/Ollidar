@@ -79,6 +79,7 @@ SCAN_CHECK_ENUM(SCAN_STREAM_CAMERA_FRAMES, StreamId::kCameraFrames);
 SCAN_CHECK_ENUM(SCAN_STREAM_POSE_FUSED, StreamId::kPoseFused);
 SCAN_CHECK_ENUM(SCAN_STREAM_SLAM_MAP, StreamId::kSlamMap);
 SCAN_CHECK_ENUM(SCAN_STREAM_POSE_LIO, StreamId::kPoseLio);
+SCAN_CHECK_ENUM(SCAN_STREAM_IMU_PHONE, StreamId::kImuPhone);
 
 // A8's three new enums. The drift guard matters more here than usual: the
 // gates are what Tech Spec §3.3's "flagged and excluded by default" and
@@ -1063,6 +1064,51 @@ scan_error_t scan_engine_pose_at(scan_engine* engine, int64_t t_mono_ns, scan_po
   if (s.gate == PoseGate::kFuture) return SCAN_ERR_AGAIN;
   return to_c(set_last_error(ScanError::kNotFound, "no pose at %lld ns (%s)",
                              static_cast<long long>(t_mono_ns), to_string(s.gate)));
+  SCAN_GUARD_END
+}
+
+// --- the phone IMU (ABI 8, ROUND 9 item 35) ---------------------------------
+
+scan_error_t scan_engine_push_imu(scan_engine* engine, int64_t t_mono_ns,
+                                  const float gyro_rad_s[3], const float accel_m_s2[3]) {
+  SCAN_GUARD_BEGIN
+  if (engine == nullptr || gyro_rad_s == nullptr || accel_m_s2 == nullptr) {
+    return fail(ScanError::kInvalidArgument, "null argument");
+  }
+  return to_c(handle_of(engine)->engine->push_phone_imu(t_mono_ns, gyro_rad_s, accel_m_s2));
+  SCAN_GUARD_END
+}
+
+scan_error_t scan_engine_set_imu_extrinsics(scan_engine* engine, const double quat_xyzw[4]) {
+  SCAN_GUARD_BEGIN
+  if (engine == nullptr || quat_xyzw == nullptr) {
+    return fail(ScanError::kInvalidArgument, "null argument");
+  }
+  return to_c(handle_of(engine)->engine->set_imu_extrinsics(quat_xyzw));
+  SCAN_GUARD_END
+}
+
+scan_error_t scan_engine_imu_densify_stats(scan_engine* engine, scan_imu_densify_stats* out) {
+  SCAN_GUARD_BEGIN
+  if (engine == nullptr || out == nullptr) {
+    return fail(ScanError::kInvalidArgument, "null argument");
+  }
+  const ImuDensifyStats s = handle_of(engine)->engine->imu_densify_stats();
+  std::memset(out, 0, sizeof(*out));
+  out->samples_in = s.samples_in;
+  out->samples_rejected = s.samples_rejected;
+  out->queries = s.queries;
+  out->densified = s.densified;
+  out->fallbacks = s.fallbacks;
+  out->fallback_no_imu = s.fallback_no_imu;
+  out->fallback_gap = s.fallback_gap;
+  out->fallback_bracket = s.fallback_bracket;
+  out->fallback_closing = s.fallback_closing;
+  out->bias_updates = s.bias_updates;
+  for (int i = 0; i < 3; ++i) out->bias_rad_s[i] = s.bias_rad_s[i];
+  out->worst_closing_deg = s.worst_closing_deg;
+  out->mean_closing_deg = s.mean_closing_deg;
+  return SCAN_OK;
   SCAN_GUARD_END
 }
 

@@ -210,7 +210,10 @@ TEST_CASE("engine/create_starts_idle_and_reports_a_version") {
   // 7: the live point window (scan_engine_set_live_page_eviction,
   //    scan_engine_page_stats + scan_page_stats,
   //    scan_engine_recycle_live_pages, SCAN_PAGE_UPDATE_EVICTED).
-  CHECK(kEngineAbiVersion == 7);
+  // 8: ROUND 9 item 35's phone IMU (scan_engine_push_imu,
+  //    scan_engine_set_imu_extrinsics, scan_engine_imu_densify_stats +
+  //    scan_imu_densify_stats, SCAN_STREAM_IMU_PHONE).
+  CHECK(kEngineAbiVersion == 8);
 }
 
 TEST_CASE("engine/session_transitions_are_enforced_and_announced") {

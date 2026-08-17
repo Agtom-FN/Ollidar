@@ -50,6 +50,27 @@
          unavailable (see ArAvailability.message()). -->
     <uses-feature android:name="android.hardware.camera.ar" android:required="false" />
 
+    <!-- ROUND 9 (owner item 35): the phone's own gyro + accelerometer, pushed
+         into the engine's IMU-densified pose interpolator.
+
+         ARCore poses arrive at ~30 Hz while the COIN-D6 samples at 4000 Hz, so
+         every return is interpolated; integrating the phone's gyro across each
+         33 ms ARCore interval is what makes that interpolation follow a walking
+         human instead of a dolly (engine-side: wall plane-fit RMS 0.739 cm ->
+         0.021 cm). The benefit scales with how much of that interval the IMU
+         actually samples.
+
+         Android caps sensor delivery at 200 Hz for apps that do not hold
+         HIGH_SAMPLING_RATE_SENSORS, whatever the sensor's own minDelay says and
+         whatever SENSOR_DELAY_FASTEST asks for. This permission lifts that cap
+         to the hardware's real rate (400+ Hz on modern phones). It is
+         INSTALL-TIME (protection level "normal"), so there is no runtime prompt
+         and nothing to ask the operator — declaring it is the whole of it.
+         PhoneImuRecorder measures the rate it actually gets and reports it, so
+         a device that grants less says so rather than being assumed. -->
+    <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS" />
+    <uses-feature android:name="android.hardware.sensor.gyroscope" android:required="false" />
+
     <!-- B9 (Tech Spec §2.3, §3.1's "RTK rover: Bluetooth SPP (Android)").
 
          API 31+ replaced the old install-time BLUETOOTH/BLUETOOTH_ADMIN pair

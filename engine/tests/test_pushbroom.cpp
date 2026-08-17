@@ -8,6 +8,7 @@
 #include "scanengine/poses/pose_interpolator.h"
 #include "scanengine/poses/external_pose_source.h"
 #include "scanengine/slam/pushbroom/pushbroom_assembler.h"
+#include "scanengine/drivers/d6/d6_fan.h"
 
 #include <algorithm>
 #include <cmath>
@@ -120,8 +121,13 @@ Pose make_pose(std::int64_t t_ns, const Trajectory& traj, PoseQuality qual = Pos
 void expected_world(const Trajectory& traj, const Quat& q_mount, const double t_mount[3],
                     std::int64_t t_ns, double angle_deg, double range_m, double out[3]) {
   const double t = static_cast<double>(t_ns) * 1e-9;
-  const double a = angle_deg * kPi / 180.0;
-  const double p_l[3] = {range_m * std::sin(a), range_m * std::cos(a), 0.0};
+  // The fan frame comes from the ONE production definition (d6_fan.h) — the
+  // point of this ground truth is to check the COMPOSITION independently (via
+  // a quaternion sandwich, never a 4x4 product), not to re-derive the sensor
+  // convention and risk the two silently disagreeing. ROUND 9 item 34 is what
+  // happens when they do.
+  double p_l[3];
+  d6::fan_point(angle_deg, range_m, p_l);
   double p_phone[3];
   qrot(q_mount, p_l, p_phone);
   for (int i = 0; i < 3; ++i) p_phone[i] += t_mount[i];
@@ -532,10 +538,11 @@ TEST_CASE("pushbroom/cartesian_seam_overload_agrees_with_the_polar_path") {
   // The same returns as sensor-frame PointVertex, the way D6Driver emits them.
   std::vector<PointVertex> cart;
   for (const auto& p : prof) {
-    const double a = static_cast<double>(p.angle_deg) * kPi / 180.0;
+    double p_l[3];
+    d6::fan_point(static_cast<double>(p.angle_deg), static_cast<double>(p.range_m), p_l);
     PointVertex v{};
-    v.x = static_cast<float>(p.range_m * std::sin(a));
-    v.y = static_cast<float>(p.range_m * std::cos(a));
+    v.x = static_cast<float>(p_l[0]);
+    v.y = static_cast<float>(p_l[1]);
     v.z = 0.0f;
     v.r = v.b = p.intensity;
     v.g = p.high_reflectivity ? 255 : p.intensity;
@@ -849,9 +856,14 @@ Pose gait_pose(std::int64_t t_ns, const GaitTrajectory& g) {
 
 // The owner's mount: D6 flat on the BACK of the phone with the scan fan
 // VERTICAL and across the direction of travel. In lidar coordinates the fan is
-// the xy plane (p = d*sin(theta), d*cos(theta), 0), so the mount must send
-// lidar +x -> world +y (across), lidar +y -> world +z (up), lidar +z -> world
-// +x (forward, the spin axis, along the walk).
+// the xy plane (d6_fan.h), so the mount must send lidar +x -> world +y
+// (across), lidar +y -> world +z (up), lidar +z -> world +x (along the walk).
+//
+// NOTE this fixture's world is +z-up and its "lidar +z -> forward" is a TEST
+// convention, unrelated to the phone frame; it exists to make the planarity
+// arithmetic readable. It is deliberately NOT a statement about which end of
+// the unit +z comes out of — d6_fan.h owns that, and the chirality assertion
+// lives in test_round9_chirality.cpp, which uses the real ARCore frame.
 void pushbroom_mount(double m[16], Quat* q_out) {
   const double R[9] = {0, 0, 1,
                        1, 0, 0,
@@ -868,8 +880,8 @@ void pushbroom_mount(double m[16], Quat* q_out) {
 // out of the D6's range).
 double range_to_wall(const GaitTrajectory& g, const Quat& q_mount, double wall_y, double t,
                      double angle_deg) {
-  const double a = angle_deg * kPi / 180.0;
-  const double dir_l[3] = {std::sin(a), std::cos(a), 0.0};
+  double dir_l[3];
+  d6::fan_point(angle_deg, 1.0, dir_l);  // unit ray in the fan frame
   double dir_p[3];
   qrot(q_mount, dir_l, dir_p);
   double dir_w[3];
@@ -954,9 +966,11 @@ std::vector<PointVertex> walk_past_a_wall(Pairing pairing, std::size_t* out_kept
 
   ExternalPoseSource poses;
   // Poses cover the whole walk with a margin either side, so nothing is
-  // dropped for want of a bracket.
+  // dropped for want of a bracket. The trailing margin is a full USB chunk
+  // wide because the kPerChunk arm dates a return at the END of the 177.8 ms
+  // read holding it, which can land past the last return's own time.
   for (std::int64_t t = kT0 - 2 * kPoseNs;
-       t <= kT0 + kRevolutions * kRevNs + 2 * kPoseNs; t += kPoseNs) {
+       t <= kT0 + kRevolutions * kRevNs + kChunkNs + 2 * kPoseNs; t += kPoseNs) {
     REQUIRE(poses.push_pose(gait_pose(t, g)).ok());
   }
 

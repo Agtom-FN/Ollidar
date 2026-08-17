@@ -411,7 +411,11 @@ TEST_CASE("e2/d6_replay_golden_is_byte_stable") {
   CHECK(v.data[0].y == doctest::Approx(1.0f).epsilon(1e-4));
   // The revolution's LAST sample is 1/120th of a turn before closing back to
   // 360 deg, i.e. angle = 360 - 360/120 = 357 deg exactly (120 = 6*20).
-  CHECK(v.data[v.count - 1].x == doctest::Approx(-0.05234f).epsilon(1e-3));
+  //
+  // ROUND 9 item 34: this x flipped sign, from -0.05234 to +0.05234. It is the
+  // golden pin on the fan-frame handedness (d6_fan.h): x = -d*sin(357 deg) =
+  // +0.05234. If a future change flips the sweep back, this line fails first.
+  CHECK(v.data[v.count - 1].x == doctest::Approx(0.05234f).epsilon(1e-3));
   CHECK(v.data[v.count - 1].y == doctest::Approx(0.99863f).epsilon(1e-3));
 }
 

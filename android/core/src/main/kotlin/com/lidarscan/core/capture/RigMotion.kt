@@ -25,11 +25,24 @@ data class RigMotionEstimate(
  *
  * Why finite differences and not the IMU: A11 records these two numbers per
  * keyframe precisely so that "colorization works from a `.lscan` alone, on a
- * desktop, with no IMU stream to re-integrate" (A11 §3.3 item 4), and the
+ * desktop, with no IMU stream to re-integrate" (A11 §3.3 item 4). So the pose
+ * stream *is* the motion source here, deliberately, and it stays that way.
+ *
+ * **ROUND 9 (owner item 35) update.** This comment used to continue "…and the
  * phone's own IMU is not a stream this app pushes into the engine at all —
- * ARCore consumes it internally and hands back poses. So the pose stream *is*
- * the motion source here. A caller who later has a real IMU stream can pass
- * an `AngularRateFn` to the colorizer and that wins, by A11's own rule.
+ * ARCore consumes it internally and hands back poses." That is no longer true:
+ * [PhoneImu]/`com.lidarscan.app.ar.PhoneImuRecorder` now register
+ * `TYPE_GYROSCOPE` + `TYPE_ACCELEROMETER` and push the fused stream through
+ * `scan_engine_push_imu`, so the engine's pose interpolator can DENSIFY
+ * ARCore's ~30 Hz poses against the D6's 4000 Hz sampling (the owner's "lidar
+ * data and the imu position data need sync the frequency"; measured engine-side
+ * as a wall plane-fit RMS of 0.739 cm -> 0.021 cm).
+ *
+ * That changes nothing here, and on purpose. These two numbers are a
+ * KEYFRAME-INDEX field that must survive into a `.lscan` a desktop can
+ * colorize with no IMU stream at all, which is A11's stated reason for them
+ * existing. A caller who has a real IMU stream in hand can still pass an
+ * `AngularRateFn` to the colorizer and that wins, by A11's own rule.
  *
  * The estimate is a **centred difference over a short window** (default
  * ±100 ms, i.e. ~3 ARCore frames either side at 30 Hz): a single 33 ms

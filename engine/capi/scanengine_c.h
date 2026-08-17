@@ -133,7 +133,36 @@ extern "C" {
  * existing struct layout or function signature from ABI 6 changed, and the
  * default behaviour of every existing call is byte-for-byte what it was. An
  * ABI-6 consumer relinks against this header unmodified. */
-#define SCAN_ABI_VERSION 7u
+/* 7 -> 8 (ROUND 9 item 35): the phone's IMU becomes an input to the geometry.
+ * The owner's words: "lidar data and the imu position data need sync the
+ * frequency". ARCore delivers ~30 poses/s and the COIN-D6 delivers 4000
+ * returns/s, so ~133 consecutive returns share one pose bracket and are placed
+ * on the chord between its ends — which cannot represent the 5-15 Hz band a
+ * handheld rig actually moves in. The phone's own gyro runs at 200-400 Hz and
+ * does. On the engine's fixture (1.5 deg of 12 Hz jitter) the wall's plane-fit
+ * RMS goes from 0.739 cm to 0.021 cm.
+ *   * scan_engine_push_imu() — one gyro+accel sample, `SensorEvent.timestamp`
+ *     verbatim (it is already CLOCK_BOOTTIME, the same clock ARCore stamps
+ *     poses with, so nothing maps it). Feeds the densifier AND is recorded as
+ *     a ChunkType::kPhoneImu chunk, because since this round the gyro decides
+ *     where most returns go and a container without it can only be re-resolved
+ *     to a coarser cloud than the operator watched.
+ *   * scan_engine_set_imu_extrinsics() — the IMU->camera rotation. NOT
+ *     identity on a real phone: Android's sensor frame is defined against the
+ *     display and ARCore's against the camera image, and the two are usually
+ *     90 degrees apart (CameraCharacteristics.SENSOR_ORIENTATION). Only the
+ *     app can know it, which is why it must cross the ABI.
+ *   * scan_engine_imu_densify_stats() + scan_imu_densify_stats — was the gyro
+ *     path used, and if not, which of the four guards refused it.
+ *   * SCAN_STREAM_IMU_PHONE — a new VALUE of the existing SCAN_STREAM_* mirror
+ *     (no layout change). Deliberately not SCAN_STREAM_IMU, which is the
+ *     Mid-360's IMU and is what two offline pipelines read as "this is a
+ *     Mid-360 project".
+ * Every addition is a NEW symbol, a NEW struct or a NEW enum value: no existing
+ * struct layout or function signature from ABI 7 changed. An ABI-7 consumer
+ * relinks against this header unmodified and, pushing no IMU, gets
+ * byte-for-byte the trajectory and the cloud it got before. */
+#define SCAN_ABI_VERSION 8u
 
 /* --- errors: mirror of scanengine::ScanError --------------------------- */
 typedef int32_t scan_error_t;
@@ -203,7 +232,10 @@ enum {
   SCAN_STREAM_POSE_FUSED = 7,
   SCAN_STREAM_SLAM_MAP = 8,  /* registered world-frame points: A6's map, A8's
                               * assembled pushbroom cloud */
-  SCAN_STREAM_POSE_LIO = 9
+  SCAN_STREAM_POSE_LIO = 9,
+  SCAN_STREAM_IMU_PHONE = 10 /* ROUND 9: the PHONE's gyro/accel. Distinct from
+                              * SCAN_STREAM_IMU, which is the Mid-360's — the
+                              * offline pipelines route on that distinction. */
 };
 
 /* --- poses: mirror of poses/pose_source.h + pose_interpolator.h ---------- */
@@ -1035,6 +1067,68 @@ SCAN_API scan_error_t scan_engine_push_pose(scan_engine* engine, const scan_pose
  * `out` may be NULL if only the gate is wanted. */
 SCAN_API scan_error_t scan_engine_pose_at(scan_engine* engine, int64_t t_mono_ns,
                                           scan_pose* out, uint8_t* out_gate);
+
+/* --- the phone IMU in (ABI 8, ROUND 9 item 35) ---------------------------
+ *
+ * One decoded sample, in the IMU's own frame and SI units — i.e. an Android
+ * `SensorEvent` for TYPE_GYROSCOPE fused with the matching TYPE_ACCELEROMETER
+ * event, passed through unchanged. `t_mono_ns` is `SensorEvent.timestamp`
+ * VERBATIM: it is already CLOCK_BOOTTIME, the same domain ARCore stamps poses
+ * in, so the engine maps nothing and a caller that "helpfully" converts it
+ * will break the correlation this entire feature depends on.
+ *
+ * Safe from the SensorEventListener thread while points decode on another. A
+ * non-finite sample, or one older than the newest already held, is rejected
+ * with SCAN_ERR_INVALID_ARGUMENT rather than corrupting the ring — Android
+ * genuinely delivers out-of-order events across sensor types, so this is an
+ * expected return, not a bug indicator.
+ *
+ * Pushing nothing is always legal: with an empty ring the engine's trajectory
+ * is exactly the ABI-7 one. */
+SCAN_API scan_error_t scan_engine_push_imu(scan_engine* engine, int64_t t_mono_ns,
+                                           const float gyro_rad_s[3],
+                                           const float accel_m_s2[3]);
+
+/* The rotation taking a vector in the IMU's frame to the frame ARCore reports
+ * its pose in, as a unit quaternion (x, y, z, w). The identity is correct ONLY
+ * for a synthetic stream or a device where the sensor and camera frames
+ * coincide; on a real phone they are usually 90 degrees apart
+ * (CameraCharacteristics.SENSOR_ORIENTATION), and only the app knows which way.
+ *
+ * A wrong value cannot corrupt the pose knots — those stay pinned to ARCore —
+ * but it distorts the interpolated path between them, which is the whole value
+ * being added. Non-finite or zero-norm is SCAN_ERR_INVALID_ARGUMENT.
+ *
+ * Applying it REBUILDS the densifier, dropping its buffered samples and its
+ * estimated gyro bias, so call it once during setup — before
+ * scan_engine_start() — exactly like the mount extrinsic. */
+SCAN_API scan_error_t scan_engine_set_imu_extrinsics(scan_engine* engine,
+                                                     const double quat_xyzw[4]);
+
+/* Mirror of scanengine::ImuDensifyStats. The four `fallback_*` counters are
+ * the field diagnosis and they mean different things to an operator:
+ * `no_imu` = nothing is pushing samples, `gap` = the sensor is stuttering,
+ * `bracket` = ARCore dropped poses, `closing` = the gyro and ARCore disagree
+ * by more than any real rig should, which almost always means the extrinsic
+ * above is wrong. */
+typedef struct scan_imu_densify_stats {
+  uint64_t samples_in;
+  uint64_t samples_rejected; /* non-finite, or out of order */
+  uint64_t queries;
+  uint64_t densified;        /* placed on the gyro path */
+  uint64_t fallbacks;        /* fell through to plain interpolation */
+  uint64_t fallback_no_imu;
+  uint64_t fallback_gap;
+  uint64_t fallback_bracket;
+  uint64_t fallback_closing;
+  uint64_t bias_updates;
+  double bias_rad_s[3];      /* the estimated gyro bias, IMU frame */
+  double worst_closing_deg;  /* worst gyro-vs-ARCore disagreement over a bracket */
+  double mean_closing_deg;
+} scan_imu_densify_stats;
+
+SCAN_API scan_error_t scan_engine_imu_densify_stats(scan_engine* engine,
+                                                    scan_imu_densify_stats* out);
 
 /* --- D6 pushbroom (A8) ---------------------------------------------------
  *

@@ -39,6 +39,7 @@
 #include "packet_builder.h"
 #include "scanengine/cloud/page_store.h"
 #include "scanengine/core/engine.h"
+#include "scanengine/drivers/d6/d6_fan.h"
 #include "scanengine/poses/se3.h"
 #include "scanengine/record/lscan.h"
 #include "scanengine/record/replay.h"
@@ -115,8 +116,13 @@ constexpr double kWallY = 2.4;
 // `angle_deg`. Negative = this return is not the wall (missed, behind, out of
 // the D6's window, or into floor/ceiling).
 double range_to_wall(const Gait& g, const Quat& q_mount, double t, double angle_deg) {
-  const double a = angle_deg * kPi / 180.0;
-  const double dir_l[3] = {std::sin(a), std::cos(a), 0.0};
+  // The ray leaves the sensor in the production fan frame (d6_fan.h). Using
+  // the shared definition rather than a local copy is what keeps this fixture
+  // honest across a convention change — ROUND 9 item 34 flipped the sweep, and
+  // a hand-copied sin/cos here would have kept the test green while the room
+  // came out mirrored.
+  double dir_l[3];
+  d6::fan_point(angle_deg, 1.0, dir_l);
   double dir_p[3], dir_w[3], pos[3];
   qrot(q_mount, dir_l, dir_p);
   qrot(g.orientation_at(t), dir_p, dir_w);

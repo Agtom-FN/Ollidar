@@ -68,6 +68,15 @@ bool copy_mat4(JNIEnv* env, jdoubleArray in, double out[16]) {
   return true;
 }
 
+// The same fixed-length guard for a (x, y, z, w) quaternion. Same reason: a
+// Kotlin-side length mistake must surface as SCAN_ERR_INVALID_ARGUMENT, not as
+// a read past the end of the array.
+bool copy_quat(JNIEnv* env, jdoubleArray in, double out[4]) {
+  if (in == nullptr || env->GetArrayLength(in) != 4) return false;
+  env->GetDoubleArrayRegion(in, 0, 4, out);
+  return true;
+}
+
 }  // namespace
 
 extern "C" {
@@ -117,6 +126,56 @@ Java_com_lidarscan_app_engine_ScanEngineNative_nativePoseGateAt(JNIEnv*, jclass,
   scan_error_t err = scan_engine_pose_at(engine, static_cast<int64_t>(t_mono_ns), nullptr, &gate);
   if (err != SCAN_OK && err != SCAN_ERR_AGAIN && err != SCAN_ERR_NOT_FOUND) return -1;
   return static_cast<jint>(gate);
+}
+
+// --- 1b. ROUND 9 (owner item 35): the phone's own IMU, in -------------------
+//
+// "lidar data and the imu position data need sync the frequency." ARCore poses
+// arrive at ~30 Hz; the D6 samples at 4000 Hz. The engine's densified pose
+// interpolator integrates the phone's gyro between the bracketing ARCore poses
+// rather than slerping through them — measured engine-side as a wall plane-fit
+// RMS of 0.739 cm (plain slerp) -> 0.021 cm (densified) under 1.5 deg of 12 Hz
+// jitter. These two entry points are its input.
+//
+// CLOCK DOMAIN, stated here because it is the one thing that can silently ruin
+// this: `t_mono_ns` is Android's `SensorEvent.timestamp` passed through
+// UNCONVERTED. That field is CLOCK_BOOTTIME on virtually every device, which
+// is already the engine's domain (the same one ARCore's Frame.getTimestamp()
+// uses) — so a conversion here would be the bug. The Kotlin side probes the
+// "virtually" (com.lidarscan.core.capture.ImuClockDomain) and stops pushing
+// rather than feeding the engine samples from a different clock.
+//
+// Called from PhoneImuRecorder's own HandlerThread at 200-400 Hz, concurrently
+// with the AR thread's nativePushPose and the D6 reader thread's
+// nativePushSerialBytes — the same thread-safety note scanengine_c.h makes for
+// push_pose covers this.
+JNIEXPORT jint JNICALL
+Java_com_lidarscan_app_engine_ScanEngineNative_nativePushImu(JNIEnv*, jclass, jlong handle,
+                                                                jlong t_mono_ns, jfloat gx,
+                                                                jfloat gy, jfloat gz, jfloat ax,
+                                                                jfloat ay, jfloat az) {
+  auto* engine = reinterpret_cast<scan_engine*>(handle);
+  const float gyro[3] = {gx, gy, gz};
+  const float accel[3] = {ax, ay, az};
+  return static_cast<jint>(
+      scan_engine_push_imu(engine, static_cast<int64_t>(t_mono_ns), gyro, accel));
+}
+
+// `camera_from_imu` as a unit quaternion, (x, y, z, w) — the rotation taking a
+// vector in the Android device/sensor frame into the ARCore camera frame. The
+// Android sensor frame and the ARCore camera frame are NOT the same: the camera
+// is mounted at CameraCharacteristics.SENSOR_ORIENTATION (usually 90 degrees)
+// to the display. See com.lidarscan.core.capture.CameraFromImu for the
+// derivation; it is deliberately on the Kotlin side, where SENSOR_ORIENTATION
+// is read and where it can be unit-tested off-device.
+JNIEXPORT jint JNICALL
+Java_com_lidarscan_app_engine_ScanEngineNative_nativeSetImuExtrinsics(JNIEnv* env, jclass,
+                                                                        jlong handle,
+                                                                        jdoubleArray q) {
+  double quat_xyzw[4];
+  if (!copy_quat(env, q, quat_xyzw)) return SCAN_ERR_INVALID_ARGUMENT;
+  return static_cast<jint>(
+      scan_engine_set_imu_extrinsics(reinterpret_cast<scan_engine*>(handle), quat_xyzw));
 }
 
 // --- 2. pushbroom + mount extrinsics ---------------------------------------

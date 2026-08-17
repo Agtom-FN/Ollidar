@@ -683,6 +683,87 @@ int scan_capi_smoke_run(const uint8_t* d6_bytes, size_t d6_len) {
     }
   }
 
+  /* --- ABI 8 (ROUND 9 item 35): the phone IMU -----------------------------
+   *
+   * The Android call sequence, from C: set the IMU->camera rotation once, then
+   * pump SensorEvent triples. What is asserted is that every entry point is
+   * callable with the argument shapes JNI will use, that the guards fire on
+   * the two mistakes a sensor listener actually makes (out-of-order and
+   * non-finite events, both of which Android really delivers), and that an
+   * engine which is never given an IMU reports honest zeroes rather than
+   * failing. */
+  {
+    scan_engine_config c8;
+    scan_engine* e8 = NULL;
+    scan_imu_densify_stats istats;
+    /* SENSOR_ORIENTATION = 90 deg about +z: the usual phone, where the sensor
+     * frame is defined against the display and ARCore's against the camera. */
+    const double cam_from_imu[4] = {0.0, 0.0, 0.70710678118654752, 0.70710678118654752};
+    const double zero_quat[4] = {0.0, 0.0, 0.0, 0.0};
+    float gyro[3];
+    float accel[3];
+    int64_t t;
+    int k;
+
+    memset(&c8, 0, sizeof c8);
+    c8.app_name = "capi-smoke-abi8";
+    c8.log_level = SCAN_LOG_WARN;
+    if (scan_engine_create(&c8, &e8) != SCAN_OK || e8 == NULL) return 180;
+
+    /* Before anything is pushed: askable, and all zero. This is the state every
+     * ABI-7 consumer stays in forever, and it must not be an error. */
+    memset(&istats, 0xAB, sizeof istats);
+    if (scan_engine_imu_densify_stats(e8, &istats) != SCAN_OK) return 181;
+    if (istats.samples_in != 0 || istats.densified != 0) return 182;
+
+    if (scan_engine_set_imu_extrinsics(e8, NULL) != SCAN_ERR_INVALID_ARGUMENT) return 183;
+    if (scan_engine_set_imu_extrinsics(e8, zero_quat) != SCAN_ERR_INVALID_ARGUMENT) return 184;
+    if (scan_engine_set_imu_extrinsics(e8, cam_from_imu) != SCAN_OK) return 185;
+
+    accel[0] = 0.0f;
+    accel[1] = 0.0f;
+    accel[2] = 9.81f;
+    for (k = 0; k < 40; ++k) {
+      t = 2000000000LL + (int64_t)k * 2500000LL; /* 400 Hz */
+      gyro[0] = 0.01f * (float)k;
+      gyro[1] = -0.02f;
+      gyro[2] = 0.0f;
+      if (scan_engine_push_imu(e8, t, gyro, accel) != SCAN_OK) return 186;
+    }
+    /* Out of order is rejected, not silently reordered — an Android
+     * SensorEventListener genuinely delivers these across sensor types. */
+    if (scan_engine_push_imu(e8, 2000000000LL, gyro, accel) != SCAN_ERR_INVALID_ARGUMENT) {
+      return 187;
+    }
+    /* And so is a non-finite one. */
+    gyro[1] = (float)NAN;
+    if (scan_engine_push_imu(e8, 2100000000LL, gyro, accel) != SCAN_ERR_INVALID_ARGUMENT) {
+      return 188;
+    }
+    if (scan_engine_push_imu(e8, 2100000000LL, NULL, accel) != SCAN_ERR_INVALID_ARGUMENT) {
+      return 189;
+    }
+    if (scan_engine_push_imu(NULL, 2100000000LL, gyro, accel) != SCAN_ERR_INVALID_ARGUMENT) {
+      return 190;
+    }
+
+    memset(&istats, 0, sizeof istats);
+    if (scan_engine_imu_densify_stats(e8, &istats) != SCAN_OK) return 191;
+    if (istats.samples_in != 42) return 192;      /* 40 good + the two refused */
+    if (istats.samples_rejected != 2) return 193;
+    if (scan_engine_imu_densify_stats(e8, NULL) != SCAN_ERR_INVALID_ARGUMENT) return 194;
+    if (scan_engine_imu_densify_stats(NULL, &istats) != SCAN_ERR_INVALID_ARGUMENT) return 195;
+
+    /* Re-applying the extrinsic rebuilds the densifier, which is documented to
+     * drop the ring and the bias. Asserting it here keeps the header honest. */
+    if (scan_engine_set_imu_extrinsics(e8, cam_from_imu) != SCAN_OK) return 196;
+    memset(&istats, 0xAB, sizeof istats);
+    if (scan_engine_imu_densify_stats(e8, &istats) != SCAN_OK) return 197;
+    if (istats.samples_in != 0) return 198;
+
+    scan_engine_destroy(e8);
+  }
+
   return 0;
 }
 

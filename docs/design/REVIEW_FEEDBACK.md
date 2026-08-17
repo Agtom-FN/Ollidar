@@ -296,3 +296,125 @@ both closed × keyframes on / off. Screenshots: `redesign-exports/fix-r4-*.png`.
 35. Pose/lidar rate sync (owner insight): ARCore poses ~30 Hz vs lidar slices ~6 ms —
     densify poses with phone IMU (gyro/accel) between ARCore samples for gait-frequency
     motion; record the phone IMU stream so offline re-resolve benefits too.
+
+### Resolution — 2026-08-18 (0.6.0)
+
+32. **Design sketch written, no implementation, as asked.** `android/NOTES.md` ROUND 9 §6
+    carries it: read the keyframe index FIRST (if `kCameraFrameIndex` descriptors still
+    hold ARCore poses, that is already a trajectory and the rest is unnecessary — this may
+    make the item nearly free); otherwise incremental SfM over the keyframes
+    (`scan-015` has 50 jpgs + `frames.idx`), scale fixed from the D6's own metric ranges
+    as a single global factor, interpolate, and re-resolve through the EXISTING
+    `post::D6ResolvePipeline` by synthesising a `kPoseAr` stream — no new assembler, and
+    this round's chirality fix applies for free. Honest quality: keyframes at ~2 Hz are
+    15x sparser than ARCore, so gait-band motion is not merely attenuated but **aliased**
+    and is not recoverable by any post-process. Expect several centimetres of wall RMS at
+    best. It should be offered as "recover a recognisable room from a scan you would
+    otherwise throw away", never as survey grade, and the UI must say so.
+
+33. **Fixed — and the stray was not coming from where it looked.** Entering Capture has
+    created nothing since ROUND 5; leaving without recording was already clean, and the
+    regression test added for it passed on the first run. The three real sources were:
+    (a) a Start the engine REFUSES — the `.lscan` was created before the engine was asked
+    to record, so a refusal left the directory, `project.json` and a spent series number
+    behind (the code admitted this in a comment); now rolled back, and only when that call
+    created it. (b) Stop with 0 points, kept deliberately since ROUND 7; now pruned, with
+    the navigation-to-Projects suppressed so the shell cannot open a deleted project. A
+    *failed* seal is still never pruned, so the "your raw data IS on the phone" banner can
+    never be contradicted. (c) The legacy scan-012/-014 strays: the Projects list hides
+    them (filtered in the ViewModel, not in the shared store), the count is shown quietly,
+    and Settings gained a Scans section with a `keepEmptyScans` switch (default off) and a
+    "Clean up N empty scans" action. Emulator-verified on b4_test: 16 tests, 0 failures.
+
+34. **Root cause found in the vendor datasheet. It was one character, and it is fixed at
+    the source rather than at the output.**
+    (a) **What it was:** the vendor states the D6's angle convention in a **left-handed**
+    coordinate system — `docs/bench/BENCH_SETUP.md` §3.1 has quoted the manual since
+    Phase 0: *"left-hand coordinate system ... rotation angle increases clockwise ...
+    zero-degree direction marked in the figure"*. S1 transcribed the datasheet's `(x, y)`
+    verbatim into a right-handed frame. Keeping `x` and `y` while the handedness flips
+    **reverses the sense of rotation about the spin axis**, so the fan swept the wrong way
+    and every cloud came out reflected. The formula is now
+    `p_lidar = (−d·sinθ, d·cosθ, 0)` with `+z` out of the BASE of the unit, derived in
+    full in the new `engine/include/scanengine/drivers/d6/d6_fan.h` — the one place it is
+    written down and the only place it is computed (it had been spelled out longhand in
+    two files, and **neither said which end of the sensor `+z` came out of**).
+    (b) **Why det=+1 proved nothing, and why eight rounds of tests missed it:** every D6
+    return has `z == 0` exactly, and restricted to that plane the reflection `x → −x` is
+    identical to `diag(−1,+1,−1)` — a **proper, det=+1** rotation of 180°. So the rigidity
+    guard that exists precisely to catch a mirrored cloud could not fire. Separately,
+    every geometry test in both trees measured a **sign-blind** quantity — axis extents,
+    best-fit-plane RMS, point counts — and a mirrored room has identical extents and
+    identical planarity. There was no test in the repository able to tell a room from its
+    reflection.
+    (c) **The CAD nominal did NOT change**, and that is load-bearing. Under the corrected
+    frame your stated mount (0° beam UP, cap FORWARD, D6 on the back of a portrait phone)
+    maps lidar `+y → camera +Y`, lidar `+z` (the base) `→ camera +Z` so the cap faces
+    forward, lidar `+x → camera +X` — the identity rotation `BracketNominals` has always
+    carried. Yawing the nominal 180° instead would have produced the same picture, and
+    doing **both** would have been a no-op; exactly one of them was wrong. Fixing the
+    formula also un-mirrors **every archived capture for free**, with no manifest
+    migration, because `old_fan(θ) ≡ diag(−1,+1,−1)·new_fan(θ)`.
+    (d) **The falsifiable proof** (`engine/tests/test_round9_chirality.cpp`): a corridor
+    walk with a doorway cut into the wall on the operator's LEFT, with "left" computed as
+    `up × forward` from the resolved trajectory rather than hard-coded. Fixed convention:
+    **0 returns left of the walk in the doorway band, 1,440 right.** The same returns
+    through the same assembler under the pre-fix convention: **exactly reversed.**
+    (e) **Your scan-017, re-resolved** with the fix and its own unmodified manifest:
+    15,631 points, 150/150 poses. The vertical extent — ARCore's world is gravity-aligned
+    with +Y up, so this is floor-to-ceiling — drops from **4.16 m to 3.20 m**, and you
+    describe a ~3.1 m room; the two strongest horizontal bands (floor and ceiling) hold
+    18.4% of returns after the fix versus 13.0% before. Mean per-point movement 1.77 m.
+    **Both of those point the right way but neither is proof — please look at the
+    re-resolved cloud and confirm the handedness against your room.** The one link in the
+    chain that came from a translated quotation rather than a measurement is whether the
+    datasheet's figure is a top view; your eyes settle it.
+
+35. **Implemented, and the numbers are large.** Your insight was right: measured on
+    scan-017 itself, ARCore delivered **150 poses over 4.999 s — 29.8 Hz, median 33.33 ms**
+    — while the D6 samples at 4000 Hz, so **one pose bracket covers ~133 lidar returns**
+    whose trajectory was pure interpolation.
+    (a) **Orientation is where it pays:** 1° of orientation error puts a 3 m return 5 cm
+    out of place; 1 mm of position error puts it 1 mm out. So the gyro densifies rotation
+    and position stays on the lerp.
+    (b) **The method is drift-proof by construction.** Integrate the gyro across the
+    bracket, form the closing error against the next ARCore pose, and distribute it
+    linearly. At both ends the answer is *exactly* the ARCore pose, so the IMU can only
+    choose the PATH between two points VIO has already fixed — it can never pull the
+    trajectory away or accumulate drift. Gyro bias is estimated from that same closing
+    error, and every query falls back to plain interpolation (counted, by reason) if the
+    IMU stutters, the bracket is too wide, or the disagreement is implausible.
+    (c) **Measured** (`engine/tests/test_round9_imu_densify.cpp`), walking past a flat wall
+    with 1.5° of 12 Hz rotational jitter — deliberately *below* the 30 Hz pose Nyquist, so
+    this is attenuation and not aliasing: wall plane-fit RMS **0.739 cm with plain slerp
+    → 0.021 cm IMU-densified**, against an analytic-truth floor of 0.0007 cm. **36x
+    better; 97.3% of the recoverable error closed**, 3,856 queries densified, 0 fallbacks.
+    Controls: remove the jitter and the win collapses to 0.55x (there is nothing to
+    recover); a realistic 0.01 rad/s gyro bias still beats plain slerp and is recovered to
+    0.0146 of 0.0173 rad/s; a starved 5 Hz IMU falls back on every query and reproduces
+    the plain answer instead of inventing a shape.
+    (d) The phone IMU is recorded as its own stream (`streams/imu_phone.bin`) so an offline
+    re-resolve gets the same benefit, and it is wired into both the live pushbroom and
+    `D6ResolvePipeline`. Its extrinsic goes into `manifest.json` beside `mountCalibration`,
+    because a container carrying gyro samples but not the frame they were measured in is
+    self-contained only by accident — that was ROUND 8's lesson and it applies again here.
+    Wiring it up also turned up a latent bug worth naming: `FileRecordReader` had a
+    hard-coded list of stream files, so the new stream was written correctly and then never
+    read back. Anything added to the format in future has to update that list, and nothing
+    enforces it.
+    (e) **Not yet verified on hardware** — every number above is from a synthetic bench,
+    and the 12 Hz / 1.5° jitter model is an assumption about handheld gait rather than a
+    measurement of your walk.
+
+**Plus one refinement your D6 spec numbers exposed, which you did not ask for.** 10 Hz
+rotation / 4000 Hz sampling / 230400 baud against a measured ~13.7 KB/s is **~60% wire
+duty** — the D6 buffers a packet and transmits it ~1.7x faster than it samples (the packet
+size falls straight out of those numbers: at 24 samples/packet the stream costs exactly
+13,667 B/s). ROUND 7's byte-position back-dating is correct at packet granularity but
+compresses time inside a packet. Returns are now dated when they were **sampled** — spaced
+at the sampling period derived per packet from its own angle span and the reported scan
+frequency, anchored on the packet's first byte. Going further: that anchor is itself
+**biased late** by the duty cycle (up to ~120 ms at the head of a 4 KB read), so it is now
+combined with the device's own sample rate through a min-delay estimator, which converges
+with no tuning because every read's tail gives one tight anchor that the chain carries
+forward. Derivation in `engine/docs/A2-d6-driver.md` §9.

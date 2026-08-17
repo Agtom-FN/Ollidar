@@ -261,6 +261,16 @@ class AppContainer(context: Context) {
     val arController = CaptureArController(appContext)
 
     /**
+     * ROUND 9 (owner item 35): the phone's own gyro + accelerometer, feeding the
+     * engine's IMU-densified pose interpolator. App-lifetime for the same reason
+     * [arController] is — it holds a `SensorManager` and a `HandlerThread`, and
+     * re-creating those per capture would churn a thread on every Start. It
+     * registers listeners only between `start`/`stop`, so an idle app costs
+     * nothing.
+     */
+    val phoneImuRecorder = com.lidarscan.app.ar.PhoneImuRecorder(appContext)
+
+    /**
      * B7: the device-level, per-bracket calibration store (WIZARD.md §3 —
      * "Calibration belongs to the bracket, not the project"). Lives beside
      * the projects root rather than inside any project, keyed by

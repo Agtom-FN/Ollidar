@@ -106,9 +106,70 @@ calibration solver calls `camera_from_lidar` and `color/colorize.h` calls
 `camera_from_lidar`: ARCore's pose is the camera pose, so the phone frame and
 the camera frame are one frame. One transform, two names, no conversion.
 
-The sensor-frame convention is `x = d·sin θ, y = d·cos θ, z = 0` — byte for
-byte what `D6Driver::on_point()` already produces for the live preview, so the
+The sensor-frame convention lives in **`drivers/d6/d6_fan.h`** and nowhere else:
+
+```
+D6 fan frame, RIGHT-handed:
+  +y = the 0-degree beam direction (the vendor's zero mark)
+  +z = the spin axis, pointing out of the BASE of the unit (away from the cap)
+  +x = y × z
+
+p_lidar = ( −d·sin θ,  d·cos θ,  0 )
+```
+
+`D6Driver::on_point()` calls the same function for the live preview, so the
 extrinsic means the same thing in both places.
+
+> **ROUND 9 (0.6.0) — the x term used to be `+d·sin θ`, and that was the
+> mirror.** The owner's report was *"the output is left right reversed"*, and
+> it was right. Two things had to be true at once for this to survive as long
+> as it did:
+>
+> * **The vendor states its angle convention in a LEFT-HANDED coordinate
+>   system.** `docs/bench/BENCH_SETUP.md` §3.1 quotes the manual directly —
+>   *"left-hand coordinate system … rotation angle increases clockwise …
+>   zero-degree direction marked in the figure"*. S1 transcribed the
+>   datasheet's `(x, y)` pair verbatim into a right-handed frame. Keeping `x`
+>   and `y` while the handedness flips **reverses the sense of rotation about
+>   the third axis**, and nothing downstream ever compensated. The datasheet's
+>   figure is a top view — the sweep is clockwise seen from the CAP — and the
+>   old formula implemented clockwise seen from the BASE.
+>
+> * **A planar fan's mirror is achievable by a proper rotation.** Every return
+>   has `z == 0` exactly, and restricted to that plane the reflection `x → −x`
+>   is identical to `diag(−1, +1, −1)`, a det = +1 rotation of 180° about the
+>   fan's own 0° axis. So §4.4's rigidity guard was never going to fire, and
+>   the owner's `scan-017` manifest storing a det = +1 extrinsic proved
+>   nothing. That is worth stating plainly next to §4.4, which offers "mirrored
+>   cloud" as a symptom of a **non-rigid** matrix: this round's mirror came
+>   from a perfectly rigid one.
+>
+> It also survived because **every geometry test in the suite measured a
+> sign-blind quantity** — axis extents (`D6PushbroomGeometryTest`), best-fit
+> plane RMS (§3.7, ROUND 7's gait test, ROUND 8's reopen test), point counts,
+> live-vs-offline equality. A mirrored room has exactly the same extents and
+> exactly the same planarity as the real one. `tests/test_round9_chirality.cpp`
+> is the first test in the tree that can tell a room from its mirror image: a
+> corridor walk with a doorway cut into the wall on the operator's LEFT, with
+> "left" computed as `up × forward` from the resolved trajectory rather than
+> hard-coded. Fixed convention: 0 returns left of the walk in the doorway band,
+> 1,440 right. Pre-fix convention, same returns, same assembler: exactly
+> reversed.
+>
+> **The CAD nominal did not change and did not need to.** Under the corrected
+> frame the owner's rig — 0° beam UP, cap FORWARD, D6 on the back of a portrait
+> phone — maps lidar `+y → camera +Y`, lidar `+z` (the base) `→ camera +Z`
+> (backward, so the cap faces forward), lidar `+x → camera +X`. That is the
+> identity rotation `BracketNominals.cadNominal(COIN_D6)` has always carried.
+> Changing BOTH the formula and the nominal would have been a no-op; exactly
+> one of them was wrong, and it was the formula.
+>
+> **Legacy captures are fixed by re-resolving, with no manifest migration**,
+> because `old_fan(θ) ≡ diag(−1, +1, −1) · new_fan(θ)`. Re-running a pre-0.6.0
+> `.lscan` through today's `D6ResolvePipeline` with its own stored extrinsic
+> un-mirrors it. `d6::d6_legacy_fan_extrinsic()` goes the other way and is what
+> the chirality test's control arm uses to run the old convention through the
+> production code path.
 
 ### 3.2 Three properties worth the code
 
@@ -118,6 +179,51 @@ one revolution**, and ~3° of yaw at a gentle turn. `ProfilePoint` therefore
 carries its own `t_mono_ns`. The `Span<const PointVertex>` overload inherited
 from the A1 `PushbroomAssembler` seam shares one stamp across a batch and is
 documented as the coarse path.
+
+> **ROUND 9 — where that per-point stamp now comes from.** See A2 §9: it is no
+> longer a wire-rate byte position but the instant the sample was *taken*,
+> reconstructed from the device's own 4 kHz sampling rate. The two differ
+> because the D6 buffers a packet and transmits it ~1.7x faster than it samples.
+
+**The pose side is densified too.** ARCore delivers ~30 Hz — 33.3 ms median on
+the owner's real `scan-017` — while the lidar now stamps every return
+individually at 4 kHz, so one pose bracket covers ~133 returns whose trajectory
+is entirely whatever a lerp/slerp says. `poses/imu_densified_pose.h`
+(`ImuDensifiedPoseSource`) replaces the *orientation* half of that with a
+gyro-integrated path between the same two ARCore poses, pinned to both
+endpoints by a linearly distributed closing error, so it can never drag the
+trajectory away from VIO or accumulate drift. Orientation, not position, is
+where this pays: 1° of orientation error puts a 3 m return 5 cm out of place;
+1 mm of position error puts it 1 mm out. Measured in
+`tests/test_round9_imu_densify.cpp` against 1.5° of 12 Hz rotational jitter —
+below the 30 Hz pose Nyquist, so this is an *attenuation* argument, not an
+aliasing one: **wall plane-fit RMS 0.739 cm (plain slerp) → 0.021 cm
+(IMU-densified), against an analytic-truth floor of 0.0007 cm — 97.3 % of the
+recoverable error closed.** With the jitter removed the win collapses to 1.8x,
+which is the control.
+
+**Does it survive imperfect lidar timestamps?** This is the question ROUND 9's
+two halves ask of each other, and it is not rhetorical: densification makes the
+trajectory *follow* 12 Hz motion instead of smoothing it away, and a path with
+more high-frequency content is in principle more sensitive to being sampled at
+the wrong instant — a plain slerp is accidentally robust to timing error
+precisely because it has already thrown the fast motion away. Measured rather
+than argued, with a random per-packet stamp error (constant within a 24-sample
+packet, independent between packets — the shape a byte-position reconstruction
+actually produces):
+
+| per-packet stamp error | plain slerp | IMU-densified | ratio |
+| ---: | ---: | ---: | ---: |
+| ±0 ms | 0.739 cm | 0.021 cm | 0.03x |
+| ±1 ms | 0.743 cm | 0.059 cm | 0.08x |
+| ±4 ms | 0.772 cm | 0.234 cm | 0.30x |
+| ±8 ms | 0.840 cm | 0.473 cm | 0.56x |
+
+Densification **never becomes counter-productive**, even with stamps an order
+of magnitude worse than A2 §9's sample clock should produce — so it is safe to
+leave on by default rather than gated on timestamp quality. It does degrade
+monotonically, which is the honest half, and that degradation is the argument
+for A2 §9 in one table: the better the stamps, the more the gyro is worth.
 
 **Buffer, never guess.** ARCore delivers ~30 Hz *behind* a 4 kpts/s point
 stream, so most points arrive before the pose that brackets them. A point with

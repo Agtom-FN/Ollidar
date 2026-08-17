@@ -77,6 +77,24 @@ struct ReplayConfig {
   // that deliberately wants the bytes without the trajectory — e.g. a test
   // isolating the decode path — sets it false.
   bool replay_poses = true;
+
+  // --- ROUND 9: the phone IMU replays too --------------------------------
+  //
+  // Same shape and same argument as `replay_poses`, one sensor down.
+  // ChunkType::kPhoneImu is not a byte stream either; its entry point is
+  // Engine::push_phone_imu(), and since ROUND 9 item 35 the gyro is what
+  // decides where each of the ~133 D6 returns inside one ARCore bracket
+  // actually goes. Replaying the poses but not the IMU would therefore
+  // reproduce the capture's trajectory and NOT its geometry — the wall would
+  // come back measurably less flat than the one the operator watched
+  // (0.021 cm -> 0.739 cm on ROUND 9's fixture).
+  //
+  // DEFAULT true, and provably not a behaviour change for anything already on
+  // disk: nothing wrote a kPhoneImu chunk before ROUND 9, so no existing
+  // `.lscan` contains one and the flag is a no-op on every one of them. A
+  // caller wanting the A/B — the same container resolved with and without the
+  // gyro — sets it false.
+  bool replay_phone_imu = true;
 };
 
 struct ReplayStats {
@@ -87,6 +105,10 @@ struct ReplayStats {
   // meaning). Zero on a pre-0.5.0 recording, which is how a caller tells
   // "this project predates trajectory storage" from "this project has poses".
   std::uint64_t poses_replayed = 0;
+  // ROUND 9: kPhoneImu chunks accepted by the densifier. Zero on a pre-ROUND-9
+  // recording, which is how a caller tells "this project predates phone-IMU
+  // storage" from "this project has an IMU track".
+  std::uint64_t imu_replayed = 0;
   // Copied from FileRecordReader::warnings() after the run — a replayed
   // capture that hit a recorded crash's truncated tail is not an error,
   // just a fact the caller may want to report (e.g. in a job's log).

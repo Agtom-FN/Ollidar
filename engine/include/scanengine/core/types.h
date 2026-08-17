@@ -44,6 +44,13 @@ enum class StreamId : std::uint8_t {
   kPoseFused = 7,    // output of the pose fusion layer
   kSlamMap = 8,      // registered world-frame map points (A6 output)
   kPoseLio = 9,      // LIO pose track
+  // ROUND 9 (additive): the PHONE's own gyro/accel, at 200-400 Hz. Deliberately
+  // NOT kImu, which is the Mid-360's SDK2 IMU datagram stream — d6_resolve.cpp
+  // and post_pipeline.cpp both read a non-empty kImu summary as evidence that a
+  // container is a Mid-360 project, so a phone sample landing there would
+  // misroute the offline pipeline. Same argument record/lscan.h makes for
+  // kSlamMap. Stamps are CLOCK_BOOTTIME, i.e. already engine time.
+  kImuPhone = 10,
 };
 
 const char* to_string(StreamId s) noexcept;

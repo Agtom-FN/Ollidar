@@ -68,6 +68,12 @@ struct Point {
   bool     new_rotation     = false;  // first point of a new revolution
   bool     from_start_packet = false; // carried by a T=1 packet
   uint64_t t_rx_ns          = 0;      // host receive time of the carrying packet
+
+  // ROUND 9: the estimated instant this sample was actually TAKEN, as opposed
+  // to when its bytes reached the host. See Config::per_sample_timestamps for
+  // the model and why the two differ by more than the wire delay. 0 when the
+  // estimate is unavailable (per_sample_timestamps off, or no packet context).
+  uint64_t t_sample_ns      = 0;
 };
 
 // --- statistics -------------------------------------------------------------
@@ -95,6 +101,18 @@ struct Stats {
   // Scan frequency reported by the device in the last start packet:
   // M&T >> 1. Raw units; the vendor SDK treats it as Hz*10 for its health check.
   uint8_t  scan_freq_raw  = 0;
+
+  // ROUND 9 sample-timing diagnostics (Config::per_sample_timestamps).
+  // `sample_hz_est` is the last packet's angle-derived sampling rate — the
+  // cross-check against the datasheet's 4 kHz. `sample_rate_warnings` counts
+  // packets whose angle span implied a rate outside
+  // Config::sample_rate_tolerance; a steady climb here means the device is not
+  // sampling where its spec says, and every per-point stamp is drifting.
+  double   sample_hz_est = 0.0;
+  uint64_t sample_rate_warnings = 0;
+  // Times the min-delay sample clock had to re-seed from the wire anchor
+  // because the packet chain broke (Config::sample_clock_resync_ns).
+  uint64_t sample_clock_resyncs = 0;
 
   double checksum_pass_rate() const {
     const uint64_t tot = packets_ok + packets_bad_checksum;
@@ -125,6 +143,77 @@ struct Config {
   // On a checksum failure, consume the whole packet (vendor behaviour, keeps
   // stream alignment) rather than restarting the header hunt one byte later.
   bool consume_packet_on_bad_checksum = true;
+
+  // --- ROUND 9: burst-aware per-sample timestamps --------------------------
+  //
+  // The owner's authoritative spec numbers: the D6 spins at 10 Hz and samples
+  // at 4000 Hz, so a revolution is 400 returns, 250 us apart, 0.9 deg apart.
+  // The link is 230400 8N1 = 23,040 bytes/s of capacity.
+  //
+  // Measured on real hardware, the device emits ~13.7 KB/s. That is only ~60%
+  // wire duty, which means the D6 does NOT trickle bytes out in step with its
+  // sampling: it buffers a packet, blasts it at the full line rate (~1.7x
+  // faster than real time), then idles until the next one is ready.
+  //
+  // ROUND 7 back-dated bytes at the wire rate across a whole USB read. That is
+  // right at PACKET granularity — it correctly locates where each packet's
+  // bytes sat inside the read — but inside a packet it stretches ~10 samples
+  // worth of 250 us spacing across only ~1.7 ms of wire time, compressing them
+  // by that same 1.7x. The residual is small (~1-3 mm at walking pace) but it
+  // is systematic, and it is the last per-point timing error in the chain.
+  //
+  // The correct model, in three parts:
+  //
+  //   1. Inside a packet, samples are spaced at exactly the SAMPLING period,
+  //      not the wire period. The period is derived per packet from the
+  //      packet's own FSA/LSA angle span and the device's reported scan
+  //      frequency, so a device spinning at 9.7 Hz instead of 10.0 Hz is
+  //      honoured rather than assumed away. `nominal_sample_hz` is the
+  //      fallback when the device has not reported a scan frequency yet.
+  //
+  //   2. The anchor is the packet's FIRST byte: the device starts transmitting
+  //      immediately after taking the packet's last sample, so
+  //          t_last_sample ~= t_first_byte
+  //                        ~= t_last_byte - packet_bytes / wire_bytes_per_sec
+  //      and the earlier samples are back-dated from there at the sample
+  //      period.
+  //
+  //   3. The wire-rate model is kept for exactly one job: locating packet
+  //      boundaries inside a read burst (which is what ROUND 7 built, and it
+  //      is still correct for that).
+  //
+  // Turning this off restores the ROUND 7 behaviour exactly, which is what the
+  // falsifiable control arm of the gait planarity test uses.
+  bool per_sample_timestamps = true;
+
+  // Link capacity in bytes/s. 230400 baud 8N1 = 10 bits per byte = 23040 B/s.
+  double wire_bytes_per_sec = 23040.0;
+
+  // Datasheet sampling rate, used until the device reports a scan frequency.
+  double nominal_sample_hz = 4000.0;
+
+  // The start packet's scan-frequency field is in 0.1 Hz units: a reported
+  // 100 means 10.00 Hz.
+  double scan_freq_raw_to_hz = 0.1;
+
+  // Run the min-delay sample clock on top of the wire anchor. The anchor is
+  // biased LATE by the burst duty cycle (it assumes the link was busy while it
+  // was in fact idle ~40% of the time), so it is an upper bound; propagating
+  // the previous packet forward at the sampling period and taking the earlier
+  // of the two removes almost all of that bias. Off restores the plain wire
+  // anchor, which is the control arm of the ROUND 9 timing test.
+  bool sample_clock_anchor = true;
+
+  // How far the wire anchor may run ahead of the propagated sample clock
+  // before the chain is declared broken (dropped packets, stall, device
+  // restart) and re-seeded from the anchor. 50 ms is ~200 samples at 4 kHz.
+  double sample_clock_resync_ns = 50e6;
+
+  // Relative tolerance on the angle-derived sample rate before it is counted
+  // as a drift warning (Stats::sample_rate_warnings). 0.25 = +/-25% of
+  // `nominal_sample_hz`. Outside the band the nominal period is used instead,
+  // because a wild angle span is a corrupt packet, not a slow motor.
+  double sample_rate_tolerance = 0.25;
 
   // Hard cap on the internal reassembly buffer.
   size_t max_buffered_bytes = 1 << 16;
@@ -206,6 +295,8 @@ class Parser {
 
   // Angle interpolation state.
   float last_interval_deg64_ = 0.f;  // vendor's IntervalSampleAngle_LastPackage
+  // ROUND 9: last packet's final sample time, for the monotonicity clamp.
+  double prev_sample_ns_ = 0.0;
   // Rotation detection state.
   bool  saw_start_packet_ = false;
   bool  pending_new_rotation_ = false;

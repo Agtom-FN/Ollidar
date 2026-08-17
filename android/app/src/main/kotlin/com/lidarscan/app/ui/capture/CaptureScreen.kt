@@ -173,6 +173,9 @@ fun CaptureRoute(
                     // push poses into, so it gets no AR controller at all
                     // rather than one that would silently do nothing.
                     arController = if (isReplay) null else container.arController,
+                    // ROUND 9 (item 35): the phone IMU densifies ARCore's ~30 Hz
+                    // poses for the D6's 4000 Hz returns. A replay has neither.
+                    phoneImu = if (isReplay) null else container.phoneImuRecorder,
                     engineHandleProvider = container::currentEngineHandle,
                     mountCalibrationFor = { sensor ->
                         container.mountCalibrationStore.find(
@@ -261,6 +264,12 @@ fun CaptureRoute(
                     loadStoredMountTrim = { container.settingsRepository.storedMountTrim() },
                     persistMountTrim = { stored -> container.settingsRepository.setStoredMountTrim(stored) },
                     appRunId = container.appRunId,
+                    // ROUND 9 (owner item 33): read at Stop, not here, so the
+                    // switch applies to the next capture rather than the next
+                    // time this tab is rebuilt.
+                    keepEmptyScans = {
+                        container.settingsRepository.settings.first().keepEmptyScans
+                    },
                 )
             }
         },

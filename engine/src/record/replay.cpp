@@ -63,6 +63,20 @@ Status ReplaySource::run(const ReplayConfig& cfg) {
       continue;
     }
 
+    // ROUND 9: and so does the phone IMU, ahead of everything for the same
+    // reason — the densifier must already hold the samples covering a bracket
+    // by the time a return inside that bracket is resolved, and the reader's
+    // chronological merge is what guarantees it does.
+    if (cfg.replay_phone_imu && h.type == ChunkType::kPhoneImu) {
+      PhoneImuChunkRecord rec{};
+      if (decode_phone_imu_chunk(ByteSpan(payload.data(), payload.size()), &rec)) {
+        if (engine_.push_phone_imu(h.t_mono_ns, rec.gyro_rad_s, rec.accel_m_s2).ok()) {
+          ++stats_.imu_replayed;
+        }
+      }
+      continue;
+    }
+
     if (h.type != cfg.chunk_type) continue;  // not ours to replay (yet) — see class comment
 
     if (cfg.speed > 0.0) {

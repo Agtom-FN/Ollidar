@@ -132,8 +132,12 @@ data class WizardUiState(
  * The lidar points are in the SENSOR frame because the pushbroom assembler is
  * *off* during the wizard: with no mount extrinsic yet there is nothing to
  * assemble world points with, and `D6Driver::on_point()` publishes
- * `x = d·sinθ, y = d·cosθ, z = 0` — the sensor frame the solver's residual is
- * written against (A8 §3.1).
+ * `x = -d·sinθ, y = d·cosθ, z = 0` — the sensor frame the solver's residual
+ * is written against (A8 §3.1, derived in full in
+ * `engine/include/scanengine/drivers/d6/d6_fan.h`). ROUND 9 item 34 corrected
+ * the sign of that x term; the driver and the pushbroom now share one
+ * implementation, so a wizard solve and a resolved cloud cannot disagree
+ * about which way the fan sweeps.
  *
  * ### Honesty about the detector
  *

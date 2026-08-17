@@ -83,6 +83,7 @@ bool TimeSync::stream_has_device_clock(StreamId stream) noexcept {
     case StreamId::kSlamMap:      // engine-produced, already in engine time
     case StreamId::kPoseLio:      // engine-produced, already in engine time
     case StreamId::kPoseFused:    // produced in engine time
+    case StreamId::kImuPhone:     // Android SensorEvent stamps ARE CLOCK_BOOTTIME
     case StreamId::kUnknown:
       return false;
   }

@@ -64,6 +64,7 @@ import com.lidarscan.app.ui.theme.SemGood
 import com.lidarscan.app.ui.theme.SemWarn
 import com.lidarscan.core.model.SensorType
 import com.lidarscan.core.store.Project
+import kotlinx.coroutines.flow.first
 
 @Composable
 fun ProjectsListRoute(
@@ -86,7 +87,17 @@ fun ProjectsListRoute(
 ) {
     val viewModel: ProjectsListViewModel = viewModel(
         factory = viewModelFactory {
-            initializer { ProjectsListViewModel(container.projectStore) }
+            initializer {
+                ProjectsListViewModel(
+                    projectStore = container.projectStore,
+                    // ROUND 9 (owner item 33): the scan library hides 0-point
+                    // strays by default. Settings › Scans has the switch and a
+                    // one-tap cleanup that deletes them for good.
+                    keepEmptyScans = {
+                        container.settingsRepository.settings.first().keepEmptyScans
+                    },
+                )
+            }
         },
     )
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -152,7 +163,7 @@ fun ProjectsListScreen(
     ) {
         HeroHeader(
             title = "LidarScan",
-            subtitle = aggregateLine(uiState.projects),
+            subtitle = aggregateLine(uiState.projects, uiState.hiddenEmptyCount),
             trailing = {
                 AvatarButton(
                     icon = Icons.Filled.Person,
@@ -175,7 +186,7 @@ fun ProjectsListScreen(
                     CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                 }
 
-                uiState.projects.isEmpty() -> EmptyProjectsState(onNewScan)
+                uiState.projects.isEmpty() -> EmptyProjectsState(uiState.hiddenEmptyCount, onNewScan)
 
                 else -> LazyColumn(
                     modifier = Modifier.fillMaxSize().testTag("projectsList"),
@@ -206,9 +217,20 @@ fun ProjectsListScreen(
                     item {
                         Spacer(Modifier.height(2.dp))
                         Hint(
-                            "Tap a scan to preview it · long-press to delete · new scans start in the Capture tab.",
+                            "Tap a scan to preview it · long-press to delete · new scans start in the Capture tab." +
+                                // ROUND 9 (item 33): the quiet half of "auto-hide
+                                // with a count in settings" — one clause on a hint
+                                // that was already there, and only when there is
+                                // something to say.
+                                if (uiState.hiddenEmptyCount > 0) {
+                                    "\n${uiState.hiddenEmptyCount} empty scan" +
+                                        "${if (uiState.hiddenEmptyCount == 1) " is" else "s are"} hidden — " +
+                                        "Settings › Scans clears them."
+                                } else {
+                                    ""
+                                },
                             color = InkFaint,
-                            modifier = Modifier.padding(horizontal = 4.dp),
+                            modifier = Modifier.padding(horizontal = 4.dp).testTag("projectsListHint"),
                         )
                     }
                 }
@@ -217,8 +239,12 @@ fun ProjectsListScreen(
     }
 }
 
-private fun aggregateLine(projects: List<Project>): String {
-    if (projects.isEmpty()) return "no projects yet"
+private fun aggregateLine(projects: List<Project>, hiddenEmptyCount: Int = 0): String {
+    // ROUND 9 (item 33): the hidden strays are named here rather than left to be
+    // discovered — "2 projects" on a phone with five directories on it would be
+    // the app quietly disagreeing with the file manager.
+    val hidden = if (hiddenEmptyCount > 0) " · $hiddenEmptyCount empty hidden" else ""
+    if (projects.isEmpty()) return "no projects yet$hidden"
     val georeferenced = projects.count { it.manifest.crsEpsg != null && it.manifest.crsEpsg != 0 }
     val totalPoints = projects.sumOf { it.manifest.pointCountEstimate ?: 0L }
     val pts = when {
@@ -226,7 +252,8 @@ private fun aggregateLine(projects: List<Project>): String {
         totalPoints > 0 -> "%,d points".format(totalPoints)
         else -> "no captures yet"
     }
-    return "${projects.size} project${if (projects.size == 1) "" else "s"} · $georeferenced georeferenced · $pts"
+    return "${projects.size} project${if (projects.size == 1) "" else "s"} · " +
+        "$georeferenced georeferenced · $pts$hidden"
 }
 
 /**
@@ -396,7 +423,7 @@ private fun metaLine(project: Project): String {
 }
 
 @Composable
-private fun EmptyProjectsState(onNewScan: () -> Unit) {
+private fun EmptyProjectsState(hiddenEmptyCount: Int, onNewScan: () -> Unit) {
     Box(
         Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 24.dp),
         contentAlignment = Alignment.Center,
@@ -414,6 +441,19 @@ private fun EmptyProjectsState(onNewScan: () -> Unit) {
                 "Scans are created in the Capture tab: plug in the COIN-D6 or the Mid-360 and it connects " +
                     "itself, then Start records into a new project.",
             )
+            // ROUND 9 (item 33): "No projects yet" would be a lie on a phone
+            // holding nothing BUT empty strays, so the empty state says which
+            // kind of empty it is.
+            if (hiddenEmptyCount > 0) {
+                Spacer(Modifier.height(10.dp))
+                Hint(
+                    "$hiddenEmptyCount scan${if (hiddenEmptyCount == 1) "" else "s"} recorded no points and " +
+                        "${if (hiddenEmptyCount == 1) "is" else "are"} hidden. Settings › Scans deletes them, " +
+                        "or shows them again.",
+                    color = InkFaint,
+                    modifier = Modifier.testTag("hiddenEmptyScansNote"),
+                )
+            }
             Spacer(Modifier.height(22.dp))
             // The one exception to "Projects never creates a scan": with no
             // projects at all, a tab that only says "go somewhere else" is a dead

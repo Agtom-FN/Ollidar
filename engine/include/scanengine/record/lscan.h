@@ -72,6 +72,15 @@ inline constexpr const char* kGnssStreamFile = "streams/gnss.bin";
 // it then discards. Nothing wrote kSlamMap chunks before ROUND 8, so giving
 // the stream its own filename breaks no existing recording.
 inline constexpr const char* kMapStreamFile = "streams/map.bin";
+// ROUND 9 (additive): the PHONE's IMU, i.e. StreamId::kImuPhone. Its own file
+// for the same reason kSlamMap got one, plus a sharper one: `streams/imu.bin`
+// is the MID-360's SDK2 datagram stream, and both `slam/post/post_pipeline.cpp`
+// and `slam/post/d6_resolve.cpp` (lscan_is_d6_project) treat a non-empty
+// StreamId::kImu summary as evidence that a container is a Mid-360 project. A
+// phone-IMU sample written into imu.bin would therefore route a pure D6 capture
+// to the Mid-360 pipeline, which cannot resolve it. Nothing wrote kPhoneImu
+// chunks before ROUND 9, so a new filename breaks no existing recording.
+inline constexpr const char* kPhoneImuStreamFile = "streams/imu_phone.bin";
 
 // Chunk payload kinds. STABLE, APPEND-ONLY: a shipped .lscan may contain any
 // of these forever.
@@ -88,6 +97,7 @@ enum class ChunkType : std::uint16_t {
   kMarker = 9,           // user marker / capture annotation
   kSessionNote = 10,     // free text (mode changes, warnings)
   kPointsXyzRgba = 11,   // engine-frame PointVertex array (processed output)
+  kPhoneImu = 12,        // one decoded PHONE gyro+accel sample (ROUND 9)
 };
 
 // Chunk flags.
@@ -192,6 +202,58 @@ bool decode_pose_chunk(ByteSpan in, PoseChunkRecord* out);
 // count rather than as the struct so record/ keeps its core/-only dependency
 // set; the two are pinned to each other by a static_assert in lscan.cpp.
 inline constexpr std::size_t kPointVertexBytes = 16;
+
+// --- ROUND 9: the kPhoneImu payload -----------------------------------------
+//
+// ROUND 9 item 35 made the phone's gyro a real input to the geometry:
+// `ImuDensifiedPoseSource` replaces the orientation of every interpolated pose
+// with a gyro-integrated path between the same two ARCore knots, which on the
+// owner's own 12 Hz-jitter fixture took the wall's plane-fit RMS from 0.739 cm
+// to 0.021 cm. That makes the phone IMU part of how the cloud is SHAPED — and
+// record-always (Tech Spec §3 key rule 2) says a stream the geometry depends on
+// must be on disk, or the container stops being self-contained and the offline
+// re-resolve silently produces a different (worse) room than the live pass. It
+// is exactly the argument ROUND 8 made for kPoseAr, one sensor further down.
+//
+// WHY A DECODED POD AND NOT AN OPAQUE DATAGRAM. kMid360Imu records the SDK2
+// datagram verbatim because that is what arrives — a wire format with its own
+// framing that the driver must parse anyway. A phone IMU sample arrives as an
+// Android `SensorEvent`: already decoded, already in SI units, already in
+// CLOCK_BOOTTIME. There is no wire format to preserve, so this follows the
+// kPoseAr precedent (a fixed little-endian POD) rather than the kMid360Imu one.
+//
+// LAYOUT — fixed 24 bytes, little-endian, no padding, no alignment requirement.
+// The stamp is NOT in here, for the same reason it is not in the pose record: a
+// chunk already carries `t_mono_ns` and duplicating it would let the two
+// disagree.
+//
+//   off  size  field
+//     0    12  gyro_rad_s[3]    f32  rad/s, IMU frame (Android SENSOR_TYPE_GYROSCOPE)
+//    12    12  accel_m_s2[3]    f32  m/s^2, IMU frame (SENSOR_TYPE_ACCELEROMETER)
+//
+// f32 and not f64 on purpose: an Android SensorEvent delivers `float`, so f64
+// would store nothing but the widening. `ImuDensifiedPoseSource::PhoneImuSample`
+// carries the same two float triples, which makes the conversion a memcpy's
+// worth of work at the boundary and leaves no room for a units mistake.
+//
+// COST, because record-always has to be affordable: 24 B at 400 Hz = 9.6 KB/s,
+// 34 MB over a one-hour walk. Against the ~200 KB/s of raw D6 UART bytes the
+// same session already writes, under 5 % — and it is the cheapest 5 % in the
+// container, because it is what makes the offline resolve reproduce the live
+// geometry instead of approximating it.
+inline constexpr std::size_t kPhoneImuChunkPayloadBytes = 24;
+
+struct PhoneImuChunkRecord {
+  float gyro_rad_s[3] = {0.0f, 0.0f, 0.0f};
+  float accel_m_s2[3] = {0.0f, 0.0f, 0.0f};
+};
+
+// `out` must have room for kPhoneImuChunkPayloadBytes.
+void encode_phone_imu_chunk(const PhoneImuChunkRecord& s, std::uint8_t* out);
+// False (leaving `*out` untouched) when `in` is shorter than the expected size.
+// A LONGER payload is accepted and its tail ignored — the same
+// forward-compatibility rule decode_pose_chunk() and the chunk framing follow.
+bool decode_phone_imu_chunk(ByteSpan in, PhoneImuChunkRecord* out);
 
 // Which stream file a chunk type belongs in.
 StreamId stream_of(ChunkType t);
@@ -349,6 +411,23 @@ class FileRecordWriter final : public RecordWriter {
   //     "mountCalibration": {"phoneFromLidar": [16 doubles, row-major]}
   void set_mount_calibration(const double phone_from_lidar[16]);
   // ===== end ROUND 8 addition ==============================================
+
+  // ===== ROUND 9 addition ==================================================
+  // The phone-IMU extrinsic, for exactly the reason above. A container that
+  // carries a `kPhoneImu` stream but not `camera_from_imu` is self-contained
+  // only by accident: the gyro samples are in the Android sensor frame, ARCore
+  // reports its pose in the camera frame, and on a real phone those differ by
+  // the camera's `SENSOR_ORIENTATION` (usually 90 degrees). Re-resolving
+  // without it does not fail loudly — it silently distorts the densified path
+  // between pose knots, which is precisely the thing the IMU was added to
+  // improve. Only the app knows the number, so only the app can record it.
+  //
+  // Quaternion (x, y, z, w) taking a vector in the IMU frame to the camera
+  // frame, matching `ImuDensifyConfig::camera_from_imu`. Call before open();
+  // unset stays `null`. Emitted as:
+  //     "imuCalibration": {"cameraFromImu": [x, y, z, w]}
+  void set_imu_calibration(const double camera_from_imu[4]);
+  // ===== end ROUND 9 addition ==============================================
 
   const std::string& path() const;
 

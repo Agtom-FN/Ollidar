@@ -64,6 +64,17 @@ struct PoseSample {
   // when it explains a gap.
   std::int64_t bracket_gap_ns = 0;
 
+  // ROUND 9 (additive): the stamps of the two bracketing samples themselves.
+  // `bracket_gap_ns` gives their spacing but not where they are, and an IMU
+  // densifier (poses/imu_densified_pose.h) needs the actual knot times so it
+  // can integrate over exactly the interval the interpolator used and pin its
+  // endpoints to the same two poses. Both 0 when there is no bracket.
+  //
+  // When `t` lands exactly on a pushed pose, or the source is holding the last
+  // pose, both are that pose's stamp.
+  std::int64_t bracket_t0_ns = 0;
+  std::int64_t bracket_t1_ns = 0;
+
   bool ok() const { return gate == PoseGate::kOk; }
 
   // "A pose exists but you must flag the point." Distinguishing this from

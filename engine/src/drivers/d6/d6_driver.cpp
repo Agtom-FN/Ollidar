@@ -5,6 +5,7 @@
 
 #include "scanengine/core/log.h"
 #include "scanengine/drivers/d6/commands.h"
+#include "scanengine/drivers/d6/d6_fan.h"
 
 namespace scanengine {
 
@@ -387,19 +388,34 @@ void D6Driver::on_point(const d6::Point& p) {
     // chunk". With D6Config::time_slice_bytes these differ by up to a whole
     // chunk (178 ms on the phone's 4 KB reads), and the difference is the
     // per-revolution shingling the assembler was blamed for.
-    const std::int64_t t_point = static_cast<std::int64_t>(p.t_rx_ns);
+    //
+    // ROUND 9: prefer the parser's per-SAMPLE estimate when it has one. The
+    // D6 transmits a buffered packet at ~1.7x its sampling rate (60% wire
+    // duty measured against 230400 baud), so `t_rx_ns` — a wire-rate position
+    // — compresses the ~250 us spacing inside a packet. `t_sample_ns` spaces
+    // samples at the SAMPLING period, anchored on the packet's first byte.
+    // See d6::Config::per_sample_timestamps.
+    const std::int64_t t_point = p.t_sample_ns != 0
+                                     ? static_cast<std::int64_t>(p.t_sample_ns)
+                                     : static_cast<std::int64_t>(p.t_rx_ns);
     cfg_.profile_sink(p.angle_deg, static_cast<float>(p.distance_mm) * 0.001f, p.intensity,
                       p.high_reflectivity ? std::uint8_t{1} : std::uint8_t{0},
                       t_point != 0 ? t_point : t_current_ns_,
                       cfg_.profile_sink_user_data);
   }
 
-  const double a = static_cast<double>(p.angle_deg) * kDegToRad;
-  const double d = static_cast<double>(p.distance_mm) * 0.001;  // mm → m
+  // ROUND 9 item 34: one definition of the fan frame, in d6_fan.h. The live
+  // preview and the pushbroom MUST agree here — the mount extrinsic is defined
+  // against this frame, so a preview that disagrees is a preview of a
+  // different sensor.
+  double p_lidar[3];
+  d6::fan_point(static_cast<double>(p.angle_deg),
+                static_cast<double>(p.distance_mm) * 0.001,  // mm → m
+                p_lidar);
 
   PointVertex v{};
-  v.x = static_cast<float>(d * std::sin(a));
-  v.y = static_cast<float>(d * std::cos(a));
+  v.x = static_cast<float>(p_lidar[0]);
+  v.y = static_cast<float>(p_lidar[1]);
   v.z = 0.0f;  // A8 replaces this with the trajectory-assembled 3-D position.
   // Intensity as greyscale; high-reflectivity returns tinted so the S1
   // reflective-post case is visible in the live view without a colour mode.

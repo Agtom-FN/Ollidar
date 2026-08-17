@@ -59,6 +59,7 @@ void Parser::reset() {
   head_ = 0;
   queue_.clear();
   last_interval_deg64_ = 0.f;
+  prev_sample_ns_ = 0.0;
   saw_start_packet_ = false;
   pending_new_rotation_ = false;
   prev_angle_deg_ = -1.f;
@@ -217,6 +218,111 @@ void Parser::emit_packet(const uint8_t* p, uint8_t lsn, bool is_start,
     ++stats_.rotations;
   }
 
+  // --- ROUND 9: when was each sample actually TAKEN? -------------------------
+  //
+  // Config::per_sample_timestamps documents the model in full. Briefly: the
+  // device blasts a buffered packet at the line rate (~1.7x faster than it
+  // samples), so spacing samples at the WIRE rate compresses them. Space them
+  // at the SAMPLING rate instead, anchored on the packet's first byte, which
+  // is the moment just after its last sample was taken.
+  const size_t total_bytes = kHeaderBytes + static_cast<size_t>(lsn) * kSampleBytes;
+  double t_last_sample = 0.0;
+  double sample_ns = 0.0;
+  const bool stamp_samples = cfg_.per_sample_timestamps && t_rx_ns != 0 &&
+                             cfg_.wire_bytes_per_sec > 0.0 && cfg_.nominal_sample_hz > 0.0;
+  if (stamp_samples) {
+    const double byte_ns = 1e9 / cfg_.wire_bytes_per_sec;
+
+    // (3) The wire-rate model, doing the one job it is right for: locating
+    // this packet inside the read burst. Bytes still buffered BEHIND this
+    // packet arrived after its last byte did.
+    const size_t bytes_after = avail() - total_bytes;
+    const double t_last_byte = static_cast<double>(t_rx_ns) - static_cast<double>(bytes_after) * byte_ns;
+
+    // (2) The anchor.
+    t_last_sample = t_last_byte - static_cast<double>(total_bytes) * byte_ns;
+
+    // (1) The spacing. Prefer the device's own behaviour — this packet's
+    // angle span against the reported spin rate — over the datasheet number,
+    // so real spin-speed variation is honoured.
+    sample_ns = 1e9 / cfg_.nominal_sample_hz;
+    if (lsn > 1 && interval64 > 0.f && stats_.scan_freq_raw != 0) {
+      const double scan_hz = static_cast<double>(stats_.scan_freq_raw) * cfg_.scan_freq_raw_to_hz;
+      if (scan_hz > 1.0 && scan_hz < 100.0) {
+        const double deg_per_sample = static_cast<double>(interval64) / 64.0;
+        const double hz = 360.0 * scan_hz / deg_per_sample;
+        stats_.sample_hz_est = hz;
+        // The cross-check the spec asks for: angle-derived rate vs the
+        // datasheet's 4 kHz. Inside the band, trust the device. Outside it,
+        // this is a corrupt angle span rather than a slow motor — fall back to
+        // nominal and say so.
+        const double rel = std::fabs(hz - cfg_.nominal_sample_hz) / cfg_.nominal_sample_hz;
+        if (rel <= cfg_.sample_rate_tolerance) {
+          sample_ns = 1e9 / hz;
+        } else {
+          ++stats_.sample_rate_warnings;
+        }
+      }
+    }
+
+    // --- the min-delay sample clock ----------------------------------------
+    //
+    // The wire anchor above is good but BIASED LATE, and the bias is exactly
+    // the burst duty cycle. Back-dating `bytes_after` at the LINE rate assumes
+    // the link was busy the whole time; at ~60% duty it was idle for 40% of
+    // it, so the real elapsed time is ~1.7x what the model says and the anchor
+    // lands too late — by up to a hundred milliseconds at the head of a
+    // phone-sized 4 KB read. The anchor is therefore an UPPER BOUND on the
+    // true sample time, never a lower one.
+    //
+    // The device's own sampling rate, however, is a superb clock: steady,
+    // known to 0.1 Hz from the scan-frequency field, and independent of how
+    // the bytes happen to be bunched. So run the classic min-delay estimator
+    // over the two: propagate the previous packet's time forward at the
+    // sampling period, and take whichever of {propagated, wire anchor} is
+    // EARLIER.
+    //
+    // This converges for free. At the TAIL of every read `bytes_after` is ~0,
+    // so that packet's anchor is tight and the minimum takes it; the chain
+    // then carries that tight value forward through the head of the NEXT read,
+    // where the anchor is loose and the propagation wins. Every packet ends up
+    // dated from the nearest tight anchor rather than from the line-rate
+    // fiction.
+    //
+    // It also subsumes what would otherwise be a separate monotonicity clamp:
+    // the propagated term is strictly increasing by construction, so the two
+    // invariants the assembler needs — non-decreasing stamps, and no stamp in
+    // the future of the transport that carried it — both fall out.
+    if (cfg_.sample_clock_anchor && prev_sample_ns_ != 0.0) {
+      const double propagated = prev_sample_ns_ + static_cast<double>(lsn) * sample_ns;
+      if (t_last_sample - propagated > cfg_.sample_clock_resync_ns) {
+        // The chain has lost the stream: dropped packets, a stall, or a device
+        // restart. Nothing to propagate from — fall back to the anchor and
+        // start a new chain.
+        ++stats_.sample_clock_resyncs;
+      } else {
+        t_last_sample = std::min(t_last_sample, propagated);
+      }
+    }
+
+    // Monotonicity across the packet boundary. The constraint is on this
+    // packet's FIRST sample, not its last: the window is (lsn-1) periods wide
+    // and must start no earlier than the previous packet's final sample. When
+    // the anchor leaves less room than that — a saturated stream, or a
+    // re-ordered read — hold the anchor (invariant (ii): never stamp into the
+    // future of the transport) and COMPRESS the spacing to fit, which degrades
+    // gracefully to ROUND 7's wire-rate spacing rather than lying about it.
+    if (prev_sample_ns_ != 0.0 && lsn > 1) {
+      const double room = t_last_sample - prev_sample_ns_;
+      const double want = static_cast<double>(lsn - 1) * sample_ns;
+      if (room < want) {
+        sample_ns = room > 0.0 ? room / static_cast<double>(lsn - 1) : 0.0;
+        if (room <= 0.0) t_last_sample = prev_sample_ns_;
+      }
+    }
+    prev_sample_ns_ = t_last_sample;
+  }
+
   const uint8_t* s = p + kHeaderBytes;
   for (uint8_t i = 0; i < lsn; ++i, s += kSampleBytes) {
     Point pt;
@@ -225,6 +331,12 @@ void Parser::emit_packet(const uint8_t* p, uint8_t lsn, bool is_start,
     pt.high_reflectivity = sample_high_reflectivity(s);
     pt.from_start_packet = is_start;
     pt.t_rx_ns           = t_rx_ns;
+    if (stamp_samples) {
+      // Sample `lsn-1` sits on the anchor; earlier ones are back-dated at the
+      // sampling period.
+      const double t = t_last_sample - static_cast<double>(lsn - 1 - i) * sample_ns;
+      pt.t_sample_ns = t > 0.0 ? static_cast<uint64_t>(t + 0.5) : 0;
+    }
 
     float a64 = static_cast<float>(fsa64) + interval64 * static_cast<float>(i);
     if (cfg_.apply_mechanical_angle_correction && pt.distance_mm != 0) {

@@ -135,6 +135,50 @@ object ScanEngineNative {
     /** Returns the `SCAN_POSE_GATE_*` value at [tMonoNs] (see [PoseGate]), or -1 if the call itself failed. */
     external fun nativePoseGateAt(handle: Long, tMonoNs: Long): Int
 
+    // --- ROUND 9 (owner item 35): the phone's own IMU, in --------------------
+    //
+    // "lidar data and the imu position data need sync the frequency." ARCore
+    // poses arrive at ~30 Hz (measured: 150 poses / 4.999 s on the owner's
+    // scan-017) while the D6 samples at 4000 Hz, so every return is
+    // interpolated. The engine's densified interpolator integrates the phone's
+    // gyro between the bracketing ARCore poses instead of slerping through
+    // them; these two calls are what feed it.
+    //
+    // Pushed from `com.lidarscan.app.ar.PhoneImuRecorder`'s own HandlerThread,
+    // concurrently with the AR thread's [nativePushPose] and the D6 reader
+    // thread's [nativePushSerialBytes] — the same thread-safety note
+    // scanengine_c.h makes for push_pose applies.
+
+    /**
+     * One fused IMU sample. `tMonoNs` is `SensorEvent.timestamp` **unconverted**
+     * — it is already the engine's CLOCK_BOOTTIME domain, and converting it
+     * would be the bug rather than the fix (see
+     * `com.lidarscan.core.capture.ImuClockDomain`, which checks that
+     * assumption). Gyro is rad/s, accel is m/s^2, both in the ANDROID DEVICE
+     * frame; `nativeSetImuExtrinsics` is what relates that frame to ARCore's
+     * camera frame.
+     */
+    external fun nativePushImu(
+        handle: Long,
+        tMonoNs: Long,
+        gx: Float,
+        gy: Float,
+        gz: Float,
+        ax: Float,
+        ay: Float,
+        az: Float,
+    ): Int
+
+    /**
+     * `camera_from_imu` as a unit quaternion in **(x, y, z, w)** order — the
+     * rotation taking a vector in the Android device/sensor frame into the
+     * ARCore camera frame. Derived from `CameraCharacteristics.SENSOR_ORIENTATION`;
+     * see `com.lidarscan.core.capture.CameraFromImu` for the full derivation.
+     * Must be exactly 4 elements; a wrong length is rejected on the C++ side as
+     * `SCAN_ERR_INVALID_ARGUMENT` rather than read past the end.
+     */
+    external fun nativeSetImuExtrinsics(handle: Long, quatXyzw: DoubleArray): Int
+
     // --- B7: D6 pushbroom + mount extrinsics -----------------------------------
     /** `phoneFromLidar` must be a **row-major** 4x4; the engine rejects a column-major one outright. */
     external fun nativeSetMountExtrinsics(handle: Long, phoneFromLidar: DoubleArray): Int

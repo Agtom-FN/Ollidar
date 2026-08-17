@@ -3,6 +3,7 @@
 #include <cmath>
 
 #include "scanengine/core/log.h"
+#include "scanengine/drivers/d6/d6_fan.h"
 #include "scanengine/poses/se3.h"
 
 namespace scanengine {
@@ -100,10 +101,10 @@ Status D6PushbroomAssembler::push_profile(Span<const PointVertex> profile,
     p.t_mono_ns = t_mono_ns;
     p.range_m = static_cast<float>(std::sqrt(static_cast<double>(v.x) * v.x +
                                              static_cast<double>(v.y) * v.y));
-    // theta measured from +y toward +x, matching x = d·sin, y = d·cos.
-    double a = std::atan2(static_cast<double>(v.x), static_cast<double>(v.y)) * se3::kRadToDeg;
-    if (a < 0.0) a += 360.0;
-    p.angle_deg = static_cast<float>(a);
+    // The exact inverse of d6::fan_point() (d6_fan.h): theta runs from +y
+    // toward -x, so recovering it is atan2(-x, y), not atan2(x, y).
+    p.angle_deg = static_cast<float>(
+        d6::fan_angle_deg(static_cast<double>(v.x), static_cast<double>(v.y)));
     p.intensity = v.r;
     p.high_reflectivity = (v.g > v.r) ? 1 : 0;
     SCAN_TRY(push_point(p));
@@ -183,9 +184,12 @@ Status D6PushbroomAssembler::resolve_(bool force) {
     double world_from_lidar[16];
     se3::mat4_mul(world_from_phone, phone_from_lidar_, world_from_lidar);
 
-    const double a = static_cast<double>(p.angle_deg) * se3::kDegToRad;
-    const double d = static_cast<double>(p.range_m);
-    const double p_lidar[3] = {d * std::sin(a), d * std::cos(a), 0.0};
+    // ROUND 9 item 34: the ONE definition of the fan frame lives in
+    // `drivers/d6/d6_fan.h`. It used to be spelled out here and again in
+    // D6Driver, with neither saying which end of the sensor +z came out of —
+    // which is how the cloud shipped mirrored. Do not inline it again.
+    double p_lidar[3];
+    d6::fan_point(static_cast<double>(p.angle_deg), static_cast<double>(p.range_m), p_lidar);
     double p_world[3];
     se3::mat4_apply(world_from_lidar, p_lidar, p_world);
 

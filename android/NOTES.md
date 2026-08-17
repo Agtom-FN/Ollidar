@@ -5588,3 +5588,501 @@ Still no D6, no Mid-360 and no ARCore device here, so:
 5. **Recording overhead on a phone.** The map cache adds ~57 KB/s and the pose
    stream ~2 KB/s by construction; neither has been measured against a real
    phone's storage under thermal load.
+
+---
+
+## ROUND 9 — THE MIRROR, AND TWO CLOCKS THAT DID NOT AGREE
+
+Scope: `android/**` and `engine/**`. Triggered by the owner's verdict on 0.5.0 —
+
+> "This version is much better ... The output is left right reversed"
+
+— arriving with the **first true-3D phone capture**, `captures/scan-017-pixel-0.5.0.lscan.zip`:
+`kD6Raw` + `kPoseAr` (150 chunks, 68-byte payloads) + `kSlamMap` (15,631 points),
+`mountCalibration.phoneFromLidar` det = +1, mount trim 89.82°. Plus the owner's
+own spec sheet for the D6 and the insight that *"lidar data and the imu position
+data need sync the frequency"*.
+
+VERSION 0.5.0 → **0.6.0** (versionCode 600 — `major*10000 + minor*100 + patch`,
+per `android/app/build.gradle.kts:118`; note ROUNDS 6–8 wrote 30000/40000/50000
+in this file, which is 100x the value the build actually produces).
+
+Verdicts first.
+
+| # | Item | Verdict |
+| --- | --- | --- |
+| 34 | Output is left-right mirrored | **Root cause found in the vendor datasheet, fixed at the one wrong sign, proven by the first chirality-sensitive test in the tree** |
+| 35 | Pose/lidar rate sync — densify with the phone IMU | **Implemented; 97.3% of the recoverable error closed on the falsifiable bench** |
+| — | D6 per-sample timestamping (owner's spec numbers) | **Refined: samples are now dated when TAKEN, on a min-delay sample clock** |
+| 33 | Capture flow leaves nothing behind | **Fixed — and the real stray source was not the one suspected** |
+| 32 | Legacy rescue for pre-0.5.0 scans | **Design sketch only, as asked — §6** |
+
+---
+
+### 1. ITEM 34 — THE MIRROR
+
+#### 1.1 What it was, in one sentence
+
+**The vendor states the D6's angle convention in a LEFT-HANDED coordinate
+system, the engine read it into a RIGHT-handed one, and that silently reverses
+which way the beam sweeps.**
+
+`docs/bench/BENCH_SETUP.md` §3.1 has been quoting the manual since Phase 0:
+
+> "left-hand coordinate system ... rotation angle increases clockwise ...
+> zero-degree direction marked in the figure"
+
+Both halves of that sentence matter and only one was ever acted on. S1 took the
+datasheet's `(x, y)` pair verbatim into `x = d·sin θ, y = d·cos θ`. Keeping `x`
+and `y` while the handedness flips **reverses the sense of rotation about the
+third axis**. The datasheet's figure is a top view — the sweep is clockwise seen
+from the **cap** — and the shipped code implemented clockwise seen from the
+**base**.
+
+#### 1.2 Why eight rounds of tests never saw it
+
+Two independent reasons, and both are worth remembering.
+
+**(a) A planar fan's mirror is a proper rotation.** Every D6 return has `z == 0`
+*exactly*. Restricted to that plane, the reflection `x → −x` is identical to
+`diag(−1, +1, −1)` — a **det = +1** rotation of 180° about the fan's own 0° axis.
+So A8 §4.4's rigidity guard (`se3::mat4_is_rigid`), which exists precisely to
+catch "a plausible-looking but mirrored cloud", could not fire; and the owner's
+`scan-017` manifest storing a det = +1 extrinsic proved nothing at all. The
+ROUND 9 brief's premise that "a mirrored FAN cannot be fixed by any rotation" is
+true for a volumetric sensor and **false for a planar one** — that difference is
+the whole trap.
+
+**(b) Every geometry test in both trees measured a sign-blind quantity.**
+`D6PushbroomGeometryTest` asserts axis extents. `D6WalkingGaitPlanarityTest`,
+ROUND 7's engine gait test and ROUND 8's reopen test all assert best-fit plane
+RMS. Others assert point counts and live-vs-offline equality. **A mirrored room
+has identical extents, identical planarity and identical point counts.** There
+was no test in the repository capable of distinguishing a room from its
+reflection.
+
+#### 1.3 The frame, written down once
+
+New file `engine/include/scanengine/drivers/d6/d6_fan.h` — the only place the
+conversion is computed, and it carries the full derivation:
+
+```
+D6 fan frame, RIGHT-handed:
+  +y = the 0-degree beam direction (the vendor's zero mark)
+  +z = the spin axis, pointing out of the BASE of the unit (away from the cap)
+  +x = y × z
+
+p_lidar = ( −d·sin θ,  d·cos θ,  0 )
+```
+
+`D6Driver::on_point()` (live preview) and `D6PushbroomAssembler::resolve_()`
+(the cloud) both call it, along with the Cartesian-seam inverse
+`fan_angle_deg()`. Before this round the formula was written out longhand in
+both, and **neither said which physical end of the sensor its `+z` came out of**
+— a convention that is never written down cannot be checked.
+
+#### 1.4 `BracketNominals` did NOT change, and that is the interesting part
+
+The obvious "fix" is to yaw the CAD nominal 180°. It produces the identical
+cloud, and doing **both** that and the formula fix is a no-op — a trap worth
+naming, because each looks correct in isolation.
+
+Only one of them was actually wrong. Under the corrected frame, the owner's
+stated rig — D6 on the back of a portrait phone, 0° beam **UP**, cap **FORWARD**
+along the walk — maps:
+
+| lidar axis | physical | camera frame |
+| --- | --- | --- |
+| `+y` | 0° beam, UP | `+Y` |
+| `+z` | the BASE (so the CAP faces forward) | `+Z` (ARCore looks along `−Z`) |
+| `+x` | operator's RIGHT | `+X` |
+
+That is the **identity rotation** `BracketNominals.cadNominal(COIN_D6)` has
+carried since A8. The CAD nominal was right; the formula was wrong. Its KDoc now
+states the frame axis-by-axis instead of restating the old formula, and the
+"honest placeholder" caveat is narrowed to the translation, which is still one.
+
+**Fixing the formula rather than the nominal also fixes every archived capture
+for free**, with no manifest migration: `old_fan(θ) ≡ diag(−1,+1,−1)·new_fan(θ)`,
+so re-resolving a pre-0.6.0 `.lscan` with its own stored extrinsic un-mirrors it.
+Fixing the nominal instead would have left every existing recording mirrored
+forever. `d6::d6_legacy_fan_extrinsic()` goes the other way and is what the
+control arm below uses.
+
+#### 1.5 The proof — `engine/tests/test_round9_chirality.cpp`
+
+A corridor walk with exactly one asymmetric feature: a 2 m doorway cut into the
+wall on the operator's **LEFT**. The phone is portrait with its back to the walk
+direction, so its ARCore orientation is the identity for the whole run and the
+trajectory's rotation is removed from the argument entirely — the fan convention
+and the extrinsic are the only things left that can decide handedness. "Left" is
+**computed** as `up × forward` from the resolved trajectory, not hard-coded.
+
+```
+walk forward = (0, 0, -1), left = up x forward = (-1, 0, 0)
+doorway band, wall returns -- FIXED: left 0, right 1440 | LEGACY: left 1440, right 0
+worst |fixed - mirror(legacy)| = 0 mm
+```
+
+The control is the point: the **same** synthetic returns through the **same**
+assembler under the pre-fix convention put the doorway on the right — it fails
+the real assertion, exactly. A second case confirms the corridor is otherwise
+symmetric to 2%, so the doorway is the only thing the proof is reading. Kotlin
+gets the mirror of this in `:core` as `D6ChiralityTest`.
+
+#### 1.6 The owner's scan-017, re-resolved
+
+The container re-resolves cleanly with the fix and **no change to its stored
+manifest**: 823 D6 chunks / 71,667 bytes, 150/150 poses accepted, 15,631 world
+points — the same returns, placed differently.
+
+| | x extent | y extent (ARCore **up**) | z extent |
+| --- | ---: | ---: | ---: |
+| 0.5.0 as shipped | 4.18 m | **4.16 m** | 3.08 m |
+| 0.6.0 re-resolved | 4.06 m | **3.20 m** | 3.17 m |
+
+Mean per-point displacement between the two is **1.77 m**, worst 6.52 m. They
+are *not* a global mirror of each other, because the phone's attitude changes
+during the walk, so each return is reflected in a different plane — which is
+also why this could never have been fixed by post-processing the exported cloud.
+
+Two things point the same way, though neither is proof and **the owner's own
+eyes are the arbiter**:
+
+* ARCore's world is gravity-aligned with **+Y up**, so the y extent is the
+  room's floor-to-ceiling height. The owner describes a ~3.1 m room. The fixed
+  resolve gives **3.20 m**; the shipped one claimed **4.16 m**.
+* The two strongest horizontal 5 cm bands (floor and ceiling) hold **18.4%** of
+  all returns after the fix versus **13.0%** before — the same surfaces, ~40%
+  more tightly stacked.
+
+---
+
+### 2. ITEM 35 — DENSIFYING THE POSE STREAM WITH THE PHONE'S IMU
+
+> "lidar data and the imu position data need sync the frequency"
+
+#### 2.1 The rate gap, measured on the owner's own capture
+
+`scan-017`'s pose stream: **150 poses over 4.999 s, median interval 33.33 ms,
+29.8 Hz**. The D6 samples at 4000 Hz and, after §3, every return carries its own
+instant. **One ARCore bracket therefore spans ~133 lidar returns**, and for all
+133 the trajectory is whatever a lerp/slerp between two endpoints says.
+
+That is fine for the slow part of walking and wrong for the fast part: heel
+strike, hand tremor and the small rotations of a handheld rig live at 5–15 Hz,
+which a 30 Hz sampler attenuates badly even where it does not alias. The phone's
+gyro runs at 200–400 Hz and sees all of it.
+
+#### 2.2 Orientation, not position — and why
+
+1° of orientation error puts a 3 m return **5 cm** out of place. 1 mm of
+position error puts it 1 mm out. Orientation is where short-horizon IMU shines
+and where the payoff is two orders of magnitude larger, so position stays on the
+lerp exactly as the item asks.
+
+#### 2.3 The method (`engine/include/scanengine/poses/imu_densified_pose.h`)
+
+For a query at `t` bracketed by ARCore poses `a`(ta) and `b`(tb):
+
+1. integrate the bias-corrected gyro from `ta` to `t` in the body frame;
+2. integrate on to `tb` and form the closing error `e = q_int(tb)⁻¹ · q_b` —
+   everything the gyro got wrong over the bracket;
+3. distribute it linearly: `q(t) = q_int(t) · exp(u · log e)`, `u = (t−ta)/(tb−ta)`.
+
+Step 3 is what makes it safe. **At both knots the result is exactly the ARCore
+pose**, so the densifier can never drag the trajectory away from VIO, can never
+accumulate drift across brackets, and degrades continuously — if the gyro has
+nothing to say, `e` absorbs the whole rotation and the output is a slerp again.
+All the IMU is permitted to do is choose the *path* between two points VIO has
+already fixed.
+
+`ImuDensifiedPoseSource` is a strict wrapper implementing `PoseInterpolator`;
+`ExternalPoseSource` and `D6PushbroomAssembler` are untouched, because the
+assembler already took the interface rather than the concrete class. `PoseSample`
+gained `bracket_t0_ns`/`bracket_t1_ns` (additive) so the densifier integrates
+over exactly the interval the interpolator used.
+
+Bias comes from the same closing error (a bias `b` over an interval `T` *is*
+`b·T` of closing error, to first order), leaked in slowly, clamped, and weighted
+harder when the rig is judged still. Every query falls back to plain
+interpolation — counted, by reason — if the IMU has a hole wider than 25 ms, the
+bracket is wider than 200 ms, or the closing error exceeds 20° (the guard
+against a wrong `camera_from_imu` or a mis-stamped stream).
+
+#### 2.4 The numbers — `engine/tests/test_round9_imu_densify.cpp`
+
+A rig walks past a flat wall carrying 2 Hz gait sway **plus 1.5° of 12 Hz
+rotational jitter on all three axes**. 12 Hz is deliberately *below* the 30 Hz
+pose Nyquist, so this is an attenuation argument and not an aliasing one: the
+poses do sample the jitter, at 2.5 samples per cycle, which is nowhere near
+enough for a slerp to follow the arc. Wall flatness is the measure.
+
+| arm | wall plane-fit RMS |
+| --- | ---: |
+| plain slerp, 30 Hz ARCore (what 0.5.0 ships) | **0.739 cm** |
+| **IMU-densified, 400 Hz gyro** | **0.021 cm** |
+| analytic truth (1 kHz poses) | 0.0007 cm |
+
+**36x better, and 97.3% of the recoverable error closed.** 3,856 queries
+densified, **0 fallbacks**; worst gyro-vs-ARCore closing error over a bracket
+0.038°, mean 0.009°.
+
+The controls matter as much as the headline:
+
+* **Remove the jitter and the win collapses** to 0.55x — a 30 Hz slerp is
+  already good when there is nothing hiding between the samples. If that ratio
+  ever drops, the fixture has acquired motion it should not have and the
+  headline is measuring the wrong thing.
+* **A 0.01 rad/s gyro bias** (0.57°/s, a realistic consumer MEMS offset) still
+  beats plain slerp, and the estimator recovers 0.0146 rad/s of the true
+  0.0173 rad/s magnitude with the right sign on all three axes — the
+  endpoint-pinning means a bias can distort the path but never accumulate.
+* **A 5 Hz "IMU"** (every bracket holed) falls back on 3,856 of 3,856 queries
+  and reproduces the plain answer, rather than fabricating a shape.
+
+#### 2.5 Do the two halves of this round fight each other?
+
+Worth asking, because it is not obvious. Densification makes the trajectory
+*follow* 12 Hz motion instead of smoothing it away, and a faithful path is in
+principle more sensitive to being sampled at the wrong instant than a smoothed
+one — a plain slerp is accidentally robust to timing error precisely because it
+has already discarded the fast motion. If that effect dominated, item 35 would
+be actively dangerous on a device whose lidar stamps are poor.
+
+Measured, with a random per-packet stamp error (constant within a 24-sample
+packet, independent between packets — the shape a byte-position reconstruction
+really produces):
+
+| per-packet stamp error | plain slerp | IMU-densified | ratio |
+| ---: | ---: | ---: | ---: |
+| ±0 ms | 0.739 cm | 0.021 cm | 0.03x |
+| ±1 ms | 0.743 cm | 0.059 cm | 0.08x |
+| ±4 ms | 0.772 cm | 0.234 cm | 0.30x |
+| ±8 ms | 0.840 cm | 0.473 cm | 0.56x |
+
+**Densification never becomes counter-productive**, even at stamp errors an
+order of magnitude worse than §3's sample clock should produce — so it ships on
+by default rather than gated on timestamp quality. It does degrade
+monotonically, which is the honest half, and that is also §3's justification in
+one table: the better the stamps, the more the gyro is worth.
+
+---
+
+### 3. D6 PER-SAMPLE TIMESTAMPING — THE OWNER'S SPEC NUMBERS
+
+The owner supplied: 10 Hz rotation, **4000 Hz sampling** (400 returns/rev,
+250 µs, 0.9° apart), 230400 8N1 = 23,040 B/s capacity — against a **measured
+~13.7 KB/s**, i.e. **~60% wire duty**. The D6 buffers a packet, blasts it at the
+line rate (**~1.7x faster than it samples**), then idles.
+
+The packet size falls out of those numbers and confirms them: at `lsn = 24` the
+stream costs `4000·3 + (4000/24)·10` = **13,667 B/s**. An 82-byte packet takes
+3.56 ms to send and covers 6.0 ms of sampling — 59% duty, as measured.
+
+ROUND 7's wire-rate back-dating is right at *packet* granularity and stays. It
+is wrong *inside* a packet, compressing 24 samples of 250 µs spacing into
+3.56 ms of wire time. `d6::Config::per_sample_timestamps` (default on) spaces
+samples at the **sampling** period — derived per packet from its own FSA/LSA
+angle span and the reported scan frequency, so a motor at 9.7 Hz is honoured —
+anchored on the packet's **first byte**, since transmission begins right after
+its last sample. `d6::Point` gained `t_sample_ns`; `t_rx_ns` keeps its exact old
+meaning.
+
+**A8/A2 also needed one thing the brief did not ask for.** That anchor is
+**biased late**, and the bias is the duty cycle: back-dating at the line rate
+assumes the link was busy when it was idle 40% of the time, so the head of a
+4 KB read can be mis-dated by ~120 ms — far worse than the 1–3 mm the refinement
+was about. The wire anchor is an *upper bound*, never a lower one, and the
+device's sampling rate is a far better clock. So `sample_clock_anchor` runs a
+**min-delay estimator** over the two: propagate the previous packet forward at
+the sampling period, take whichever is **earlier**. It converges with no tuning —
+at each read's *tail* `bytes_after ≈ 0` so the anchor is tight, and the chain
+carries that value through the *head* of the next read where it is loose. See
+A2 §9.3, which also derives why both assembler invariants (non-decreasing
+stamps; never later than the transport) fall out of it, and why a saturated
+stream compresses rather than slides.
+
+ROUND 7's control needed updating to stay falsifiable: per-sample stamping works
+off each packet's byte *offset*, so it recovers structure even with slicing off
+and would have quietly disarmed the `time_slice_bytes = 0` arm. That arm now
+turns both off.
+
+---
+
+### 4. ITEM 33 — CAPTURE LEAVES NOTHING BEHIND
+
+**The suspected bug was not the bug.** Entering Capture has created nothing
+since ROUND 5 (`CaptureViewModel.kt`: "the project is created at Start, not at
+screen entry"); leaving without recording was already clean, and the regression
+test added for it passes unchanged. The three real sources of strays were:
+
+1. **A Start the engine refuses.** `startCapture()` created the `.lscan` *before*
+   asking the engine to record, and on failure left the directory, `project.json`
+   and a spent series number behind — the code said so in a comment. Now rolled
+   back, and only when *that* call created it (a reopened project is never
+   deleted).
+2. **Stop with 0 points**, kept deliberately since ROUND 7 ("the project was
+   saved so the evidence is not lost"). Now pruned by default, with
+   `_sealedProjectId` suppressed so the shell cannot navigate to a project that
+   no longer exists. A **failed** seal is still never pruned, so the "its raw
+   data IS on the phone" banner can never be contradicted.
+3. **Legacy 0-point strays** (the scan-012/-014 clutter). `ProjectManifest.
+   isEmptyScan` is now the single definition; the Projects list filters them in
+   the **ViewModel**, not in `FileProjectStore.list()`, which merge/processing/
+   settings share. Settings gained a Scans section: a `keepEmptyScans` switch
+   (default **false**) and a "Clean up N empty scans" action.
+
+Verified on the `b4_test` emulator: **16 connected tests, 0 failures**, including
+the new `CaptureFlowNoStrayTest` (enter Capture → leave → no new project; record
+2 s → stop → kept). JVM: app unit 62 → and `:core` 405, both green.
+
+---
+
+### 5. ENGINE CHANGES
+
+| file | what |
+| --- | --- |
+| `drivers/d6/d6_fan.h` | **new** — the fan frame, derived and computed in one place |
+| `drivers/d6/d6_parser.h/.cpp` | `Point::t_sample_ns`; per-sample timestamping + the min-delay sample clock; `Stats::sample_hz_est` / `sample_rate_warnings` / `sample_clock_resyncs` |
+| `drivers/d6/d6_driver.cpp` | live preview uses `d6::fan_point`; the A8 sink prefers `t_sample_ns` |
+| `slam/pushbroom/pushbroom_assembler.cpp` | uses `d6::fan_point` / `fan_angle_deg` |
+| `poses/se3.h` | **additive** `quat_mul`, `quat_conj`, `quat_from_rotvec`, `quat_to_rotvec` — the engine's only quaternion multiply had been trapped in an anonymous namespace in `post_pipeline.cpp` |
+| `poses/pose_interpolator.h` | **additive** `PoseSample::bracket_t0_ns` / `bracket_t1_ns` |
+| `poses/imu_densified_pose.h/.cpp` | **new** — `ImuDensifiedPoseSource` |
+| `record/lscan.h/.cpp` | `ChunkType::kPhoneImu = 12`, `StreamId::kImuPhone = 10`, `streams/imu_phone.bin`, a 24-byte codec, and manifest `"imuCalibration"` |
+| `core/engine.cpp` | `push_phone_imu()`, `set_imu_extrinsics()`, the densifier wired between the pose source and the pushbroom |
+| `record/replay.cpp`, `slam/post/d6_resolve.cpp` | replay and offline re-resolve both feed the densifier |
+| `capi/scanengine_c.h/.cpp` | `scan_engine_push_imu`, `scan_engine_set_imu_extrinsics`, `scan_engine_imu_densify_stats`; **ABI 7 → 8** |
+
+Three findings from that wiring worth keeping:
+
+* **A real latent bug: `FileRecordReader::open()` carried a hard-coded
+  `kCandidates[]` list of stream files.** `streams/imu_phone.bin` was not in it,
+  so `kPhoneImu` chunks were written correctly and then never read back —
+  every reopen silently reported zero. Fixed. **Any future stream must update
+  that list**, and nothing enforces it.
+* **`plane_fit_rms` is not a valid metric through the real D6 driver**, and it
+  initially ranked the A/B backwards. The fixture models each sample's range at
+  its *packet's* time while the driver assigns per-sample times up to ~5 ms
+  earlier (ROUND 7 slicing + ROUND 9 `t_sample_ns`) and applies the datasheet
+  angle correction. The proof that it was the metric and not the code: a
+  **1 kHz-pose truth arm** resolved from identical bytes measures 1.541 cm —
+  *less flat* than the plain-slerp arm's 1.329 cm. Replaced with a
+  point-by-point comparison of two resolves of the same bytes, which cancels
+  every fixture artefact exactly: **0.036 cm with the gyro vs 2.684 cm without,
+  75x**, and the densified arm's flatness (1.539 cm) is now indistinguishable
+  from truth's (1.541 cm).
+* **The offline IMU pre-pass was considered and deliberately rejected.**
+  Loading every `kPhoneImu` chunk before the resolve pass would raise the
+  densified fraction, but it would break the stronger property — that an
+  offline resolve reproduces the live cloud **bit for bit** — because it would
+  densify returns the live pass fell back on. Backward-only is a requirement,
+  not an accident, and there is now a case that falsifies it: truncating
+  `imu_phone.bin` to 40% yields points that are each *either* exactly the
+  full-densified value *or* exactly the plain one, never a third. The
+  structural fallbacks were removed instead by aligning the fixture's pose
+  period to a whole multiple of the IMU period (`fallback_gap` 323 → 0);
+  coprime rates leave ~20% of returns falling one 2.5 ms step short at the
+  trailing edge, which is a genuine effect on a real phone and is exactly what
+  `fallback_gap` exists to report.
+
+Determinism doctrine held: no Eigen, hand-rolled integration, fixed-seed
+fixtures.
+
+---
+
+### 6. ITEM 32 — LEGACY RESCUE, DESIGN SKETCH (no implementation this round)
+
+The goal: recover a trajectory for pre-0.5.0 captures, which hold raw D6 returns
+but no `kPoseAr` stream, so A8 has nothing to resolve against and
+`D6ResolvePipeline` correctly refuses them with `kNotFound` rather than
+resolving through identity.
+
+**The input that exists.** `captures/scan-015-pixel-0.4.0.lscan/` has
+`streams/frames/` — **50 camera keyframes** (`kf_000000.jpg` …) plus
+`frames.idx`, alongside 437 KB of `lidar.bin`. `ChunkType::kCameraFrameIndex`
+already carries a keyframe descriptor with path, pose, intrinsics and timestamp.
+
+**The pipeline.**
+
+1. **Read the keyframe index** for stamps and intrinsics. If the recorded
+   descriptors still carry ARCore poses, *stop here* — that is already a
+   trajectory at keyframe rate and steps 2–3 are unnecessary. Check this first;
+   it may make the whole item cheap for some captures.
+2. **SfM/VIO over the keyframes.** ~50 frames over ~26 s is a small, well-posed
+   incremental SfM problem: features → pairwise matches → essential matrices →
+   incremental reconstruction → bundle adjustment. This is where an external
+   dependency finally earns its place (A8 §2's "if a future task needs a *joint*
+   solve, that is when Ceres/GTSAM earns it").
+3. **Fix the scale.** Monocular SfM is scale-free, and this is the step that
+   decides whether the result is a room or a scale model. Three sources, best
+   first: (a) the D6's own ranges — a metric sensor observing the same surfaces,
+   solved as one global scale factor against the SfM structure; (b) the recorded
+   accelerometer, if any; (c) an operator-entered known dimension. Without (a)
+   this is not worth shipping.
+4. **Interpolate to lidar rate** and re-resolve through the *existing*
+   `post::D6ResolvePipeline` by synthesising a `kPoseAr` stream — no new
+   assembler, and the ROUND 9 fan fix applies automatically.
+
+**Honest expected quality.** Keyframes at ~2 Hz against ARCore's 30 Hz is a 15x
+sparser trajectory, and §2 of this round quantifies exactly what interpolating a
+sparse pose stream costs: the 30 Hz→slerp arm already loses 0.74 cm of wall
+flatness to 12 Hz motion. At 2 Hz, gait-band motion is not attenuated but
+**aliased**, and no amount of post-processing recovers it. Expect **several
+centimetres** of wall RMS at best, degrading fast wherever the operator turned
+between keyframes, plus outright failure across the low-texture walls and
+motion-blurred frames that make handheld indoor SfM hard. **Position this as
+"recover a recognisable room from a scan you would otherwise throw away", never
+as a survey-grade result** — and say so in the UI, because a mediocre cloud that
+looks confident is worse than a refusal.
+
+**Sequencing.** Behind step 1 (which may be free) and after a decision on
+Ceres/GTSAM. Not scheduled.
+
+---
+
+### 7. VERIFICATION
+
+```
+$ cmake --build <engine-build> -j8 && ./scanengine_tests
+[doctest] test cases: 553 | 553 passed | 0 failed | 7 skipped
+[doctest] assertions: 2324351 | 2324351 passed | 0 failed
+$ ctest                                         # 100% tests passed, 7 of 7
+$ ./gradlew :core:test :app:testDebugUnitTest   # core 433/0, app 66/0
+$ ./gradlew assembleDebug                       # BUILD SUCCESSFUL
+$ ./gradlew :app:connectedDebugAndroidTest      # 16 tests, 0 failures (b4_test)
+```
+
+Engine: 535 → **553** cases (+18: 5 chirality/manifest, 6 IMU densification,
+7 phone-IMU container), 2,289,147 → **2,324,351** assertions.
+Android: `:core` 405 → **433**, `:app` unit 62 → **66**, emulator **16**.
+
+---
+
+### 8. EXPLICITLY NOT VERIFIED
+
+1. **The handedness itself, against the owner's actual room.** The chirality
+   test proves the pipeline is now self-consistent with the owner's *stated*
+   mount and with the datasheet read as a top view. The datasheet figure's
+   viewpoint is the one link in the chain that came from a translated quotation
+   rather than from measurement. **The owner looking at the re-resolved
+   scan-017 and saying "yes, that door is on the left now" is the acceptance
+   test, and nothing here substitutes for it.**
+2. **The IMU densification on real hardware.** Every number in §2 is from a
+   synthetic bench. No phone gyro has been recorded through this path yet, and
+   the 12 Hz / 1.5° jitter model is an assumption about handheld gait, not a
+   measurement of the owner's walk.
+3. **`camera_from_imu` on a real device.** The Android sensor frame and the
+   ARCore camera frame differ by the camera's `SENSOR_ORIENTATION`. A wrong
+   value cannot move the bracket endpoints (they are pinned to ARCore) but it
+   distorts the path between them — which is the entire value being added. The
+   derivation is now recorded in the container (`manifest.json`'s
+   `"imuCalibration"`, alongside `"mountCalibration"`) so an offline re-resolve
+   recovers it rather than guessing, but the DERIVATION itself has only been
+   checked against synthetic orientations, never against a real Pixel.
+4. **The 60% wire duty on the owner's rig.** It is the owner's measurement,
+   reproduced arithmetically at `lsn = 24`, not one taken from `scan-017`'s
+   bytes.
+5. **Whether scan-015's recorded keyframe descriptors carry usable poses** —
+   §6 step 1, which decides how expensive item 32 actually is. Not opened.

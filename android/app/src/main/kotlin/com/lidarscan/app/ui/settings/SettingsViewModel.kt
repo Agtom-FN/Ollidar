@@ -134,6 +134,77 @@ class SettingsViewModel(
         viewModelScope.launch { settingsRepository.setAllowPoorSyncColorize(allow) }
     }
 
+    // ── ROUND 9, owner item 33: empty scans ─────────────────────────────────
+    //
+    // "prune 0-point legacy strays (scan-012/-014 style) — offer/perform cleanup
+    // of empty projects in the list". The switch below decides what happens to
+    // NEW ones (Stop deletes a 0-point scan rather than keeping it, and the
+    // Projects tab hides the ones already on disk); this counter and its action
+    // are what actually get the legacy clutter off the phone.
+
+    private val _emptyScanCount = MutableStateFlow(0)
+
+    /** How many 0-point `.lscan` directories are on this device right now. */
+    val emptyScanCount: StateFlow<Int> = _emptyScanCount.asStateFlow()
+
+    /** What the last cleanup did, in one line. Null until one has been run. */
+    private val _emptyScanNote = MutableStateFlow<String?>(null)
+    val emptyScanNote: StateFlow<String?> = _emptyScanNote.asStateFlow()
+
+    init {
+        refreshEmptyScanCount()
+    }
+
+    fun refreshEmptyScanCount() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _emptyScanCount.value = runCatching {
+                projectStore.list().count { it.manifest.isEmptyScan }
+            }.getOrDefault(0)
+        }
+    }
+
+    fun setKeepEmptyScans(keep: Boolean) {
+        viewModelScope.launch { settingsRepository.setKeepEmptyScans(keep) }
+    }
+
+    /**
+     * Deletes every 0-point project on the device.
+     *
+     * Unconditionally destructive and deliberately not gated on
+     * [AppSettings.keepEmptyScans]: pressing a button called "Clean up empty
+     * scans" is a decision about these directories, not about the default. What
+     * it removes has, by definition, no points in it — the manifest and an empty
+     * `streams/` tree — and the capture log's `sealed OK … NO-DATA=true` lines
+     * for those attempts survive it, since the log is not in the project.
+     */
+    fun cleanUpEmptyScans() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val empties = runCatching { projectStore.list().filter { it.manifest.isEmptyScan } }
+                .getOrDefault(emptyList())
+            var deleted = 0
+            empties.forEach { project ->
+                com.lidarscan.app.ui.projects.ProjectPreviewCache.invalidate(project.id)
+                if (runCatching { projectStore.delete(project.id) }.getOrDefault(false)) deleted++
+            }
+            _emptyScanCount.value = runCatching {
+                projectStore.list().count { it.manifest.isEmptyScan }
+            }.getOrDefault(0)
+            _emptyScanNote.value = when {
+                empties.isEmpty() -> "No empty scans to clean up."
+                deleted == empties.size ->
+                    "Deleted $deleted empty scan${if (deleted == 1) "" else "s"}. " +
+                        "The Projects list refreshes when you go back to it."
+                else ->
+                    "Deleted $deleted of ${empties.size} empty scans — the rest could not be removed " +
+                        "(check the storage location in this screen)."
+            }
+        }
+    }
+
+    fun dismissEmptyScanNote() {
+        _emptyScanNote.value = null
+    }
+
     /**
      * B4's debug-drawer acceptance path. Reuses an existing "Synthetic
      * Replay Demo" project if the user has already run this before (so

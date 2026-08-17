@@ -82,6 +82,68 @@ inline bool quat_normalize(double q[4]) {
   return true;
 }
 
+// Hamilton product, (x, y, z, w) order: `out` = `a` then `b` applied in `a`'s
+// frame, i.e. `R(out) = R(a) * R(b)`. Aliasing-safe.
+//
+// ROUND 9 added these two: until then the engine's only quaternion multiply
+// lived in an anonymous namespace inside `slam/post/post_pipeline.cpp` and was
+// not reachable from anywhere else, so the IMU densifier would have been the
+// third hand-rolled copy.
+inline void quat_mul(const double a[4], const double b[4], double out[4]) {
+  const double x = a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1];
+  const double y = a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0];
+  const double z = a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3];
+  const double w = a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2];
+  out[0] = x;
+  out[1] = y;
+  out[2] = z;
+  out[3] = w;
+}
+
+inline void quat_conj(const double q[4], double out[4]) {
+  out[0] = -q[0];
+  out[1] = -q[1];
+  out[2] = -q[2];
+  out[3] = q[3];
+}
+
+// Axis-angle (rotation vector, radians) -> quaternion, and back. Series-
+// expanded near zero, which is the case that matters here: a gyro step at
+// 400 Hz is a few milliradians and the naive `sin(t)/t` loses precision.
+inline void quat_from_rotvec(const double w[3], double q[4]) {
+  const double t2 = w[0] * w[0] + w[1] * w[1] + w[2] * w[2];
+  const double t = std::sqrt(t2);
+  double s;  // sin(t/2)/t
+  if (t < 1e-8) {
+    s = 0.5 - t2 / 48.0;  // 1/2 - t^2/48 + ...
+    q[3] = 1.0 - t2 / 8.0;
+  } else {
+    s = std::sin(0.5 * t) / t;
+    q[3] = std::cos(0.5 * t);
+  }
+  q[0] = w[0] * s;
+  q[1] = w[1] * s;
+  q[2] = w[2] * s;
+}
+
+inline void quat_to_rotvec(const double q[4], double w[3]) {
+  double n[4] = {q[0], q[1], q[2], q[3]};
+  quat_normalize(n);
+  if (n[3] < 0.0) {  // shortest arc
+    for (int i = 0; i < 4; ++i) n[i] = -n[i];
+  }
+  const double v = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+  double k;  // angle / |v|
+  if (v < 1e-8) {
+    k = 2.0 + (2.0 / 3.0) * v * v;  // 2*asin(v)/v expanded
+  } else {
+    k = 2.0 * std::atan2(v, n[3]) / v;
+  }
+  w[0] = n[0] * k;
+  w[1] = n[1] * k;
+  w[2] = n[2] * k;
+}
+
 // Shortest-arc spherical linear interpolation. `u` is clamped to [0, 1].
 //
 // The sign fix (`if (cos < 0) negate b`) is not cosmetic: a quaternion and its

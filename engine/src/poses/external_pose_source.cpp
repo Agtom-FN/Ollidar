@@ -225,6 +225,10 @@ PoseSample ExternalPoseSource::sample_at(std::int64_t t) const {
     u = (gap > 0) ? static_cast<double>(t - a->pose.t_mono_ns) / static_cast<double>(gap) : 0.0;
   }
 
+  // ROUND 9: publish the knots, not just their spacing (see PoseSample).
+  out.bracket_t0_ns = a->pose.t_mono_ns;
+  out.bracket_t1_ns = b->pose.t_mono_ns;
+
   // Interpolate. Position lerps; orientation SLERPs on the shortest arc.
   Pose& p = out.pose;
   p.t_mono_ns = t;

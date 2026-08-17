@@ -67,9 +67,16 @@ namespace scanengine {
 // the engine-time stamp A4 mapped it to. Converting to Cartesian is the
 // assembler's job, so the sensor-frame convention lives in exactly one place.
 //
-// Sensor frame (identical to D6Driver's, deliberately — the mount extrinsic
-// is defined against it):  x = d·sin(theta), y = d·cos(theta), z = 0,
-// with theta = 0 along +y.
+// Sensor frame (identical to D6Driver's, deliberately — the mount extrinsic is
+// defined against it): see `drivers/d6/d6_fan.h`, which is the ONE place the
+// convention is written down and the only place it is computed.
+//
+//     x = -d·sin(theta), y = d·cos(theta), z = 0,  theta = 0 along +y
+//
+// with +z out of the BASE of the unit. ROUND 9 item 34 corrected the sign of
+// the x term: the vendor states its angle convention in a LEFT-handed frame,
+// and transcribing it into a right-handed one reverses the sweep, which
+// mirrored every resolved cloud left-for-right. d6_fan.h derives it in full.
 struct ProfilePoint {
   std::int64_t t_mono_ns = 0;
   float angle_deg = 0.0f;   // [0, 360); wraps freely, no unwrapping required

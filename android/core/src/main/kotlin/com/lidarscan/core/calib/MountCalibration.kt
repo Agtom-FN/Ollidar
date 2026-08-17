@@ -144,12 +144,60 @@ data class MountCalibration(
  * both halves of the split-half gate ("both seeded from the same CAD nominal,
  * because in the field that is the only initial guess there is", A8 §4.3).
  *
- * These are placeholders in the honest sense: **no physical bracket exists
- * yet** (Tech Spec's hardware-absent addendum), so the values below encode
- * only the intended geometry — the lidar sitting a few centimetres above and
- * behind the phone's camera, axes aligned with the sensor-frame convention
- * A8 §3.1 fixes (`x = d·sinθ, y = d·cosθ, z = 0`). A real bracket ships its
- * own numbers here; the wizard's whole job is to recover the difference.
+ * ## The COIN-D6 fan frame (ROUND 9, owner item 34)
+ *
+ * The authority for this is `engine/include/scanengine/drivers/d6/d6_fan.h`,
+ * which derives it in full. In short, the fan frame is **right-handed** and
+ * pinned to the physical unit as:
+ *
+ *  * **+y** — the 0-degree beam direction, i.e. the zero mark on the housing.
+ *  * **+z** — the spin axis, pointing out of the **BASE** of the unit, away
+ *    from the cap / optical-window end.
+ *  * **+x** — `y × z`, which completes the right-handed triple.
+ *
+ * and a return at vendor angle `θ`, range `d`, lands at
+ *
+ * ```
+ * p_lidar = (-d·sin θ,  d·cos θ,  0)
+ * ```
+ *
+ * **The `x` sign is negative, and that is the ROUND 9 fix.** This KDoc used to
+ * say the axes were "aligned with the sensor-frame convention A8 §3.1 fixes
+ * (`x = d·sinθ, y = d·cosθ, z = 0`)". That formula is **wrong**: the vendor
+ * datasheet states its angle convention in a *left-handed* coordinate system
+ * ("left-hand coordinate system … rotation angle increases clockwise", quoted
+ * in `docs/bench/BENCH_SETUP.md` §3.1), and the engine transcribed the
+ * datasheet's `(x, y)` verbatim into a right-handed frame. A left-handed
+ * triple read as right-handed silently reverses the sweep direction about the
+ * spin axis, so the resolved cloud came out **left-right mirrored** — the
+ * owner's "the output is left right reversed".
+ *
+ * ## Why identity is the right rotation for the owner's mount
+ *
+ * The owner's authoritative rig: the D6 rides on the **back of the phone**;
+ * the **0-degree beam points UP** (phone held portrait); the **cap/top of the
+ * lidar faces FORWARD** along the walk direction. Under the frame above, and
+ * with ARCore's camera frame (+X right, +Y up, looking along −Z):
+ *
+ * ```
+ * lidar +y (0-deg beam, up)   = camera +Y  (up)
+ * lidar +z (out of the BASE)  = camera +Z  (backward — so the CAP faces forward)
+ * lidar +x                    = camera +X  (the operator's right)
+ * ```
+ *
+ * Axis for axis, so `phone_from_lidar` carries an **IDENTITY rotation**, which
+ * is exactly what [cadNominal] has always had. The CAD nominal's rotation was
+ * never the wrong part; formula (1) was. It is therefore no longer a
+ * placeholder — it is a derived, owner-confirmed fact, and a change to it needs
+ * a changed physical mount, not a tweak. `D6ChiralityTest` pins it.
+ *
+ * ## What IS still a placeholder
+ *
+ * Only the **TRANSLATION**. No physical bracket exists yet (Tech Spec's
+ * hardware-absent addendum), so the lever arms below encode only the intended
+ * geometry — the lidar sitting a few centimetres above and behind the phone's
+ * camera. A real bracket ships its own numbers here; the wizard's whole job is
+ * to recover the difference.
  */
 object BracketNominals {
 
@@ -159,6 +207,9 @@ object BracketNominals {
     fun cadNominal(sensor: SensorType): Mat4 = when (sensor) {
         // D6: pushbroom bracket, scanner directly above the camera, its scan
         // plane vertical (so the sweep is across the walk direction).
+        // Rotation: IDENTITY, derived above from the owner's mount and the
+        // right-handed fan frame of d6_fan.h — do not "fix" it. Translation:
+        // still a CAD placeholder (6 cm up, 3.5 cm behind the camera).
         SensorType.COIN_D6 -> Mat4(
             doubleArrayOf(
                 1.0, 0.0, 0.0, 0.000,

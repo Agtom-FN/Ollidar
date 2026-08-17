@@ -97,4 +97,27 @@ data class AppSettings(
      * including why the default is 2 and why it is a setting at all.
      */
     val d6SensorLatencyMs: Int = com.lidarscan.core.capture.D6TimeSync.DEFAULT_SENSOR_LATENCY_MS,
+    /**
+     * ROUND 9 (owner item 33): keep a scan that recorded **zero points**?
+     *
+     * **Off by default, i.e. empty scans do not survive.** A capture that
+     * received no sensor packets leaves a `.lscan` directory with a
+     * `project.json`, an empty `streams/` tree and nothing else — and the
+     * owner's phone had accumulated a column of them (`scan-012`, `scan-014`,
+     * …), each one indistinguishable in the list from a real scan until you
+     * open it. Stop now deletes such a project instead of keeping it, and the
+     * Projects list hides the legacy ones that are already on disk (Settings has
+     * a one-tap "clean up" that deletes those for good).
+     *
+     * Turning it ON restores ROUND 7's behaviour — "the project was saved so the
+     * evidence is not lost" — which is the right setting while diagnosing a
+     * sensor that produces nothing, because then the empty `.lscan` *is* the
+     * evidence: it carries the manifest, the mount trim and the timestamps of an
+     * attempt that failed.
+     *
+     * Never applies to a replay session or to a capture recorded into a project
+     * that already existed before Start (the deep-link route): deleting either
+     * would be deleting something this capture did not create.
+     */
+    val keepEmptyScans: Boolean = false,
 )

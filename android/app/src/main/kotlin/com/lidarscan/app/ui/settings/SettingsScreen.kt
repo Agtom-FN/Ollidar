@@ -99,6 +99,12 @@ fun SettingsRoute(
     val captureLogSize = remember(captureLogLastLine) { viewModel.captureLogSizeBytes() }
     // ROUND 7: the log export's own outcome — a path, or a reason.
     val exportNote by viewModel.exportNote.collectAsStateWithLifecycle()
+    // ROUND 9 (item 33): how many 0-point strays are on the phone, recounted
+    // every time this screen is entered — the Capture tab may have pruned some
+    // since the last visit.
+    val emptyScanCount by viewModel.emptyScanCount.collectAsStateWithLifecycle()
+    val emptyScanNote by viewModel.emptyScanNote.collectAsStateWithLifecycle()
+    androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refreshEmptyScanCount() }
 
     SettingsScreen(
         settings = settings,
@@ -117,6 +123,11 @@ fun SettingsRoute(
         onCloudChange = viewModel::setCloud,
         onAllowPoorSyncChange = viewModel::setAllowPoorSyncColorize,
         onD6SensorLatencyChange = viewModel::setD6SensorLatencyMs,
+        emptyScanCount = emptyScanCount,
+        emptyScanNote = emptyScanNote,
+        onKeepEmptyScansChange = viewModel::setKeepEmptyScans,
+        onCleanUpEmptyScans = viewModel::cleanUpEmptyScans,
+        onDismissEmptyScanNote = viewModel::dismissEmptyScanNote,
         onReplaySyntheticCapture = { viewModel.replaySyntheticCapture(onReplaySyntheticCapture) },
         onBack = onBack,
     )
@@ -157,6 +168,13 @@ fun SettingsScreen(
     onCloudChange: (String, String) -> Unit = { _, _ -> },
     onAllowPoorSyncChange: (Boolean) -> Unit = {},
     onD6SensorLatencyChange: (Int) -> Unit = {},
+    /** ROUND 9 (owner item 33): how many 0-point strays are on the device right now. */
+    emptyScanCount: Int = 0,
+    /** What the last "clean up empty scans" actually did. */
+    emptyScanNote: String? = null,
+    onKeepEmptyScansChange: (Boolean) -> Unit = {},
+    onCleanUpEmptyScans: () -> Unit = {},
+    onDismissEmptyScanNote: () -> Unit = {},
     onReplaySyntheticCapture: () -> Unit = {},
     onBack: () -> Unit,
 ) {
@@ -207,6 +225,20 @@ fun SettingsScreen(
 
             SettingsSection("Processing") {
                 ProcessingOptionsCard(settings.allowPoorSyncColorize, onAllowPoorSyncChange)
+            }
+
+            // ROUND 9 (owner item 33): "owner hates clutter". One switch and one
+            // button — the switch decides what Stop does with a scan that
+            // recorded nothing, the button gets rid of the ones already there.
+            SettingsSection("Scans") {
+                EmptyScansCard(
+                    keepEmptyScans = settings.keepEmptyScans,
+                    emptyScanCount = emptyScanCount,
+                    note = emptyScanNote,
+                    onKeepEmptyScansChange = onKeepEmptyScansChange,
+                    onCleanUp = onCleanUpEmptyScans,
+                    onDismissNote = onDismissEmptyScanNote,
+                )
             }
 
             SettingsSection("Sensor timing (advanced)") {
@@ -349,9 +381,10 @@ private fun ScanSwitchRow(
     detail: String,
     checked: Boolean,
     enabled: Boolean = true,
+    modifier: Modifier = Modifier,
     onCheckedChange: (Boolean) -> Unit,
 ) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             CardTitle(title)
             Spacer(Modifier.height(4.dp))
@@ -470,6 +503,73 @@ private fun ProcessingOptionsCard(allowPoorSync: Boolean, onChange: (Boolean) ->
             checked = allowPoorSync,
             onCheckedChange = onChange,
         )
+    }
+}
+
+/**
+ * ROUND 9, owner item 33 — **empty scans.**
+ *
+ * A capture that received no sensor packets used to be kept ("the project was
+ * saved so the evidence is not lost"), which is defensible once and intolerable
+ * by the fifteenth time: the owner's phone ended up with a column of
+ * `scan-012` / `scan-014` directories that read like real scans in the list
+ * until you opened one. The default is now the opposite — Stop deletes a
+ * 0-point scan and the Projects tab hides the legacy ones — and this card is
+ * both halves of the escape hatch: the switch that restores the old behaviour,
+ * and the button that gets the existing strays off the device for good.
+ *
+ * The count is live rather than a promise: a "clean up" button that cannot say
+ * how many is asking for a blind tap.
+ */
+@Composable
+private fun EmptyScansCard(
+    keepEmptyScans: Boolean,
+    emptyScanCount: Int,
+    note: String?,
+    onKeepEmptyScansChange: (Boolean) -> Unit,
+    onCleanUp: () -> Unit,
+    onDismissNote: () -> Unit,
+) {
+    ScanCard {
+        ScanSwitchRow(
+            title = "Keep empty scans",
+            detail = "Off (the default): a scan that records 0 points is deleted when you press Stop, and " +
+                "0-point projects already on the phone stay out of the Projects list. On: every attempt is " +
+                "kept as evidence — the right setting while chasing a sensor that produces nothing.",
+            checked = keepEmptyScans,
+            onCheckedChange = onKeepEmptyScansChange,
+            modifier = Modifier.testTag("keepEmptyScansRow"),
+        )
+        Spacer(Modifier.height(12.dp))
+        Hint(
+            if (emptyScanCount == 0) {
+                "No empty scans on this device."
+            } else {
+                "$emptyScanCount scan${if (emptyScanCount == 1) "" else "s"} on this device recorded no " +
+                    "points. Deleting them removes the .lscan directories permanently; there is nothing in " +
+                    "them but a manifest."
+            },
+            color = InkFaint,
+            modifier = Modifier.testTag("emptyScanCount"),
+        )
+        Spacer(Modifier.height(10.dp))
+        SecondaryPill(
+            text = if (emptyScanCount == 0) "Clean up empty scans" else "Clean up $emptyScanCount empty scans",
+            height = 46.dp,
+            onClick = onCleanUp,
+            modifier = Modifier.fillMaxWidth().testTag("cleanUpEmptyScansButton"),
+        )
+        if (note != null) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                note,
+                style = MaterialTheme.typography.bodySmall,
+                color = Ink,
+                modifier = Modifier
+                    .clickable(onClick = onDismissNote)
+                    .testTag("emptyScanCleanupNote"),
+            )
+        }
     }
 }
 

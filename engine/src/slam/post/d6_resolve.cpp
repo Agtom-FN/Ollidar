@@ -26,6 +26,7 @@
 #include "scanengine/core/log.h"
 #include "scanengine/drivers/d6/d6_driver.h"
 #include "scanengine/poses/external_pose_source.h"
+#include "scanengine/poses/imu_densified_pose.h"
 #include "scanengine/record/lscan.h"
 
 namespace scanengine {
@@ -51,6 +52,43 @@ constexpr float kResolveFraction = 0.93f;
 // shape is fixed and written by one function ten lines away in the same
 // codebase, so the risk this trades away is small and the alternative is a new
 // third-party dependency in the engine's core.
+// ROUND 9: the same hand-rolled read for the phone-IMU extrinsic. Kept as a
+// separate function rather than a templated one because the arity is the whole
+// safety property here — "exactly N, never the first N of more" is what stops a
+// writer/reader disagreement from silently producing a plausible wrong frame.
+bool read_manifest_array(const std::string& lscan_dir, const char* key_name,
+                         double* out, int want) {
+  if (out == nullptr) return false;
+  std::ifstream in(lscan_dir + "/" + lscan::kManifestFile, std::ios::binary);
+  if (!in) return false;
+  std::ostringstream ss;
+  ss << in.rdbuf();
+  const std::string j = ss.str();
+
+  const std::size_t key = j.find(key_name);
+  if (key == std::string::npos) return false;
+  const std::size_t open = j.find('[', key);
+  if (open == std::string::npos) return false;
+  const std::size_t close = j.find(']', open);
+  if (close == std::string::npos) return false;
+
+  std::vector<double> m;
+  const char* p = j.c_str() + open + 1;
+  const char* end = j.c_str() + close;
+  while (p < end && static_cast<int>(m.size()) < want) {
+    char* stop = nullptr;
+    const double v = std::strtod(p, &stop);
+    if (stop == p) { ++p; continue; }
+    if (!std::isfinite(v)) return false;
+    m.push_back(v);
+    p = stop;
+    while (p < end && (*p == ',' || *p == ' ' || *p == '\n' || *p == '\t' || *p == '\r')) ++p;
+  }
+  if (static_cast<int>(m.size()) != want) return false;
+  for (int i = 0; i < want; ++i) out[i] = m[i];
+  return true;
+}
+
 bool read_manifest_mount(const std::string& lscan_dir, double phone_from_lidar[16]) {
   if (phone_from_lidar == nullptr) return false;
   std::ifstream in(lscan_dir + "/" + lscan::kManifestFile, std::ios::binary);
@@ -175,6 +213,10 @@ struct D6ResolvePipeline::Impl {
   // and the driver's profile sink holds a raw pointer to this Impl, so both
   // must outlive the decode loop — which they do, being members.
   std::unique_ptr<ExternalPoseSource> poses;
+  // ROUND 9: wraps `poses`, and is what the assembler resolves against when
+  // D6ResolveConfig::densify_with_phone_imu is on. Declared after `poses` so it
+  // is destroyed first — it holds a raw pointer to it.
+  std::unique_ptr<ImuDensifiedPoseSource> densified;
   std::unique_ptr<D6PushbroomAssembler> assembler;
 
   void report(PostStage stage, float fraction, float stage_fraction, std::uint64_t done,
@@ -294,10 +336,50 @@ Status D6ResolvePipeline::run(const std::string& lscan_dir) {
   s.poses = std::make_unique<ExternalPoseSource>(pc);
   SCAN_TRY(s.poses->start());
 
+  // --- ROUND 9: the same densifier the live pass uses ----------------------
+  //
+  // BACKWARD-ONLY, which is what makes this safe under `drain_on_push`. That
+  // flag is on here (see D6ResolveConfig::pushbroom), so a return is resolved
+  // the instant the chunk carrying it is decoded — there is no second pass to
+  // fix up a query that guessed. The densifier never needs one: for a query at
+  // `t` it integrates the gyro over the bracket [ta, tb] the wrapped source
+  // ALREADY chose, and that bracket exists only once the pose at tb has been
+  // pushed. FileRecordReader hands chunks back in non-decreasing t_mono_ns
+  // order across every stream, so by the time the kPoseAr chunk at tb arrives,
+  // every kPhoneImu chunk stamped at or before tb has arrived too — the ring
+  // covers [ta, tb] completely, and nothing is ever read from the future.
+  //
+  // When it does NOT cover it (a container whose IMU stream is short, sparse
+  // or absent) the densifier's own coverage check fails and the query falls
+  // back to the plain interpolation. So the failure mode of getting this wrong
+  // is "ROUND 8's answer", never a wrong one.
+  ImuDensifyConfig icfg;
+  icfg.capacity = s.cfg.imu_capacity > 0 ? s.cfg.imu_capacity : 1;
+  // Caller first, then the container's own manifest. ROUND 9 added
+  // `"imuCalibration": {"cameraFromImu": [...]}` for exactly this: a container
+  // carrying a kPhoneImu stream but no IMU extrinsic is self-contained only by
+  // accident, because the gyro is in the Android sensor frame while ARCore's
+  // pose is in the camera frame and on a real phone those differ by the
+  // camera's SENSOR_ORIENTATION. Getting it wrong does not fail loudly — it
+  // distorts the densified path between pose knots, which is the one thing the
+  // gyro was added to improve.
+  if (s.cfg.have_imu_extrinsics) {
+    for (int i = 0; i < 4; ++i) icfg.camera_from_imu[i] = s.cfg.imu_camera_from_imu[i];
+  } else {
+    double q[4];
+    if (read_manifest_array(lscan_dir, "\"cameraFromImu\"", q, 4)) {
+      for (int i = 0; i < 4; ++i) icfg.camera_from_imu[i] = q[i];
+      s.stats.imu_extrinsics_from_manifest = true;
+    }
+  }
+  s.densified = std::make_unique<ImuDensifiedPoseSource>(s.poses.get(), icfg);
+
   PushbroomConfig bc = s.cfg.pushbroom;
   bc.out_stream = s.cfg.out_stream;
   s.assembler = std::make_unique<D6PushbroomAssembler>(s.cfg.store, bc);
-  s.assembler->set_pose_source(s.poses.get());
+  s.assembler->set_pose_source(s.cfg.densify_with_phone_imu
+                                   ? static_cast<const PoseInterpolator*>(s.densified.get())
+                                   : static_cast<const PoseInterpolator*>(s.poses.get()));
   {
     const Status st = s.assembler->set_mount_extrinsics(mount);
     if (!st.ok()) {
@@ -365,6 +447,21 @@ Status D6ResolvePipeline::run(const std::string& lscan_dir) {
         p.tracking_lost = rec.tracking_lost;
         if (s.poses->push_pose(p).ok()) ++s.stats.poses_accepted;
       }
+    } else if (h.type == lscan::ChunkType::kPhoneImu) {
+      // Decoded even when densification is off, so `imu_read` always reports
+      // what the container HOLDS rather than what this run chose to use — a
+      // caller comparing the A and B arms needs the same denominator for both.
+      lscan::PhoneImuChunkRecord rec{};
+      if (lscan::decode_phone_imu_chunk(ByteSpan(payload.data(), payload.size()), &rec)) {
+        ++s.stats.imu_read;
+        PhoneImuSample smp;
+        smp.t_mono_ns = h.t_mono_ns;
+        for (int i = 0; i < 3; ++i) {
+          smp.gyro_rad_s[i] = rec.gyro_rad_s[i];
+          smp.accel_m_s2[i] = rec.accel_m_s2[i];
+        }
+        if (s.densified->push_imu(smp)) ++s.stats.imu_accepted;
+      }
     } else if (h.type == lscan::ChunkType::kD6Raw) {
       ++s.stats.lidar_chunks;
       s.stats.lidar_bytes += payload.size();
@@ -394,14 +491,24 @@ Status D6ResolvePipeline::run(const std::string& lscan_dir) {
 
   s.stats.pushbroom = s.assembler->stats();
   s.stats.points_out = s.stats.pushbroom.points_out;
+  {
+    const ImuDensifyStats ist = s.densified->stats();
+    s.stats.imu_densified = ist.densified;
+    s.stats.imu_fallbacks = ist.fallbacks;
+  }
 
   SCAN_LOG_INFO(kMod,
-                "resolved '%s': %llu D6 chunks / %llu bytes, %llu poses (%llu accepted) -> "
-                "%llu world points (mount from %s)",
+                "resolved '%s': %llu D6 chunks / %llu bytes, %llu poses (%llu accepted), "
+                "%llu phone-IMU samples (%llu accepted; %llu returns densified, %llu fell "
+                "back) -> %llu world points (mount from %s)",
                 lscan_dir.c_str(), static_cast<unsigned long long>(s.stats.lidar_chunks),
                 static_cast<unsigned long long>(s.stats.lidar_bytes),
                 static_cast<unsigned long long>(s.stats.poses_read),
                 static_cast<unsigned long long>(s.stats.poses_accepted),
+                static_cast<unsigned long long>(s.stats.imu_read),
+                static_cast<unsigned long long>(s.stats.imu_accepted),
+                static_cast<unsigned long long>(s.stats.imu_densified),
+                static_cast<unsigned long long>(s.stats.imu_fallbacks),
                 static_cast<unsigned long long>(s.stats.points_out),
                 s.stats.mount_from_manifest ? "manifest" : "caller");
 

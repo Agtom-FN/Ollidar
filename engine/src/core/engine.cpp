@@ -4,6 +4,7 @@
 #include <array>
 #include <atomic>
 #include <cctype>
+#include <cmath>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -214,7 +215,32 @@ struct Engine::Impl {
   // touch of it goes through `pushbroom_m` — the app's flush()/stats() calls
   // arrive on the control thread while the serial reader is pushing points.
   std::unique_ptr<ExternalPoseSource> poses;
+  // ROUND 9 item 35: sits BETWEEN `poses` and `pushbroom`. It wraps `poses`,
+  // answers the same PoseInterpolator interface, and replaces the orientation
+  // of each interpolated sample with the phone gyro's path between the same two
+  // ARCore knots. Engine-lifetime like the source it wraps, and constructed
+  // whether or not anyone ever pushes a sample: with an empty ring every query
+  // falls through to `poses`' own answer, so an app that pushes no IMU gets
+  // byte-for-byte the pre-ROUND-9 trajectory (test_round9_phone_imu_record.cpp
+  // asserts exactly that against a recorded walk).
+  //
+  // Declared AFTER `poses` so the destruction order is the reverse: the
+  // densifier holds a raw pointer to the source and must not outlive it.
+  std::unique_ptr<ImuDensifiedPoseSource> densified_poses;
   std::unique_ptr<D6PushbroomAssembler> pushbroom;
+  // Guards ONLY the `densified_poses` POINTER, which set_imu_extrinsics()
+  // swaps. Deliberately not pushbroom_m: samples arrive at 400 Hz from the
+  // phone's SensorEventListener thread and must not queue behind a D6 profile
+  // resolve. The OBJECT is internally synchronized, so the resolve path reads
+  // it through the raw pointer the assembler holds; the swap is safe against
+  // that because it is done under pushbroom_m as well (lock order:
+  // pushbroom_m -> imu_m -> record_m).
+  mutable std::mutex imu_m;
+  ImuDensifyConfig imu_cfg{};
+  // ROUND 9: true once set_imu_extrinsics() has been called, so a session
+  // opened afterwards records `imuCalibration` in its manifest. Guarded by
+  // imu_m alongside imu_cfg.
+  bool have_imu_extrinsics = false;
   mutable std::mutex pushbroom_m;
   std::atomic<bool> pushbroom_on{false};
   // ROUND 8: the last extrinsic set_mount_extrinsics() accepted, kept so
@@ -537,9 +563,19 @@ Result<std::unique_ptr<Engine>> Engine::create(const EngineConfig& cfg) {
   pc.timesync = &e->impl_->timesync;
   e->impl_->poses = std::make_unique<ExternalPoseSource>(pc);
   (void)e->impl_->poses->start();
+  // ROUND 9 item 35: the densifier goes BETWEEN the pose source and the
+  // assembler. It is a strict wrapper — with no IMU pushed, every query falls
+  // through to `poses`' own answer — so inserting it unconditionally changes
+  // nothing for an app that never calls push_phone_imu(), and gives one that
+  // does a gyro-integrated path between every pair of ARCore knots instead of
+  // the chord. `poses()` and the georef fusion keep reading the RAW source:
+  // "the pose" an overlay draws is ARCore's, and the densifier only ever
+  // reshapes the interpolation BETWEEN poses, never a pose itself.
+  e->impl_->densified_poses =
+      std::make_unique<ImuDensifiedPoseSource>(e->impl_->poses.get(), e->impl_->imu_cfg);
   e->impl_->pushbroom =
       std::make_unique<D6PushbroomAssembler>(e->impl_->points.get(), engine_pushbroom_defaults());
-  e->impl_->pushbroom->set_pose_source(e->impl_->poses.get());
+  e->impl_->pushbroom->set_pose_source(e->impl_->densified_poses.get());
 
   // A4/A6: the Mid-360's one estimator (see Impl::imu).
   e->impl_->imu = std::make_unique<ImuIngest>(e->impl_->timesync, StreamId::kLidarMid360);
@@ -662,10 +698,14 @@ Status Engine::start_session(const SessionConfig& cfg) {
     // A10 §9.3 item 3 / spec §3.3's "Desktop D6 capture: no ARCore →
     // RTK-trajectory mode only". Not a code path: GnssSource IS a
     // PoseInterpolator, so the assembler cannot tell the two apart.
-    impl_->pushbroom->set_pose_source(cfg.trajectory == TrajectorySource::kGnss
-                                          ? static_cast<const PoseInterpolator*>(impl_->gnss.get())
-                                          : static_cast<const PoseInterpolator*>(
-                                                impl_->poses.get()));
+    // ROUND 9: the EXTERNAL arm is the densifier, not the raw source. The GNSS
+    // arm is not: an RTK rover's trajectory is not an ARCore bracket and the
+    // phone's gyro has nothing to say about the path between two fixes.
+    std::lock_guard<std::mutex> ilock(impl_->imu_m);
+    impl_->pushbroom->set_pose_source(
+        cfg.trajectory == TrajectorySource::kGnss
+            ? static_cast<const PoseInterpolator*>(impl_->gnss.get())
+            : static_cast<const PoseInterpolator*>(impl_->densified_poses.get()));
   }
   impl_->trajectory.store(cfg.trajectory, std::memory_order_release);
   impl_->pushbroom_on.store(cfg.pushbroom, std::memory_order_release);
@@ -765,12 +805,24 @@ Status Engine::start_session(const SessionConfig& cfg) {
         have_mount = impl_->pushbroom->has_mount_extrinsics();
         for (int i = 0; i < 16; ++i) mount[i] = impl_->mount_phone_from_lidar[i];
       }
+      // ROUND 9: the phone-IMU extrinsic goes into the manifest for the same
+      // self-containment reason as the mount above. A container with a
+      // kPhoneImu stream and no `imuCalibration` re-resolves into a quietly
+      // distorted trajectory rather than failing loudly.
+      bool have_imu_calib = false;
+      double imu_q[4];
+      {
+        std::lock_guard<std::mutex> ilock(impl_->imu_m);
+        have_imu_calib = impl_->have_imu_extrinsics;
+        for (int i = 0; i < 4; ++i) imu_q[i] = impl_->imu_cfg.camera_from_imu[i];
+      }
 
       std::lock_guard<std::mutex> rlock(impl_->record_m);
       if (auto* fw = dynamic_cast<lscan::FileRecordWriter*>(impl_->recorder.get())) {
         fw->set_profile(cfg.profile);
         for (const auto& s : sensors) fw->add_sensor(s[0], s[1], s[2]);
         if (have_mount) fw->set_mount_calibration(mount);
+        if (have_imu_calib) fw->set_imu_calibration(imu_q);
       }
       const Status s = impl_->recorder->open(cfg.lscan_dir);
       if (!s.ok()) {
@@ -1117,6 +1169,115 @@ PoseSample Engine::pose_at(std::int64_t t_mono_ns) const {
 ExternalPoseSource& Engine::poses() { return *impl_->poses; }
 const ExternalPoseSource& Engine::poses() const { return *impl_->poses; }
 
+// --- ROUND 9 item 35: the phone IMU in -------------------------------------
+//
+// > "lidar data and the imu position data need sync the frequency"
+//
+// Two effects, deliberately in this order and for the same reasons
+// record_pose_() gives:
+//
+//   1. the densifier accepts (or rejects) the sample. A sample it rejects —
+//      non-finite, or older than the newest one it holds — is not part of the
+//      trajectory's shape, and recording it would make an offline re-resolve
+//      diverge from the live pass.
+//   2. an accepted sample is written to the recorder as a kPhoneImu chunk.
+//
+// That second step is what makes the phone IMU a RECORDED stream rather than a
+// live-only enhancement, and it is not optional: since ROUND 9 the gyro decides
+// where ~133 of every 134 D6 returns are placed, so a container without it can
+// only be re-resolved to a coarser cloud than the one the operator watched.
+// That is precisely the failure ROUND 8 fixed for kPoseAr, one sensor down.
+//
+// LOCKING. `imu_m` guards only the densifier POINTER (set_imu_extrinsics swaps
+// it); the object's own ring is internally synchronized. The recorder write
+// happens after `imu_m` is released, so a 400 Hz sensor thread never holds two
+// engine locks at once.
+Status Engine::push_phone_imu(std::int64_t t_mono_ns, const float gyro_rad_s[3],
+                              const float accel_m_s2[3]) {
+  if (gyro_rad_s == nullptr || accel_m_s2 == nullptr) {
+    return set_last_error(ScanError::kInvalidArgument, "push_phone_imu: null sample");
+  }
+  PhoneImuSample s;
+  s.t_mono_ns = t_mono_ns;
+  for (int i = 0; i < 3; ++i) {
+    s.gyro_rad_s[i] = gyro_rad_s[i];
+    s.accel_m_s2[i] = accel_m_s2[i];
+  }
+  bool accepted = false;
+  {
+    std::lock_guard<std::mutex> lock(impl_->imu_m);
+    accepted = impl_->densified_poses->push_imu(s);
+  }
+  if (!accepted) {
+    return set_last_error(ScanError::kInvalidArgument,
+                          "push_phone_imu: rejected at %lld ns (non-finite, or older than the "
+                          "newest sample held)",
+                          static_cast<long long>(t_mono_ns));
+  }
+  record_phone_imu_(s);
+  return kOkStatus;
+}
+
+void Engine::record_phone_imu_(const PhoneImuSample& s) {
+  std::lock_guard<std::mutex> lock(impl_->record_m);
+  if (!impl_->recorder->is_open()) return;
+  lscan::PhoneImuChunkRecord rec{};
+  for (int i = 0; i < 3; ++i) {
+    rec.gyro_rad_s[i] = s.gyro_rad_s[i];
+    rec.accel_m_s2[i] = s.accel_m_s2[i];
+  }
+  std::uint8_t buf[lscan::kPhoneImuChunkPayloadBytes];
+  lscan::encode_phone_imu_chunk(rec, buf);
+  (void)impl_->recorder->write_chunk(lscan::ChunkType::kPhoneImu, s.t_mono_ns,
+                                     ByteSpan(buf, lscan::kPhoneImuChunkPayloadBytes));
+}
+
+Status Engine::set_imu_extrinsics(const double quat_xyzw[4]) {
+  if (quat_xyzw == nullptr) {
+    return set_last_error(ScanError::kInvalidArgument, "set_imu_extrinsics: null quaternion");
+  }
+  double n = 0.0;
+  for (int i = 0; i < 4; ++i) {
+    if (!std::isfinite(quat_xyzw[i])) {
+      return set_last_error(ScanError::kInvalidArgument,
+                            "set_imu_extrinsics: non-finite quaternion");
+    }
+    n += quat_xyzw[i] * quat_xyzw[i];
+  }
+  if (n < 1e-12) {
+    return set_last_error(ScanError::kInvalidArgument,
+                          "set_imu_extrinsics: zero-norm quaternion");
+  }
+
+  // ImuDensifyConfig is fixed at construction, so applying a new extrinsic
+  // means a new densifier. Under BOTH locks: pushbroom_m so the assembler is
+  // not mid-resolve through the pointer being replaced (the same lock every
+  // set_pose_source() call already takes), imu_m so a sensor thread is not
+  // mid-push_imu(). See Impl::imu_m for the order.
+  std::lock_guard<std::mutex> lock(impl_->pushbroom_m);
+  std::lock_guard<std::mutex> ilock(impl_->imu_m);
+  for (int i = 0; i < 4; ++i) impl_->imu_cfg.camera_from_imu[i] = quat_xyzw[i];
+  impl_->have_imu_extrinsics = true;
+  auto next = std::make_unique<ImuDensifiedPoseSource>(impl_->poses.get(), impl_->imu_cfg);
+  const bool was_wired = impl_->trajectory.load(std::memory_order_acquire) ==
+                         TrajectorySource::kExternal;
+  impl_->densified_poses = std::move(next);
+  if (was_wired) impl_->pushbroom->set_pose_source(impl_->densified_poses.get());
+  SCAN_LOG_INFO(kMod, "[imu] camera_from_imu = (%.6f, %.6f, %.6f, %.6f)", quat_xyzw[0],
+                quat_xyzw[1], quat_xyzw[2], quat_xyzw[3]);
+  return kOkStatus;
+}
+
+ImuDensifyStats Engine::imu_densify_stats() const {
+  std::lock_guard<std::mutex> lock(impl_->imu_m);
+  return impl_->densified_poses->stats();
+}
+
+PoseSample Engine::densified_pose_at(std::int64_t t_mono_ns) const {
+  std::lock_guard<std::mutex> lock(impl_->imu_m);
+  return impl_->densified_poses->sample_at(t_mono_ns);
+}
+
 // --- A8: pushbroom ----------------------------------------------------------
 
 Status Engine::set_mount_extrinsics(const double phone_from_lidar[16]) {
@@ -1182,14 +1343,18 @@ PushbroomStats Engine::pushbroom_stats() const {
 }
 
 Status Engine::set_trajectory_source(TrajectorySource src) {
-  const PoseInterpolator* p = nullptr;
-  switch (src) {
-    case TrajectorySource::kGnss: p = impl_->gnss.get(); break;
-    case TrajectorySource::kExternal: p = impl_->poses.get(); break;
-  }
-  if (p == nullptr) return set_last_error(ScanError::kInvalidArgument, "unknown trajectory source");
   {
     std::lock_guard<std::mutex> lock(impl_->pushbroom_m);
+    std::lock_guard<std::mutex> ilock(impl_->imu_m);
+    const PoseInterpolator* p = nullptr;
+    switch (src) {
+      case TrajectorySource::kGnss: p = impl_->gnss.get(); break;
+      // ROUND 9: the densifier, for the reason given in start_session().
+      case TrajectorySource::kExternal: p = impl_->densified_poses.get(); break;
+    }
+    if (p == nullptr) {
+      return set_last_error(ScanError::kInvalidArgument, "unknown trajectory source");
+    }
     impl_->pushbroom->set_pose_source(p);
   }
   impl_->trajectory.store(src, std::memory_order_release);

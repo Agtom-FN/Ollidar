@@ -46,6 +46,13 @@ import com.google.ar.core.exceptions.NotYetAvailableException
  *   this is checked once per session and logged loudly if it disagrees — it
  *   is the one assumption that, if wrong, silently mis-times every keyframe
  *   and every pushbroom point on the device.
+ * * **`SENSOR_ORIENTATION` + `LENS_FACING`** (ROUND 9, owner item 35) — the
+ *   camera is mounted at an angle to the display (usually 90 degrees), so the
+ *   ARCore camera frame and the Android sensor/device frame that
+ *   `TYPE_GYROSCOPE` reports in are NOT the same. This is the only thing on the
+ *   device that says by how much, and it is what
+ *   [com.lidarscan.core.capture.CameraFromImu] turns into the `camera_from_imu`
+ *   quaternion the engine's IMU densifier needs.
  * * `SENSOR_INFO_PIXEL_ARRAY_SIZE` / `LENS_INFO_...` — context only.
  *
  * ### What nobody exposes
@@ -127,7 +134,23 @@ data class ArCameraCharacteristicsProbe(
     val timestampSourceKnown: Boolean,
     val pixelArrayWidth: Int,
     val pixelArrayHeight: Int,
+    /**
+     * ROUND 9 (item 35): `CameraCharacteristics.SENSOR_ORIENTATION`, degrees
+     * clockwise, or null when the tag is absent. Feeds
+     * [com.lidarscan.core.capture.CameraFromImu.resolve].
+     */
+    val sensorOrientationDeg: Int? = null,
+    /** True when `LENS_FACING` is FRONT — `camera_from_imu` is not derivable from SENSOR_ORIENTATION alone there. */
+    val lensFacingFront: Boolean = false,
 ) {
+    /**
+     * `camera_from_imu` for this camera, or an identity-with-a-reason. Computed
+     * rather than stored so the derivation lives in exactly one place
+     * ([com.lidarscan.core.capture.CameraFromImu], which is plain-JVM testable).
+     */
+    val cameraFromImu: com.lidarscan.core.capture.CameraFromImuExtrinsics
+        get() = com.lidarscan.core.capture.CameraFromImu.resolve(sensorOrientationDeg, lensFacingFront)
+
     companion object {
         private const val TAG = "ArCameraProbe"
 
@@ -153,12 +176,30 @@ data class ArCameraCharacteristicsProbe(
                             "domain, which A4/A8 assume for StreamId.kPoseAr.",
                     )
                 }
+                // ROUND 9 (item 35). Same posture as the timestamp source: read
+                // it once per session, and if it is missing say so rather than
+                // assume the usual 90 — an assumed extrinsic would rotate every
+                // integrated gyro increment 90 degrees off, which bends the
+                // densified path sideways instead of following the walk.
+                val orientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION)
+                val facing = characteristics.get(CameraCharacteristics.LENS_FACING)
+                val front = facing == CameraCharacteristics.LENS_FACING_FRONT
+                if (orientation == null) {
+                    Log.w(
+                        TAG,
+                        "Camera $cameraId reports no SENSOR_ORIENTATION — camera_from_imu cannot be " +
+                            "derived, so the IMU densifier will run on IDENTITY and its path shape " +
+                            "will be degraded (StreamId phone-imu).",
+                    )
+                }
                 ArCameraCharacteristicsProbe(
                     cameraId = cameraId,
                     timestampSourceIsRealtime = realtime,
                     timestampSourceKnown = source != null,
                     pixelArrayWidth = size?.width ?: 0,
                     pixelArrayHeight = size?.height ?: 0,
+                    sensorOrientationDeg = orientation,
+                    lensFacingFront = front,
                 )
             } catch (e: Exception) {
                 Log.w(TAG, "camera characteristics unavailable for $cameraId: ${e.message}")

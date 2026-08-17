@@ -130,6 +130,23 @@ data class ProjectManifest(
      */
     val sectionBreaks: List<com.lidarscan.core.capture.PoseSectionBreak> = emptyList(),
 ) {
+    /**
+     * ROUND 9 (owner item 33): **this project has no capture in it.**
+     *
+     * [pointCountEstimate] is written exactly once — by the capture seal, and
+     * only when the session actually produced points (see
+     * `CaptureViewModel.sealAndStopLocked`). So `null` means "never recorded
+     * into" and `0` means "recorded into and got nothing", and both are the
+     * same thing to an operator looking at the Projects list: a stray. The
+     * owner's `scan-012` / `scan-014` are the null arm of this.
+     *
+     * A computed property rather than a constructor field: it is derived from
+     * data that is already in the manifest, so it must never be persisted (and
+     * cannot drift from what it is derived from).
+     */
+    val isEmptyScan: Boolean
+        get() = (pointCountEstimate ?: 0L) <= 0L
+
     /** The project's own capture defaults, or the profile's if it predates B5. */
     fun effectiveCaptureDefaults(): CaptureDefaults =
         captureDefaults ?: CaptureDefaults.forProfile(profile)

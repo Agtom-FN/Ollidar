@@ -78,9 +78,13 @@ class D6PushbroomGeometryTest {
             val worldFromLidar = worldFromPhone * phoneFromLidar
             for (angleDeg in anglesDeg) {
                 val a = Math.toRadians(angleDeg)
-                // A8 §3.1's sensor-frame convention, byte for byte:
-                // x = d·sinθ, y = d·cosθ, z = 0.
-                val pLidar = Vec3(rangeM * sin(a), rangeM * cos(a), 0.0)
+                // A8 §3.1's sensor-frame convention, byte for byte
+                // (engine/include/scanengine/drivers/d6/d6_fan.h):
+                // x = -d·sinθ, y = d·cosθ, z = 0. ROUND 9 item 34 corrected
+                // the x sign; note this test is MIRROR-INVARIANT (it asserts
+                // axis extents, which are sign-blind), which is exactly why it
+                // could not catch that bug — see D6ChiralityTest, which can.
+                val pLidar = Vec3(-rangeM * sin(a), rangeM * cos(a), 0.0)
                 val pWorld = worldFromLidar.transform(pLidar)
                 out.add(WorldPoint(pWorld.x, pWorld.y, pWorld.z))
             }

@@ -92,6 +92,18 @@ class CaptureViewModel(
      * simply absent rather than half-present.
      */
     private val arController: com.lidarscan.app.ar.CaptureArController? = null,
+    /**
+     * ROUND 9 (owner item 35): the phone's own gyro + accelerometer, pushed into
+     * the engine's IMU-densified pose interpolator for the whole of a capture.
+     *
+     * Null for a replay session (nothing live to densify) and for any build or
+     * device without the sensors — the interpolator then falls back to plain
+     * SLERP, which is degraded but correct. A separate constructor slot rather
+     * than a field of [arController] because it is not an ARCore object and must
+     * not be gated on there being a camera controller, the same lesson ROUND 8
+     * item 30d learned about the mount extrinsic.
+     */
+    private val phoneImu: com.lidarscan.app.ar.PhoneImuRecorder? = null,
     private val engineHandleProvider: () -> Long = { 0L },
     private val mountCalibrationFor: (com.lidarscan.core.model.SensorType) -> com.lidarscan.core.calib.MountCalibration? = { null },
     /**
@@ -185,6 +197,16 @@ class CaptureViewModel(
     private val persistMountTrim: suspend (com.lidarscan.core.calib.StoredMountTrim?) -> Unit = {},
     /** ROUND 7: this app process's id, so a restored trim can be told apart from one set on this screen. */
     private val appRunId: String = "",
+    /**
+     * ROUND 9 (owner item 33): the device setting behind "a scan that recorded
+     * nothing is not a scan" — see [com.lidarscan.app.data.AppSettings.keepEmptyScans].
+     *
+     * A suspend supplier rather than a snapshot, read at Stop, so flipping the
+     * switch in Settings applies to the very next capture rather than to the
+     * next time this ViewModel is built. The default matches the app default
+     * (`false` = prune), so a bare-JVM test sees shipped behaviour.
+     */
+    private val keepEmptyScans: suspend () -> Boolean = { false },
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<CaptureUiState>(CaptureUiState.Loading)
@@ -1604,9 +1626,15 @@ class CaptureViewModel(
         _lastSavedProject.value = null
         _liveMapFullNote.value = null
         viewModelScope.launch {
-            val project = (_uiState.value as? CaptureUiState.Loaded)?.project
+            // ROUND 9 (item 33): remember whether THIS Start is what put the
+            // project on disk. Only a project this call created may be rolled
+            // back below — a reopened/deep-linked one existed before the button
+            // was pressed and is not ours to delete.
+            val reopened = (_uiState.value as? CaptureUiState.Loaded)?.project
+            val project = reopened
                 ?: createProjectForThisScan()
                 ?: return@launch
+            val createdByThisStart = reopened == null
             logEvent(
                 LOG_TAG_SESSION,
                 "start: project=${project.id} sensor=${project.manifest.sensor} " +
@@ -1622,11 +1650,22 @@ class CaptureViewModel(
                 // ROUND 6: this used to be a bare `return@launch`. The project
                 // directory exists at this point but nothing will ever be
                 // written into it, and the operator was shown nothing at all.
+                //
+                // ROUND 9 (owner item 33): …and ROUND 6's own comment was the
+                // whole bug — "the project directory exists at this point but
+                // nothing will ever be written into it" is a stray, and a failed
+                // Start is the easiest way to make one. It is now rolled back.
                 val why = started.exceptionOrNull()
+                logEvent(LOG_TAG_SEAL, "engine startCapture FAILED for ${project.id}: ${why?.message}")
+                // The rollback happens BEFORE the banner is raised, so that the
+                // moment the operator is told the scan did not start, the tab is
+                // already back in its new-scan state and the directory is
+                // already gone — no window in which the screen says "nothing was
+                // recorded" while a half-made project is still listable.
+                if (createdByThisStart) rollBackUnstartedProject(project)
                 _saveError.value =
                     "The scan did not start (${why?.message ?: "the engine refused"}). Nothing is being " +
                         "recorded — check the sensor connection and press Start again."
-                logEvent(LOG_TAG_SEAL, "engine startCapture FAILED for ${project.id}: ${why?.message}")
                 return@launch
             }
             sealPending.set(true)
@@ -1659,9 +1698,39 @@ class CaptureViewModel(
                 project.manifest.sensor,
                 project.manifest.mountCalibration,
             )
+            // ROUND 9 (item 35): the phone IMU, started for the same reason and
+            // in the same place as the extrinsic — it is an ENGINE stream, not
+            // an ARCore one, so it must not sit behind `arController ?: return`
+            // inside startArPipelines (ROUND 8 item 30d's lesson) even though
+            // what it densifies is ARCore's pose stream.
+            startPhoneImu()
             startArPipelines(project)
             startPhoneGeorefIfNeeded(project)
         }
+    }
+
+    /**
+     * ROUND 9 (owner item 35) — arms the phone-IMU stream for this capture.
+     *
+     * The `camera_from_imu` quaternion comes from the AR session's own camera
+     * characteristics probe (`SENSOR_ORIENTATION`; see
+     * [com.lidarscan.core.capture.CameraFromImu] for the derivation). With no AR
+     * session there is no probe, so `resolve(null, false)` returns an
+     * identity-with-a-reason and [com.lidarscan.app.ar.PhoneImuRecorder.start]
+     * logs it loudly — never a silent guess.
+     */
+    private fun startPhoneImu() {
+        val recorder = phoneImu ?: return
+        if (isReplay) return
+        val handle = engineHandleProvider()
+        val extrinsics = arController?.status?.value?.cameraProbe?.cameraFromImu
+            ?: com.lidarscan.core.capture.CameraFromImu.resolve(null, frontFacing = false)
+        recorder.start(handle, extrinsics)
+        logEvent(
+            LOG_TAG_AR,
+            "phone IMU start: handle=$handle available=${recorder.available} " +
+                "camera_from_imu=${if (extrinsics.derived) "derived" else "IDENTITY"} (${extrinsics.why})",
+        )
     }
 
     /**
@@ -1722,6 +1791,48 @@ class CaptureViewModel(
         phoneLocationJob?.cancel()
         phoneLocationJob = null
         phoneGeorefRecorder?.stop()
+    }
+
+    /**
+     * ROUND 9 (owner item 33): **undoes a project that never became a scan.**
+     *
+     * "Entering Capture = a new-scan context; leaving WITHOUT ever starting a
+     * recording must leave NO project behind." Entry itself creates nothing
+     * (item 9 moved creation to Start, and `onCleared` has nothing to undo), so
+     * the one remaining way to leave a project behind without ever recording is
+     * a Start that the engine refuses **after** the `.lscan` has been created —
+     * which is exactly what ROUND 6's own comment on the failure branch admits
+     * to. This deletes the directory and puts the tab back into its new-scan
+     * state, so the Projects list never sees it.
+     *
+     * **The series number stays spent, deliberately.** It is a monotonic
+     * device-level counter, not a count of directories
+     * ([com.lidarscan.app.data.AppSettings.scanSeriesCounter] spells out why:
+     * two `Scan-014-…` on one phone, taken weeks apart, is the confusion the
+     * series exists to prevent). Handing the number back would mean the next
+     * scan re-uses it, and a spent number costs nothing but a gap in the
+     * sequence — a gap that is itself an honest record of a Start that failed.
+     */
+    private suspend fun rollBackUnstartedProject(project: Project) {
+        val deleted = withContext(Dispatchers.IO) {
+            com.lidarscan.app.ui.projects.ProjectPreviewCache.invalidate(project.id)
+            runCatching { projectStore.delete(project.id) }.getOrDefault(false)
+        }
+        logEvent(
+            LOG_TAG_STORE,
+            "rolled back un-started project id=${project.id} deleted=$deleted " +
+                "dir=${project.directory.absolutePath} (series number stays spent)",
+        )
+        // Back to a new-scan tab, with the auto-name the NEXT series number
+        // implies — the Loaded state createProjectForThisScan() left behind
+        // would otherwise make the next Start re-record into a project that no
+        // longer exists on disk.
+        _uiState.value = CaptureUiState.NewScan(
+            autoName = com.lidarscan.core.capture.ScanAutoName.format(
+                series = runCatching { peekSeriesNumber() }.getOrDefault(1),
+                epochMillis = clock(),
+            ),
+        )
     }
 
     /**
@@ -2002,6 +2113,14 @@ class CaptureViewModel(
         // with it — before the engine handle goes away, since the recorder pushes
         // into that handle.
         stopPhoneGeoref()
+        // ROUND 9 (item 35): the IMU stream pushes into the engine handle too,
+        // so it stops here, before that handle goes away — same rule, same
+        // reason. Its final counters are logged so a field session can be asked
+        // afterwards what rate the device actually granted.
+        phoneImu?.let { recorder ->
+            recorder.stop()
+            logEvent(LOG_TAG_AR, recorder.status.value.summary())
+        }
         // Keyframes first: the recorder's index has to be flushed and closed
         // while the .lscan is still the live session's, and the ARCore frame
         // listener must stop before the engine handle goes away.
@@ -2069,6 +2188,25 @@ class CaptureViewModel(
             return
         }
 
+        // ── ROUND 9, owner item 33: does this scan get to survive Stop? ──────
+        //
+        // "record+stop keeps + redirects (as shipped)" — but a capture that
+        // recorded ZERO points is not a scan, it is the `scan-012`/`scan-014`
+        // clutter the owner is asking to be rid of. Decided BEFORE the seal
+        // reports success, because the two outcomes say different things on
+        // screen and only one of them may claim the scan was saved.
+        //
+        // Three guards, all of them about not deleting something that is not
+        // this capture's to delete:
+        //  * `!isReplay` — a replay writes no new points by design
+        //    (`ReplayEngineBridge`), so every replay would look empty;
+        //  * `projectId == null` — a project-scoped/deep-link entry records into
+        //    a project that existed before Start;
+        //  * the setting, for the operator who is diagnosing a dead sensor and
+        //    for whom the empty `.lscan` IS the evidence.
+        val emptyScan = finalStats.pointsCaptured == 0L && !isReplay && projectId == null
+        val pruneEmptyScan = emptyScan && !runCatching { keepEmptyScans() }.getOrDefault(false)
+
         val sealed = withContext(Dispatchers.IO) {
             projectStore.updateManifest(activeId) { manifest ->
                 manifest.copy(
@@ -2105,7 +2243,10 @@ class CaptureViewModel(
                     "points=${finalStats.pointsCaptured} dir=${projectDir?.absolutePath}",
             )
         } else {
-            _lastSavedProject.value = verified.directory.absolutePath
+            // ROUND 9 (item 33): a scan that is about to be pruned was not
+            // "saved to <path>" — saying so would send the operator to a
+            // directory this method deletes three lines from now.
+            if (!pruneEmptyScan) _lastSavedProject.value = verified.directory.absolutePath
             logEvent(
                 LOG_TAG_SEAL,
                 "sealed OK id=$activeId name=\"${verified.manifest.name}\" " +
@@ -2123,14 +2264,46 @@ class CaptureViewModel(
                     },
             )
         }
+        // ROUND 9 (item 33): the prune itself, after the seal has been written
+        // and read back — so the capture log still carries the full `sealed OK …
+        // NO-DATA=true` line for the scan that was discarded, and the operator
+        // has a record of the attempt even though its directory is gone.
+        //
+        // A FAILED seal is never pruned, even when it is empty: the branch above
+        // has just told the operator "its raw data IS on the phone at <path> —
+        // do not delete it", and deleting it three lines later would make the
+        // app a liar about the one screen it shows when something has gone
+        // properly wrong. A scan whose manifest could not be written or read
+        // back is not known to be empty; it is only known to be broken.
+        val prunedEmptyScan = pruneEmptyScan && sealed != null && verified != null && withContext(Dispatchers.IO) {
+            com.lidarscan.app.ui.projects.ProjectPreviewCache.invalidate(activeId)
+            runCatching { projectStore.delete(activeId) }.getOrDefault(false)
+        }
+        if (prunedEmptyScan) {
+            logEvent(
+                LOG_TAG_STORE,
+                "pruned EMPTY scan id=$activeId points=0 dir=${projectDir?.absolutePath} " +
+                    "(Settings > Scans > \"Keep empty scans\" turns this off)",
+            )
+        }
+
         if (finalStats.pointsCaptured == 0L && !isReplay) {
             // ROUND 7: the scan is saved and it is empty, and the operator has
             // to hear that from the app rather than from the Projects list two
             // days later. The watchdog is stopped by now, so nothing clears it.
-            _noDataAlert.value =
+            //
+            // ROUND 9 (item 33): two arms now, because the banner has to match
+            // what actually happened to the directory.
+            _noDataAlert.value = if (prunedEmptyScan) {
+                "THIS SCAN RECORDED NO POINTS. ${noDataVerdict ?: "No sensor packets reached the session."} " +
+                    "Nothing was saved — the empty scan was removed rather than left in the Projects list. " +
+                    "Re-seat the USB-C cable and scan again. " +
+                    "(Settings › Scans › \"Keep empty scans\" keeps failed attempts instead.)"
+            } else {
                 "THIS SCAN RECORDED NO POINTS. ${noDataVerdict ?: "No sensor packets reached the session."} " +
                     "The project was saved so the evidence is not lost — but there is nothing in it. " +
                     "Re-seat the USB-C cable and scan again."
+            }
         }
         pushbroomEnabled = false
         _pushbroomActive.value = false
@@ -2204,7 +2377,12 @@ class CaptureViewModel(
         // navigator which scan to open. Emitted last, and only on the verified
         // path: navigating away from a capture that FAILED to save would take
         // the operator off the one screen carrying the red banner that says so.
-        if (verified != null) {
+        //
+        // ROUND 9 (item 33): …and only when the scan still exists. Navigating to
+        // a project this Stop just deleted would land the operator on an empty
+        // list entry that vanishes under them on the next refresh; the red
+        // no-data banner on THIS screen is the thing they need to read.
+        if (verified != null && !prunedEmptyScan) {
             _sealedProjectId.tryEmit(activeId)
         }
     }
@@ -2311,8 +2489,29 @@ class CaptureViewModel(
         markCustomIfDiverged()
     }
 
+    /**
+     * ROUND 9 (owner item 33) — **the leave path, audited.**
+     *
+     * "Entering Capture = a new-scan context; leaving WITHOUT ever starting a
+     * recording must leave NO project behind (no dir, no list entry)." Nothing
+     * below deletes anything, and that is the correct implementation rather
+     * than an omission: screen ENTRY creates no project at all (ROUND 5 item 9
+     * moved creation into `startCapture`, and `_uiState` opens on
+     * [CaptureUiState.NewScan]), so a tab that is opened and left has nothing
+     * to undo. The two ways a project could otherwise be left behind are
+     * handled where they happen — a refused Start rolls back
+     * ([rollBackUnstartedProject]) and a 0-point Stop prunes
+     * (`sealAndStopLocked`) — and both are pinned by `CaptureRound9FlowTest`.
+     *
+     * A project that HAS been recorded into is never touched here, even if the
+     * screen is destroyed mid-capture: those bytes are the operator's.
+     */
     override fun onCleared() {
         stopPhoneGeoref()
+        // ROUND 9 (item 35): a HandlerThread and two registered SensorEventListeners
+        // outlive a ViewModel quite happily if nobody unregisters them, and this
+        // is the one path a mid-capture screen destruction takes.
+        phoneImu?.stop()
         detachTrailListener()
         detachRigPoseListener()
         detachKeyframeListener()

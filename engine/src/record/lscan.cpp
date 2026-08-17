@@ -194,6 +194,21 @@ bool decode_pose_chunk(ByteSpan in, PoseChunkRecord* out) {
   return true;
 }
 
+// --- ROUND 9: kPhoneImu payload codec ---------------------------------------
+
+void encode_phone_imu_chunk(const PhoneImuChunkRecord& s, std::uint8_t* out) {
+  for (int i = 0; i < 3; ++i) put_f32(out + 0 + 4 * i, s.gyro_rad_s[i]);
+  for (int i = 0; i < 3; ++i) put_f32(out + 12 + 4 * i, s.accel_m_s2[i]);
+}
+
+bool decode_phone_imu_chunk(ByteSpan in, PhoneImuChunkRecord* out) {
+  if (out == nullptr || in.size() < kPhoneImuChunkPayloadBytes) return false;
+  const std::uint8_t* p = in.data();
+  for (int i = 0; i < 3; ++i) out->gyro_rad_s[i] = get_f32(p + 0 + 4 * i);
+  for (int i = 0; i < 3; ++i) out->accel_m_s2[i] = get_f32(p + 12 + 4 * i);
+  return true;
+}
+
 StreamId stream_of(ChunkType t) {
   switch (t) {
     case ChunkType::kD6Raw: return StreamId::kLidarD6;
@@ -211,6 +226,10 @@ StreamId stream_of(ChunkType t) {
     // — is the whole fix, and it is additive: nothing wrote this chunk type
     // before, so no existing container changes meaning.
     case ChunkType::kPointsXyzRgba: return StreamId::kSlamMap;
+    // ROUND 9: the phone's own IMU. NOT StreamId::kImu — see the note over
+    // kPhoneImuStreamFile in lscan.h: kImu means "this is a Mid-360 project" to
+    // two offline pipelines, and a phone sample must not claim that.
+    case ChunkType::kPhoneImu: return StreamId::kImuPhone;
     case ChunkType::kDeviceInfo:
     case ChunkType::kMarker:
     case ChunkType::kSessionNote:
@@ -236,6 +255,10 @@ const char* stream_file_of(StreamId s) {
     // replay read and CRC tens of megabytes it immediately discards.
     case StreamId::kSlamMap: return kMapStreamFile;
     case StreamId::kPoseLio: return kPoseArStreamFile;
+    // ROUND 9: its own file, not imu.bin (the Mid-360's) and not poses_ar.bin
+    // (which a kPoseAr replay walks chunk by chunk — a 400 Hz stream folded in
+    // there would make every pose replay read and CRC 13x its own volume).
+    case StreamId::kImuPhone: return kPhoneImuStreamFile;
     case StreamId::kUnknown: return kLidarStreamFile;
   }
   return kLidarStreamFile;
@@ -428,6 +451,9 @@ struct FileRecordWriter::Impl {
   // FileRecordWriter::set_mount_calibration().
   bool have_mount_ = false;
   double mount_phone_from_lidar_[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+  // ROUND 9: see FileRecordWriter::set_imu_calibration().
+  bool have_imu_calib_ = false;
+  double imu_camera_from_imu_[4] = {0, 0, 0, 1};
   std::int64_t created_at_utc_ns_ = 0;
   std::map<StreamId, StreamFile> streams_;
 
@@ -517,6 +543,19 @@ struct FileRecordWriter::Impl {
       j << "]},\n";
     } else {
       j << "  \"mountCalibration\": null,\n";
+    }
+    // ROUND 9: the phone-IMU extrinsic, for the same self-containment reason
+    // as mountCalibration above — a kPhoneImu stream without it re-resolves
+    // into a quietly distorted trajectory rather than failing loudly.
+    if (have_imu_calib_) {
+      j << "  \"imuCalibration\": {\"cameraFromImu\": [";
+      for (int i = 0; i < 4; ++i) {
+        if (i != 0) j << ", ";
+        j << std::setprecision(17) << imu_camera_from_imu_[i];
+      }
+      j << "]},\n";
+    } else {
+      j << "  \"imuCalibration\": null,\n";
     }
     j << "  \"crs\": null,\n";
     // --- INT-34, additive: A11 §8.4's per-bracket camera clock offset ------
@@ -715,6 +754,13 @@ void FileRecordWriter::set_mount_calibration(const double phone_from_lidar[16]) 
   impl_->have_mount_ = true;
 }
 
+// ROUND 9, additive: see FileRecordWriter::set_imu_calibration() in lscan.h.
+void FileRecordWriter::set_imu_calibration(const double camera_from_imu[4]) {
+  if (camera_from_imu == nullptr) return;
+  for (int i = 0; i < 4; ++i) impl_->imu_camera_from_imu_[i] = camera_from_imu[i];
+  impl_->have_imu_calib_ = true;
+}
+
 // --- FileRecordReader ---------------------------------------------------------
 
 struct FileRecordReader::Impl {
@@ -880,7 +926,12 @@ Status FileRecordReader::open(const std::string& lscan_dir) {
   static const char* const kCandidates[] = {kLidarStreamFile, kImuStreamFile, kPoseArStreamFile,
                                             kGnssStreamFile, kFrameIndexFile,
                                             // ROUND 8: the resolved cloud, StreamId::kSlamMap.
-                                            kMapStreamFile};
+                                            kMapStreamFile,
+                                            // ROUND 9: the phone's own IMU,
+                                            // StreamId::kImuPhone. A stream that is
+                                            // written but not listed here is written
+                                            // and never read back.
+                                            kPhoneImuStreamFile};
   bool hard_fail = false;
   for (const char* rel : kCandidates) {
     if (!impl_->load_stream_file(lscan_dir + "/" + rel, &hard_fail)) {
