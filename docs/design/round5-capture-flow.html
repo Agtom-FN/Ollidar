@@ -1,0 +1,537 @@
+<title>Round 5 Capture Flow</title>
+<style>
+  :root{
+    --bg:#101216; --panel:#181b21; --panel2:#1f232b; --line:#2a2f39;
+    --ink:#e8eaf0; --dim:#9aa1af; --faint:#6b7280;
+    --ember:#ff6d3d; --ember-soft:#ff8a5c; --ok:#4cd88a; --warn:#ffd166; --bad:#ff5d5d;
+    --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+    --disp:'Space Grotesk','Inter',-apple-system,'Segoe UI',sans-serif;
+    --body:'Inter',-apple-system,'Segoe UI',sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{background:var(--bg)}
+  body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.55;padding:28px 20px 80px}
+  .wrap{max-width:1040px;margin:0 auto}
+  h1{font-family:var(--disp);font-size:30px;font-weight:600;letter-spacing:-.02em;text-wrap:balance}
+  .sub{color:var(--dim);margin-top:6px;max-width:62ch}
+  .sub b{color:var(--ember-soft);font-weight:600}
+  h2{font-family:var(--disp);font-size:19px;font-weight:600;margin:40px 0 14px;letter-spacing:-.01em}
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-bottom:6px}
+
+  /* ---- step comparison ---- */
+  .cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:22px}
+  @media(max-width:760px){.cmp{grid-template-columns:1fr}}
+  .cmp .col{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px}
+  .cmp .col.new{border-color:#3d2a22;background:linear-gradient(180deg,#1d1713,var(--panel))}
+  .cmp h3{font-family:var(--disp);font-size:14px;font-weight:600;margin-bottom:10px;display:flex;justify-content:space-between;align-items:baseline}
+  .cmp h3 .n{font-family:var(--mono);font-size:12px;color:var(--faint)}
+  .cmp .col.new h3 .n{color:var(--ok)}
+  .steps{list-style:none}
+  .steps li{padding:5px 0 5px 26px;position:relative;color:var(--dim);font-size:13.5px}
+  .steps li::before{content:"";position:absolute;left:8px;top:13px;width:6px;height:6px;border-radius:50%;background:var(--faint)}
+  .steps li.gone{text-decoration:line-through;color:var(--faint)}
+  .col.new .steps li{color:var(--ink)}
+  .col.new .steps li::before{background:var(--ember)}
+  .steps li em{font-style:normal;color:var(--ember-soft)}
+
+  /* ---- platform toggle ---- */
+  .toggle{display:inline-flex;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:4px;margin:26px 0 18px;gap:4px}
+  .toggle button{border:0;background:transparent;color:var(--dim);font-family:var(--disp);font-size:14px;font-weight:600;padding:8px 22px;border-radius:999px;cursor:pointer}
+  .toggle button.on{background:var(--ember);color:#1a0e08}
+  .toggle button:focus-visible{outline:2px solid var(--ember-soft);outline-offset:2px}
+
+  /* ---- app frame ---- */
+  .frame{background:var(--panel);border:1px solid var(--line);border-radius:16px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.45)}
+  .titlebar{display:flex;align-items:center;gap:8px;background:#14161b;border-bottom:1px solid var(--line);padding:10px 14px}
+  .dot{width:11px;height:11px;border-radius:50%}
+  .titlebar .t{margin-left:10px;font-family:var(--mono);font-size:11.5px;color:var(--faint)}
+  .app{display:flex;min-height:520px}
+  .rail{width:64px;background:#14161b;border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;padding-top:14px;gap:6px}
+  .rail button{width:46px;height:46px;border-radius:12px;border:0;background:transparent;color:var(--dim);cursor:pointer;font-size:19px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px}
+  .rail button small{font-size:8.5px;font-family:var(--disp);letter-spacing:.02em}
+  .rail button.on{background:#2a1c14;color:var(--ember-soft)}
+  .rail button:focus-visible{outline:2px solid var(--ember-soft)}
+  .stage{flex:1;padding:16px 18px;min-width:0}
+
+  /* ---- capture stage ---- */
+  .banner{display:flex;align-items:center;gap:10px;background:var(--panel2);border:1px solid var(--line);border-radius:11px;padding:9px 14px;font-size:13px;color:var(--dim)}
+  .banner .pulse{width:9px;height:9px;border-radius:50%;background:var(--warn);animation:pu 1.1s infinite}
+  .banner.good .pulse{background:var(--ok);animation:none}
+  .banner.good{color:var(--ink)}
+  .banner .mono{font-family:var(--mono);font-size:12px;color:var(--ember-soft)}
+  .mini{margin-left:auto;flex:none;border:1px solid var(--line);background:transparent;color:var(--dim);border-radius:8px;font-family:var(--disp);font-size:11.5px;font-weight:600;padding:5px 12px;cursor:pointer}
+  .mini:hover{color:var(--ember-soft);border-color:#4a2a1c}
+  .manualrow{display:flex;gap:9px;align-items:center;background:var(--panel2);border:1px solid var(--line);border-radius:11px;padding:9px 14px;margin-top:9px;flex-wrap:wrap}
+  .manualrow label{font-size:12px;color:var(--faint);display:flex;align-items:center;gap:7px}
+  .manualrow input{background:#0b0d10;border:1px solid var(--line);border-radius:8px;color:var(--ink);font-family:var(--mono);font-size:12px;padding:7px 10px;width:140px}
+  .pactions{display:flex;gap:9px;align-items:center;margin-top:11px;flex-wrap:wrap}
+  .pactions .btn{padding:9px 20px;font-size:13px}
+  .pactions .btn.sec{background:var(--panel2);color:var(--ink);border:1px solid var(--line)}
+  .pactions .btn.sec[disabled]{opacity:.45}
+  .pactions .why{font-size:11.5px;color:var(--faint)}
+  @keyframes pu{50%{opacity:.25}}
+  .capgrid{display:grid;grid-template-columns:1fr 240px;gap:14px;margin-top:13px}
+  @media(max-width:860px){.capgrid{grid-template-columns:1fr}}
+  .viewport{position:relative;background:#0b0d10;border:1px solid var(--line);border-radius:13px;overflow:hidden;min-height:330px}
+  .viewport canvas{display:block;width:100%;height:100%;position:absolute;inset:0}
+  .vtag{position:absolute;top:10px;left:12px;font-family:var(--mono);font-size:11px;letter-spacing:.08em;padding:4px 10px;border-radius:999px;background:rgba(16,18,22,.75);border:1px solid var(--line);color:var(--ok)}
+  .vtag.rec{color:#ffb4a1;border-color:#5c2a1c}
+  .vtag.rec::before{content:"●";color:var(--bad);margin-right:6px;animation:pu 1s infinite}
+  .vstats{position:absolute;bottom:10px;left:12px;right:12px;display:flex;gap:14px;font-family:var(--mono);font-size:11px;color:var(--dim);background:rgba(16,18,22,.6);border-radius:9px;padding:6px 12px;flex-wrap:wrap}
+  .vstats b{color:var(--ink);font-weight:500}
+  .params{background:var(--panel2);border:1px solid var(--line);border-radius:13px;padding:14px 16px;display:flex;flex-direction:column;gap:11px}
+  .params h4{font-family:var(--disp);font-size:12.5px;font-weight:600;color:var(--dim);letter-spacing:.05em;text-transform:uppercase}
+  .param label{display:flex;justify-content:space-between;font-size:12.5px;color:var(--dim);margin-bottom:3px}
+  .param label output{font-family:var(--mono);font-size:11.5px;color:var(--ember-soft)}
+  input[type=range]{width:100%;accent-color:var(--ember);height:20px}
+  .note{font-size:11.5px;color:var(--faint);border-top:1px solid var(--line);padding-top:9px}
+  .startrow{display:flex;gap:12px;margin-top:14px;align-items:center;flex-wrap:wrap}
+  .pname{flex:1;min-width:230px;background:var(--panel2);border:1px solid var(--line);border-radius:11px;padding:11px 14px;color:var(--ink);font-family:var(--mono);font-size:13px}
+  .pname::placeholder{color:var(--faint)}
+  .pname:focus{outline:2px solid #5c3a28;border-color:#5c3a28}
+  .btn{border:0;border-radius:11px;font-family:var(--disp);font-weight:600;font-size:14.5px;padding:12px 26px;cursor:pointer}
+  .btn:focus-visible{outline:2px solid var(--ember-soft);outline-offset:2px}
+  .btn.start{background:var(--ember);color:#1a0e08}
+  .btn.stop{background:#3a1611;color:#ffb4a1;border:1px solid #5c2a1c}
+  .btn[disabled]{opacity:.4;cursor:default}
+  .hintline{font-size:12px;color:var(--faint);margin-top:8px}
+  .hintline code{font-family:var(--mono);font-size:11px;color:var(--dim)}
+
+  /* ---- projects stage ---- */
+  .projgrid{display:grid;grid-template-columns:280px 1fr;gap:14px;min-height:430px}
+  @media(max-width:860px){.projgrid{grid-template-columns:1fr}}
+  .plist{background:var(--panel2);border:1px solid var(--line);border-radius:13px;overflow:hidden}
+  .plist header{padding:11px 15px;font-family:var(--disp);font-size:13px;font-weight:600;border-bottom:1px solid var(--line);color:var(--dim)}
+  .pitem{padding:11px 15px;border-bottom:1px solid var(--line);cursor:pointer}
+  .pitem .nm{font-family:var(--mono);font-size:12.5px}
+  .pitem .meta{font-size:11.5px;color:var(--faint);margin-top:2px}
+  .pitem.on{background:#241812;border-left:3px solid var(--ember)}
+  .pitem.fresh .nm{color:var(--ok)}
+  .pprev{background:#0b0d10;border:1px solid var(--line);border-radius:13px;position:relative;overflow:hidden}
+  .pprev canvas{position:absolute;inset:0;width:100%;height:100%}
+  .pprev .cap{position:absolute;bottom:0;left:0;right:0;padding:10px 14px;font-family:var(--mono);font-size:11.5px;color:var(--dim);background:linear-gradient(transparent,rgba(11,13,16,.9))}
+
+  /* ---- phone ---- */
+  .phonewrap{display:flex;gap:26px;align-items:flex-start;flex-wrap:wrap}
+  .phone{width:340px;background:#0c0e12;border:2px solid #2c313b;border-radius:34px;padding:12px 10px 16px;flex:none}
+  .notch{width:110px;height:22px;background:#000;border-radius:999px;margin:0 auto 10px}
+  .pscreen{background:var(--bg);border-radius:22px;overflow:hidden;border:1px solid var(--line)}
+  .pbody{padding:13px 13px 15px}
+  .chiprow{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:11px}
+  .chip{font-family:var(--mono);font-size:10.5px;letter-spacing:.05em;padding:5px 11px;border-radius:999px;border:1px solid var(--line);color:var(--dim);background:var(--panel2)}
+  .chip.dev{color:var(--ember-soft);border-color:#4a2a1c}
+  .chip.trk{color:var(--warn)}
+  .chip.trk.good{color:var(--ok)}
+  .mount{display:flex;gap:12px;background:var(--panel2);border:1px solid var(--line);border-radius:13px;padding:11px 13px;margin-bottom:11px;align-items:center}
+  .mount svg{flex:none}
+  .mount p{font-size:11.8px;color:var(--dim)}
+  .mount p b{color:var(--ink);font-weight:600}
+  .pviewport{position:relative;background:#0b0d10;border:1px solid var(--line);border-radius:13px;height:210px;overflow:hidden}
+  .pviewport canvas{position:absolute;inset:0;width:100%;height:100%}
+  .sheetbar{display:flex;gap:8px;margin:11px 0}
+  .sheetbar button{flex:1;background:var(--panel2);border:1px solid var(--line);border-radius:10px;color:var(--dim);font-family:var(--disp);font-size:12px;font-weight:600;padding:9px 0;cursor:pointer}
+  .sheetbar button.on{color:var(--ember-soft);border-color:#4a2a1c;background:#241812}
+  .sheet{background:var(--panel2);border:1px solid var(--line);border-radius:13px;padding:12px 14px;margin-bottom:11px}
+  .pstart{width:100%}
+  .capsule{display:flex;background:#14161b;border-top:1px solid var(--line);padding:8px 14px;gap:8px}
+  .capsule button{flex:1;border:0;border-radius:999px;background:transparent;color:var(--dim);font-family:var(--disp);font-size:12px;font-weight:600;padding:9px 0;cursor:pointer}
+  .capsule button.on{background:#2a1c14;color:var(--ember-soft)}
+  .phonenotes{flex:1;min-width:260px}
+  .phonenotes ul{list-style:none;display:flex;flex-direction:column;gap:10px}
+  .phonenotes li{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 15px;font-size:13.5px;color:var(--dim)}
+  .phonenotes li b{color:var(--ink);font-weight:600}
+  .phonenotes li .k{font-family:var(--mono);font-size:11px;color:var(--ember-soft)}
+
+  /* ---- confirm ---- */
+  .confirm{margin-top:44px}
+  .citem{display:flex;gap:14px;align-items:flex-start;background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:14px 17px;margin-bottom:10px}
+  .citem .txt{flex:1;font-size:13.8px;color:var(--dim)}
+  .citem .txt b{color:var(--ink);font-weight:600}
+  .cbtns{display:flex;gap:7px;flex:none}
+  .cbtns button{border:1px solid var(--line);background:var(--panel2);color:var(--dim);border-radius:9px;font-family:var(--disp);font-size:12px;font-weight:600;padding:7px 14px;cursor:pointer}
+  .cbtns button.yes.on{background:#12301f;border-color:#215c39;color:var(--ok)}
+  .cbtns button.no.on{background:#33150f;border-color:#5c2a1c;color:#ffb4a1}
+  .report{width:100%;margin-top:14px;background:var(--panel);border:1px solid var(--line);border-radius:12px;color:var(--dim);font-family:var(--mono);font-size:12px;padding:13px 15px;min-height:96px;resize:vertical}
+  .copyrow{display:flex;gap:10px;margin-top:10px;align-items:center}
+  .copyrow .ok{font-size:12.5px;color:var(--ok)}
+  .hide{display:none !important}
+  @media(prefers-reduced-motion:reduce){.banner .pulse,.vtag.rec::before{animation:none}}
+</style>
+
+<div class="wrap">
+  <div class="eyebrow">LidarScan · design review · round 5</div>
+  <h1>Round 5 Capture Flow</h1>
+  <p class="sub">Everything below is <b>clickable</b> — walk the real flow: auto-detect → live preview (sliders actually change the cloud) → <b>Start</b> → recording → <b>Stop</b> lands the project in Projects. No popups anywhere. Then confirm each decision at the bottom.</p>
+
+  <div class="cmp">
+    <div class="col">
+      <h3>Old flow <span class="n">7 steps to first data</span></h3>
+      <ol class="steps">
+        <li>Open Capture, pick device tab</li>
+        <li class="gone">Type lidar IP + host IP by hand</li>
+        <li class="gone">Popup: run self-test, wait for gate</li>
+        <li class="gone">Popup: create / name project first</li>
+        <li>Choose profile, toggle Live on</li>
+        <li>Start recording</li>
+        <li class="gone">Display settings in a separate dialog</li>
+      </ol>
+    </div>
+    <div class="col new">
+      <h3>New flow <span class="n">2 steps · zero popups</span></h3>
+      <ol class="steps">
+        <li><em>Open Capture</em> — auto-detect + connect + live preview happen by themselves; tune point size, gamma, brightness, refresh rate on the live cloud</li>
+        <li><em>Press Start</em> — a new project is created for you (name optional, auto-named otherwise); live view stays on while recording; Stop seals it into Projects</li>
+      </ol>
+    </div>
+  </div>
+
+  <div class="toggle" role="tablist">
+    <button id="tgD" class="on">Desktop · Mid-360 + RTK</button>
+    <button id="tgA">Android · D6 3D + Mid-360</button>
+  </div>
+
+  <!-- ================= DESKTOP ================= -->
+  <div id="deskView">
+    <div class="frame">
+      <div class="titlebar">
+        <span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span>
+        <span class="t">LidarScan — kc-m4 · desktop capture (D6 removed — phone-only now)</span>
+      </div>
+      <div class="app">
+        <div class="rail">
+          <button id="railProj"><span>▦</span><small>Projects</small></button>
+          <button id="railCap" class="on"><span>●</span><small>Capture</small></button>
+        </div>
+        <div class="stage">
+
+          <div id="capStage">
+            <div class="banner" id="dBanner">
+              <span class="pulse"></span>
+              <span id="dBannerTxt">Auto-detecting devices… listening for Mid-360 heartbeat, probing serial ports</span>
+              <button class="mini" id="dManualBtn">Manual setup</button>
+            </div>
+            <div class="manualrow hide" id="dManualRow">
+              <label>Lidar IP <input value="192.168.1.159"></label>
+              <label>Host IP <input value="192.168.1.5"></label>
+              <button class="mini" style="margin-left:0">Connect</button>
+              <span class="why" style="font-size:11.5px;color:var(--faint)">Nothing found after 6 s? This row opens by itself — auto-detect never locks you out.</span>
+            </div>
+            <div class="capgrid">
+              <div class="viewport">
+                <canvas id="dCanvas"></canvas>
+                <span class="vtag" id="dTag">LIVE PREVIEW — not recording</span>
+                <div class="vstats">
+                  <span>pts/s <b id="dPps">0</b></span>
+                  <span>IMU <b id="dImu">–</b></span>
+                  <span>elapsed <b id="dElapsed">–</b></span>
+                  <span>chunks <b id="dChunks">–</b></span>
+                </div>
+              </div>
+              <div class="params">
+                <h4>Display · live</h4>
+                <div class="param"><label>Point size <output id="oSize">1.5 px</output></label>
+                  <input type="range" id="pSize" min="0.1" max="3" step="0.1" value="1.5"></div>
+                <div class="param"><label>Brightness <output id="oBri">1.00</output></label>
+                  <input type="range" id="pBri" min=".3" max="2" step=".05" value="1"></div>
+                <div class="param"><label>Gamma <output id="oGam">1.00</output></label>
+                  <input type="range" id="pGam" min=".5" max="2.4" step=".05" value="1"></div>
+                <div class="param"><label>Live refresh <output id="oFps">30 fps</output></label>
+                  <input type="range" id="pFps" min="5" max="60" step="5" value="30"></div>
+                <p class="note">One panel, both modes: whatever you set in preview <b>carries straight into recording</b> and is saved with the project as its default view. Colormap, range clip &amp; the rest sit one scroll below (not a dialog).</p>
+              </div>
+            </div>
+            <div class="startrow">
+              <input class="pname" id="dName" placeholder="Project name (optional) — else: Scan-015 2026-08-17 20-41">
+              <button class="btn start" id="dStart" disabled>Start</button>
+              <button class="btn stop hide" id="dStop">Stop &amp; seal</button>
+            </div>
+            <p class="hintline">Serial probe found <code>COIN-D6</code>? Desktop just says: <code>COIN-D6 detected — capture it with the phone app</code>. Desktop capture = Mid-360 + RTK only.</p>
+          </div>
+
+          <div id="projStage" class="hide">
+            <div class="projgrid">
+              <div class="plist">
+                <header>Projects</header>
+                <div id="pFresh" class="pitem fresh hide"><div class="nm" id="pFreshName">—</div><div class="meta">just now · Mid-360 · sealed ✓</div></div>
+                <div class="pitem on"><div class="nm">Scan-014 2026-08-17 19-32</div><div class="meta">3.1 min · Mid-360 · 34.2 M pts</div></div>
+                <div class="pitem"><div class="nm">warehouse-east-bay</div><div class="meta">yesterday · Mid-360 + RTK Fixed</div></div>
+                <div class="pitem"><div class="nm">Scan-012 2026-08-16 15-08</div><div class="meta">D6 · phone · 3D pushbroom</div></div>
+              </div>
+              <div class="pprev">
+                <canvas id="prevCanvas"></canvas>
+                <div class="cap">preview — orbit with mouse · Merge &amp; Processing live HERE now, no separate tabs</div>
+              </div>
+            </div>
+            <div class="pactions">
+              <button class="btn start">Process</button>
+              <button class="btn sec">Export</button>
+              <button class="btn sec" disabled>Merge</button>
+              <span class="why">Process = SLAM post / colorize / floor plan on the selected scan. Merge unlocks when you select 2+ projects. Same engines as before — the tabs are gone, not the features.</span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= ANDROID ================= -->
+  <div id="androidView" class="hide">
+    <div class="phonewrap">
+      <div class="phone">
+        <div class="notch"></div>
+        <div class="pscreen">
+          <div class="pbody">
+            <div class="chiprow">
+              <span class="chip dev" id="aDev">◎ detecting…</span>
+              <span class="chip trk hide" id="aTrk">AR · INITIALIZING</span>
+            </div>
+            <div class="mount" id="aMount">
+              <svg width="58" height="72" viewBox="0 0 58 72" aria-hidden="true">
+                <rect x="6" y="4" width="30" height="64" rx="6" fill="#1f232b" stroke="#3a404c"/>
+                <rect x="10" y="8" width="22" height="10" rx="3" fill="#0b0d10" stroke="#2a2f39"/>
+                <circle cx="45" cy="38" r="9" fill="#241812" stroke="#ff6d3d"/>
+                <circle cx="45" cy="38" r="3.5" fill="#ff6d3d"/>
+                <path d="M45 12 v-8 M45 64 v8 M45 20 a18 18 0 0 0 0 36" stroke="#ff8a5c" stroke-dasharray="3 3" fill="none"/>
+              </svg>
+              <p><b>Mount the D6 on the phone's back</b>, fan vertical, cameras clear. The phone's motion tracking (camera + IMU) is the D6's brain — it turns the vertical fan into a full <b>3D scan</b> as you walk.</p>
+            </div>
+            <div class="pviewport">
+              <canvas id="aCanvas"></canvas>
+            </div>
+            <div class="sheetbar">
+              <button id="aShDisp" class="on">Display</button>
+              <button id="aShCap">Capture</button>
+              <button id="aShDiag">Diagnostics</button>
+            </div>
+            <div class="sheet" id="aSheet">
+              <div class="param"><label>Point size <output id="aoSize">1.5 px</output></label>
+                <input type="range" id="apSize" min="0.1" max="3" step="0.1" value="1.5"></div>
+              <div class="param"><label>Brightness <output id="aoBri">1.00</output></label>
+                <input type="range" id="apBri" min=".3" max="2" step=".05" value="1"></div>
+              <div class="param"><label>Gamma <output id="aoGam">1.00</output></label>
+                <input type="range" id="apGam" min=".5" max="2.4" step=".05" value="1"></div>
+              <div class="param"><label>Live refresh <output id="aoFps">30 fps</output></label>
+                <input type="range" id="apFps" min="5" max="60" step="5" value="30"></div>
+            </div>
+            <input class="pname" id="aName" style="width:100%;margin-bottom:10px" placeholder="Project name (optional)">
+            <button class="btn start pstart" id="aStart" disabled>Start · new project</button>
+            <button class="btn stop pstart hide" id="aStop">Stop &amp; seal</button>
+          </div>
+          <div class="capsule">
+            <button>▦ Projects</button><button class="on">● Capture</button><button>⚙ RTK</button>
+          </div>
+        </div>
+      </div>
+      <div class="phonenotes">
+        <ul>
+          <li><b>D6 = 3D scanner, phone-only.</b> <span class="k">no built-in IMU (owner-verified)</span> — so the phone supplies the motion path via ARCore. The app auto-starts tracking the moment a D6 capture opens and records poses + lidar together in the same project.</li>
+          <li><b>Tracking chip stays visible</b> during preview and capture: <span class="k">INITIALIZING → TRACKING → LOST</span>. 3D quality depends on it, so it is never hidden in a sheet.</li>
+          <li><b>Same 2-step flow as desktop:</b> open Capture (auto-detect → live preview, sliders live) → Start. Empty name → <span class="k">Scan-016-2026-08-17-20-41</span>.</li>
+          <li><b>Sheets, not popups.</b> Display / Capture / Diagnostics slide up in place — nothing blocks the live view.</li>
+          <li><b>Mid-360 on the phone</b> keeps the identical flow via the USB-C Ethernet adapter — auto-detect finds it the same way as on desktop.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= CONFIRM ================= -->
+  <div class="confirm">
+    <h2>Confirm the six decisions</h2>
+    <div id="cList"></div>
+    <textarea class="report" id="cReport" readonly>— nothing confirmed yet —</textarea>
+    <div class="copyrow">
+      <button class="btn start" id="cCopy" style="padding:9px 18px;font-size:13px">Copy report</button>
+      <span class="ok hide" id="cOk">copied ✓</span>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var $=function(id){return document.getElementById(id)};
+
+  /* ---------- fake point cloud ---------- */
+  function makeCloud(n){
+    var pts=[],i,s,x,y,z;
+    for(i=0;i<n;i++){
+      s=Math.random();
+      if(s<.55){ // walls of a room
+        var w=Math.floor(Math.random()*4);
+        x=(w===0?-1:w===1?1:Math.random()*2-1);
+        z=(w===2?-1:w===3?1:Math.random()*2-1);
+        y=Math.random();
+      }else if(s<.8){x=Math.random()*2-1;z=Math.random()*2-1;y=0;}
+      else{x=(Math.random()*.5-.25);z=(Math.random()*.5+.2);y=Math.random()*.55;}
+      pts.push([x,y,z]);
+    }
+    return pts;
+  }
+  function drawer(canvas,state){
+    var ctx=canvas.getContext("2d"),ang=0;
+    function fit(){var r=canvas.parentElement.getBoundingClientRect();canvas.width=r.width*2;canvas.height=r.height*2;}
+    fit();addEventListener("resize",fit);
+    return function(){
+      ang+=0.004*(state.spin?1:0)+0.004;
+      var W=canvas.width,H=canvas.height,ca=Math.cos(ang),sa=Math.sin(ang);
+      ctx.fillStyle="#0b0d10";ctx.fillRect(0,0,W,H);
+      var i,p,x,z,px,py,d,t,c;
+      for(i=0;i<state.pts.length;i++){
+        p=state.pts[i];x=p[0]*ca-p[2]*sa;z=p[0]*sa+p[2]*ca;
+        d=1/(z+2.6);px=W/2+x*W*.62*d;py=H*.82-p[1]*H*.72*d;
+        t=Math.pow(Math.max(0,Math.min(1,p[1])),1/state.gam)*state.bri;
+        t=Math.max(0,Math.min(1.4,t));
+        c=t<.5?[46+300*t,90+160*t,240-120*t]:[255*Math.min(1,t),170*Math.min(1,t)+40,60];
+        ctx.fillStyle="rgba("+(c[0]|0)+","+(c[1]|0)+","+(c[2]|0)+","+(0.35+0.5*d)+")";
+        ctx.fillRect(px,py,state.size*2*d*2.4,state.size*2*d*2.4);
+      }
+    };
+  }
+  function runLoop(state,draw){
+    var last=0;
+    function frame(ts){
+      if(ts-last>=1000/state.fps){draw();last=ts;}
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  }
+
+  /* ---------- desktop ---------- */
+  var dState={pts:makeCloud(2600),size:1.5,bri:1,gam:1,fps:30,spin:true};
+  $("dManualBtn").addEventListener("click",function(){$("dManualRow").classList.toggle("hide")});
+  runLoop(dState,drawer($("dCanvas"),dState));
+  var pvState={pts:makeCloud(2200),size:2.0,bri:1.1,gam:1,fps:24,spin:true};
+  runLoop(pvState,drawer($("prevCanvas"),pvState));
+
+  function bindParams(map){
+    Object.keys(map).forEach(function(id){
+      var cfg=map[id];
+      $(id).addEventListener("input",function(){
+        cfg.state[cfg.key]=parseFloat(this.value);
+        $(cfg.out).textContent=cfg.fmt(this.value);
+      });
+    });
+  }
+  bindParams({
+    pSize:{state:dState,key:"size",out:"oSize",fmt:function(v){return (+v).toFixed(1)+" px"}},
+    pBri:{state:dState,key:"bri",out:"oBri",fmt:function(v){return (+v).toFixed(2)}},
+    pGam:{state:dState,key:"gam",out:"oGam",fmt:function(v){return (+v).toFixed(2)}},
+    pFps:{state:dState,key:"fps",out:"oFps",fmt:function(v){return v+" fps"}}
+  });
+
+  var dPps=$("dPps"),recT0=null,recChunks=0,recTimer=null;
+  setInterval(function(){dPps.textContent=(198500+Math.floor(Math.random()*3000)).toLocaleString();$("dImu").textContent="200 Hz";},700);
+
+  /* auto-detect sequence */
+  setTimeout(function(){
+    $("dBannerTxt").innerHTML='Found <span class="mono">Mid-360 · SN ARMCP7K0034759 · 192.168.1.159</span> — connected, live preview running. <span class="mono">COIN-D6 detected — capture it with the phone app.</span>';
+    $("dBanner").classList.add("good");
+    $("dStart").disabled=false;
+  },2300);
+
+  function seriesName(){
+    var d=new Date(),p=function(n){return (n<10?"0":"")+n};
+    return "Scan-015 "+d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+" "+p(d.getHours())+"-"+p(d.getMinutes());
+  }
+  var lastProject="";
+  $("dStart").addEventListener("click",function(){
+    lastProject=$("dName").value.trim()||seriesName();
+    $("dTag").textContent="RECORDING — "+lastProject;
+    $("dTag").classList.add("rec");
+    this.classList.add("hide");$("dStop").classList.remove("hide");
+    recT0=Date.now();recChunks=0;
+    recTimer=setInterval(function(){
+      var s=(Date.now()-recT0)/1000;recChunks+=Math.floor(45+Math.random()*10);
+      $("dElapsed").textContent=s.toFixed(0)+" s";$("dChunks").textContent=recChunks.toLocaleString();
+    },400);
+  });
+  $("dStop").addEventListener("click",function(){
+    clearInterval(recTimer);
+    $("dTag").textContent="LIVE PREVIEW — not recording";$("dTag").classList.remove("rec");
+    this.classList.add("hide");$("dStart").classList.remove("hide");
+    $("pFreshName").textContent=lastProject;$("pFresh").classList.remove("hide");
+    showProjects(); // sealed → jump to Projects so the reviewer SEES it land
+  });
+
+  function showProjects(){$("projStage").classList.remove("hide");$("capStage").classList.add("hide");
+    $("railProj").classList.add("on");$("railCap").classList.remove("on");}
+  function showCapture(){$("capStage").classList.remove("hide");$("projStage").classList.add("hide");
+    $("railCap").classList.add("on");$("railProj").classList.remove("on");}
+  $("railProj").addEventListener("click",showProjects);
+  $("railCap").addEventListener("click",showCapture);
+
+  /* ---------- android ---------- */
+  var aState={pts:makeCloud(1700),size:1.5,bri:1,gam:1,fps:30,spin:true};
+  runLoop(aState,drawer($("aCanvas"),aState));
+  bindParams({
+    apSize:{state:aState,key:"size",out:"aoSize",fmt:function(v){return (+v).toFixed(1)+" px"}},
+    apBri:{state:aState,key:"bri",out:"aoBri",fmt:function(v){return (+v).toFixed(2)}},
+    apGam:{state:aState,key:"gam",out:"aoGam",fmt:function(v){return (+v).toFixed(2)}},
+    apFps:{state:aState,key:"fps",out:"aoFps",fmt:function(v){return v+" fps"}}
+  });
+  setTimeout(function(){
+    $("aDev").textContent="◉ COIN-D6 · 3D · phone-tracked";
+    $("aTrk").classList.remove("hide");
+    setTimeout(function(){$("aTrk").textContent="AR · TRACKING";$("aTrk").classList.add("good");$("aStart").disabled=false;},1800);
+  },1600);
+  $("aStart").addEventListener("click",function(){
+    this.classList.add("hide");$("aStop").classList.remove("hide");
+  });
+  $("aStop").addEventListener("click",function(){
+    this.classList.add("hide");$("aStart").classList.remove("hide");
+  });
+  [["aShDisp",""],["aShCap","Capture profile · quickscan — colorize ON, keyframes 3 fps, record-always. One tap to change, still not a popup."],["aShDiag","AR tracking detail, keyframes written, loss episodes, rolling shutter — all the diagnostics live HERE, off the capture body (round-3 decision, kept)."]].forEach(function(pair){
+    $(pair[0]).addEventListener("click",function(){
+      ["aShDisp","aShCap","aShDiag"].forEach(function(id){$(id).classList.toggle("on",id===pair[0])});
+      var sheet=$("aSheet");
+      if(pair[0]==="aShDisp"){sheet.querySelectorAll(".param").forEach(function(p){p.classList.remove("hide")});var msg=sheet.querySelector(".sheetmsg");if(msg)msg.remove();}
+      else{
+        sheet.querySelectorAll(".param").forEach(function(p){p.classList.add("hide")});
+        var m=sheet.querySelector(".sheetmsg");
+        if(!m){m=document.createElement("p");m.className="sheetmsg";m.style.cssText="font-size:12px;color:#9aa1af";sheet.appendChild(m);}
+        m.textContent=pair[1];
+      }
+    });
+  });
+
+  /* ---------- platform toggle ---------- */
+  $("tgD").addEventListener("click",function(){$("deskView").classList.remove("hide");$("androidView").classList.add("hide");this.classList.add("on");$("tgA").classList.remove("on");});
+  $("tgA").addEventListener("click",function(){$("androidView").classList.remove("hide");$("deskView").classList.add("hide");this.classList.add("on");$("tgD").classList.remove("on");});
+
+  /* ---------- confirm checklist ---------- */
+  var items=[
+    "No popups — auto-detect banner, inline display panel, sheets on Android. Nothing modal in the capture path.",
+    "2-step capture: open Capture (auto-detect → connect → live preview by itself), then Start. Self-test gate removed — live points on screen are the proof.",
+    "Start always creates a NEW project; empty name auto-names with series + date + time (Scan-015 2026-08-17 20-41).",
+    "Live preview BEFORE capture with all display parameters (refresh rate, point size, gamma, brightness, …) — and live view stays on DURING capture.",
+    "Projects tab = list + preview of the selected scan only. Capture tab = new scans only.",
+    "D6 is phone-only and 3D: mounted on the phone's back, phone ARCore (camera+IMU) provides the trajectory, desktop capture drops D6 (keeps Mid-360 + RTK; desktop still processes D6 projects).",
+    "Auto-detect never locks you out: nothing found → an inline Manual setup row opens by itself (also reachable anytime via the Manual setup button). Point size range 0.1–3.0 px in 0.1 steps.",
+    "Merge & Processing tabs are gone but the features stay: inside Projects — select a scan → Process / Export under the preview; select 2+ scans → Merge unlocks."
+  ];
+  var votes=new Array(items.length).fill(null);
+  var list=$("cList");
+  items.forEach(function(txt,i){
+    var row=document.createElement("div");row.className="citem";
+    row.innerHTML='<div class="txt"><b>'+(i+1)+'.</b> '+txt+'</div>'+
+      '<div class="cbtns"><button class="yes">Confirm</button><button class="no">Change</button></div>';
+    var yes=row.querySelector(".yes"),no=row.querySelector(".no");
+    yes.addEventListener("click",function(){votes[i]=true;yes.classList.add("on");no.classList.remove("on");render();});
+    no.addEventListener("click",function(){votes[i]=false;no.classList.add("on");yes.classList.remove("on");render();});
+    list.appendChild(row);
+  });
+  function render(){
+    var out=["LidarScan round-5 capture-flow review"],i;
+    for(i=0;i<items.length;i++){
+      out.push((i+1)+". "+(votes[i]===true?"CONFIRMED":votes[i]===false?"CHANGE REQUESTED":"(not reviewed)"));
+    }
+    $("cReport").value=out.join("\n");
+  }
+  render();
+  $("cCopy").addEventListener("click",function(){
+    $("cReport").select();document.execCommand("copy");
+    $("cOk").classList.remove("hide");setTimeout(function(){$("cOk").classList.add("hide")},1600);
+  });
+})();
+</script>

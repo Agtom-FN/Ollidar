@@ -171,3 +171,12 @@ both closed × keyframes on / off. Screenshots: `redesign-exports/fix-r4-*.png`.
     Mount: on the back of the phone; phone ARCore (camera+IMU VIO) supplies the 6-DoF
     trajectory; A8 pushbroom builds the 3D cloud. Remove D6 from desktop capture (desktop
     keeps D6 project post-processing/replay). Desktop capture = Mid-360 + RTK.
+
+### round 5.1 (owner, on the round-5 mockup)
+12. Auto-detect must never lock the user out: nothing found → inline manual-setup row
+    opens by itself; "Manual setup" reachable anytime. Inline, not a dialog.
+13. Point size: min 0.1 px, max 3.0 px, step 0.1.
+14. Display settings chosen in preview carry unchanged into recording (same live panel)
+    and are saved with the project as its default view.
+15. Processing & Merge TABS removed; features fold into Projects: 1 selected → Process +
+    Export beside preview; 2+ selected → Merge unlocks. Same engines, fewer tabs.
