@@ -39,3 +39,19 @@ Pixel 8 Pro, D6 powered-hub retest, mount rig + calibration.
   SdkInit until killed — single-instance guard worth considering.
 - App RTK defaults to prefill later: host ntrip.geodetic.gov.hk:2101, HK station
   mountpoints (nearest-station picker), UM982 @ 230400.
+
+## Session 3 — D6 root cause SOLVED: the CH340 adapter
+Timeline: owner powered D6 from external 5 V → stream garbled (110 KB garbage, 0 packets).
+Ground bonding improved it to framed-but-corrupt (AB 55 for AA 55, 82% 1-bits — zeros
+read as ones = RX low level marginal). Restoring original wiring did NOT fix it; baud
+sweep (57.6k–921.6k) ruled out clock shift; reseat + different Mac USB port ruled out
+connector and host. **Swapping the USB-serial adapter fixed everything instantly**:
+- 30 s: 100.0000% checksum, 5,281 packets, 0 bad
+- 180 s soak: 100.0000% checksum, 30,727 packets, 0 bad, 10.00 Hz steady,
+  4,000 pts/s, full duty — **the original ~50% duty stalls are gone too.**
+Verdict: the vendor-kit CH340 adapter was flaky from day one (stalls) and died fully
+during the rewiring. Owner was right that D6 current draw (240 mA typ) was never the
+problem. D6 is now UNCONDITIONALLY CLEARED: capture path meets S1 at full duty.
+D6 now at /dev/cu.usbserial-21120 (new adapter); old adapter on -21130 should be
+unplugged; UM982 (-21140) not enumerated at session end — likely unplugged during swap.
+Evidence: captures/d6_soak_180s.bin (2.5 MB, 100% pass on replay).
