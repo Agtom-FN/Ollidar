@@ -189,3 +189,14 @@ both closed × keyframes on / off. Screenshots: `redesign-exports/fix-r4-*.png`.
     accuracy honestly as sigma into the A10 GNSS fusion. Inline chip shows "RTK Fixed ±2 cm"
     vs "Phone GPS ±N m". Location permission asked only when needed; denial → capture
     continues un-georeferenced with a quiet note (no blocking popup).
+
+### round 5.3 (owner)
+17. **Live refresh rate max is hardware-derived — never crash the renderer.** The slider's
+    ceiling comes from the device (display refresh rate / measured render headroom), not a
+    hardcoded 60. If frames start dropping or thermals climb, auto-downshift the live view
+    (never the recording — recording is full-rate always) and say so quietly inline.
+18. **Walkthrough-first: both apps assume the operator WALKS the space while scanning.**
+    Defaults, UX and safeguards tuned for handheld motion: screen stays awake during
+    capture, big touch targets usable one-handed mid-walk, live trajectory trail in the
+    view so the operator sees where they have covered, gentle "moving too fast" hint tied
+    to the existing motion gates. Stationary/tripod is the special case, not the default.
