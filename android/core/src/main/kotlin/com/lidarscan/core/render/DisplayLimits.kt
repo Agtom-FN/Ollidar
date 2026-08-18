@@ -13,10 +13,27 @@ package com.lidarscan.core.render
  */
 object DisplayLimits {
 
-    /** Owner-specified live point-size range, in pixels. */
+    /**
+     * The ONE point-size range, in pixels — ROUND 19 item 76.
+     *
+     * Round 16 named the divergence and left it: the capture sheet offered
+     * 0.1-3.0 px while Review's panel offered 0.5-12, so the same map could be
+     * drawn at a size one panel refused to admit existed. The floor stays the
+     * owner's 0.1 (round 5); the ceiling is Review's 12, which was already
+     * shipping. Both panels now read these two constants and nothing else.
+     */
     const val POINT_SIZE_MIN_PX = 0.1f
-    const val POINT_SIZE_MAX_PX = 3.0f
+    const val POINT_SIZE_MAX_PX = 12.0f
     const val POINT_SIZE_STEP_PX = 0.1f
+
+    /**
+     * The ONE LOD-budget range, in millions of points — ROUND 19 item 76,
+     * same story: 2-20 M against 0.5-50 M. Review's wider range wins (it was
+     * shipping and a saved scan legitimately wants more than a live one);
+     * the capture sheet's INT slider uses the same endpoints rounded in.
+     */
+    const val LOD_MIN_M = 0.5f
+    const val LOD_MAX_M = 50f
 
     /**
      * Discrete slider steps *between* the ends, which is what Compose's
@@ -25,7 +42,10 @@ object DisplayLimits {
      * cannot leave a slider that snaps to the wrong grid.
      */
     val POINT_SIZE_STEPS: Int =
-        (((POINT_SIZE_MAX_PX - POINT_SIZE_MIN_PX) / POINT_SIZE_STEP_PX).toInt() - 1).coerceAtLeast(0)
+        // Math.round, not toInt(): (12.0 - 0.1) / 0.1 is 118.99999… in float,
+        // and truncation would silently misalign the grid by one stop.
+        (Math.round((POINT_SIZE_MAX_PX - POINT_SIZE_MIN_PX) / POINT_SIZE_STEP_PX) - 1)
+            .coerceAtLeast(0)
 
     /** Snaps a raw slider value onto the 0.1 grid and into range. */
     fun snapPointSize(px: Float): Float {

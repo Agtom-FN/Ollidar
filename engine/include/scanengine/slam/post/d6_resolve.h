@@ -67,6 +67,7 @@
 #include "scanengine/cloud/page_store.h"
 #include "scanengine/core/error.h"
 #include "scanengine/core/types.h"
+#include "scanengine/slam/post/gap_rescue.h"
 #include "scanengine/slam/post/progress.h"
 #include "scanengine/slam/post/section_stitch.h"
 #include "scanengine/poses/imu_densified_pose.h"
@@ -177,6 +178,38 @@ struct D6ResolveConfig {
   bool stitch_sections = false;
   SectionStitchConfig sections{};
 
+  // --- ROUND 19 item 73: gyro-constrained gap rescue ------------------------
+  //
+  // OFF by default, same rule and same reason as the three switches around
+  // it: a rescue moves points the live pass could not have moved, so it runs
+  // inside "Process" and never behind a re-resolve's back. It runs AFTER
+  // stitching (which decided which gaps are refused and put everything else
+  // into one frame) and BEFORE the loop-end closure (which needs the walk to
+  // be one walk to mean anything).
+  //
+  // See slam/post/gap_rescue.h: every gap the stitch pass examined and
+  // REFUSED is retried as a registration problem — rotation locked to the
+  // gyro that witnessed the blind window, translation solved from the walls
+  // the two sides share, the ruler voting last. Refusals stay refusals, now
+  // with the registration's own numbers attached.
+  bool rescue_gaps = false;
+  GapRescueConfig rescue{};
+
+  // --- ROUND 19 item 74: recover the loss-window returns --------------------
+  //
+  // OFF by default — the live default (PushbroomConfig::exclude_flagged) is
+  // deliberately NOT changed; this is offline-first. When on, the resolve
+  // keeps a copy of every decoded return (a D6 is ~4 k/s; a three-minute
+  // capture is ~15 MB, which an offline pass can afford and a phone's live
+  // path is never asked to), and after every correction has been applied the
+  // returns captured DURING a bridged or rescued gap are re-resolved against
+  // an interpolated trajectory: orientation integrated from the gyro with the
+  // closing error distributed linearly (the densifier's own model), position
+  // linearly interpolated between the two trusted endpoints. The ruler votes
+  // per gap; a recovery that reads worse is dropped and says so. Admitted
+  // points carry PushbroomConfig::flagged_alpha — recovered, and marked.
+  bool recover_gap_points = false;
+
   // --- ROUND 16 item 60: loop-end closure ----------------------------------
   //
   // OFF by default for exactly the reason the two above are: it moves points
@@ -245,6 +278,27 @@ struct D6ResolveStats {
   // points in the store were moved.
   LoopEndReport loop_end{};
   bool loop_end_applied = false;
+
+  // --- ROUND 19 item 73 -----------------------------------------------------
+  // Every rescue ATTEMPT, in gap order, refusals included — each carries the
+  // gate that refused it and the numbers it was judged on. `gaps_rescued` is
+  // how many were accepted and applied.
+  std::vector<GapRescueReport> rescues;
+  std::size_t gaps_rescued = 0;
+
+  // --- ROUND 19 item 74 -----------------------------------------------------
+  // Per-gap recovery accounting (bridged and rescued gaps only), and the
+  // total actually admitted to the cloud. A vetoed recovery says so.
+  std::vector<GapRecovery> recoveries;
+  std::uint64_t recovered_points = 0;
+
+  // --- ROUND 19 yield audit -------------------------------------------------
+  // True no-returns (range 0) the D6 reported, from the parser — they never
+  // reach the assembler, whose own stats carry the rest of the story
+  // (dropped_range = out-of-window, dropped_no_pose, the flagged_* family,
+  // points_out). Together these say where every one of the 4,000 samples per
+  // second went.
+  std::uint64_t d6_no_returns = 0;
 
   // ROUND 10 (additive): the densifier's OWN verdict, verbatim, including the
   // per-reason fallback breakdown and the closing-error statistics.

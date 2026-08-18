@@ -5,24 +5,28 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * ROUND 5 (owner mockup review, addition 2): point size is **0.1 – 3.0 px in 0.1
- * steps** wherever it is set. These tests pin the range, the snapping and — the
- * one that actually caught something — that [clamped] no longer clamps the
- * bottom of that range back up to A14's 0.5 px floor.
+ * ROUND 5 (owner mockup review, addition 2): point size in **0.1 px steps**
+ * wherever it is set, with the round-5 0.1 px floor intact. ROUND 19 item 76
+ * widened the ceiling to Review's 12 px — the two panels now read ONE range
+ * (round 16 named the divergence; this round closed it) — so the pins below
+ * are on the SHARED constants, not on the old capture-only ceiling.
  */
 class DisplayLimitsTest {
 
     @Test
-    fun `the owner's range is what the control offers`() {
+    fun `one range, both panels — the round-5 floor and Review's ceiling`() {
         assertEquals(0.1f, DisplayLimits.POINT_SIZE_MIN_PX, 0f)
-        assertEquals(3.0f, DisplayLimits.POINT_SIZE_MAX_PX, 0f)
+        assertEquals(12.0f, DisplayLimits.POINT_SIZE_MAX_PX, 0f)
         assertEquals(0.1f, DisplayLimits.POINT_SIZE_STEP_PX, 0f)
+        // The LOD budget too: 0.5-50 M for both, round 16's other divergence.
+        assertEquals(0.5f, DisplayLimits.LOD_MIN_M, 0f)
+        assertEquals(50f, DisplayLimits.LOD_MAX_M, 0f)
     }
 
     @Test
     fun `slider steps land on the tenth-pixel grid`() {
-        // 0.1 → 3.0 in 0.1 steps is 29 intervals, so 28 interior stops.
-        assertEquals(28, DisplayLimits.POINT_SIZE_STEPS)
+        // 0.1 → 12.0 in 0.1 steps is 119 intervals, so 118 interior stops.
+        assertEquals(118, DisplayLimits.POINT_SIZE_STEPS)
     }
 
     @Test
@@ -30,7 +34,7 @@ class DisplayLimitsTest {
         assertEquals(0.1f, DisplayLimits.snapPointSize(0.12f), 1e-6f)
         assertEquals(0.5f, DisplayLimits.snapPointSize(0.47f), 1e-6f)
         assertEquals(2.5f, DisplayLimits.snapPointSize(2.53f), 1e-6f)
-        assertEquals(3.0f, DisplayLimits.snapPointSize(9f), 1e-6f)
+        assertEquals(12.0f, DisplayLimits.snapPointSize(90f), 1e-6f)
         assertEquals(0.1f, DisplayLimits.snapPointSize(-4f), 1e-6f)
     }
 

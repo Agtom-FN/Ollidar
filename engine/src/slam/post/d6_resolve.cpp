@@ -13,6 +13,7 @@
 // in A7: "points through the trajectory".
 #include "scanengine/slam/post/d6_resolve.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -25,8 +26,10 @@
 #include "scanengine/core/event_bus.h"
 #include "scanengine/core/log.h"
 #include "scanengine/drivers/d6/d6_driver.h"
+#include "scanengine/drivers/d6/d6_fan.h"
 #include "scanengine/poses/external_pose_source.h"
 #include "scanengine/poses/imu_densified_pose.h"
+#include "scanengine/poses/se3.h"
 #include "scanengine/record/lscan.h"
 #include "scanengine/slam/post/trajectory_loop.h"
 
@@ -311,6 +314,16 @@ struct D6ResolvePipeline::Impl {
   // the same extrinsic and the same hole tolerance.
   ImuDensifyConfig densified_cfg{};
 
+  // ROUND 19 item 74. Every decoded return, kept ONLY when the caller asked
+  // for loss-window recovery: 4 k samples/s at 24 bytes is ~15 MB for a
+  // three-minute capture, which an offline pass can afford and the live path
+  // is never asked to. Kept rather than re-read because the driver's ROUND-7
+  // byte-position back-dating happens during THIS decode — a second pass over
+  // the raw chunks would have to reproduce it exactly to stamp the same
+  // times, and one decode with one stamping is how that stays true.
+  bool keep_profiles = false;
+  std::vector<ProfilePoint> profile_kept;
+
   // ROUND 11 item 41. Owned when the caller did not supply its own sinks, so
   // that `close_loops` works without the caller having to know it needs them.
   std::vector<TrajPose> traj_own;
@@ -347,6 +360,7 @@ struct D6ResolvePipeline::Impl {
     p.range_m = range_m;
     p.intensity = intensity;
     p.high_reflectivity = high_reflectivity;
+    if (self->keep_profiles) self->profile_kept.push_back(p);
     (void)self->assembler->push_profile(Span<const ProfilePoint>(&p, 1));
   }
 };
@@ -365,6 +379,10 @@ const D6ResolveStats& D6ResolvePipeline::stats() const { return impl_->stats; }
 Status D6ResolvePipeline::run(const std::string& lscan_dir) {
   Impl& s = *impl_;
   s.stats = D6ResolveStats{};
+  s.imu_kept.clear();
+  s.profile_kept.clear();
+  s.gap_gyro.reset();
+  s.keep_profiles = s.cfg.recover_gap_points;
 
   if (s.cfg.store == nullptr) {
     return set_last_error(ScanError::kInvalidArgument,
@@ -591,7 +609,9 @@ Status D6ResolvePipeline::run(const std::string& lscan_dir) {
           smp.accel_m_s2[i] = rec.accel_m_s2[i];
         }
         if (s.densified->push_imu(smp)) ++s.stats.imu_accepted;
-        if (s.cfg.stitch_sections && s.cfg.sections.bridge_long_gaps) s.imu_kept.push_back(smp);
+        const bool wants_gap_gyro = (s.cfg.stitch_sections && s.cfg.sections.bridge_long_gaps) ||
+                                    s.cfg.rescue_gaps || s.cfg.recover_gap_points;
+        if (wants_gap_gyro) s.imu_kept.push_back(smp);
       }
     } else if (h.type == lscan::ChunkType::kD6Raw) {
       ++s.stats.lidar_chunks;
@@ -615,6 +635,10 @@ Status D6ResolvePipeline::run(const std::string& lscan_dir) {
   }
 
   (void)reader.close();
+  // ROUND 19 yield audit: the returns that never reach the assembler. The
+  // parser counts every decoded sample; the driver drops range-0 before the
+  // profile sink, so "no return" is only knowable here.
+  s.stats.d6_no_returns = driver.parser_stats().points_zero_range;
   (void)driver.stop();
 
   s.report(PostStage::kPublishing, kOpenFraction + kResolveFraction, 1.f, seen, total_chunks);
@@ -628,6 +652,24 @@ Status D6ResolvePipeline::run(const std::string& lscan_dir) {
     s.stats.imu_fallbacks = ist.fallbacks;
     s.stats.imu = ist;
   }
+
+  // ROUND 17 item 63 (and ROUND 19 items 73/74, which ask the same witness):
+  // the whole-stream gyro, over the kept copy of the recorded IMU, seeded
+  // with the bias the resolve just measured — that estimate is the only
+  // calibration this capture will ever get. Built once, on first demand;
+  // `densified`'s own ring is 8 s deep by design and cannot answer a
+  // question about a moment minutes in the past.
+  const auto ensure_gap_gyro = [&s]() -> const reanchor::GyroBridge* {
+    if (s.gap_gyro != nullptr) return s.gap_gyro.get();
+    if (s.imu_kept.empty()) return nullptr;
+    ImuDensifyConfig gcfg = s.densified_cfg;
+    gcfg.capacity = s.imu_kept.size();
+    const ImuDensifyStats ist = s.densified->stats();
+    for (int i = 0; i < 3; ++i) gcfg.initial_bias_rad_s[i] = ist.bias_rad_s[i];
+    s.gap_gyro = std::make_unique<ImuDensifiedPoseSource>(nullptr, gcfg);
+    for (const PhoneImuSample& smp : s.imu_kept) (void)s.gap_gyro->push_imu(smp);
+    return s.gap_gyro.get();
+  };
 
   // --- ROUND 13: section stitching -----------------------------------------
   //
@@ -655,19 +697,9 @@ Status D6ResolvePipeline::run(const std::string& lscan_dir) {
       s.stats.sections.summary = "the cloud and its per-point timestamps disagree in length";
     } else {
       // ROUND 17 item 63: the gyro, over the WHOLE stream, so a gap in the
-      // first minute can still be asked about in the last. Seeded with the
-      // bias the resolve just measured rather than zero — that estimate is the
-      // only calibration this capture will ever get.
+      // first minute can still be asked about in the last.
       SectionStitchConfig scfg = s.cfg.sections;
-      if (scfg.bridge_long_gaps && scfg.gyro == nullptr && !s.imu_kept.empty()) {
-        ImuDensifyConfig gcfg = s.densified_cfg;
-        gcfg.capacity = s.imu_kept.size();
-        const ImuDensifyStats ist = s.densified->stats();
-        for (int i = 0; i < 3; ++i) gcfg.initial_bias_rad_s[i] = ist.bias_rad_s[i];
-        s.gap_gyro = std::make_unique<ImuDensifiedPoseSource>(nullptr, gcfg);
-        for (const PhoneImuSample& smp : s.imu_kept) (void)s.gap_gyro->push_imu(smp);
-        scfg.gyro = s.gap_gyro.get();
-      }
+      if (scfg.bridge_long_gaps && scfg.gyro == nullptr) scfg.gyro = ensure_gap_gyro();
       SectionCorrection corr;
       s.stats.sections = stitch_sections(
           *s.traj, Span<const PointVertex>(cloud.data(), cloud.size()),
@@ -697,6 +729,117 @@ Status D6ResolvePipeline::run(const std::string& lscan_dir) {
     }
     SCAN_LOG_INFO(kMod, "section stitching: %zu sections — %s", s.stats.sections.sections,
                   s.stats.sections.summary);
+  }
+
+  // --- ROUND 19 item 73: gyro-constrained gap rescue ------------------------
+  //
+  // AFTER stitching — the pass above just decided which gaps are refused, and
+  // everything it could fix is already in one frame — and BEFORE the loop-end
+  // closure, which needs the walk to be one walk before "the end" means
+  // anything. Every gap the stitch pass examined and refused is retried as a
+  // registration problem (gap_rescue.h): rotation locked to the gyro that
+  // witnessed the blind window, translation solved from the walls the two
+  // sides share, the ruler voting last. A rescue that survives is applied
+  // exactly the way a section seam is — a world-frame rigid transform on
+  // everything strictly before the gap's re-acquisition — and every attempt,
+  // refusals included, lands in `stats.rescues` with its numbers.
+  if (s.cfg.rescue_gaps && s.traj != nullptr && s.times != nullptr) {
+    std::vector<SectionSeam> candidates;
+    for (const SectionSeam& g : s.stats.sections.gaps_examined) {
+      switch (g.decision) {
+        case SeamDecision::kGapRefusedDisagree:
+        case SeamDecision::kGapRefusedNoGyro:
+        case SeamDecision::kGapRefusedTooLong:
+        case SeamDecision::kThinSubmap:
+        case SeamDecision::kMapGotWorse:
+          candidates.push_back(g);
+          break;
+        default:
+          // Negligible gaps have nothing to rescue; kept bridges already
+          // moved what needed moving.
+          break;
+      }
+    }
+    // gaps_examined interleaves the detection scan with the bridged-gap
+    // review, so impose time order before corrections compose.
+    std::sort(candidates.begin(), candidates.end(),
+              [](const SectionSeam& a, const SectionSeam& b) { return a.t_ns < b.t_ns; });
+    if (!candidates.empty()) {
+      std::vector<PointVertex> cloud;
+      cloud.reserve(static_cast<std::size_t>(s.cfg.store->total_points()));
+      const std::vector<PageId> ids = s.cfg.store->page_ids();
+      for (const PageId id : ids) {
+        const PageView v = s.cfg.store->page_view(id);
+        if (!v.valid()) continue;
+        for (std::uint32_t k = 0; k < v.count; ++k) cloud.push_back(v.data[k]);
+      }
+      if (cloud.size() != s.times->size()) {
+        SCAN_LOG_WARN(kMod, "gap rescue skipped: %zu points in the store but %zu point times",
+                      cloud.size(), s.times->size());
+      } else {
+        GapRescueConfig rcfg = s.cfg.rescue;
+        if (rcfg.gyro == nullptr) rcfg.gyro = ensure_gap_gyro();
+        for (const SectionSeam& g : candidates) {
+          GapRescueReport rr = rescue_gap(
+              *s.traj, Span<const PointVertex>(cloud.data(), cloud.size()),
+              Span<const std::int64_t>(s.times->data(), s.times->size()), g.pose_before,
+              g.pose_after, rcfg);
+          s.stats.rescues.push_back(rr);
+          if (rr.decision != GapRescueDecision::kRescued) {
+            SCAN_LOG_INFO(kMod, "gap of %.3f s not rescued: %s — %s", rr.gap_s,
+                          to_string(rr.decision), rr.reason);
+            continue;
+          }
+          ++s.stats.gaps_rescued;
+          // A point stamped exactly at the seam belongs to the LATER frame —
+          // the same rule SectionCorrection::section_of enforces, for the
+          // same reason.
+          const std::int64_t cut = rr.t_after_ns;
+          for (std::size_t k = 0; k < cloud.size(); ++k) {
+            if ((*s.times)[k] >= cut) continue;
+            const double in[3] = {cloud[k].x, cloud[k].y, cloud[k].z};
+            double o[3];
+            se3::mat4_apply(rr.correction, in, o);
+            cloud[k].x = static_cast<float>(o[0]);
+            cloud[k].y = static_cast<float>(o[1]);
+            cloud[k].z = static_cast<float>(o[2]);
+          }
+          std::size_t k = 0;
+          for (const PageId id : ids) {
+            const PageView v = s.cfg.store->page_view(id);
+            if (!v.valid()) continue;
+            PointVertex* w = s.cfg.store->page_data_mutable(id);
+            if (w == nullptr) {
+              k += v.count;
+              continue;
+            }
+            for (std::uint32_t i = 0; i < v.count; ++i, ++k) {
+              w[i].x = cloud[k].x;
+              w[i].y = cloud[k].y;
+              w[i].z = cloud[k].z;
+            }
+            (void)s.cfg.store->notify_recoloured(id, 0, v.count);
+          }
+          double cr[9], ct[3], cq[4];
+          se3::mat4_get_rt(rr.correction, cr, ct);
+          se3::matrix_to_quat(cr, cq);
+          for (TrajPose& tp : *s.traj) {
+            if (tp.t_ns >= cut) continue;
+            double nq[4];
+            se3::quat_mul(cq, tp.q, nq);
+            se3::quat_normalize(nq);
+            double np[3];
+            se3::mat4_apply(rr.correction, tp.p, np);
+            for (int i = 0; i < 4; ++i) tp.q[i] = nq[i];
+            for (int i = 0; i < 3; ++i) tp.p[i] = np[i];
+          }
+          SCAN_LOG_INFO(kMod,
+                        "gap of %.3f s RESCUED: %.2f deg locked from the gyro, %.3f m solved "
+                        "from the walls",
+                        rr.gap_s, rr.rotation_applied_deg, rr.translation_m);
+        }
+      }
+    }
   }
 
   // --- ROUND 11 item 41: loop closure --------------------------------------
@@ -828,6 +971,204 @@ Status D6ResolvePipeline::run(const std::string& lscan_dir) {
                   s.stats.loop_end.reason);
   }
 
+  // --- ROUND 19 item 74: recover the loss-window returns --------------------
+  //
+  // LAST, after every correction, because the interpolation is anchored on
+  // the CORRECTED endpoint poses: a gap is recoverable exactly when its two
+  // ends are finally in one trusted frame — bridged by the stitch pass, or
+  // rescued above. Orientation across the window comes from the gyro with the
+  // closing error distributed linearly in time (the densifier's own model,
+  // imu_densified_pose.h step 3); position is linearly interpolated between
+  // the endpoints, which is the honest statement of what is known about it.
+  // The ruler votes per gap, on the number the summary card prints, and a
+  // recovery it vetoes is dropped and named. Admitted points carry
+  // `flagged_alpha` — recovered, and marked as such.
+  if (s.cfg.recover_gap_points && s.traj != nullptr && s.times != nullptr &&
+      !s.profile_kept.empty()) {
+    struct GapRef {
+      std::size_t jb = 0;
+      std::size_t ja = 0;
+    };
+    std::vector<GapRef> gaps;
+    for (const SectionSeam& g : s.stats.sections.gaps_examined) {
+      if (g.decision == SeamDecision::kBridged) gaps.push_back({g.pose_before, g.pose_after});
+    }
+    for (const GapRescueReport& r : s.stats.rescues) {
+      if (r.decision == GapRescueDecision::kRescued) {
+        gaps.push_back({r.pose_before, r.pose_after});
+      }
+    }
+    std::sort(gaps.begin(), gaps.end(),
+              [](const GapRef& a, const GapRef& b) { return a.jb < b.jb; });
+    const reanchor::GyroBridge* gyro = ensure_gap_gyro();
+    if (!gaps.empty() && gyro != nullptr) {
+      std::vector<PointVertex> cloud;
+      cloud.reserve(static_cast<std::size_t>(s.cfg.store->total_points()));
+      for (const PageId id : s.cfg.store->page_ids()) {
+        const PageView v = s.cfg.store->page_view(id);
+        if (!v.valid()) continue;
+        for (std::uint32_t k = 0; k < v.count; ++k) cloud.push_back(v.data[k]);
+      }
+      if (cloud.size() != s.times->size()) {
+        SCAN_LOG_WARN(kMod,
+                      "loss-window recovery skipped: %zu points in the store but %zu point "
+                      "times",
+                      cloud.size(), s.times->size());
+      } else {
+        for (const GapRef& g : gaps) {
+          GapRecovery rec;
+          if (g.jb >= s.traj->size() || g.ja >= s.traj->size()) continue;
+          const TrajPose& pb = (*s.traj)[g.jb];
+          const TrajPose& pa = (*s.traj)[g.ja];
+          rec.t_before_ns = pb.t_ns;
+          rec.t_after_ns = pa.t_ns;
+          if (pa.t_ns <= pb.t_ns) continue;
+          double qg[4] = {0, 0, 0, 1};
+          double peak = 0.0;
+          bool hole = false;
+          if (!gyro->relative_rotation(pb.t_ns, pa.t_ns, qg, &peak, &hole) || hole) {
+            rec.reason = "the gyro does not cover the window continuously";
+            s.stats.recoveries.push_back(rec);
+            continue;
+          }
+          double qb[4] = {pb.q[0], pb.q[1], pb.q[2], pb.q[3]};
+          double qa[4] = {pa.q[0], pa.q[1], pa.q[2], pa.q[3]};
+          if (!se3::quat_normalize(qb) || !se3::quat_normalize(qa) ||
+              !se3::quat_normalize(qg)) {
+            rec.reason = "a rotation at the window's edge is degenerate";
+            s.stats.recoveries.push_back(rec);
+            continue;
+          }
+          // The closing error: everything the gyro's account fails to meet
+          // the corrected after-pose by, distributed linearly in time so the
+          // path lands EXACTLY on both trusted endpoints.
+          double q_pred_end[4];
+          se3::quat_mul(qb, qg, q_pred_end);
+          se3::quat_normalize(q_pred_end);
+          double e[4];
+          {
+            double c[4];
+            se3::quat_conj(q_pred_end, c);
+            se3::quat_mul(c, qa, e);
+            se3::quat_normalize(e);
+          }
+          const double span_ns = static_cast<double>(pa.t_ns - pb.t_ns);
+          std::vector<PointVertex> add;
+          std::vector<std::int64_t> add_t;
+          for (const ProfilePoint& pp : s.profile_kept) {
+            if (pp.t_mono_ns <= pb.t_ns || pp.t_mono_ns >= pa.t_ns) continue;
+            if (!(pp.range_m >= s.cfg.pushbroom.min_range_m) ||
+                !(pp.range_m <= s.cfg.pushbroom.max_range_m)) {
+              continue;
+            }
+            ++rec.candidates;
+            double qr[4] = {0, 0, 0, 1};
+            double pk2 = 0.0;
+            bool h2 = false;
+            if (!gyro->relative_rotation(pb.t_ns, pp.t_mono_ns, qr, &pk2, &h2) || h2) {
+              ++rec.no_gyro;
+              continue;
+            }
+            const double u = static_cast<double>(pp.t_mono_ns - pb.t_ns) / span_ns;
+            double qi[4];
+            se3::quat_mul(qb, qr, qi);
+            se3::quat_normalize(qi);
+            const double id4[4] = {0, 0, 0, 1};
+            double eu[4];
+            se3::quat_slerp(id4, e, u, eu);
+            double qt[4];
+            se3::quat_mul(qi, eu, qt);
+            se3::quat_normalize(qt);
+            const double pt[3] = {pb.p[0] + u * (pa.p[0] - pb.p[0]),
+                                  pb.p[1] + u * (pa.p[1] - pb.p[1]),
+                                  pb.p[2] + u * (pa.p[2] - pb.p[2])};
+            double wfp[16];
+            se3::mat4_from_quat_pos(qt, pt, wfp);
+            double wfl[16];
+            se3::mat4_mul(wfp, mount, wfl);
+            double pl[3];
+            d6::fan_point(static_cast<double>(pp.angle_deg), static_cast<double>(pp.range_m),
+                          pl);
+            double pw[3];
+            se3::mat4_apply(wfl, pl, pw);
+            PointVertex v{};
+            v.x = static_cast<float>(pw[0]);
+            v.y = static_cast<float>(pw[1]);
+            v.z = static_cast<float>(pw[2]);
+            v.r = pp.intensity;
+            v.g = pp.high_reflectivity != 0 ? std::uint8_t{255} : pp.intensity;
+            v.b = pp.intensity;
+            v.a = s.cfg.pushbroom.flagged_alpha;
+            add.push_back(v);
+            add_t.push_back(pp.t_mono_ns);
+          }
+          if (add.empty()) {
+            rec.reason = rec.candidates == 0
+                             ? "no in-range returns inside the window"
+                             : "the gyro covered none of the window's returns";
+            s.stats.recoveries.push_back(rec);
+            continue;
+          }
+          // The ruler votes on the map WITH the recovery in it. Appended,
+          // measured, and rolled back if it reads worse — measured on the
+          // points, so admitting them cannot flatter it.
+          const MapConsistencyReport rb =
+              measure_map_consistency(cloud, *s.times, s.cfg.rescue.consistency);
+          cloud.insert(cloud.end(), add.begin(), add.end());
+          s.times->insert(s.times->end(), add_t.begin(), add_t.end());
+          bool admit = true;
+          if (rb.measurable) {
+            const MapConsistencyReport ra =
+                measure_map_consistency(cloud, *s.times, s.cfg.rescue.consistency);
+            rec.self_check_before_m = rb.nearest_offset_m;
+            rec.self_check_after_m = ra.measurable ? ra.nearest_offset_m : rb.nearest_offset_m;
+            if (!ra.measurable ||
+                ra.nearest_offset_m >
+                    rb.nearest_offset_m + s.cfg.rescue.self_consistency_tolerance_m) {
+              admit = false;
+            }
+          }
+          if (!admit) {
+            cloud.resize(cloud.size() - add.size());
+            s.times->resize(s.times->size() - add_t.size());
+            rec.ruler_vetoed = true;
+            rec.reason = "admitting the recovered points made the map agree with itself less "
+                         "— they stay excluded for this gap";
+            s.stats.recoveries.push_back(rec);
+            SCAN_LOG_WARN(kMod,
+                          "recovery vetoed for the %.1f s window: self-check %.2f -> %.2f cm",
+                          span_ns * 1e-9, rec.self_check_before_m * 100.0,
+                          rec.self_check_after_m * 100.0);
+            continue;
+          }
+          rec.admitted = add.size();
+          rec.reason = "re-resolved against the bridged/rescued trajectory and kept";
+          s.stats.recovered_points += add.size();
+          // Publish in the recorder's own batch size, so a reader's per-chunk
+          // costs stay the ones it was written for.
+          for (std::size_t i = 0; i < add.size(); i += 4096) {
+            const std::size_t n = std::min<std::size_t>(4096, add.size() - i);
+            const Status ap = s.cfg.store->append(
+                s.cfg.out_stream, Span<const PointVertex>(add.data() + i, n), add_t[i]);
+            if (!ap.ok()) {
+              SCAN_LOG_WARN(kMod, "recovery: store refused %zu points: %s", n,
+                            error_str(ap.error()));
+              break;
+            }
+          }
+          s.stats.recoveries.push_back(rec);
+          SCAN_LOG_INFO(kMod,
+                        "recovered %llu of %llu loss-window returns across the %.1f s gap "
+                        "(%llu had no gyro cover); self-check %.2f -> %.2f cm",
+                        static_cast<unsigned long long>(rec.admitted),
+                        static_cast<unsigned long long>(rec.candidates), span_ns * 1e-9,
+                        static_cast<unsigned long long>(rec.no_gyro),
+                        rec.self_check_before_m * 100.0, rec.self_check_after_m * 100.0);
+        }
+      }
+    }
+  }
+
   SCAN_LOG_INFO(kMod,
                 "resolved '%s': %llu D6 chunks / %llu bytes, %llu poses (%llu accepted), "
                 "%llu phone-IMU samples (%llu accepted; %llu returns densified, %llu fell "
@@ -847,12 +1188,20 @@ Status D6ResolvePipeline::run(const std::string& lscan_dir) {
     // A resolve that produced nothing is a failure even though every step
     // returned kOk — ROUND 7 §3's rule, that a zero-point result must never be
     // reported as success, applied to the offline path.
+    // ROUND 19: name the flagged-excluded returns too. The owner's scan-045
+    // resolved to 0 points from 34,436 returns and the old message accounted
+    // for 223 of them — the other 34,213 were painted while EVERY pose was
+    // disowned (the double-start's reset world) and vanished without a word.
     return set_last_error(
         ScanError::kNotFound,
-        "d6resolve: '%s' resolved to 0 points from %llu returns — %llu were dropped for want of "
-        "a pose covering their timestamp and %llu were outside the D6's range window",
+        "d6resolve: '%s' resolved to 0 points from %llu returns — %llu had no pose covering "
+        "their timestamp, %llu were painted during tracking loss and excluded, and %llu were "
+        "outside the D6's range window. A capture whose every pose is disowned has no anchor "
+        "frame anywhere, and no rescue can register two sides that were never resolved.",
         lscan_dir.c_str(), static_cast<unsigned long long>(s.stats.pushbroom.points_in),
         static_cast<unsigned long long>(s.stats.pushbroom.dropped_no_pose),
+        static_cast<unsigned long long>(s.stats.pushbroom.flagged_total() -
+                                        s.stats.pushbroom.flagged_emitted),
         static_cast<unsigned long long>(s.stats.pushbroom.dropped_range));
   }
 

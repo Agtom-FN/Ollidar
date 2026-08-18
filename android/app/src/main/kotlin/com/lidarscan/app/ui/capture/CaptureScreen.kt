@@ -89,6 +89,7 @@ import com.lidarscan.app.ui.components.SecondaryPill
 import com.lidarscan.app.ui.components.Stat
 import com.lidarscan.app.ui.components.StatPanel
 import com.lidarscan.app.ui.theme.DisplayFontFamily
+import com.lidarscan.app.ui.theme.CoverageAmber
 import com.lidarscan.app.ui.theme.Ember
 import com.lidarscan.app.ui.theme.InkFaint
 import com.lidarscan.app.ui.theme.MonoLabel
@@ -151,6 +152,13 @@ fun CaptureRoute(
     // context can ask. The ViewModel calls `requestLocationPermission` at Start;
     // this bridges that suspend call to the launcher's callback.
     val locationPermissionRequest = remember { PermissionRequestBridge() }
+    // ROUND 19 item 75: the live renderer, reachable from a ViewModel lambda.
+    // The ViewModel must never hold a GL-thread object across its own lifetime
+    // (the rig-pose rule), so it gets a READ once, at seal time, through this
+    // holder the Compose side owns and clears with the view.
+    val coverageRendererHolder = remember {
+        java.util.concurrent.atomic.AtomicReference<com.lidarscan.app.render.PointCloudRenderer?>(null)
+    }
     val locationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted -> locationPermissionRequest.complete(granted) }
@@ -321,6 +329,21 @@ fun CaptureRoute(
                             onProgress = onProgress,
                         )
                     },
+                    // ROUND 19 item 76: the persisted device display block —
+                    // the one source of truth Review's panel also writes.
+                    loadDeviceDisplay = { container.settingsRepository.displayParams() },
+                    persistDeviceDisplay = { p -> container.settingsRepository.setDisplayParams(p) },
+                    // ROUND 19 item 77: the checklist's one persisted bit.
+                    preScanChecklistDismissed = {
+                        container.settingsRepository.preScanChecklistDismissed()
+                    },
+                    persistPreScanChecklistDismissed = {
+                        container.settingsRepository.setPreScanChecklistDismissed()
+                    },
+                    // ROUND 19 item 75: the largest thin arc, read at seal time.
+                    coverageAdviceProvider = {
+                        coverageRendererHolder.get()?.coverageAdviceLine()
+                    },
                 )
             }
         },
@@ -453,6 +476,18 @@ fun CaptureRoute(
     // ROUND 16 item 59: the walked path, drawn inside the live cloud.
     val trailRibbon by viewModel.trailRibbon.collectAsStateWithLifecycle()
     val showTrajectory by viewModel.showTrajectory.collectAsStateWithLifecycle()
+    // ROUND 19 item 77.
+    val showPreScanChecklist by viewModel.showPreScanChecklist.collectAsStateWithLifecycle()
+    // ROUND 19 item 75: the guidance ring, polled at 1 Hz — deliberately not
+    // per frame (round 13's cue budget applied to pixels: quiet, debounced,
+    // and visual only).
+    var coverageSectors by remember { mutableStateOf<FloatArray?>(null) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(1_000)
+            coverageSectors = coverageRendererHolder.get()?.coverageSectors()
+        }
+    }
     var liveRibbonSink by remember {
         mutableStateOf<com.lidarscan.app.render.PointCloudRenderer?>(null)
     }
@@ -659,6 +694,10 @@ fun CaptureRoute(
         manualHostIp = manualHostIp,
         trailPoints = trailPoints,
         trailLengthM = trailLengthM,
+        showPreScanChecklist = showPreScanChecklist,
+        onChecklistStart = viewModel::startFromChecklist,
+        onChecklistDismiss = viewModel::dismissPreScanChecklist,
+        coverageSectors = coverageSectors,
         motionHint = motionHint,
         refreshDownshiftNote = refreshDownshiftNote,
         onRefreshAutoDownshift = viewModel::onRefreshAutoDownshift,
@@ -712,6 +751,8 @@ fun CaptureRoute(
             viewModel.setRigPoseSink(
                 renderer?.let { r -> { x, y, z, t -> r.setRigPose(x, y, z, t) } },
             )
+            // ROUND 19 item 75: same seam, same lifetime rule.
+            coverageRendererHolder.set(renderer)
             // ROUND 16 item 59: the ribbon meets the renderer at the same seam
             // the rig pose does, and for the same reason — the ViewModel must
             // never hold a GL-thread object across its own lifetime, so the
@@ -903,6 +944,14 @@ fun CaptureScreen(
     mountTrimNoteIsWarning: Boolean = false,
     /** ROUND 7 (field bug 1): where the trim in force came from, and how old it is. */
     mountTrimProvenance: com.lidarscan.core.calib.MountTrimProvenance? = null,
+    // ── ROUND 19 item 77: the pre-scan checklist ─────────────────────────────
+    showPreScanChecklist: Boolean = false,
+    /** The checklist's Start; the Boolean is "don't show again". */
+    onChecklistStart: (Boolean) -> Unit = {},
+    /** The checklist's back-out; same Boolean. */
+    onChecklistDismiss: (Boolean) -> Unit = {},
+    // ── ROUND 19 item 75: per-sector coverage for the trail tile's ring ──────
+    coverageSectors: FloatArray? = null,
     /** ROUND 7 (field bug 2): non-null while a running capture is receiving nothing. */
     noDataAlert: String? = null,
     onDismissNoDataAlert: () -> Unit = {},
@@ -1072,6 +1121,7 @@ fun CaptureScreen(
                             keyframesWritten = keyframeStats.keyframesWritten,
                             trailPoints = trailPoints,
                             trailLengthM = trailLengthM,
+                            coverageSectors = coverageSectors,
                             onRefreshAutoDownshift = onRefreshAutoDownshift,
                             onOpenSettings = { sheet = CaptureSheet.SETTINGS },
                             onOpenDiagnostics = { sheet = CaptureSheet.DIAGNOSTICS },
@@ -1379,6 +1429,29 @@ fun CaptureScreen(
                 }
             }
         }
+    }
+
+    // ── ROUND 19 item 77: the pre-scan checklist, over everything ───────────
+    //
+    // Not part of the `when (sheet)` family below: it is not operator-opened
+    // chrome, it is the intercepted Start press, and it must never be closed
+    // by the same state the settings sheet uses.
+    if (showPreScanChecklist) {
+        PreScanChecklistSheet(
+            mountTrim = mountTrim,
+            dndNote = dndNote,
+            trackingLabel = when (poseState) {
+                PoseTrackingState.NOT_REQUIRED -> ""
+                PoseTrackingState.UNAVAILABLE -> "No position tracking — this scan would be 2D"
+                PoseTrackingState.INITIALIZING -> "Still settling — move the phone slowly"
+                PoseTrackingState.TRACKING -> "Tracking steady"
+                PoseTrackingState.LOST -> "Tracking lost — point at a textured surface"
+            },
+            trackingIsGood = poseState == PoseTrackingState.TRACKING ||
+                poseState == PoseTrackingState.NOT_REQUIRED,
+            onStart = onChecklistStart,
+            onDismiss = onChecklistDismiss,
+        )
     }
 
     // ── the sheets, mutually exclusive by construction ──────────────────────
@@ -2216,6 +2289,8 @@ private fun CaptureViewport(
     keyframesWritten: Int,
     trailPoints: List<com.lidarscan.core.capture.TrajectoryTrail.NormalizedPoint>,
     trailLengthM: Float,
+    /** ROUND 19 item 75: null (or all-zero: unmeasured) hides the ring. */
+    coverageSectors: FloatArray? = null,
     onRefreshAutoDownshift: (Int) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenDiagnostics: () -> Unit,
@@ -2362,6 +2437,7 @@ private fun CaptureViewport(
             TrajectoryTrailOverlay(
                 points = trailPoints,
                 lengthM = trailLengthM,
+                coverageSectors = coverageSectors,
                 modifier = Modifier.align(Alignment.BottomCenter)
                     .padding(bottom = 10.dp)
                     .size(width = 108.dp, height = 84.dp),
@@ -2532,6 +2608,17 @@ private fun CaptureViewport(
 private fun TrajectoryTrailOverlay(
     points: List<com.lidarscan.core.capture.TrajectoryTrail.NormalizedPoint>,
     lengthM: Float,
+    /**
+     * ROUND 19 item 75 — per-sector coverage around the operator (12 world
+     * azimuth sectors, 0..1 against the sector mean; see CoverageCompass).
+     * Thin sectors draw as amber edge arcs POINTING at the uncovered walls —
+     * the tile is already a top-down world map, so a world azimuth is a
+     * canvas angle with no conversion (x right, z down, same as the path).
+     * All-zero means "not enough evidence yet" and draws nothing: the ring
+     * only ever says something it measured. Amber, not red — round 11's
+     * language for "thin", kept.
+     */
+    coverageSectors: FloatArray? = null,
     modifier: Modifier = Modifier,
 ) {
     val shape = RoundedCornerShape(ScanDims.TileRadius)
@@ -2578,6 +2665,30 @@ private fun TrajectoryTrailOverlay(
             }
             // Where you are NOW — the one thing worth finding at a glance.
             previous?.let { drawCircle(color = Ember, radius = 4.5f, center = it) }
+
+            // ROUND 19 item 75: the guidance ring. Amber arcs at the tile's
+            // edge where the map around the walked path is thin.
+            if (coverageSectors != null && coverageSectors.any { it > 0f }) {
+                val sectors = coverageSectors.size
+                val sweep = 360f / sectors
+                val arcInset = 2.5f
+                val arcSize = androidx.compose.ui.geometry.Size(w - 2 * arcInset, h - 2 * arcInset)
+                for (s in 0 until sectors) {
+                    if (coverageSectors[s] >= com.lidarscan.core.render.CoverageCompass.DEFAULT_THIN_FRACTION) continue
+                    drawArc(
+                        color = CoverageAmber.copy(alpha = 0.9f),
+                        startAngle = s * sweep + 1.5f,
+                        sweepAngle = sweep - 3f,
+                        useCenter = false,
+                        topLeft = androidx.compose.ui.geometry.Offset(arcInset, arcInset),
+                        size = arcSize,
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(
+                            width = 3.5f,
+                            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                        ),
+                    )
+                }
+            }
         }
         Text(
             "%.0f m".format(lengthM),

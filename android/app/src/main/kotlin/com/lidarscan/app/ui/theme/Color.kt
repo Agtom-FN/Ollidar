@@ -75,6 +75,14 @@ val SemGood = Color(0xFF49D17F)
 /** Float / degraded / warning. */
 val SemWarn = Color(0xFFE5B93C)
 
+/**
+ * ROUND 19 item 75 — the coverage amber, matching the CoverageGrid tint's
+ * (255, 176, 48) exactly, so the guidance ring and the coverage colour mode
+ * speak the same "thin" in the same shade. Round 11's choice, restated there:
+ * amber, not red — thin coverage is an instruction, not an alarm.
+ */
+val CoverageAmber = Color(0xFFFFB030)
+
 /** Single / fault / failed. */
 val SemBad = Color(0xFFE05252)
 

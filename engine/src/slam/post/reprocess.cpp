@@ -277,7 +277,57 @@ void write_sidecar(const std::string& path, const ReprocessReport& r) {
                  x.residual_rotation_deg, to_string(x.decision), x.reason,
                  (i + 1 == s.gaps_examined.size()) ? "" : ",");
   }
-  std::fprintf(f, "  ]\n}\n");
+  // ROUND 19 items 73/74 + the yield audit — all additive; the app's readers
+  // ignore unknown keys. Refused rescues are recorded with the same care as
+  // applied ones: the refusal and its numbers ARE the product here.
+  std::fprintf(f, "  ],\n  \"rescues\": [\n");
+  for (std::size_t i = 0; i < r.rescues.size(); ++i) {
+    const GapRescueReport& x = r.rescues[i];
+    std::fprintf(f,
+                 "    {\"tMonoNs\": %lld, \"gapS\": %.3f, \"gyroDeg\": %.6f, "
+                 "\"rotationAppliedDeg\": %.6f, \"translationM\": %.6f, "
+                 "\"coarseOverlap\": %.4f, \"observability\": %.6f, \"solvedAxes\": %d, "
+                 "\"pairs\": %llu, \"mismatchIdentityM\": %.6f, \"mismatchRescuedM\": %.6f, "
+                 "\"selfCheckBeforeM\": %.6f, \"selfCheckAfterM\": %.6f, "
+                 "\"decision\": \"%s\", \"reason\": \"%s\"}%s\n",
+                 static_cast<long long>(x.t_after_ns), x.gap_s, x.gyro_rotation_deg,
+                 x.rotation_applied_deg, x.translation_m, x.coarse_overlap, x.observability,
+                 x.solved_axes, static_cast<unsigned long long>(x.pairs),
+                 x.mismatch_identity_m, x.mismatch_rescued_m, x.self_check_before_m,
+                 x.self_check_after_m, to_string(x.decision), x.reason,
+                 (i + 1 == r.rescues.size()) ? "" : ",");
+  }
+  std::fprintf(f, "  ],\n  \"recoveries\": [\n");
+  for (std::size_t i = 0; i < r.recoveries.size(); ++i) {
+    const GapRecovery& x = r.recoveries[i];
+    std::fprintf(f,
+                 "    {\"tBeforeNs\": %lld, \"tAfterNs\": %lld, \"candidates\": %llu, "
+                 "\"noGyro\": %llu, \"admitted\": %llu, \"rulerVetoed\": %s, "
+                 "\"selfCheckBeforeM\": %.6f, \"selfCheckAfterM\": %.6f, "
+                 "\"reason\": \"%s\"}%s\n",
+                 static_cast<long long>(x.t_before_ns), static_cast<long long>(x.t_after_ns),
+                 static_cast<unsigned long long>(x.candidates),
+                 static_cast<unsigned long long>(x.no_gyro),
+                 static_cast<unsigned long long>(x.admitted), x.ruler_vetoed ? "true" : "false",
+                 x.self_check_before_m, x.self_check_after_m, x.reason,
+                 (i + 1 == r.recoveries.size()) ? "" : ",");
+  }
+  std::fprintf(f,
+               "  ],\n"
+               "  \"recoveredPoints\": %llu,\n"
+               "  \"yield\": {\"samples\": %llu, \"noReturns\": %llu, "
+               "\"outOfWindow\": %llu, \"noPose\": %llu, \"flaggedExcluded\": %llu, "
+               "\"otherDropped\": %llu, \"resolved\": %llu, \"recovered\": %llu}\n"
+               "}\n",
+               static_cast<unsigned long long>(r.recovered_points),
+               static_cast<unsigned long long>(r.yield.samples),
+               static_cast<unsigned long long>(r.yield.no_returns),
+               static_cast<unsigned long long>(r.yield.out_of_window),
+               static_cast<unsigned long long>(r.yield.no_pose),
+               static_cast<unsigned long long>(r.yield.flagged_excluded),
+               static_cast<unsigned long long>(r.yield.other_dropped),
+               static_cast<unsigned long long>(r.yield.resolved),
+               static_cast<unsigned long long>(r.yield.recovered));
   std::fclose(f);
 }
 
@@ -322,6 +372,9 @@ Status reprocess_d6_container(const std::string& lscan_dir, const ReprocessOptio
   cfg.close_loops = opts.close_loops;
   cfg.close_loop_end = opts.close_loop_end;
   cfg.loop_end = opts.loop_end;
+  cfg.rescue_gaps = opts.rescue_gaps;
+  cfg.rescue = opts.rescue;
+  cfg.recover_gap_points = opts.recover_gap_points;
   cfg.out_trajectory = &traj;
   cfg.out_point_times = &ptimes;
 
@@ -337,6 +390,25 @@ Status reprocess_d6_container(const std::string& lscan_dir, const ReprocessOptio
   rep.stitch = pipe.stats().sections;
   rep.loop_end = pipe.stats().loop_end;
   rep.loop_end_applied = pipe.stats().loop_end_applied;
+  rep.rescues = pipe.stats().rescues;
+  rep.gaps_rescued = pipe.stats().gaps_rescued;
+  rep.recoveries = pipe.stats().recoveries;
+  rep.recovered_points = pipe.stats().recovered_points;
+  {
+    // ROUND 19: the yield audit, composed from the run's own counters. The
+    // parser is the only place that sees range-0 samples (the driver drops
+    // them before the profile sink), so `samples` is parser no-returns plus
+    // everything that reached the assembler.
+    const PushbroomStats& pb = pipe.stats().pushbroom;
+    rep.yield.no_returns = pipe.stats().d6_no_returns;
+    rep.yield.out_of_window = pb.dropped_range;
+    rep.yield.no_pose = pb.dropped_no_pose;
+    rep.yield.flagged_excluded = pb.flagged_total() - pb.flagged_emitted;
+    rep.yield.other_dropped = pb.dropped_overflow + pb.dropped_page_full;
+    rep.yield.resolved = pb.points_out;
+    rep.yield.recovered = pipe.stats().recovered_points;
+    rep.yield.samples = rep.yield.no_returns + pb.points_in;
+  }
   rep.poses = traj.size();
 
   std::vector<PointVertex> pts;

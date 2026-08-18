@@ -78,6 +78,22 @@ class SettingsRepository(private val context: Context) {
          * once. See [com.lidarscan.core.capture.CaptureFocus.shouldAsk].
          */
         val DND_ACCESS_ASKED = booleanPreferencesKey("dnd_access_asked")
+
+        /**
+         * ROUND 19 item 76 — the DEVICE display block, JSON-serialized
+         * [com.lidarscan.core.render.DisplayParams]. The one source of truth
+         * the live viewport renders with and Review's panel writes back to,
+         * which is what carries a Review toggle onto the next walk. Same
+         * unparseable-reads-as-absent rule as [MOUNT_TRIM].
+         */
+        val DISPLAY_PARAMS = stringPreferencesKey("display_params")
+
+        /**
+         * ROUND 19 item 77 — "don't show the pre-scan checklist again",
+         * per device. One-way by UI (the checklist is the only thing that
+         * writes it); a reinstall is the road back.
+         */
+        val PRE_SCAN_CHECKLIST_DISMISSED = booleanPreferencesKey("pre_scan_checklist_dismissed")
     }
 
     val settings: Flow<AppSettings> = context.settingsDataStore.data.map { prefs ->
@@ -257,6 +273,34 @@ class SettingsRepository(private val context: Context) {
     /** ROUND 14 — one-way. Once asked, never asked again; Settings is the road back. */
     suspend fun setDndAccessAsked() {
         context.settingsDataStore.edit { it[Keys.DND_ACCESS_ASKED] = true }
+    }
+
+    /** ROUND 19 item 76: the persisted device display block, or null before the first save. */
+    suspend fun displayParams(): com.lidarscan.core.render.DisplayParams? {
+        val raw = context.settingsDataStore.data.first()[Keys.DISPLAY_PARAMS] ?: return null
+        return runCatching {
+            kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+                .decodeFromString<com.lidarscan.core.render.DisplayParams>(raw)
+        }.getOrNull()
+    }
+
+    /** ROUND 19 item 76. */
+    suspend fun setDisplayParams(params: com.lidarscan.core.render.DisplayParams) {
+        context.settingsDataStore.edit { prefs ->
+            prefs[Keys.DISPLAY_PARAMS] = kotlinx.serialization.json.Json.encodeToString(
+                com.lidarscan.core.render.DisplayParams.serializer(),
+                params,
+            )
+        }
+    }
+
+    /** ROUND 19 item 77. */
+    suspend fun preScanChecklistDismissed(): Boolean =
+        context.settingsDataStore.data.first()[Keys.PRE_SCAN_CHECKLIST_DISMISSED] ?: false
+
+    /** ROUND 19 item 77 — one-way, like [setDndAccessAsked]. */
+    suspend fun setPreScanChecklistDismissed() {
+        context.settingsDataStore.edit { it[Keys.PRE_SCAN_CHECKLIST_DISMISSED] = true }
     }
 
     suspend fun setAllowPoorSyncColorize(allow: Boolean) {

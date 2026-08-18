@@ -33,6 +33,7 @@
 
 #include "scanengine/cloud/point_page.h"
 #include "scanengine/core/error.h"
+#include "scanengine/slam/post/gap_rescue.h"
 #include "scanengine/slam/post/map_consistency.h"
 #include "scanengine/slam/post/loop_end.h"
 #include "scanengine/slam/post/mount_watch.h"
@@ -58,6 +59,20 @@ struct ReprocessOptions {
   // that is what it should cost. See slam/post/loop_end.h.
   bool close_loop_end = true;
   LoopEndConfig loop_end{};
+  // ROUND 19 item 73. ON by default for the same reason close_loop_end is:
+  // this is the one pipeline allowed to move points the live pass could not
+  // have moved, the refused gaps are the largest errors left in the owner's
+  // captures (a 106-degree fold is not a nuance), and the rescue refuses
+  // itself on its own gates with the ruler voting last — so "on by default"
+  // costs a named refusal and a log line when there is nothing to rescue.
+  bool rescue_gaps = true;
+  GapRescueConfig rescue{};
+  // ROUND 19 item 74. ON by default under the same argument, and doubly
+  // gated: recovery only runs on a gap whose two ends a bridge or a rescue
+  // has already placed in one trusted frame, and the ruler votes on the
+  // result per gap. The LIVE default (PushbroomConfig::exclude_flagged) is
+  // untouched — this is offline-first, by design.
+  bool recover_gap_points = true;
   bool densify_with_phone_imu = true;
   SectionStitchConfig sections{};
   // Written even when nothing was stitched, so the sidecar always says what
@@ -75,6 +90,21 @@ struct ReprocessOptions {
   MapConsistencyConfig consistency{};
 };
 
+// ROUND 19: where the D6's 4,000 samples per second actually went, per
+// capture. Every row is measured on this run's own decode — nothing is
+// estimated — and the rows sum to `samples`. The one honest denominator for
+// "how much of my sensor am I using".
+struct YieldAudit {
+  std::uint64_t samples = 0;          // everything the D6 decoded this run
+  std::uint64_t no_returns = 0;       // range 0 — the sensor saw nothing there
+  std::uint64_t out_of_window = 0;    // outside the D6's [0.05, 12] m window
+  std::uint64_t no_pose = 0;          // no trajectory covering their instant
+  std::uint64_t flagged_excluded = 0; // painted during tracking loss, excluded
+  std::uint64_t other_dropped = 0;    // queue overflow / store backpressure
+  std::uint64_t resolved = 0;         // world points that reached the cloud
+  std::uint64_t recovered = 0;        // item 74: re-admitted from loss windows
+};
+
 struct ReprocessReport {
   bool ran = false;             // the pipeline resolved
   bool map_written = false;     // processed/map_stitched.bin exists and is new
@@ -90,6 +120,15 @@ struct ReprocessReport {
   // gate — so a field log can say why a scan's loop was or was not closed.
   LoopEndReport loop_end{};
   bool loop_end_applied = false;
+  // ROUND 19 item 73: every rescue attempt, refusals included, each naming
+  // its gate; `gaps_rescued` is how many were applied.
+  std::vector<GapRescueReport> rescues;
+  std::size_t gaps_rescued = 0;
+  // ROUND 19 item 74: per-gap recovery accounting and the admitted total.
+  std::vector<GapRecovery> recoveries;
+  std::uint64_t recovered_points = 0;
+  // ROUND 19: the yield audit for this run.
+  YieldAudit yield{};
   // ROUND 16 item 59: `processed/trajectory.bin` was written — the corrected
   // walk, as float32 metre triples, for the path the app draws inside the
   // cloud. See write_trajectory() in the .cpp for the format and for why it is

@@ -136,6 +136,7 @@ int usage() {
       "\n"
       "  engine_cli --d6-selfcheck <lscan-dir> [--window S] [--cell M]\n"
       "  engine_cli --d6-reprocess <lscan-dir> [--no-refine] [--no-densify] [--no-loopend]\n"
+      "                            [--no-rescue] [--no-recover]\n"
       "      The phone's own Process action, from a terminal: stitch, close the loop\n"
       "      end, measure, and write processed/map_stitched.bin + stitch.json +\n"
       "      trajectory.bin.\n"
@@ -2538,6 +2539,8 @@ int main(int argc, char** argv) {
       if (a == "--no-refine") ro.sections.refine = false;
       else if (a == "--no-densify") ro.densify_with_phone_imu = false;
       else if (a == "--no-loopend") ro.close_loop_end = false;
+      else if (a == "--no-rescue") ro.rescue_gaps = false;
+      else if (a == "--no-recover") ro.recover_gap_points = false;
       else if (a == "--quiet") continue;
       else return usage();
     }
@@ -2558,6 +2561,38 @@ int main(int argc, char** argv) {
                 100.0 * rep.consistency.nearest_offset_m,
                 rep.consistency.measurable ? "yes" : "no",
                 post::to_string(rep.loop_end.decision));
+    // ROUND 19 item 73: every rescue attempt, with its verdict and numbers.
+    for (const auto& rr : rep.rescues) {
+      std::printf("  rescue @%.3fs gap: %s — gyro %.2f deg, rot %.2f deg, dt %.3f m "
+                  "(overlap %.2f, obs %.4f, axes %d, pairs %zu), sides %.1f->%.1f cm, "
+                  "self %.2f->%.2f cm\n",
+                  rr.gap_s, post::to_string(rr.decision), rr.gyro_rotation_deg,
+                  rr.rotation_applied_deg, rr.translation_m, rr.coarse_overlap,
+                  rr.observability, rr.solved_axes, rr.pairs,
+                  100.0 * rr.mismatch_identity_m, 100.0 * rr.mismatch_rescued_m,
+                  100.0 * rr.self_check_before_m, 100.0 * rr.self_check_after_m);
+    }
+    // ROUND 19 item 74: what came back from the loss windows.
+    for (const auto& rc : rep.recoveries) {
+      std::printf("  recovery %.1fs window: %llu candidates, %llu admitted%s, "
+                  "self %.2f->%.2f cm — %s\n",
+                  static_cast<double>(rc.t_after_ns - rc.t_before_ns) * 1e-9,
+                  static_cast<unsigned long long>(rc.candidates),
+                  static_cast<unsigned long long>(rc.admitted),
+                  rc.ruler_vetoed ? " (RULER VETO)" : "",
+                  100.0 * rc.self_check_before_m, 100.0 * rc.self_check_after_m, rc.reason);
+    }
+    // ROUND 19: the yield audit — where the 4,000 samples per second went.
+    std::printf("  yield: %llu samples = %llu no-return + %llu out-of-window + %llu no-pose "
+                "+ %llu flagged-excluded + %llu other + %llu resolved (+%llu recovered)\n",
+                static_cast<unsigned long long>(rep.yield.samples),
+                static_cast<unsigned long long>(rep.yield.no_returns),
+                static_cast<unsigned long long>(rep.yield.out_of_window),
+                static_cast<unsigned long long>(rep.yield.no_pose),
+                static_cast<unsigned long long>(rep.yield.flagged_excluded),
+                static_cast<unsigned long long>(rep.yield.other_dropped),
+                static_cast<unsigned long long>(rep.yield.resolved),
+                static_cast<unsigned long long>(rep.yield.recovered));
     return kExitOk;
   }
   if (cmd == "--d6-loopend") {

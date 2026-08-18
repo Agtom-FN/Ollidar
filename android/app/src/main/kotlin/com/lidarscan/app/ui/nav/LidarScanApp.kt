@@ -202,16 +202,28 @@ fun LidarScanApp(
                 route = Routes.REVIEW,
                 arguments = listOf(navArgument(Routes.PROJECT_ID_ARG) { type = NavType.StringType }),
             ) { backStackEntry ->
-                ReviewRoute(
-                    container = container,
-                    projectId = Uri.decode(backStackEntry.arguments?.getString(Routes.PROJECT_ID_ARG).orEmpty()),
-                    onBack = { navController.popBackStack() },
-                    onOpenPlan = { pid -> navController.navigate(Routes.plan(pid)) },
-                    onOpenExport = { pid ->
-                        activeProjectId = pid
-                        navController.navigate(Routes.processing(pid))
-                    },
-                )
+                // ROUND 19 item 76: the SAME chrome from both doors. Review is
+                // reachable from the Projects list and from Project detail;
+                // it used to be the one project screen NOT wrapped in
+                // UnderTabBar, so arriving from Detail (which is wrapped)
+                // visibly re-flowed the page under the tab bar — the
+                // "different chrome" round 16 named. Both routes stay (the
+                // seal->Projects handoff needs the list door, and removing a
+                // navigation route mid-round is the back-stack risk round 16
+                // called out); what is consolidated is the chrome: one
+                // wrapper, like every sibling project screen.
+                UnderTabBar {
+                    ReviewRoute(
+                        container = container,
+                        projectId = Uri.decode(backStackEntry.arguments?.getString(Routes.PROJECT_ID_ARG).orEmpty()),
+                        onBack = { navController.popBackStack() },
+                        onOpenPlan = { pid -> navController.navigate(Routes.plan(pid)) },
+                        onOpenExport = { pid ->
+                            activeProjectId = pid
+                            navController.navigate(Routes.processing(pid))
+                        },
+                    )
+                }
             }
 
             composable(

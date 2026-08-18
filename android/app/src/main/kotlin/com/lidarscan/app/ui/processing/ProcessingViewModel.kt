@@ -59,6 +59,8 @@ data class ProcessingUiState(
     val cloud: CloudUploadState = CloudUploadState(),
     val message: String? = null,
     val engineAvailable: Boolean = true,
+    /** ROUND 19 item 76: a blocking D6 reprocess is running from this screen. */
+    val d6Processing: Boolean = false,
 )
 
 /**
@@ -199,6 +201,37 @@ class ProcessingViewModel(
 
     fun postProcess() {
         val p = _uiState.value.project ?: return
+        // ── ROUND 19 item 76: ONE process pipeline for a D6 ─────────────────
+        //
+        // Round 16 named "three process surfaces over two different
+        // pipelines" and left them; this closes the pipeline half. For a D6
+        // container this button used to queue JobKind.POST_PROCESS — a plain
+        // re-resolve into the shared viewer store, with none of the stitch /
+        // rescue / loop-end corrections and nothing written to processed/ —
+        // while Review's card and the seal's auto-process ran
+        // reprocessD6. Same word on the button, different result on disk.
+        // Now every D6 "Process" is reprocessD6: same per-container lock,
+        // same derived files, same verdicts. The queue remains what it always
+        // was for a Mid-360, whose pipeline genuinely is a queued LIO re-run.
+        if (p.manifest.sensor == com.lidarscan.core.model.SensorType.COIN_D6) {
+            if (_uiState.value.d6Processing) return
+            _uiState.value = _uiState.value.copy(d6Processing = true, message = "Processing…")
+            viewModelScope.launch {
+                val r = withContext(Dispatchers.IO) {
+                    runCatching { repo.reprocessD6(p.directory) }.getOrNull()
+                }
+                _uiState.value = _uiState.value.copy(
+                    d6Processing = false,
+                    message = if (r?.ran == true) {
+                        "Processed — open Review to see the corrected map."
+                    } else {
+                        "This scan could not be processed. Its recorded data may be " +
+                            "incomplete — the raw files are untouched either way."
+                    },
+                )
+            }
+            return
+        }
         report(repo.submitPostProcess(projectId, p.directory), "Post-processing queued.")
     }
 

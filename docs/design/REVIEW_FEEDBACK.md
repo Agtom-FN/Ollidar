@@ -2501,3 +2501,171 @@ every engine change is inside poses/ + post/ + plan/). `:core` 560, `:app`
 2.55 m (it had no processed results at all before this round). stitch.json
 gains `gapsExamined[]` and trajectory.bin moves to v2 — both derived files,
 both additive-or-versioned, `streams/` untouched everywhere.
+
+## ROUND 19 (v0.9.4) — owner-approved: carry the trajectory through the blindness
+
+Owner-approved scope (his items 1, 2, 6, 7 plus the recovery item his
+correction earned). Context on record: the sessions were in GOOD light, the
+losses were close feature-poor surfaces (63–70 % of returns under 1.5 m) and
+fast turning, the D6 is capable hardware, and the strategy is to make
+lidar + gyro carry the trajectory through camera outages. Items 73–77.
+
+**73 — GYRO-CONSTRAINED LIDAR-TO-LIDAR GAP RESCUE (the headline).**
+
+Round 18 left three honest refusals on the table: scan-046 (6.897 s blind,
+gyro 178.63° vs the tracker's 72.28°, residual 106.54°), scan-050 (6.398 s,
+115.63° vs 29.94°, residual 85.70°) and scan-040 (76.77° residual). Refusing
+to APPLY the pose jump was right — and it is not the end of the evidence. The
+D6 painted through every loss, the gyro measured through every loss, and the
+walls on the far side of a blind window in a small flat are mostly the same
+walls as on the near side. Two rigid maps of one room plus a witness to the
+rotation between them is a registration problem with ONE unknown vector.
+
+`slam/post/gap_rescue.h` is that primitive, reusable and gated:
+
+* **Rotation LOCKED, never solved** — round 12 measured what a free rotation
+  does on a pushbroom (invents 14–19° in the null space), so
+  `R = R_after · (R_before · R_gyro)ᵀ` is constructed from the gyro's witness
+  and applied, exactly the reanchor derivation with the refusal turned into a
+  registration.
+* **Translation solved from the walls the two sides share**: a deterministic
+  coarse grid (±2.4 m / 0.4 m horizontal, ±0.6 m vertical, ties biased toward
+  zero so an unobservable direction stays put) seeds round 13's point-to-plane
+  solve at round 16's 0.60 m plane radius — with the step taken IN THE
+  OBSERVABLE SUBSPACE of the system matrix. A direction below the 0.05 gate
+  takes no step and is reported by name (`solvedAxes`, `weakAxis`); fewer than
+  two observable directions refuses outright.
+* **Refusals by name**: no-gyro, no-anchor (a disowned pose is not a frame),
+  thin-submap, no-overlap (the sides paint no shared surface within reach),
+  unobservable, not-converged, correction-too-big, no-improvement — and
+  **the ruler votes last** (gate 7 doctrine, verbatim from loop_end.h): a
+  rescue that makes the whole-map self-check worse is refused however good
+  its own residual looks.
+
+Wired into `Process` (`ReprocessOptions::rescue_gaps`, ON — this is the one
+pipeline allowed to move points the live pass could not), after stitching and
+before loop-end, applied exactly like a section seam through the `processed/`
+provenance channel. `streams/` byte-identical everywhere; the sidecar gains a
+`rescues[]` array with every attempt and its numbers.
+
+**On the owner's real bytes** (engine_cli --d6-reprocess on copies):
+
+| scan | verdict | numbers |
+|---|---|---|
+| **050** | **RESCUED** | 115.63° locked from the gyro, 0.298 m solved from the walls (overlap 0.93, observability 0.38, 3 axes, 18,832 pairs); the two sides 32.2 → 12.1 cm; **selfCheck 1.77 → 1.40 cm**; **loop-end gap 5.70 → 3.39 m** |
+| 046 | refused: ruler-says-worse | the registration itself is excellent (sides 39.2 → 12.3 cm, overlap 0.95, 3 axes) but the whole-map number would go 2.23 → 2.46 cm. Structural honesty: a fold hides from the ruler (its two halves share no cells, so the 2.23 was measured blind to the fold), and unfolding exposes the cross-gap residual to the metric for the first time. The seam stays, the numbers are recorded, the map is byte-identical |
+| 040 | refused: ruler-says-worse | sides only 41.8 → 29.6 cm at dt 1.029 m, selfCheck 2.64 → 2.79 — a genuinely weaker registration, correctly refused |
+| 047 #2/#3 | refused: no-improvement | with the gyro-locked rotation applied the two sides agree LESS (8.8 → 15.0 cm, 14.6 → 20.1 cm) — geometric confirmation that those one-frame jumps were transients the pose stream recovered from on its own, exactly what round 18's snap gate claimed |
+| 047 #1, 053 | refused: thin-submap | capture-start gaps — there is nothing painted on the near side of the blindness to register with |
+| **039** | **refused: no-anchor** | the precise gate: `rescue-no-anchor` — a rescue needs one TRACKED pose on each side of the blindness and scan-039 has none anywhere (zero poses recorded). The gyro orientation is fine (round 16 measured it); the translation has no witness and lidar-to-lidar across single 2D fans is the very null space this module refuses to invent. Unrescuable today, nothing foreclosed |
+| **045** | refused before the rescue | every one of its 268 poses is disowned (the round-17 double-start reset), so 0 points resolve and no side of any gap exists. The zero-point refusal now accounts for every return: *"223 had no pose covering their timestamp, 34,213 were painted during tracking loss and excluded"* — the old message explained 223 of 34,436 and let the rest vanish |
+
+**74 — THE LOSS-WINDOW RETURNS COME BACK, RULER PERMITTING.**
+
+`exclude_flagged` throws away ~10 k returns per long loss (scan-046: 26,428
+excluded of 148,921 decoded — 17.7 % of the capture). Once a gap is bridged
+(round 18) or rescued (item 73) its two ends are in ONE trusted frame, and the
+returns painted inside it can be re-resolved instead of discarded: orientation
+integrated from the gyro with the closing error distributed linearly (the
+densifier's own model, step 3), position linearly interpolated between the
+trusted endpoints — the honest statement of what is known. Offline only
+(`ReprocessOptions::recover_gap_points`, ON; the LIVE default is untouched by
+design), admitted points carry `flagged_alpha` as provenance, and **the ruler
+votes per gap**: scan-050's 23,609 candidates were re-resolved and then VETOED
+(selfCheck 1.40 → 1.96 cm — a 6.4 s position lerp under a 116° pacing turn
+smears, and the ruler said so), so they stay excluded and the sidecar says
+exactly that (`recoveries[]`, `rulerVetoed: true`). The synthetic end-to-end
+fixture (corridor, 7 s blindness, 30° frame restart) proves the admit path:
+5,000+ candidates recovered and kept when the interpolation is actually right.
+
+**75 — LIVE COVERAGE GUIDANCE.** Rooms rarely close because of coverage, not
+math — only scan-029 ever closed. `CoverageCompass` (:core) is the census the
+grid could not give: twelve 30° azimuth sectors around the walked path,
+counted relative to where the operator STOOD when each return resolved, thin
+judged against the sector mean (scale-free), nothing claimed below 10 k
+returns. Surfaced twice, both quiet: **amber arcs on the trail tile's edge**
+pointing at the uncovered walls (the tile is already a top-down world map, so
+a world azimuth is a canvas angle; polled at 1 Hz, visual only, zero new
+cues — the round-13 budget applied to pixels), and **one sentence on the
+summary card** naming the largest thin arc relative to the walk ("The walls
+behind you are thin in the map (about 90° of the room) — walk past them
+before stopping"), slotted into the existing advice chain below tracking
+problems. Honest by construction: coverage of what the D6 could see from the
+walked path, no pretense of global completeness, and silence when healthy or
+unmeasured.
+
+**76 — SURFACE CONSOLIDATION.** The round-16 list, closed:
+
+* **One process pipeline for a D6.** The Jobs tab's "Post-process" queued
+  `JobKind.POST_PROCESS` — a plain re-resolve with none of the stitch /
+  rescue / loop-end corrections and nothing written to `processed/` — while
+  Review's card and the seal's auto-process ran `reprocessD6`. Same word,
+  different result on disk. Every D6 "Process" is now `reprocessD6` (same
+  per-container lock, same derived files, same verdicts); the queue remains
+  what it truly is: the Mid-360's LIO re-run.
+* **One Review chrome.** Both doors stay (the seal → Projects handoff needs
+  the list door; removing a route is the back-stack risk round 16 named) but
+  the destination is now wrapped in `UnderTabBar` like every sibling project
+  screen — the "different chrome" is gone.
+* **One display truth.** Round 18's finding, fixed at the root:
+  `CaptureViewModel.displayParams` no longer SYNTHESIZES a fresh block from
+  five controls — it `copy()`s them onto a persisted DEVICE display block
+  (`SettingsRepository.displayParams`), loaded at construction and saved
+  debounced on change. Review's panel writes the same store beside its
+  per-project manifest write. Consequences, all previously broken: Review's
+  walked-path toggle finally reaches the live view; `showPoseGraph`, EDL, the
+  clip block and `fixQualityColors` survive project creation instead of
+  resetting; and the divergent slider ranges (0.1–3.0 px vs 0.5–12 px;
+  2–20 M vs 0.5–50 M) collapse into `DisplayLimits` constants both panels
+  read. (Consciously left: the floor plan's path overlay has no per-user
+  toggle — it draws the corrected trajectory with round-18 verdicts
+  unconditionally, and a toggle there would be a capi change this round does
+  not need.)
+
+**77 — PRE-SCAN CHECKLIST.** One compact sheet on the FIRST Start press per
+device (skippable; "don't show again" persisted, one-way, like the DND ask):
+mount trim age + measured accuracy against the 0.8° goal (amber past round
+18's 1.0° warn), tracking readiness in the start gate's own words, DND
+status, and ONE technique line built from measured causes — *"Keep about an
+arm's length or more from blank close surfaces, ease through the turns, and
+walk a loop that ends where it started."* Light is not mentioned, anywhere:
+the owner's correction is on record, and this round also purged the two
+summary-card advice strings that still said "turn the lights up" / "more
+light" (they now name the measured diet), with a :core test that makes
+"light" in an advice string a build failure. The checklist READS existing
+state only — the round-12/16 start gate is untouched; its own Start button
+continues the intercepted press (`startCapture(skipChecklist = true)`), so
+nothing new gates and nothing waits.
+
+**D6 YIELD AUDIT** (no UI; `yield` in stitch.json, one line in the item-66
+debug log after auto-process, printed by `engine_cli --d6-reprocess`). Where
+every decoded sample went, on the owner's captures:
+
+| scan | samples | no-return | out-of-window | no-pose | flagged-excluded | resolved |
+|---|---|---|---|---|---|---|
+| 046 | 148,921 | 1,471 (1.0 %) | **0** | 263 | **26,428 (17.7 %)** | 120,759 (81.1 %) |
+| 047 | 63,600 | 542 | 0 | 199 | 7,937 (12.5 %) | 54,922 |
+| 048 | 83,639 | 392 | 0 | 1,862 | 3,243 | 78,142 |
+| 050 | 113,037 | 482 | 0 | 445 | **23,609 (20.9 %)** | 88,501 |
+| 051 | 77,986 | 601 | 0 | 20 | 58 | 77,307 (99.1 %) |
+| 053 | 119,426 | 644 | 0 | 265 | 19,243 (16.1 %) | 99,274 |
+| 040 | 186,301 | 1,890 | 0 | 204 | 22,742 | 161,465 |
+| 045 | 34,436 returns | — | 0 | 223 | **34,213 (99.4 %)** | **0** |
+
+The verdict the numbers give: **the range window is not the problem** —
+out-of-window is zero on every capture, so there is no cheap win to retune
+there, and nothing was silently retuned. True no-returns are 0.3–1.3 %. The
+one large recoverable loss is the flagged-excluded block during long losses
+(12–21 % of everything the sensor said on the loss captures), which is
+precisely the territory items 73/74 opened.
+
+**Numbers.** Engine 629 cases / 2,527,464 asserts, ctest 7/7 serial; ABI
+stays **12** (every change is inside post/ + the sidecar; the app reads the
+new sidecar fields with a fifteen-line field reader, the same judgement the
+engine's own manifest reads make in the other direction). `:core` 573
+(+13), `:app` 119 (+11). Owner-capture regression: 046/040/047/048/051/053
+maps and self-checks byte-identical to 0.9.3 (all rescues there refused);
+050 changes BY DESIGN (the rescue: 1.77 → 1.40 cm, loop gap 5.70 → 3.39 m).
+`stitch.json` gains `rescues[]`, `recoveries[]`, `recoveredPoints`, `yield`
+— all additive. Backlog, noted and NOT built: capture-start tracking loss is
+app-caused (start-reset re-acquisition) — its avoidance is round 20.

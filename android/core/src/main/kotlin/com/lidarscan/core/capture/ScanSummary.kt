@@ -60,6 +60,14 @@ data class ScanSummary(
     val trackingDrops: Int,
     val recordingSizeBytes: Long,
     /**
+     * ROUND 19 item 75 — one plain-words sentence naming the largest thin arc
+     * of wall coverage around the walked path, measured by the live coverage
+     * grid, or null when coverage was healthy or unmeasured. Coverage of what
+     * the D6 could see from the walked path — no pretense of global
+     * completeness, and no sentence at all when there is nothing to say.
+     */
+    val coverageAdvice: String? = null,
+    /**
      * ROUND 12 — the mount trim's measured split-half accuracy in degrees, or
      * null when the trim predates 0.7.1 or was never converged.
      *
@@ -394,16 +402,24 @@ data class ScanSummary(
                 "Before the next scan: give the rear camera a lit, textured surface to look at " +
                     "and let the Start button say \"Tracking steady\" before you press it. If it " +
                     "never does, close the app and reopen it."
+            // ROUND 19 (owner correction on record): NOT light. Round 18
+            // measured every long loss on this rig at ~1 m from feature-poor
+            // surfaces (63-70 % of returns under 1.5 m) in good light, and the
+            // one short loss in a 127 deg/5 s turn. The advice names what was
+            // measured and nothing else.
             breaks >= 2 ->
-                "Before the next walk: uncover the rear camera (a case or the bracket edge is " +
-                    "enough), turn the lights up, and walk the turns slowly — the camera re-anchors " +
-                    "when it cannot recognise what it is looking at."
+                "Before the next walk: keep about an arm's length or more from blank close " +
+                    "surfaces and ease through the turns — every long tracking loss this rig has " +
+                    "measured happened close to a feature-poor wall or in a fast turn."
             breaks == 1 ->
                 "Before the next walk: give the camera more to look at through turns — corners and " +
-                    "furniture rather than blank wall."
+                    "furniture rather than blank wall, from a step further back."
             trackingDrops > 0 ->
-                "Before the next walk: more light. The camera lost tracking $trackingDrops time" +
-                    (if (trackingDrops == 1) "" else "s") + "."
+                "Before the next walk: a little more distance from blank close surfaces. The " +
+                    "camera lost tracking $trackingDrops time" +
+                    (if (trackingDrops == 1) "" else "s") +
+                    " — the measured cause on this rig is close feature-poor walls and fast " +
+                    "turns."
             // ROUND 14 — the advice that fits what the operator actually did.
             //
             // "Slow down a little" is the wrong instruction for someone who
@@ -420,6 +436,10 @@ data class ScanSummary(
                 "Before the next scan: keep walking while you sweep. Turning the phone on the " +
                     "spot gives the camera nothing to judge distance by — a few slow steps " +
                     "sideways as you turn is what keeps the room from jumping."
+            // ROUND 19 item 75: rooms rarely close because of COVERAGE, not
+            // math — only scan-029 ever closed a loop. When the coverage grid
+            // measured a thin arc, naming it beats a generic pace note.
+            coverageAdvice != null -> coverageAdvice
             densityValue < densityGoodFloor ->
                 "Before the next walk: slow down a little — the returns are thinner than the walls " +
                     "want."

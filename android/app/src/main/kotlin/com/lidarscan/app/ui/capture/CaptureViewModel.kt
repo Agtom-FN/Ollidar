@@ -29,6 +29,8 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
@@ -347,6 +349,34 @@ class CaptureViewModel(
      */
     private val runAutoProcess: suspend (java.io.File, (Float) -> Boolean) -> StitchResult? =
         { _, _ -> null },
+    /**
+     * ROUND 19 item 76 — the DEVICE display block, the one source of truth the
+     * live view, Review and the next walk all read. Loaded once at
+     * construction as the BASE the five live controls are copied onto (so
+     * every field outside those controls — `showTrajectory`, EDL, the clip
+     * block — survives instead of resetting to the data-class default), and
+     * persisted, debounced, whenever a control changes. Review writes the same
+     * store from its own panel, which is what finally makes its path toggle
+     * reach the live view.
+     */
+    private val loadDeviceDisplay: suspend () -> com.lidarscan.core.render.DisplayParams? = { null },
+    private val persistDeviceDisplay: suspend (com.lidarscan.core.render.DisplayParams) -> Unit = {},
+    /**
+     * ROUND 19 item 77 — the pre-scan checklist's one persisted bit. `true`
+     * means "the operator said don't show this again" (the default, so every
+     * existing test and the replay path see the ROUND-17 start flow
+     * unchanged; the app binds the real DataStore-backed pair, whose default
+     * is false).
+     */
+    private val preScanChecklistDismissed: suspend () -> Boolean = { true },
+    private val persistPreScanChecklistDismissed: suspend () -> Unit = {},
+    /**
+     * ROUND 19 item 75 — one plain-words sentence about the largest thin arc
+     * of coverage around the walked path, read at seal time for the summary
+     * card. Null when coverage was healthy (or unmeasured) — the card then
+     * says nothing, which is the round-13 cue budget applied to text.
+     */
+    private val coverageAdviceProvider: () -> String? = { null },
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<CaptureUiState>(CaptureUiState.Loading)
@@ -377,6 +407,36 @@ class CaptureViewModel(
      * `CaptureScreen`'s pending-navigation effect. Sealing and then jumping
      * away would show the card for one frame.
      */
+    // ── ROUND 19 item 77: the pre-scan checklist ────────────────────────────
+    //
+    // A compact sheet shown on the FIRST Start press (per device, until the
+    // operator says "don't show again"): mount trim age + measured accuracy,
+    // DND status, tracking readiness, and one technique line built from the
+    // measured failure causes. It READS existing state only — the round-12/16
+    // start gate is untouched and unrepeated; the checklist just shows that
+    // gate its inputs before the press instead of after the seal.
+    private val _preScanChecklistEnabled = MutableStateFlow(false)
+    private val _showPreScanChecklist = MutableStateFlow(false)
+    val showPreScanChecklist: StateFlow<Boolean> = _showPreScanChecklist.asStateFlow()
+
+    /** The checklist's Start: continue the press the sheet intercepted. */
+    fun startFromChecklist(dontShowAgain: Boolean) {
+        _showPreScanChecklist.value = false
+        if (dontShowAgain) muteChecklist()
+        startCapture(skipChecklist = true)
+    }
+
+    /** The checklist's back-out: no capture, optionally never again. */
+    fun dismissPreScanChecklist(dontShowAgain: Boolean) {
+        _showPreScanChecklist.value = false
+        if (dontShowAgain) muteChecklist()
+    }
+
+    private fun muteChecklist() {
+        _preScanChecklistEnabled.value = false
+        viewModelScope.launch { persistPreScanChecklistDismissed() }
+    }
+
     private val _scanSummary = MutableStateFlow<com.lidarscan.core.capture.ScanSummary?>(null)
     val scanSummary: StateFlow<com.lidarscan.core.capture.ScanSummary?> = _scanSummary.asStateFlow()
 
@@ -626,10 +686,26 @@ class CaptureViewModel(
         kotlinx.coroutines.flow.combine(_gamma, _brightness) { g, b -> g to b }
 
     /**
-     * The whole A14 parameter block the live viewport renders with, assembled
-     * from the controls above. One object rather than N setters so every control
-     * live-applies the same way colour and point size already do —
-     * `PointCloudRenderer.setDisplayParams` owns all of them together.
+     * ROUND 19 item 76 — the base every emission is a `copy()` OF. Round 18's
+     * finding, verbatim: this property used to CONSTRUCT a fresh
+     * `DisplayParams` from the five live controls, so `showTrajectory` was a
+     * constant `true` in the live view (Review's toggle never reached it,
+     * contradicting the KDoc below) and every field outside the five-way
+     * combine — `showPoseGraph`, `edlEnabled`, the clip block,
+     * `fixQualityColors` — silently reset to the data-class default at
+     * project creation. The base is the persisted DEVICE display block
+     * ([loadDeviceDisplay]), which Review's panel also writes, so the two
+     * panels finally share one source of truth.
+     */
+    private val _displayBase =
+        MutableStateFlow(com.lidarscan.core.render.DisplayParams.captureDefaults())
+
+    /**
+     * The whole A14 parameter block the live viewport renders with: the
+     * persisted base with the five live controls copied on. One object rather
+     * than N setters so every control live-applies the same way colour and
+     * point size already do — `PointCloudRenderer.setDisplayParams` owns all
+     * of them together.
      */
     val displayParams: StateFlow<com.lidarscan.core.render.DisplayParams> =
         kotlinx.coroutines.flow.combine(
@@ -637,19 +713,20 @@ class CaptureViewModel(
             _colormap,
             _pointSizePx,
             _lodBudgetMPoints,
-            toneParams,
-        ) { mode, cm, size, lodM, tone ->
+            kotlinx.coroutines.flow.combine(_displayBase, toneParams) { base, tone -> base to tone },
+        ) { mode, cm, size, lodM, baseTone ->
+            val (base, tone) = baseTone
             val (g, b) = tone
-            com.lidarscan.core.render.DisplayParams(
+            base.copy(
                 colorMode = mode,
-                height = com.lidarscan.core.render.ScalarColorParams(
+                height = base.height.copy(
                     colormap = cm,
                     manualMin = 0f,
                     manualMax = 3f,
                     gamma = g,
                     brightness = b,
                 ),
-                intensity = com.lidarscan.core.render.ScalarColorParams(
+                intensity = base.intensity.copy(
                     colormap = cm,
                     gamma = g,
                     brightness = b,
@@ -665,7 +742,7 @@ class CaptureViewModel(
                 // field the declared mode said to ignore, and the owner's own
                 // `project.json` recorded the contradiction verbatim:
                 // `"mode": "ADAPTIVE", "fixedPx": 2.5`.
-                pointSize = com.lidarscan.core.render.PointSizeParams(
+                pointSize = base.pointSize.copy(
                     mode = com.lidarscan.core.render.PointSizeMode.FIXED_PIXELS,
                     fixedPx = size,
                 ),
@@ -2124,6 +2201,36 @@ class CaptureViewModel(
             viewModelScope.launch { clearLiveViewport() }
         }
 
+        // ── ROUND 19 item 76: the persisted display block is the base ───────
+        //
+        // Loaded once; the five live controls are seeded FROM it so the sheet
+        // shows what the device actually renders with, and every later
+        // emission of [displayParams] is a copy() of it — the fields no
+        // control edits (showTrajectory, EDL, clip) survive instead of
+        // resetting. Then persisted, debounced, whenever anything changes:
+        // `collectLatest` + delay is the debounce (a slider drag emits per
+        // frame; one write 400 ms after the last movement).
+        viewModelScope.launch {
+            loadDeviceDisplay()?.let { stored ->
+                _displayBase.value = stored
+                _colorMode.value = stored.colorMode
+                _colormap.value = stored.intensity.colormap
+                _pointSizePx.value = stored.pointSize.fixedPx
+                _gamma.value = stored.intensity.gamma
+                _brightness.value = stored.intensity.brightness
+                _lodBudgetMPoints.value = (stored.lodPointBudget / 1_000_000).coerceIn(1, 200)
+            }
+            displayParams.drop(1).collectLatest { p ->
+                kotlinx.coroutines.delay(400)
+                persistDeviceDisplay(p)
+            }
+        }
+
+        // ── ROUND 19 item 77: has the operator dismissed the checklist? ─────
+        viewModelScope.launch {
+            _preScanChecklistEnabled.value = !preScanChecklistDismissed()
+        }
+
         // ROUND 7 (field bug 1): restore the mount re-zero FIRST, before any
         // project loads and long before a Start can reach applyMountExtrinsic.
         //
@@ -2512,7 +2619,18 @@ class CaptureViewModel(
      * Capture tab and walking away must not leave an empty project behind, and a
      * series number must only ever be spent on a scan that was actually taken.
      */
-    fun startCapture() {
+    fun startCapture(skipChecklist: Boolean = false) {
+        // ── ROUND 19 item 77: the checklist intercepts the FIRST press ──────
+        //
+        // Before the in-flight claim, so nothing is held while the sheet is
+        // up; never on the gate's own re-entry (`startPending` — that walk
+        // has already begun); never for a replay. The sheet's Start button
+        // calls back with `skipChecklist = true`, so this adds no gate and no
+        // wait — one tap becomes two exactly once per device.
+        if (!skipChecklist && !startPending && !isReplay && _preScanChecklistEnabled.value) {
+            _showPreScanChecklist.value = true
+            return
+        }
         // ── ROUND 17 item 64: one press, one start. ─────────────────────────
         //
         // Claimed by the first press and held across the ROUND 12 gate's whole
@@ -3432,6 +3550,10 @@ class CaptureViewModel(
             worldPointsResolved = arController?.let {
                 resolvedWorldPoints((_uiState.value as? CaptureUiState.Loaded)?.project?.directory)
             },
+            // ROUND 19 item 75: the largest thin arc, in plain words, from the
+            // coverage grid the renderer already keeps. Null when healthy or
+            // unmeasured, and the card then says nothing.
+            coverageAdvice = coverageAdviceProvider(),
         )
         _scanSummary.value = summary
         // ROUND 17 item 66.
@@ -3985,6 +4107,12 @@ class CaptureViewModel(
                     ("selfCheckCm=%.2f".format((result.selfCheck?.offsetMeters ?: 0.0) * 100)) +
                     " — gap-by-gap detail in processed/stitch.json (gapsExamined)",
             )
+            // ROUND 19: the D6 yield audit, one line — where this capture's
+            // 4,000 samples/s actually went, read back from the sidecar the
+            // engine just wrote. See item 66's README for the vocabulary.
+            com.lidarscan.app.processing.StitchSidecar.yieldLine(directory)?.let { line ->
+                logDebugFor(directory, LOG_TAG_SEAL, line)
+            }
             endDebugLogFor(directory, "capture debug log closed — auto-process complete")
         }
     }

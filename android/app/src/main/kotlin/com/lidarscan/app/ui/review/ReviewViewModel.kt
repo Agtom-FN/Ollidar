@@ -465,6 +465,12 @@ class ReviewViewModel(
             delay(400)
             withContext(Dispatchers.IO) {
                 store.updateManifest(projectId) { it.copy(displayParams = next) }
+                // ROUND 19 item 76: the DEVICE display block too — the same
+                // store the live view loads its base from, which is what
+                // finally carries this panel's toggles (the walked path, EDL,
+                // the clip block) onto the next walk. The manifest write above
+                // stays: it is the PROJECT's record of how it is displayed.
+                settings.setDisplayParams(next)
             }
         }
     }

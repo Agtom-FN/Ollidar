@@ -116,7 +116,11 @@ class Round13FocusAndAdviceTest {
         assertEquals(4, s.breaks)
         val advice = s.nextWalkAdvice
         assertNotNull("five sections must tell the operator what to change", advice)
-        assertTrue(advice!!.contains("camera"))
+        // ROUND 19: the advice names the MEASURED causes (round 18: close
+        // feature-poor surfaces and fast turns, in good light) — the owner's
+        // correction is on record, so "light" may never come back here.
+        assertTrue(advice!!.contains("arm's length"))
+        assertFalse(advice.lowercase().contains("light"))
         // The reason must name what actually happens — re-anchoring — rather
         // than "tracking restarted", which is not what the gyro says occurred.
         assertTrue(s.gradeReason.contains("re-anchored"))

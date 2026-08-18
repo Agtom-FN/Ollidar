@@ -230,6 +230,9 @@ class PointCloudRenderer(
             packed.putInt(rgba[i])
         }
         packed.flip()
+        // ROUND 19 item 75: the trail's newest point IS the operator, and it
+        // is already flowing through here at pose rate — no new plumbing.
+        if (n > 0) compass.setOperator(xyz[(n - 1) * 3], xyz[(n - 1) * 3 + 2])
         synchronized(trailLock) {
             pendingTrailBytes = packed
             pendingTrailCount = n
@@ -843,6 +846,13 @@ class PointCloudRenderer(
     //    points the renderer never saw.
     private val coverage = com.lidarscan.core.render.CoverageGrid()
 
+    // ROUND 19 item 75 — the same census, as a DIRECTION. Fed beside the grid
+    // on the upload path; its origin is the walked trail's newest point (set
+    // in [setTrail]), so a sector counts what the D6 painted in that direction
+    // from wherever the operator was standing at the time. See
+    // core/render/CoverageCompass.kt for what it claims and refuses to claim.
+    private val compass = com.lidarscan.core.render.CoverageCompass()
+
     /** Round-robin cursor for re-tinting already-uploaded pages. */
     private var coverageRefreshCursor = 0
     private var lastCoverageRefreshMs = 0L
@@ -867,9 +877,16 @@ class PointCloudRenderer(
 
     fun resetCoverage() {
         coverage.clear()
+        compass.clear()
         coverageRefreshCursor = 0
         lastCoverageRefreshMs = 0L
     }
+
+    /** ROUND 19 item 75: per-sector coverage for the tile's guidance ring. */
+    fun coverageSectors(): FloatArray = compass.sectorCoverage()
+
+    /** ROUND 19 item 75: null until measurable, and null when nothing is thin. */
+    fun coverageAdviceLine(): String? = compass.adviceLine()
 
     /**
      * Count a freshly-uploaded slice into the density grid, then hand back the
@@ -888,7 +905,11 @@ class PointCloudRenderer(
         val le = src.duplicate().order(java.nio.ByteOrder.LITTLE_ENDIAN)
         for (i in 0 until points) {
             val o = base + i * POINT_STRIDE_BYTES
-            coverage.add(le.getFloat(o), le.getFloat(o + 4), le.getFloat(o + 8))
+            val x = le.getFloat(o)
+            val y = le.getFloat(o + 4)
+            val z = le.getFloat(o + 8)
+            coverage.add(x, y, z)
+            compass.add(x, z)
         }
         if (colorMode != com.lidarscan.core.render.ColorMode.COVERAGE) return src.slice()
         return tintInto(le, base, points)

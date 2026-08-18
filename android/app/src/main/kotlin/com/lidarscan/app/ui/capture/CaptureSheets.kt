@@ -361,12 +361,17 @@ fun CaptureSettingsSheet(
                     Spacer(Modifier.height(12.dp))
                 }
 
-                // ROUND 5 (owner addition 2): 0.1 – 3.0 px in 0.1 steps. The
+                // ROUND 5 (owner addition 2), range widened by ROUND 19 item
+                // 76: ONE range for this sheet and Review's panel, from
+                // DisplayLimits — the divergence round 16 named is gone. The
                 // snapping itself lives in the ViewModel/DisplayLimits so the
                 // slider, the read-out and the manifest cannot disagree.
                 SheetRowLabel(
                     label = "Point size",
-                    hint = "0.1 – 3.0 px · 0.1 steps",
+                    hint = "%.1f – %.0f px · 0.1 steps".format(
+                        com.lidarscan.core.render.DisplayLimits.POINT_SIZE_MIN_PX,
+                        com.lidarscan.core.render.DisplayLimits.POINT_SIZE_MAX_PX,
+                    ),
                     readout = "%.1f px".format(pointSizePx),
                 )
                 SheetSlider(
@@ -442,8 +447,10 @@ fun CaptureSettingsSheet(
                 )
                 SheetSlider(
                     value = lodBudgetMPoints.toFloat(),
-                    range = 2f..20f,
-                    steps = 17,
+                    // ROUND 19 item 76: Review's endpoints, rounded into this
+                    // slider's whole-million grid — one range, two panels.
+                    range = 1f..com.lidarscan.core.render.DisplayLimits.LOD_MAX_M,
+                    steps = com.lidarscan.core.render.DisplayLimits.LOD_MAX_M.toInt() - 2,
                     onValueChange = { onLodChange(it.toInt()) },
                     contentDescription = "LOD budget",
                 )
@@ -794,4 +801,135 @@ private fun colormapLabel(cm: Colormap) = when (cm) {
     Colormap.GRAYSCALE -> "Grey"
     Colormap.SPECTRUM -> "Spectrum"
     Colormap.THERMAL -> "Thermal"
+}
+
+/**
+ * ROUND 19 item 77 — the pre-scan checklist.
+ *
+ * Shown on the FIRST Start press per device (until "don't show again"), and it
+ * READS existing state only: the round-12/16 start gate is untouched — the
+ * gate already exists, this just shows the operator its inputs before the
+ * press instead of explaining them after the seal. The technique line is
+ * built from MEASURED failure causes (round 18: every long loss ~1 m from
+ * feature-poor surfaces with 63-70 % of returns under 1.5 m; the one short
+ * loss a 127°/5 s turn; the sessions were in GOOD light) — so distance and
+ * turn speed are named and light, deliberately, is not.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PreScanChecklistSheet(
+    mountTrim: com.lidarscan.core.calib.MountTrim?,
+    dndNote: String?,
+    trackingLabel: String,
+    trackingIsGood: Boolean,
+    onStart: (dontShowAgain: Boolean) -> Unit,
+    onDismiss: (dontShowAgain: Boolean) -> Unit,
+) {
+    val dontShowAgain = androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf(false)
+    }
+    ModalBottomSheet(
+        onDismissRequest = { onDismiss(dontShowAgain.value) },
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        dragHandle = { SheetGrabber() },
+        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+        modifier = Modifier.testTag("preScanChecklistSheet"),
+    ) {
+        Column(Modifier.padding(horizontal = 18.dp).navigationBarsPadding()) {
+            SheetHead("Before you start", "checklist")
+
+            // ── mount trim: age and measured accuracy vs the 0.8° goal ──────
+            val trimAccuracy = mountTrim?.accuracyDeg
+            val trimReadout = when {
+                mountTrim == null -> "not set — bracket nominal angles in use"
+                trimAccuracy == null -> "set ${mountTrim.ageLabel(System.currentTimeMillis())}"
+                else -> "set ${mountTrim.ageLabel(System.currentTimeMillis())} · " +
+                    "%.2f° measured".format(trimAccuracy)
+            }
+            SheetRowLabel(
+                label = "Mount",
+                readout = trimReadout,
+                readoutColor = if (trimAccuracy != null &&
+                    trimAccuracy > com.lidarscan.core.calib.MountTrim.WARN_STABILITY_DEG
+                ) {
+                    SemWarn
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                },
+                modifier = Modifier.testTag("checklistMountRow"),
+            )
+            if (trimAccuracy != null &&
+                trimAccuracy > com.lidarscan.core.calib.MountTrim.WARN_STABILITY_DEG
+            ) {
+                Hint(
+                    "Measured accuracy %.2f° is past the 0.8° goal — a re-zero on a steadier "
+                        .format(trimAccuracy) +
+                        "hold would tighten overhead surfaces.",
+                )
+                Spacer(Modifier.height(6.dp))
+            }
+
+            // ── tracking readiness: the start gate's own input ───────────────
+            SheetRowLabel(
+                label = "Tracking",
+                readout = trackingLabel.ifBlank { "not required for this sensor" },
+                readoutColor = if (trackingIsGood) SemGood else SemWarn,
+                modifier = Modifier.testTag("checklistTrackingRow"),
+            )
+
+            // ── notifications ────────────────────────────────────────────────
+            SheetRowLabel(
+                label = "Notifications",
+                readout = dndNote ?: "Do Not Disturb is available in Settings",
+                modifier = Modifier.testTag("checklistDndRow"),
+            )
+
+            Spacer(Modifier.height(10.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Spacer(Modifier.height(10.dp))
+
+            // ── the ONE technique line, from measured causes ────────────────
+            Text(
+                "Keep about an arm's length or more from blank close surfaces, ease through " +
+                    "the turns, and walk a loop that ends where it started.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.testTag("checklistTechniqueLine"),
+            )
+            Hint("Measured from this rig's own tracking losses — distance and turn speed.")
+
+            Spacer(Modifier.height(12.dp))
+            Row(
+                Modifier.fillMaxWidth().clickable { dontShowAgain.value = !dontShowAgain.value },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                androidx.compose.material3.Checkbox(
+                    checked = dontShowAgain.value,
+                    onCheckedChange = { dontShowAgain.value = it },
+                    modifier = Modifier.testTag("checklistDontShowAgain"),
+                )
+                Text(
+                    "Don't show this again",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            Spacer(Modifier.height(6.dp))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.material3.TextButton(
+                    onClick = { onDismiss(dontShowAgain.value) },
+                    modifier = Modifier.testTag("checklistNotNow"),
+                ) { Text("Not now") }
+                Spacer(Modifier.weight(1f))
+                PrimaryPill(
+                    text = "Start scan",
+                    onClick = { onStart(dontShowAgain.value) },
+                    modifier = Modifier.testTag("checklistStart"),
+                )
+            }
+            Spacer(Modifier.height(10.dp))
+        }
+    }
 }

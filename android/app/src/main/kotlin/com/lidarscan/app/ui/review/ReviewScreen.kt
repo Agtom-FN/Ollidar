@@ -537,7 +537,9 @@ private fun DisplayPanel(state: ReviewUiState, vm: ReviewViewModel) {
             PointSizeMode.FIXED_PIXELS -> LabeledSlider(
                 "Size",
                 d.pointSize.fixedPx,
-                0.5f..12f,
+                // ROUND 19 item 76: the same constants the capture sheet reads.
+                com.lidarscan.core.render.DisplayLimits.POINT_SIZE_MIN_PX..
+                    com.lidarscan.core.render.DisplayLimits.POINT_SIZE_MAX_PX,
                 "%.1f px".format(d.pointSize.fixedPx),
             ) { v -> vm.updateDisplay { it.copy(pointSize = it.pointSize.copy(fixedPx = v)) } }
             PointSizeMode.ADAPTIVE -> {
@@ -561,7 +563,8 @@ private fun DisplayPanel(state: ReviewUiState, vm: ReviewViewModel) {
         LabeledSlider(
             "LOD",
             (d.lodPointBudget / 1_000_000f),
-            0.5f..50f,
+            com.lidarscan.core.render.DisplayLimits.LOD_MIN_M..
+                com.lidarscan.core.render.DisplayLimits.LOD_MAX_M,
             "${(d.lodPointBudget / 1_000_000f).roundToInt()} M points",
         ) { v -> vm.updateDisplay { it.copy(lodPointBudget = (v * 1_000_000f).roundToInt()) } }
         Text(

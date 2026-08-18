@@ -9086,3 +9086,127 @@ design (6.92 → 3.42 cm); 053 gains processed results it never had. VERSION
   polygons, floor-map thickness, `planSlice` fold, Mid-360 rewire,
   `restoreOrphaned()`, `displayParams` synthesis, `syncTrail` flag order.
 * Nothing was run on kc-m4; macOS/desktop untouched. No commit, no push.
+
+## ROUND 19 — THE REFUSED GAPS BECOME REGISTRATION PROBLEMS; THE THROWN-AWAY RETURNS GET A SECOND HEARING; COVERAGE POINTS A DIRECTION
+
+Owner-approved wave (his items 1, 2, 6, 7 plus the recovery item his
+correction earned), on the round-18 evidence: the long losses were close
+feature-poor surfaces and fast turns in GOOD light, the D6 painted straight
+through every one of them at 4 kHz, and the gyro measured straight through
+them at 399 Hz. Items 73–77 in `docs/design/REVIEW_FEEDBACK.md`; this section
+is the Android-side account and the field-facing behaviour.
+
+### 73 — the gap rescue (engine, `slam/post/gap_rescue.h`)
+
+A refused gap is no longer the end of the story: `Process` now retries every
+refusal as a REGISTRATION — rotation locked to the gyro that witnessed the
+blind window (round 12's lesson made structural: the rotation is never the
+unknown), translation solved from the walls the two sides share, in the
+observable subspace only, coarse-searched deterministically, and with the
+ROUND-12 ruler voting last. Owner numbers:
+
+* **scan-050 RESCUED**: 115.63° locked, 0.298 m solved; the two sides of the
+  gap went 32.2 → 12.1 cm apart, the self-check 1.77 → 1.40 cm, and the
+  loop-end gap **5.70 → 3.39 m**. First blind-window fold ever repaired on
+  his real bytes.
+* scan-046 and scan-040 refused by the ruler (2.23 → 2.46 cm, 2.64 → 2.79 cm)
+  — 046's registration is geometrically excellent and the refusal is the
+  seventh gate working exactly as written; both maps stay byte-identical.
+* scan-047's two short-gap refusals now carry geometric confirmation: with
+  the gyro-locked rotation applied the sides agree LESS, which is what a
+  transient relocalisation blip looks like from the walls' side.
+* scan-039 finally has its precise refusal: `rescue-no-anchor` — no tracked
+  pose exists on either side of anything, and gyro orientation without a
+  translation witness is the null space this project refuses to invent.
+  scan-045 likewise (every pose disowned by the double-start), and its
+  zero-point refusal now accounts for all 34,436 returns instead of 223.
+
+Nothing reaches `streams/`; rescues land through `processed/` exactly like
+stitching, `stitch.json` gains `rescues[]`, and deleting `processed/` still
+returns the container to what the phone sealed.
+
+### 74 — the loss-window recovery (offline only, ruler per gap)
+
+Bridged or rescued gaps get their excluded returns re-resolved against the
+gyro-integrated, endpoint-pinned trajectory (the densifier's own closing
+model; position honestly lerped). scan-050's 23,609 candidates were recovered
+and then VETOED by the ruler (1.40 → 1.96 cm — a 6.4 s lerp under a 116°
+pacing turn smears, and the number said so): they stay excluded, and
+`recoveries[]` records the veto with its numbers. The synthetic corridor
+fixture proves the admit path end-to-end (5k+ returns recovered and kept when
+the interpolation is right). The LIVE `exclude_flagged` default is untouched
+— this is `Process`-only, by design.
+
+### 75 — coverage as a direction (`CoverageCompass`, trail-tile ring, card line)
+
+Twelve azimuth sectors around the walked path, counted from where the
+operator stood when each return resolved, thin judged against the sector mean
+(scale-free), silent under 10 k returns. The trail tile grows amber edge arcs
+pointing at the uncovered walls (1 Hz poll, visual only — no new cues, the
+round-13 budget applied to pixels; amber is the round-11 coverage shade,
+exactly (255, 176, 48)); the summary card gains at most ONE sentence naming
+the largest thin arc relative to the walk direction, slotted BELOW tracking
+advice in the existing chain. The renderer feeds the compass on the same
+upload path as the coverage grid and the operator origin rides the trail
+ribbon that already flows through `setTrail` — no new plumbing.
+
+### 76 — the round-16 duplication list, closed
+
+One D6 process pipeline (the Jobs tab's D6 "Post-process" now runs
+`reprocessD6` instead of queuing the correction-less `JobKind.POST_PROCESS`;
+the queue remains the Mid-360's LIO re-run). One Review chrome (the route is
+wrapped in `UnderTabBar` like every sibling — both doors stay, the back-stack
+risk round 16 named is not re-taken). One display truth:
+`CaptureViewModel.displayParams` now `copy()`s the five live controls onto a
+persisted DEVICE display block that Review's panel also writes — Review's
+walked-path toggle reaches the live view for the first time, the
+out-of-combine fields stop resetting at project creation, and the divergent
+slider ranges collapse into `DisplayLimits` (0.1–12 px, 0.5–50 M, one pair of
+constants, two panels). `DisplayLimits.POINT_SIZE_STEPS` also stops
+float-truncating its own grid (Math.round, not toInt()).
+
+### 77 — the pre-scan checklist (reads state, gates nothing)
+
+A sheet on the FIRST Start press per device: mount trim age + measured
+accuracy vs the 0.8° goal (amber past 1.0°), tracking readiness in the start
+gate's own words, DND status, and one technique line from the measured
+causes: *"Keep about an arm's length or more from blank close surfaces, ease
+through the turns, and walk a loop that ends where it started."* Its Start
+button continues the intercepted press; "don't show again" is one persisted
+one-way bit (`pre_scan_checklist_dismissed`). The round-12/16 start gate is
+untouched. The same correction purged the last two "light" advice strings
+from the summary card (breaks ≥ 2 and trackingDrops > 0 now name the
+measured diet), and a :core test makes "light" in advice a build failure.
+
+### the D6 yield audit (item 66's log gets one line; stitch.json gets `yield`)
+
+Where the 4,000 samples/s go, measured per capture: out-of-window is ZERO on
+every owner capture (the range window needs no retuning and none happened);
+true no-returns are 0.3–1.3 %; the one big loss is flagged-excluded during
+long losses (12–21 % on the loss captures — items 73/74's territory).
+scan-051 resolves 99.1 % of everything its sensor said. After auto-process
+the capture debug log now carries `d6 yield: … = … no-return + …
+out-of-window + … no-pose + … flagged-excluded + … resolved (+… recovered)
+rescues=a/b`, read back from the sidecar by `StitchSidecar` (a fifteen-line
+field reader, not a JSON dependency — the engine's own manifest reads set the
+precedent in the other direction).
+
+### TESTS AND VERSION
+
+Engine **629 cases / 2,527,464 assertions**, ctest 7/7 serial. `:core`
+**573** (+13: CoverageCompass, the advice-text guards, the widened
+DisplayLimits pins), `:app` **119** (+11: the checklist intercept, the
+display-base copy() regression tests, the sidecar reader), emulator suite on
+`b4_test` (API 34, arm64) with the native library rebuilt from this round's
+engine sources. ABI stays **12** — rescue, recovery and the yield audit are
+all inside post/ and the sidecar. Owner-capture regression:
+046/040/047/048/051/053 byte-identical to 0.9.3; **050 changes by design**
+(rescued). VERSION **0.9.4**.
+
+Backlog (noted, not built): capture-start tracking loss is app-caused — the
+start-reset re-acquisition breaks the first ~0.6 s of every capture and is
+round 20's item. The floor plan's path overlay has no per-user toggle (a capi
+change; consciously left). scan-046's ruler refusal is structural — a fold
+hides from a metric its two halves never share cells with — and a
+fold-aware referee (occupancy-style, like loop-end's gate 6) is the honest
+next step if the owner wants 046's rescue landed.
