@@ -52,6 +52,7 @@
 #include "scanengine/poses/se3.h"
 #include "scanengine/record/lscan.h"
 #include "scanengine/slam/post/d6_resolve.h"
+#include "scanengine/slam/post/map_consistency.h"
 #include "scanengine/slam/post/trajectory_loop.h"
 
 using namespace scanengine;
@@ -102,6 +103,21 @@ int usage() {
       "      after, and the ROUND 10 crispness score for both. Prints WHY it\n"
       "      refused when it refuses, which for a one-way walk is the correct\n"
       "      answer and not a failure.\n"
+      "\n"
+      "  engine_cli --d6-dump <lscan-dir> [--out PREFIX] [--mount-from OTHER.lscan]\n"
+      "                          [--offset-ms MS] [--no-densify]\n"
+      "      ROUND 12 dev tool. Resolve a COIN-D6 capture and dump the world\n"
+      "      points WITH their point times plus the trajectory, so an analysis\n"
+      "      script can separate an out-and-back walk into its two legs.\n"
+      "      --mount-from resolves THESE bytes with ANOTHER capture's mount\n"
+      "      extrinsic, which is how a trim hypothesis is adjudicated.\n"
+      "\n"
+      "  engine_cli --d6-selfcheck <lscan-dir> [--window S] [--cell M]\n"
+      "                               [--mount-from OTHER.lscan] [--offset-ms MS]\n"
+      "      ROUND 12. How far the map disagrees with ITSELF: surfaces painted\n"
+      "      twice, compared along their own normal, bucketed by how far apart\n"
+      "      in time the two paintings were. Works at walking pace, which the\n"
+      "      wall-probe metric does not (it selects zero probes there).\n"
       "\n"
       "exit: 0 ok, 1 failed, 2 usage, 3 cancelled\n");
   return kExitUsage;
@@ -1019,8 +1035,18 @@ bool probe_thickness(const BandGrid& g, double u0, double v0, double radius,
 // survive selection instead of how thick they are. At 0.25 m the same ratio
 // is only ~23 and the filter starts selecting for the answer.
 constexpr double kProbeRadiusM = 0.5;
-constexpr std::size_t kProbeMinPoints = 200;
-constexpr double kProbeMinElongation = 20.0;
+// ROUND 12: these were constants, and 200 points inside a 0.5 m radius cell is
+// a density only the 5.3 cm/s crawl of scan-020 reaches. On BOTH of the
+// owner's walking-pace captures the selection returns **zero probes** and
+// --d6-timesweep prints nothing at all — so every crispness claim this
+// repository has made came from the one capture walked twenty times slower
+// than the product is meant to be used at.
+//
+// They are now variables with the same defaults (so scan-020's published
+// numbers are unchanged) and a --probe-min-points flag, and
+// --d6-selfcheck exists for the case this metric structurally cannot serve.
+std::size_t kProbeMinPoints = 200;
+double kProbeMinElongation = 20.0;
 
 // Pick the probe centres from the reference cloud: the busiest 10 cm cells
 // that pass the wall test, spread out so two probes cannot sit on the same
@@ -1155,6 +1181,248 @@ bool resolve_at(const std::string& lscan_dir, std::int64_t offset_ns, bool densi
     for (std::uint32_t k = 0; k < v.count; ++k) out->push_back(v.data[k]);
   }
   return true;
+}
+
+
+// --- ROUND 12: raw dump for offline adjudication -----------------------------
+//
+// A development tool, not a product feature. ROUND 12 has to answer "is the
+// shift the mount trim or something else?" on two real captures, and every
+// metric this file already owns is a SCALAR — it can say a cloud is blurrier
+// but not why, and it cannot separate the outbound leg of a walk from the
+// return leg, which is the one distinction ROUND 11 item 45c proved matters.
+//
+// So: resolve the container through the production pipeline exactly as
+// --d6-timesweep does, then write the points WITH THEIR OWN TIMESTAMPS and
+// the trajectory to two flat files that an analysis script can slice any way
+// it likes. No geometry is computed here, deliberately — the point of the
+// dump is that the adjudication happens somewhere it can be re-run and argued
+// with, not inside a printf.
+//
+// `--mount-from OTHER.lscan` is the decisive experiment: resolve THESE bytes
+// with THAT capture's mount extrinsic. If the shift is the trim, swapping the
+// trim moves it; if it does not move, the trim is not the cause.
+int cmd_d6_dump(const std::string& lscan_dir, const std::string& out_prefix,
+                const std::string& mount_from, std::int64_t offset_ns, bool densify) {
+  bool is_d6 = false;
+  const Status probe = post::lscan_is_d6_project(lscan_dir, &is_d6);
+  if (!probe.ok() || !is_d6) {
+    std::fprintf(stderr, "d6-dump: '%s' is not a readable COIN-D6 project\n", lscan_dir.c_str());
+    return kExitFailed;
+  }
+
+  PageStoreConfig psc;
+  psc.page_capacity = 1u << 20;
+  psc.max_pages = 4096;
+  PageStore store(psc);
+
+  std::vector<post::TrajPose> traj;
+  std::vector<std::int64_t> ptimes;
+
+  post::D6ResolveConfig cfg;
+  cfg.store = &store;
+  cfg.densify_with_phone_imu = densify;
+  cfg.pushbroom.pose_time_offset_ns = offset_ns;
+  cfg.out_trajectory = &traj;
+  cfg.out_point_times = &ptimes;
+
+  if (!mount_from.empty()) {
+    double m[16];
+    if (!post::read_manifest_mount(mount_from, m)) {
+      std::fprintf(stderr, "d6-dump: cannot read mountCalibration from '%s'\n",
+                   mount_from.c_str());
+      return kExitFailed;
+    }
+    cfg.have_mount = true;
+    for (int i = 0; i < 16; ++i) cfg.mount_phone_from_lidar[i] = m[i];
+    std::printf("d6-dump: mount extrinsic OVERRIDDEN from %s\n", mount_from.c_str());
+  }
+
+  post::D6ResolvePipeline pipe(cfg);
+  const Status s = pipe.run(lscan_dir);
+  if (!s.ok()) {
+    std::fprintf(stderr, "d6-dump: resolve failed: %s\n", error_str(s.error()));
+    return kExitFailed;
+  }
+  const post::D6ResolveStats& st = pipe.stats();
+
+  std::vector<PointVertex> pts;
+  pts.reserve(static_cast<std::size_t>(store.total_points()));
+  for (const PageId id : store.page_ids()) {
+    const PageView v = store.page_view(id);
+    if (!v.valid()) continue;
+    for (std::uint32_t k = 0; k < v.count; ++k) pts.push_back(v.data[k]);
+  }
+
+  // points: float32 x, y, z, intensity(as float) + int64 t_ns, per record.
+  const std::string pfile = out_prefix + ".points.bin";
+  std::FILE* pf = std::fopen(pfile.c_str(), "wb");
+  if (pf == nullptr) {
+    std::fprintf(stderr, "d6-dump: cannot write %s\n", pfile.c_str());
+    return kExitFailed;
+  }
+  const std::size_t n = std::min(pts.size(), ptimes.size());
+  for (std::size_t i = 0; i < n; ++i) {
+    float rec[4] = {pts[i].x, pts[i].y, pts[i].z, static_cast<float>(pts[i].r)};
+    std::int64_t t = ptimes[i];
+    std::fwrite(rec, sizeof(float), 4, pf);
+    std::fwrite(&t, sizeof(std::int64_t), 1, pf);
+  }
+  std::fclose(pf);
+
+  const std::string tfile = out_prefix + ".traj.csv";
+  std::FILE* tf = std::fopen(tfile.c_str(), "wb");
+  if (tf == nullptr) {
+    std::fprintf(stderr, "d6-dump: cannot write %s\n", tfile.c_str());
+    return kExitFailed;
+  }
+  std::fprintf(tf, "t_ns,px,py,pz,qx,qy,qz,qw\n");
+  for (const post::TrajPose& tp : traj) {
+    std::fprintf(tf, "%lld,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f\n",
+                 static_cast<long long>(tp.t_ns), tp.p[0], tp.p[1], tp.p[2], tp.q[0], tp.q[1],
+                 tp.q[2], tp.q[3]);
+  }
+  std::fclose(tf);
+
+  std::printf("d6-dump: %s\n", lscan_dir.c_str());
+  std::printf("  points %zu (paired %zu), poses %llu read / %llu accepted, traj %zu\n", pts.size(),
+              n, static_cast<unsigned long long>(st.poses_read),
+              static_cast<unsigned long long>(st.poses_accepted), traj.size());
+  std::printf("  mount from manifest: %s; imu extrinsics from manifest: %s\n",
+              st.mount_from_manifest ? "yes" : "NO", st.imu_extrinsics_from_manifest ? "yes" : "NO");
+  std::printf("  densify: %llu on gyro path, %llu fell back "
+              "(no-imu %llu, gap %llu, wide-bracket %llu, closing %llu)\n",
+              static_cast<unsigned long long>(st.imu_densified),
+              static_cast<unsigned long long>(st.imu_fallbacks),
+              static_cast<unsigned long long>(st.imu.fallback_no_imu),
+              static_cast<unsigned long long>(st.imu.fallback_gap),
+              static_cast<unsigned long long>(st.imu.fallback_bracket),
+              static_cast<unsigned long long>(st.imu.fallback_closing));
+  std::printf("  imu closing error: mean %.4f deg, worst %.4f deg; bias (%.5f, %.5f, %.5f) rad/s\n",
+              st.imu.mean_closing_deg, st.imu.worst_closing_deg, st.imu.bias_rad_s[0],
+              st.imu.bias_rad_s[1], st.imu.bias_rad_s[2]);
+  {
+    const PushbroomStats& pb = st.pushbroom;
+    std::printf("  pushbroom: in %llu -> out %llu (range %llu, no-pose %llu, overflow %llu, "
+                "page-full %llu); flagged lost %llu stale %llu lowconf %llu emitted %llu\n",
+                static_cast<unsigned long long>(pb.points_in),
+                static_cast<unsigned long long>(pb.points_out),
+                static_cast<unsigned long long>(pb.dropped_range),
+                static_cast<unsigned long long>(pb.dropped_no_pose),
+                static_cast<unsigned long long>(pb.dropped_overflow),
+                static_cast<unsigned long long>(pb.dropped_page_full),
+                static_cast<unsigned long long>(pb.flagged_tracking_lost),
+                static_cast<unsigned long long>(pb.flagged_stale_pose),
+                static_cast<unsigned long long>(pb.flagged_low_confidence),
+                static_cast<unsigned long long>(pb.flagged_emitted));
+  }
+  std::printf("  wrote %s and %s\n", pfile.c_str(), tfile.c_str());
+  return kExitOk;
+}
+
+
+// --- ROUND 12: does the map agree with ITSELF? -------------------------------
+//
+// The metric --d6-timesweep scores with (wall-probe thickness) selects ZERO
+// probes on both of the owner's walking-pace captures, so this project had no
+// way to score a scan taken at the speed it is meant to be used at. See
+// slam/post/map_consistency.h for why plane fits and voxel counts structurally
+// cannot see a surface painted twice in two places.
+//
+// `--offset-ms` and `--mount-from` are here for the same reason they are on
+// --d6-dump: the two adjudication experiments ROUND 12 needed were "resolve
+// these bytes with that capture's trim" and "resolve them at a different
+// lidar->pose offset", and a score is only useful if the thing being scored
+// can be varied.
+int cmd_d6_selfcheck(const std::string& lscan_dir, const std::string& mount_from,
+                     std::int64_t offset_ns, bool densify, double window_s, double cell_m) {
+  bool is_d6 = false;
+  const Status probe = post::lscan_is_d6_project(lscan_dir, &is_d6);
+  if (!probe.ok() || !is_d6) {
+    std::fprintf(stderr, "d6-selfcheck: '%s' is not a readable COIN-D6 project\n",
+                 lscan_dir.c_str());
+    return kExitFailed;
+  }
+
+  PageStoreConfig psc;
+  psc.page_capacity = 1u << 20;
+  psc.max_pages = 4096;
+  PageStore store(psc);
+  std::vector<post::TrajPose> traj;
+  std::vector<std::int64_t> ptimes;
+
+  post::D6ResolveConfig cfg;
+  cfg.store = &store;
+  cfg.densify_with_phone_imu = densify;
+  cfg.pushbroom.pose_time_offset_ns = offset_ns;
+  cfg.out_trajectory = &traj;
+  cfg.out_point_times = &ptimes;
+  if (!mount_from.empty()) {
+    double m[16];
+    if (!post::read_manifest_mount(mount_from, m)) {
+      std::fprintf(stderr, "d6-selfcheck: cannot read mountCalibration from '%s'\n",
+                   mount_from.c_str());
+      return kExitFailed;
+    }
+    cfg.have_mount = true;
+    for (int i = 0; i < 16; ++i) cfg.mount_phone_from_lidar[i] = m[i];
+  }
+
+  post::D6ResolvePipeline pipe(cfg);
+  const Status s = pipe.run(lscan_dir);
+  if (!s.ok()) {
+    std::fprintf(stderr, "d6-selfcheck: resolve failed: %s\n", error_str(s.error()));
+    return kExitFailed;
+  }
+
+  std::vector<PointVertex> pts;
+  pts.reserve(static_cast<std::size_t>(store.total_points()));
+  for (const PageId id : store.page_ids()) {
+    const PageView v = store.page_view(id);
+    if (!v.valid()) continue;
+    for (std::uint32_t k = 0; k < v.count; ++k) pts.push_back(v.data[k]);
+  }
+
+  double path_m = 0.0;
+  for (std::size_t i = 1; i < traj.size(); ++i) {
+    const double dx = traj[i].p[0] - traj[i - 1].p[0];
+    const double dy = traj[i].p[1] - traj[i - 1].p[1];
+    const double dz = traj[i].p[2] - traj[i - 1].p[2];
+    path_m += std::sqrt(dx * dx + dy * dy + dz * dz);
+  }
+  const double dur_s = traj.size() >= 2
+                           ? static_cast<double>(traj.back().t_ns - traj.front().t_ns) * 1e-9
+                           : 0.0;
+
+  post::MapConsistencyConfig mcfg;
+  mcfg.window_seconds = window_s;
+  mcfg.cell_m = cell_m;
+  const post::MapConsistencyReport r = post::measure_map_consistency(pts, ptimes, mcfg);
+
+  std::printf("d6-selfcheck: %s\n", lscan_dir.c_str());
+  if (!mount_from.empty()) std::printf("  mount extrinsic OVERRIDDEN from %s\n", mount_from.c_str());
+  if (offset_ns != 0) {
+    std::printf("  lidar->pose offset %+.1f ms\n", static_cast<double>(offset_ns) / 1e6);
+  }
+  std::printf("  %zu points, %zu poses, %.1f s, %.2f m walked (%.3f m/s), "
+              "window %.1f s, cell %.2f m\n",
+              pts.size(), traj.size(), dur_s, path_m, dur_s > 0 ? path_m / dur_s : 0.0, window_s,
+              cell_m);
+  if (!r.measurable) {
+    std::printf("  NOT MEASURABLE: %s\n", r.blocker);
+    return kExitFailed;
+  }
+  std::printf("  measurement floor (one window against itself): %.2f cm over %zu cells\n",
+              r.self_floor_m * 100.0, r.self_cells);
+  std::printf("  separation      median      p90    cells\n");
+  for (const post::MapConsistencySeparation& sp : r.by_separation) {
+    std::printf("   %5.0f s      %7.2f cm %7.2f cm %6zu\n", sp.seconds, sp.median_offset_m * 100.0,
+                sp.p90_offset_m * 100.0, sp.cells);
+  }
+  std::printf("\n  SELF-CONSISTENCY at %.0f s: %.2f cm (floor %.2f cm)\n",
+              static_cast<double>(r.nearest_separation) * window_s, r.nearest_offset_m * 100.0,
+              r.self_floor_m * 100.0);
+  return kExitOk;
 }
 
 int cmd_d6_timesweep(const std::string& lscan_dir, double from_ms, double to_ms, double step_ms,
@@ -1702,6 +1970,10 @@ int main(int argc, char** argv) {
       else if (a == "--to" && i + 1 < argc) to_ms = std::atof(argv[++i]);
       else if (a == "--step" && i + 1 < argc) step_ms = std::atof(argv[++i]);
       else if (a == "--no-densify") densify = false;
+      else if (a == "--probe-min-points" && i + 1 < argc)
+        kProbeMinPoints = static_cast<std::size_t>(std::atoi(argv[++i]));
+      else if (a == "--probe-elongation" && i + 1 < argc)
+        kProbeMinElongation = std::atof(argv[++i]);
       else if (a == "--up" && i + 1 < argc) {
         const std::string ax = argv[++i];
         if (ax == "X" || ax == "x") up_axis = 0;
@@ -1713,6 +1985,45 @@ int main(int argc, char** argv) {
       else return usage();
     }
     return cmd_d6_timesweep(dir, from_ms, to_ms, step_ms, densify, up_axis);
+  }
+  if (cmd == "--d6-selfcheck") {
+    if (argc < 3) return usage();
+    const std::string dir = argv[2];
+    std::string mount_from;
+    std::int64_t offset_ns = 0;
+    bool densify = true;
+    double window_s = 8.0, cell_m = 0.25;
+    for (int i = 3; i < argc; ++i) {
+      const std::string a = argv[i];
+      if (a == "--mount-from" && i + 1 < argc) mount_from = argv[++i];
+      else if (a == "--offset-ms" && i + 1 < argc)
+        offset_ns = static_cast<std::int64_t>(std::llround(std::atof(argv[++i]) * 1e6));
+      else if (a == "--window" && i + 1 < argc) window_s = std::atof(argv[++i]);
+      else if (a == "--cell" && i + 1 < argc) cell_m = std::atof(argv[++i]);
+      else if (a == "--no-densify") densify = false;
+      else if (a == "--quiet") continue;
+      else return usage();
+    }
+    return cmd_d6_selfcheck(dir, mount_from, offset_ns, densify, window_s, cell_m);
+  }
+  if (cmd == "--d6-dump") {
+    if (argc < 3) return usage();
+    const std::string dir = argv[2];
+    std::string out_prefix = dir + "-dump";
+    std::string mount_from;
+    std::int64_t offset_ns = 0;
+    bool densify = true;
+    for (int i = 3; i < argc; ++i) {
+      const std::string a = argv[i];
+      if (a == "--out" && i + 1 < argc) out_prefix = argv[++i];
+      else if (a == "--mount-from" && i + 1 < argc) mount_from = argv[++i];
+      else if (a == "--offset-ms" && i + 1 < argc)
+        offset_ns = static_cast<std::int64_t>(std::llround(std::atof(argv[++i]) * 1e6));
+      else if (a == "--no-densify") densify = false;
+      else if (a == "--quiet") continue;
+      else return usage();
+    }
+    return cmd_d6_dump(dir, out_prefix, mount_from, offset_ns, densify);
   }
   if (cmd == "--d6-loopclose") {
     if (argc < 3 || argv[2][0] == '-') return usage();

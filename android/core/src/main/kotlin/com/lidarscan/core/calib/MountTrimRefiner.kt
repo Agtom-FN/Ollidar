@@ -130,14 +130,23 @@ class MountTrimRefiner(
         }
 
         val newest = samples.maxOf { it.tMonoNs }
-        val hold = samples.filter { it.tMonoNs >= holdStartedAtMonoNs }
+        // ROUND 12: `tracking` is filtered here exactly as it is in capture()
+        // below. It was not, so `Progress.samples` and `holdMillis` could count
+        // frames the stored mean excludes — the ring and the trim disagreeing
+        // about what "the hold" is.
+        val hold = samples.filter { it.tMonoNs >= holdStartedAtMonoNs && it.tracking }
         val holdMillis = if (hold.isEmpty()) 0L else (newest - holdStartedAtMonoNs) / 1_000_000L
 
         // The live gate, over the SAME window a tap would have used, so the ring
         // and the tap can never disagree.
         val gate = MountTrimSampler.capture(samples, nowMillis = 0L)
         val gateMeasurement = (gate as? MountTrimResult.Rejected)?.measurement
-        val gatePasses = gate is MountTrimResult.Captured
+        // ROUND 12: the gate looks at the whole ring, not at the hold, so on the
+        // first tick — before one frame of hold exists — it could already report
+        // `gate=true`. The owner's log has two of exactly that:
+        //   `mount hold released early: holdMs=0 samples=1 ... gate=true`
+        // A gate verdict about a hold that has not happened is not a verdict.
+        val gatePasses = gate is MountTrimResult.Captured && hold.size >= MountTrim.MIN_SAMPLES
 
         val liveWindow = samples.filter {
             it.tMonoNs >= newest - MountTrim.WINDOW_MS * 1_000_000L
@@ -212,14 +221,43 @@ class MountTrimRefiner(
 
         val mean = MountTrimSampler.meanOrientation(hold.map { it.orientation })
         val devs = hold.map { Math.toDegrees(mean.angleTo(it.orientation)) }
+        val holdP90 = MountTrimSampler.percentile(devs, MountTrim.SPREAD_PERCENTILE)
+        val holdMax = devs.max()
+        val stability = splitHalfStabilityDeg(hold)
+
+        // ── ROUND 12: the whole-hold mean has to clear the same bar the
+        // one-second window did. ─────────────────────────────────────────────
+        //
+        // ROUND 11 ran the gate over the trailing second, and then stored a mean
+        // over the WHOLE hold whose own dispersion was compared against nothing.
+        // A hold whose last second was perfect and whose first seven wandered
+        // therefore passed, and the wander went into the stored mean.
+        //
+        // The owner's scan-028 is that case: 244 samples (8.1 s — the
+        // `maxHoldMillis` timeout path, so `refined` was false), stored with
+        // `spreadP90Deg = 2.40` while the gate that admitted it had judged only
+        // the final second. The gate's own thresholds are the right ones to
+        // apply — they say "this set of orientations is consistent enough to
+        // average" — they were just never asked about the set being averaged.
+        //
+        // Falling back to `gate` rather than refusing is deliberate: the last
+        // second DID pass, so a usable trim exists, and refusing here would
+        // throw away a good answer because a worse one was also available.
+        if (holdP90 > MountTrim.MAX_SPREAD_P90_DEG || holdMax > MountTrim.MAX_SPREAD_OUTLIER_DEG) {
+            return MountTrimResult.Captured(
+                gate.trim.copy(stabilityDeg = stability),
+            )
+        }
+
         return MountTrimResult.Captured(
             MountTrim.fromHoldOrientation(
                 hold = mean,
                 sensor = sensor,
                 capturedAtEpochMillis = nowMillis,
                 sampleCount = hold.size,
-                spreadDeg = devs.max(),
-                spreadP90Deg = MountTrimSampler.percentile(devs, MountTrim.SPREAD_PERCENTILE),
+                spreadDeg = holdMax,
+                spreadP90Deg = holdP90,
+                stabilityDeg = stability,
             ),
         )
     }

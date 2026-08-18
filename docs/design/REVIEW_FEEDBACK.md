@@ -854,3 +854,138 @@ log carries both halves — `points=293166 (map=293166 raw=293524 other=0)` — 
 the next field report needs no re-derivation. This number also feeds
 `pointCountEstimate` in the sealed manifest, the HUD and the summary card, all of
 which were ~2× as well.
+
+## Round 12 — owner field test of 0.7.0 (2026-08-18, scan-025/026/028 + log 1418)
+
+Owner verdict, walking at normal pace: **"quality not so good, still shift."**
+
+46. **The shift is real, it is NOT the mount trim, and ROUND 11's prediction is
+    refuted by the owner's own A/B pair.** scan-026 (`spreadP90 0.44°`) and
+    scan-028 (`spreadP90 2.40°`), same room, four minutes apart. Diagnose with a
+    metric that works at walking pace — the existing wall-probe one selects
+    ZERO probes on both — and adjudicate the trim hypothesis by resolving each
+    capture's bytes with the other's mount extrinsic.
+
+47. **The mount-trim quality number in the container is not an accuracy figure
+    and is being read as one.** `spreadP90Deg` is a dispersion over whatever
+    hold length was averaged, so a 1 s hold and an 8 s hold produce
+    incomparable numbers. Store the split-half repeatability the refiner already
+    computes, gate the whole-hold spread, and never let the auto-recapture at
+    Start replace a better trim with a worse one.
+
+48. **A capture must not start on a tracker that has not settled.** scan-025
+    took a 2.015 m step in 33 ms, 6.9 s after Start, with ARCore reporting
+    TRACKING and quality GOOD; scan-028 the same shape at 3.7 s.
+
+49. **The summary card claimed more than it measured.** It graded scan-026
+    GOOD SCAN on counts alone, and scan-026 is the worst-aligned of the three
+    captures examined.
+
+### Resolution — 2026-08-18 (0.7.1)
+
+46. **Adjudicated, and outcome (b): both clouds shift and the trim is not why.**
+
+    **The premise was broken before the experiment started.** The two "very
+    different" trims are **1.33° apart**. scan-026's 0.44° is a one-second
+    dispersion over 34 samples; scan-028's 2.40° is an eight-second one over
+    244. ROUND 11's own notes say holding longer does not reduce the spread —
+    and then shipped that spread as the container's only quality field.
+
+    **A ruler had to be built.** `post::measure_map_consistency` (new,
+    hand-rolled, no Eigen, bit-identical under point reordering): split the
+    capture into 8 s windows, and for every pair that filled the same 25 cm
+    cell, measure how far the later pass lands from the earlier pass's own
+    plane **along that plane's normal**. Along the normal is the point — a D6's
+    returns slide freely along a wall, which is exactly why every flatness
+    metric this project owns is blind to the error the owner reports.
+    `engine_cli --d6-selfcheck` runs it; `--d6-dump` exports points with their
+    own timestamps for analysis outside the tool. Proved against injected truth
+    in `test_round12_map_consistency.cpp`: 20 cm of slide ALONG a wall reads
+    **0.00 cm** while 20 cm perpendicular reads **20.0 cm**, and a one-pass map
+    returns *not measurable* rather than a reassuring zero.
+
+    **The numbers.** Surfaces re-painted 8 s apart disagree by:
+
+    | capture | trim `spreadP90` | walked | disagreement | floor |
+    | --- | ---: | ---: | ---: | ---: |
+    | scan-020 (5.3 cm/s crawl) | 2.40° | 10.8 m | **0.70 cm** | 0.29 cm |
+    | scan-026 | **0.44°** | 15.3 m | **5.26 cm** | 0.99 cm |
+    | scan-028 | **2.40°** | 15.8 m | **4.45 cm** | 0.70 cm |
+
+    The capture with the *good* trim is the *worse* of the two. And the
+    decisive experiment — re-resolve each capture with the OTHER one's mount
+    extrinsic, the trim hypothesis with nothing else changed — moves scan-026
+    from 5.26 to 5.00 cm and scan-028 from 4.45 to 4.21 cm, with occupied 3 cm
+    voxels changing by **0.15 %**. Both get very slightly *better*, which is
+    what noise looks like and is impossible if either trim were correct.
+
+    **Three more suspects tested and killed.** A lidar↔pose clock offset:
+    swept ±100 ms on both captures — flat to 7 %, and the two minima disagree
+    in sign (ROUND 10's null result was measured on the one capture where
+    100 ms is 5 mm; it now holds at six times the speed). Live-vs-offline
+    divergence: the cached `map.bin` and an offline re-resolve have identical
+    extents and voxel counts within 0.02 %, so what the owner looked at is what
+    is on disk. ARCore orientation: it tracks the phone gyro at **r = 0.9994**,
+    and rewriting the pose stream with a gyro complementary filter at time
+    constants from 0.3 s to 30 s produced **no improvement at any of them** —
+    recorded as a falsified hypothesis so it is not re-tried from reasoning.
+
+    **What it is.** Local geometry at walking pace is *excellent*: the
+    measurement's own floor — one 8 s window against itself — is 0.70–0.99 cm,
+    which retires every per-return error class (fan formula, byte-position time
+    slicing, sample cadence, mount extrinsic, pose interpolation). What grows is
+    the disagreement *between passes*. **Both captures are loops the app never
+    closes**: scan-026 ends 0.52 m from its start after 15.3 m, scan-028 0.80 m
+    after 15.8 m. ROUND 11's loop closer finds the revisit on both and refuses
+    both, correctly — the rotations ICP proposes (14–19°) are impossible against
+    the gyro cross-check (≤1.1° over 16 s), which is precisely the pushbroom
+    null-space wander its observability gate exists to catch. **The gate is
+    right and the closure is therefore unavailable.** That is the honest state
+    and it is the next round's headline.
+
+    **Also fixed while here:** `--d6-timesweep` grew `--probe-min-points` /
+    `--probe-elongation`, because its defaults (200 points in a 0.5 m cell)
+    silently produce zero probes and a blank report at walking pace. Relaxed to
+    40/6 it reads 8.66 cm of wall thickness on scan-026 against scan-020's
+    4.86 cm.
+
+47. **Root-caused to three defects, all fixed, all from the owner's own
+    `scan-028` and log.** `sampleCount = 244` at 30 Hz is 8.1 s — exactly
+    `DEFAULT_MAX_HOLD_MS`, so the hold ran to its timeout without converging.
+    (a) The whole-hold mean was stored with its dispersion compared against
+    nothing: the gate judged the trailing second, the refiner then stored an
+    eight-second mean. It now must clear the same gate, and falls back to the
+    (passing) one-second trim when it does not. (b) The split-half accuracy was
+    computed for the ring and thrown away; `MountTrim.stabilityDeg` now reaches
+    DataStore and `project.json` (defaulted to −1 so every 0.7.0 trim still
+    decodes), with `accuracyDeg` / `accuracyIsPoor` / `qualityRank` as the API.
+    `spreadP90Deg` keeps its name and meaning — ROUND 8's rule. (c) The
+    auto-recapture at Start replaced the incumbent unconditionally, so a 0.35°
+    guided hold could be overwritten by a 2.49° one-second sample — and because
+    `fromPreviousRun` alone marks a trim stale, that path runs far more often
+    than "10 minutes" suggests. It now compares `qualityRank` and keeps the
+    better, saying which and why in the log. Two smaller ones from the same
+    read: the ring reported `gate=true` on a hold that had not happened
+    (`holdMs=0 samples=1` appears twice in the owner's log), and `evaluate()`
+    did not filter `tracking` while `capture()` did.
+
+48. **Fixed — `TrackingWarmup`, and the tracking flag was not the answer.**
+    ARCore reported TRACKING with pose quality GOOD across every one of those
+    jumps; all three containers decode with `tracking_lost = 0`. It does not
+    report re-anchoring as a failure, it just moves. So the gate is a property
+    of a WINDOW: two seconds of poses with no step a person could not take,
+    reusing `PoseSectionTracker`'s own thresholds so the two can never disagree.
+    It **waits and never refuses** — four seconds, then Start proceeds with an
+    amber note saying why. A Start that can refuse is ROUND 10 item 38 arriving
+    by another road.
+
+49. **Fixed, in three ways that are all about not claiming more than was
+    measured.** The GOOD sentence now ends *"Coverage checks passed; alignment
+    is not measured on the phone"*. A mount trim measured worse than 1.0° caps
+    the grade at FAIR with a named reason (ROUND 11 measured 1.4° = 16.3 cm of
+    doubled feature at 3 m). And the walk's return-to-start gap is reported
+    **under** the grade, never as part of it, with its condition attached: *"if
+    you finished where you began, that gap is tracker drift and it is the
+    largest error in this scan"* — because the app cannot know whether the
+    operator meant to finish where they started, and quietly assuming it would
+    be the same unearned confidence that produced item 49.

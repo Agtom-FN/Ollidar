@@ -429,3 +429,69 @@ sweep could not see it and ROUND 11's fixture could:
   displaces the room by `r·sin(d)`, consistently, which is an error nobody
   reports; about the forward axis it does nothing at all, because that is a
   rotation inside the fan's own plane and the fan is 360°.
+
+## 12. ROUND 12 — the sweep re-run at walking pace, and why it needed a new score
+
+§10 measured the lidar↔pose offset on `scan-020` and found nothing: the whole
+±30 ms window varied by 0.1 %. That null result was correct and it was measured
+on the one capture where the effect is structurally invisible — **scan-020 was
+walked at 5.3 cm/s**, where 100 ms of skew displaces a point by 5 mm against a
+4.8 cm wall thickness.
+
+ROUND 12 got two captures walked at 25 and 32 cm/s, six times faster, and
+re-ran the experiment. Two things had to change first.
+
+### 12.1 The wall-probe score selects nothing at walking pace
+
+`choose_wall_probes()` requires **200 returns inside a 0.5 m radius cell** with
+an elongation of 20. On `scan-026` and `scan-028` it selects **zero probes** and
+`--d6-timesweep` prints an empty table. The threshold is a density, the density
+is set by how long the sensor lingers, and lingering is what the owner is asking
+not to have to do.
+
+`kProbeMinPoints` and `kProbeMinElongation` are now variables with the same
+defaults (so §10's published numbers are unchanged) and
+`--probe-min-points` / `--probe-elongation` flags. At 40/6 `scan-026` yields 6
+probes and reads **8.66 cm** of wall thickness against `scan-020`'s 4.86 cm.
+
+That is a workaround, not a fix: a probe count that depends on walking speed
+cannot compare two captures walked at different speeds.
+
+### 12.2 The score that does work — `--d6-selfcheck`
+
+`slam/post/map_consistency.h` measures the thing the owner is actually
+describing: a surface painted twice, in two places. See that header for the
+derivation. `--d6-selfcheck <lscan-dir> [--window S] [--cell M] [--offset-ms MS]
+[--mount-from OTHER.lscan]` resolves through the same `D6ResolvePipeline` and
+scores the result; `--d6-dump` writes the points with their own timestamps plus
+the trajectory, for analysis outside a printf.
+
+Both take `--offset-ms` and `--mount-from` for the same reason: a score is only
+useful if the thing being scored can be varied.
+
+### 12.3 The offset sweep, re-run
+
+| `--offset-ms` | scan-026 self-consistency @8 s | scan-028 |
+| ---: | ---: | ---: |
+| −100 | 5.07 cm | 4.51 cm |
+| −50 | **4.91 cm** | 4.99 cm |
+| 0 | 5.26 cm | 4.45 cm |
+| +50 | 6.49 cm | **4.44 cm** |
+| +100 | 6.86 cm | 5.02 cm |
+
+Flat to about 7 %, and **the two captures' minima disagree in sign**. There is
+no lidar↔pose offset on this rig at any walking speed the product supports.
+`pose_time_offset_ns` stays 0 and the knob stays for a transport that genuinely
+has one.
+
+### 12.4 What the same tool says about the driver
+
+The measurement's own floor — one 8 s window scored against itself, which is
+the pipeline resolving a surface twice within a single pass — is **0.99 cm** on
+scan-026 and **0.70 cm** on scan-028, at 0.25 and 0.32 m/s.
+
+That is the strongest statement this document can make about the driver: every
+per-return mechanism it describes (§7's byte-position back-dating, §9.1's
+per-sample cadence, §9.3's min-delay anchor) holds to under a centimetre at
+normal walking speed on real hardware. The error the owner sees is downstream of
+all of it, in the trajectory — see `android/NOTES.md` ROUND 12.

@@ -52,6 +52,24 @@ data class ScanSummary(
     val sections: Int,
     val trackingDrops: Int,
     val recordingSizeBytes: Long,
+    /**
+     * ROUND 12 — the mount trim's measured split-half accuracy in degrees, or
+     * null when the trim predates 0.7.1 or was never converged.
+     *
+     * This is the ONE geometric input the app can supply without the engine,
+     * and it is a real one: ROUND 11 measured through the production assembler
+     * that 1.4 degrees of trim error paints an overhead feature 16.3 cm apart
+     * between the two legs of an out-and-back at 3 m.
+     */
+    val mountTrimAccuracyDeg: Double? = null,
+    /**
+     * ROUND 12 — how far the walk's END finished from its START, metres, or
+     * null when the walk was too short to be a loop.
+     * See [com.lidarscan.core.capture.LoopReturnTracker]: this is REPORTED and
+     * deliberately not GRADED, because the app cannot know whether the operator
+     * meant to finish where they began.
+     */
+    val loopEndGapMeters: Double? = null,
 ) {
     /**
      * Resolved points per metre walked. The denominator is floored at 0.5 m so a
@@ -68,6 +86,14 @@ data class ScanSummary(
     val averageSpeedMps: Double
         get() = if (elapsedMillis <= 0L) 0.0 else pathLengthMeters * 1000.0 / elapsedMillis
 
+    /**
+     * ROUND 12 — true when the mount trim that went into this scan was measured
+     * and did not converge. See [com.lidarscan.core.calib.MountTrim] —
+     * the threshold is one degree, from ROUND 11's measured cost table.
+     */
+    val mountTrimIsPoor: Boolean
+        get() = mountTrimAccuracyDeg?.let { it > POOR_TRIM_DEG } == true
+
     val grade: ScanGrade
         get() = when {
             pointsCaptured <= 0L -> ScanGrade.POOR
@@ -77,6 +103,9 @@ data class ScanSummary(
             sections > MAX_SECTIONS_GOOD -> ScanGrade.FAIR
             trackingDrops > MAX_DROPS_GOOD -> ScanGrade.FAIR
             pointsPerMeter < MIN_DENSITY_GOOD -> ScanGrade.FAIR
+            // ROUND 12: a scan taken through a trim that never converged is not
+            // a GOOD scan, whatever the counting says about it.
+            mountTrimIsPoor -> ScanGrade.FAIR
             else -> ScanGrade.GOOD
         }
 
@@ -101,8 +130,40 @@ data class ScanSummary(
                 "$trackingDrops tracking drops — some gaps. Walk those parts again if they matter."
             pointsPerMeter < MIN_DENSITY_GOOD ->
                 "${pointsPerMeter.roundToInt()} points per metre — a little thin. Slow down for finer detail."
+            mountTrimIsPoor ->
+                ("Mount reference is only accurate to %.1f deg, which doubles features by " +
+                    "several centimetres. Re-zero with a longer, steadier hold and rescan.")
+                    .format(mountTrimAccuracyDeg ?: 0.0)
             else ->
-                "One section, no tracking drops, ${pointsPerMeter.roundToInt()} points per metre."
+                // ── ROUND 12: this sentence used to over-claim. ─────────────
+                //
+                // It said "One section, no tracking drops, N points per metre"
+                // in the voice of a verdict, and the owner read it as one: the
+                // app graded `scan-026` **GOOD SCAN** with exactly that
+                // sentence, and offline measurement puts that capture's map
+                // 5.26 cm out of agreement with ITSELF at 8 s separation — the
+                // worst of the three captures examined. Nothing on this card
+                // looked at geometry, and the sentence did not say so.
+                //
+                // It now names what was checked, which is counting, and what
+                // was not, which is whether the room lines up.
+                ("One section, no tracking drops, ${pointsPerMeter.roundToInt()} points per metre. " +
+                    "Coverage checks passed; alignment is not measured on the phone.")
+        }
+
+    /**
+     * ROUND 12 — the conditional drift line, or null when there is nothing
+     * worth saying. Shown UNDER the grade, never as part of it.
+     */
+    val loopReturnNote: String?
+        get() {
+            val gap = loopEndGapMeters ?: return null
+            if (gap < LoopReturnTracker.WORTH_MENTIONING_M) {
+                return "Your walk ended %.0f cm from where it started — the tracker held.".format(gap * 100)
+            }
+            return ("Your walk ended %.0f cm from where it started after %.1f m. If you finished " +
+                "where you began, that gap is tracker drift and it is the largest error in this scan.")
+                .format(gap * 100, pathLengthMeters)
         }
 
     companion object {
@@ -117,5 +178,13 @@ data class ScanSummary(
 
         /** ~3.6 m/s. Below this the walls have visible stripes. */
         const val MIN_DENSITY_FAIR = 400.0
+
+        /**
+         * ROUND 12. Mirrors `MountTrim.WARN_STABILITY_DEG`; kept as its own
+         * constant here so `:core`'s capture package does not have to reach
+         * into `:core`'s calib package for a grading threshold, and so the two
+         * can be moved independently if the measured cost table ever changes.
+         */
+        const val POOR_TRIM_DEG = 1.0
     }
 }

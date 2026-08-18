@@ -1206,11 +1206,25 @@ class CaptureViewModel(
 
     private val refiner = com.lidarscan.core.calib.MountTrimRefiner()
 
+    /** ROUND 12: the tracking-stable start gate. See [com.lidarscan.core.capture.TrackingWarmup]. */
+    private val trackingWarmup = com.lidarscan.core.capture.TrackingWarmup()
+
+    private val _startWarmup =
+        MutableStateFlow<com.lidarscan.core.capture.TrackingWarmup.Verdict?>(null)
+
+    /** Non-null only while Start is waiting for the tracker to settle. */
+    val startWarmup: StateFlow<com.lidarscan.core.capture.TrackingWarmup.Verdict?> =
+        _startWarmup.asStateFlow()
+
     /** Non-null while the operator is holding the ring; drives the ring's sweep and label. */
     private val _mountHold = MutableStateFlow<com.lidarscan.core.calib.MountTrimRefiner.Progress?>(null)
     val mountHold: StateFlow<com.lidarscan.core.calib.MountTrimRefiner.Progress?> = _mountHold.asStateFlow()
 
     private var mountHoldJob: kotlinx.coroutines.Job? = null
+
+    /** ROUND 12: the tracking-stable start gate's wait loop, and its re-entry latch. */
+    private var startGateJob: kotlinx.coroutines.Job? = null
+    private var startPending = false
 
     /**
      * Start (or restart) a hold. Called on press; [cancelMountHold] on release.
@@ -1940,13 +1954,49 @@ class CaptureViewModel(
             sensor = _sensor.value,
         )
         if (result is com.lidarscan.core.calib.MountTrimResult.Captured) {
+            // ── ROUND 12: an auto-refresh may never make the trim WORSE. ─────
+            //
+            // As shipped in 0.7.0 this was unconditional: any one-second sample
+            // that cleared the gate replaced the incumbent, so a trim measured
+            // over a guided six-second hold could be overwritten at Start by a
+            // 2.4 deg one taken from whatever second the operator happened to be
+            // in. And because `fromPreviousRun` alone marks a trim stale — and
+            // the app process restarts far more often than ten minutes — this
+            // path runs constantly, not rarely.
+            //
+            // Comparison is on MountTrim.qualityRank (split-half accuracy where
+            // it exists), never on spreadP90 alone: two p90s measured over
+            // different hold lengths are not comparable, which is the whole of
+            // ROUND 12's scan-028 finding.
+            if (result.trim.qualityRank > trim.qualityRank) {
+                logEvent(
+                    LOG_TAG_AR,
+                    ("mount trim auto-refresh declined (fresh sample is worse): " +
+                        "kept rank=%.2f (%s), candidate rank=%.2f spreadP90=%.2fdeg samples=%d")
+                        .format(
+                            trim.qualityRank,
+                            provenance.logSuffix,
+                            result.trim.qualityRank,
+                            result.trim.spreadP90Deg,
+                            result.trim.sampleCount,
+                        ),
+                )
+                _mountTrimNote.value =
+                    "Mount reference is ${provenance.ageLabel}. A fresh sample was taken and was less " +
+                        "steady than the one already set, so the better one was kept — tap Re-zero and " +
+                        "hold still if the bracket has moved."
+                _mountTrimNoteIsWarning.value = true
+                return
+            }
             logEvent(
                 LOG_TAG_AR,
-                "mount trim auto-refreshed at start: was %s, now magnitude=%.2fdeg spreadP90=%.2fdeg samples=%d"
+                ("mount trim auto-refreshed at start: was %s, now magnitude=%.2fdeg " +
+                    "spreadP90=%.2fdeg stability=%.2fdeg samples=%d")
                     .format(
                         provenance.logSuffix,
                         result.trim.magnitudeDeg,
                         result.trim.spreadP90Deg,
+                        result.trim.stabilityDeg,
                         result.trim.sampleCount,
                     ),
             )
@@ -1984,6 +2034,58 @@ class CaptureViewModel(
      * series number must only ever be spent on a scan that was actually taken.
      */
     fun startCapture() {
+        // ── ROUND 12: do not start on a tracker that has not settled. ───────
+        //
+        // The owner's scan-025 took a 2.015 m step 33 ms wide, 6.9 seconds
+        // after Start, and scan-028 took a 0.30 m one 3.7 s in — ARCore
+        // re-anchoring while VIO was still converging, with `tracking` reading
+        // TRACKING and pose quality GOOD across both. Everything recorded
+        // before such a jump is in a different world frame from everything
+        // after it.
+        //
+        // This waits (it never refuses — see TrackingWarmup's header) and then
+        // re-enters startCapture(). `startPending` makes the re-entry a plain
+        // fall-through so the gate can never loop.
+        if (!startPending) {
+            val verdict = trackingWarmup.evaluate(arController?.poseWindow().orEmpty())
+            if (!verdict.ready && arController != null) {
+                logEvent(LOG_TAG_AR, "start gate: waiting for tracking — ${verdict.logSuffix}")
+                _startWarmup.value = verdict
+                startPending = true
+                startGateJob?.cancel()
+                startGateJob = viewModelScope.launch {
+                    val giveUpAt =
+                        clock() + com.lidarscan.core.capture.TrackingWarmup.MAX_WAIT_MILLIS
+                    while (clock() < giveUpAt) {
+                        val v = trackingWarmup.evaluate(arController?.poseWindow().orEmpty())
+                        _startWarmup.value = v
+                        if (v.ready) break
+                        kotlinx.coroutines.delay(MOUNT_HOLD_TICK_MS)
+                    }
+                    val finalVerdict =
+                        trackingWarmup.evaluate(arController?.poseWindow().orEmpty())
+                    logEvent(
+                        LOG_TAG_AR,
+                        "start gate: ${if (finalVerdict.ready) "cleared" else "timed out"} — " +
+                            finalVerdict.logSuffix,
+                    )
+                    if (!finalVerdict.ready) {
+                        _mountTrimNote.value =
+                            "Tracking had not settled after " +
+                                "${com.lidarscan.core.capture.TrackingWarmup.MAX_WAIT_MILLIS / 1000}s — " +
+                                "starting anyway. The first seconds of this scan may be in a " +
+                                "different frame; more light and more texture help."
+                        _mountTrimNoteIsWarning.value = true
+                    }
+                    _startWarmup.value = null
+                    startCapture()
+                }
+                return
+            }
+            _startWarmup.value = null
+        }
+        startPending = false
+
         // ROUND 11 (owner item 45b): a stale mount reference must never enter a
         // scan silently.
         maybeAutoRefreshMountTrim()
@@ -2530,17 +2632,23 @@ class CaptureViewModel(
             sections = sectionBreaks.size + 1,
             trackingDrops = trackingDrops,
             recordingSizeBytes = finalStats.recordingSizeBytes,
+            // ROUND 12: the two things the app can honestly say about geometry.
+            mountTrimAccuracyDeg = _storedMountTrim.value?.trim?.accuracyDeg,
+            loopEndGapMeters = trailRecorder.loopEndGapM?.toDouble(),
         )
         _scanSummary.value = summary
         logEvent(
             LOG_TAG_SEAL,
             "summary: grade=${summary.grade} points=${summary.pointsCaptured} " +
-                "durationMs=${summary.elapsedMillis} pathM=%.1f sections=%d drops=%d ptsPerM=%.0f"
+                "durationMs=${summary.elapsedMillis} pathM=%.1f sections=%d drops=%d ptsPerM=%.0f " +
+                "trimAccuracyDeg=%s loopEndGapM=%s"
                     .format(
                         summary.pathLengthMeters,
                         summary.sections,
                         summary.trackingDrops,
                         summary.pointsPerMeter,
+                        summary.mountTrimAccuracyDeg?.let { "%.2f".format(it) } ?: "none",
+                        summary.loopEndGapMeters?.let { "%.2f".format(it) } ?: "not-a-loop",
                     ),
         )
 

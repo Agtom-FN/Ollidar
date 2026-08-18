@@ -6920,3 +6920,322 @@ Android `:app`:
 * `--d6-loopclose` re-resolves the container twice (once as shipped, once with
   closure) so its before/after comparison is honest; on scan-020 that is ~90 s.
 * Nothing was run on kc-m4; macOS/desktop untouched.
+
+---
+
+## ROUND 12 — THE TRIM WAS NOT IT, AND THE PROJECT HAD NO RULER
+
+Owner on 0.7.0, walking at normal pace: *"quality not so good, still shift."*
+
+ROUND 11 closed by predicting the turn-around shift was mount-trim error, and
+handed ROUND 12 the experiment that would test it: two of the owner's own
+captures, minutes apart, same room, same operator, same build — one with a
+refined re-zero and one without.
+
+**The prediction was wrong, and finding that out required building a
+measurement instrument this repository did not have.**
+
+Field material: `captures/scan-026.lscan`, `captures/scan-028.lscan`,
+`captures/scan-020.lscan`, `captures/lidarscan-capture-log-2026-08-18-1418.txt`.
+
+### 1. THE A/B PAIR — and why the premise was already broken
+
+| | scan-026 | scan-028 | scan-020 (ROUND 10's reference) |
+| --- | ---: | ---: | ---: |
+| `mountTrim.spreadP90Deg` | **0.44°** | **2.40°** | 2.40° |
+| `mountTrim.sampleCount` | 34 | **244** | 30 |
+| walked | 15.3 m in 61.2 s (0.25 m/s) | 15.8 m in 49.1 s (0.32 m/s) | 10.8 m in 202 s (0.053 m/s) |
+| points (offline re-resolve) | 126,876 | 101,769 | 293,166 |
+| app's grade | **GOOD SCAN** | — | — |
+
+The A/B reads as a 5× difference in trim quality. It is not one.
+
+**The two stored trims are 1.33° apart.** `spreadP90Deg` is the dispersion of
+individual ARCore frames about the mean *over whatever window happened to be
+averaged* — and ROUND 11's refiner averages over the whole hold. scan-026's
+0.44° is a **one-second** dispersion (34 samples); scan-028's 2.40° is an
+**eight-second** one (244 samples). The two numbers were never comparable
+quantities, and the one number that IS comparable — the split-half
+repeatability the refiner computes for the ring — was never stored.
+
+ROUND 11's own write-up says this in words ("the spread measures the JITTER of
+individual ARCore frames and holding longer does not reduce it") and then
+shipped `spreadP90Deg` as the only quality field in the container anyway.
+
+### 2. THE RULER — `post::measure_map_consistency`, and why it had to be built
+
+Every geometry metric in the repository failed on these captures:
+
+* **the ROUND 10 wall-probe thickness selects ZERO probes on both.** It needs
+  200 returns inside a 0.5 m radius cell; only a 5.3 cm/s crawl reaches that
+  density. Every crispness claim this project has ever made comes from
+  `scan-020`, walked at a twentieth of normal speed. (`--d6-timesweep` now
+  takes `--probe-min-points` / `--probe-elongation`; relaxed to 40/6 it finds
+  6 probes on scan-026 and reads **8.66 cm** against scan-020's 4.86 cm.)
+* **plane-fit RMS averages a doubled surface into one thick one.** Same
+  structural blindness ROUND 9 found (sign-blind metrics) and ROUND 11 found
+  again (a trim error slides ALONG a wall).
+* **occupied-voxel counts** compare a cloud only with itself at another setting.
+
+None of them can see the owner's error, because that error is *a surface
+painted twice in two places*.
+
+`slam/post/map_consistency.{h,cpp}` measures exactly that: split the capture
+into 8 s windows; for every pair of windows that filled the same 25 cm cell,
+fit a plane to the earlier one and report the mean distance of the later one
+**along that plane's normal**. Along the normal is the whole trick — a D6's
+returns slide freely along a wall, so any 3-D offset is dominated by where the
+returns happened to land. A control (one window against itself, split in half)
+gives the measurement's own floor on that capture.
+
+Hand-rolled 3×3 Jacobi, no Eigen, no RNG, no clock, total sort order so the
+answer is **bit-identical** under point reordering.
+`engine/tests/test_round12_map_consistency.cpp` proves it against injected
+truth: a clean two-pass map reads 0.00 cm, 2/5/10/20 cm of injected
+perpendicular offset comes back within 10 %, **20 cm of slide ALONG the walls
+reads 0.00 cm while 20 cm perpendicular reads 20.0 cm**, a one-pass map returns
+*not measurable* rather than zero, and a shuffled cloud returns the identical
+double.
+
+New tools: `engine_cli --d6-selfcheck` (the score) and `--d6-dump` (points with
+their own timestamps + trajectory, for analysis outside the printf).
+
+### 3. THE VERDICT — outcome (b), and the trim theory is refuted by experiment
+
+```
+$ engine_cli --d6-selfcheck captures/scan-0NN.lscan
+```
+
+| capture | surfaces re-painted 8 s apart | 16 s | 24 s | measurement floor |
+| --- | ---: | ---: | ---: | ---: |
+| scan-020 (crawl) | **0.70 cm** | 1.70 | 1.58 | 0.29 cm |
+| scan-026 (0.44° trim) | **5.26 cm** | 9.28 | 7.13 | 0.99 cm |
+| scan-028 (2.40° trim) | **4.45 cm** | 6.21 | 6.23 | 0.70 cm |
+
+**Both walking-pace captures shift, by 6–7× what the crawl does, and the one
+with the "good" trim is the WORSE of the two.**
+
+The decisive experiment — re-resolve each capture's bytes with the OTHER
+capture's mount extrinsic (`--d6-selfcheck --mount-from`), which is the whole
+trim hypothesis with nothing else changed:
+
+| | own trim | other capture's trim | change |
+| --- | ---: | ---: | ---: |
+| scan-026 | 5.26 cm | 5.00 cm | −5 % |
+| scan-028 | 4.45 cm | 4.21 cm | −5 % |
+
+Occupied 3 cm voxels move by **0.15 %**. Swapping the trims makes both maps
+very slightly *better*, which is what noise looks like and is impossible if
+either trim were the right one. **A 1.33° trim difference is worth a few
+centimetres at 3 m and the shift is not it.**
+
+### 4. THE OTHER SUSPECTS, RANKED AND TESTED
+
+**(a) Lidar↔pose clock offset — dead, again, now at 6× the speed.** ROUND 10's
+null result was measured on scan-020, where 100 ms of skew is 5 mm and
+invisible. Re-run on the walking captures with the new metric:
+
+| offset | scan-026 | scan-028 |
+| ---: | ---: | ---: |
+| −100 ms | 5.07 | 4.51 |
+| −50 ms | **4.91** | 4.99 |
+| 0 ms | 5.26 | 4.45 |
+| +50 ms | 6.49 | **4.44** |
+| +100 ms | 6.86 | 5.02 |
+
+Flat to ~7 %, and the two captures' minima disagree in sign. There is no
+offset. The default stays 0.
+
+**(b) Live-vs-offline divergence — dead.** The cached `map.bin` each capture
+sealed and an offline re-resolve of the same bytes have **identical extents**
+and voxel counts within 0.02 % (scan-028 and scan-020 produce the identical
+point count; scan-026 differs by 27 points out of 126,876). What the owner
+looked at is what is on disk. Outcome (c) is ruled out.
+
+**(c) ARCore rotation — tracks the gyro at r = 0.9994.** The recorded 400 Hz
+phone gyro cross-correlated against the ARCore-implied rotation rate over every
+pose interval: r = 0.9994 (026), 0.9993 (028), 0.9796 (020). Total rotation
+agrees to 2.5 %.
+
+Over multi-second horizons, with the gyro bias fitted, ARCore and the gyro
+disagree by:
+
+| horizon | scan-026 | scan-028 | scan-020 |
+| ---: | ---: | ---: | ---: |
+| 1 s | 0.10° | 0.11° | 0.08° |
+| 8 s | **0.89°** | **0.62°** | **0.33°** |
+| 16 s | 1.13° | 1.05° | 0.61° |
+
+At the D6's ~3 m median return range, 0.89° is 4.7 cm — the right size for the
+observed 5.26 cm. **But the disagreement does not say which of the two is
+wrong**, and a gyro scale-factor error at the walking captures' 15 °/s mean
+rate would produce the same signature.
+
+So it was tested rather than argued: the recorded pose stream was rewritten
+with a complementary filter (gyro integrated forward, corrected toward ARCore
+with time constant τ) and the containers re-resolved through the production
+pipeline.
+
+| τ | scan-026 @8 s | scan-028 @8 s |
+| ---: | ---: | ---: |
+| 0 (= ARCore, the control) | 5.26 | 5.98 |
+| 0.3 s | 5.95 | 5.97 |
+| 1 s | 5.62 | 5.90 |
+| 3 s | 7.14 | 6.09 |
+| 10 s | 5.97 | 6.30 |
+| 30 s | 5.88 | 6.00 |
+
+**No improvement at any time constant, and occupied voxels rise slightly.**
+Substituting the gyro for ARCore's mid-band orientation does not recover the
+error. Nothing was shipped from this; it is recorded as a falsified hypothesis
+so it is not re-tried from reasoning.
+
+**(d) IMU densification fallbacks are NOT the story, but the accounting is
+broken.** 32 % of returns fall back on both walking captures (31.5 % on the
+crawl) — the same fraction at 6× the speed, so it is not speed-related. But
+`imu_densified + imu_fallbacks` exceeds the point count, and the per-reason
+counters sum to a quarter of `imu_fallbacks` (scan-026: 54,393 fallbacks,
+11,280 accounted). ROUND 10 added those counters precisely so "43 % fall back"
+could be acted on; they do not add up. **Backlog.**
+
+### 5. WHAT IT ACTUALLY IS
+
+**Local geometry at walking pace is excellent. The trajectory is not.**
+
+The measurement floor — one 8 s window against itself — is **0.99 cm** on
+scan-026 and 0.70 cm on scan-028. Within a pass, at normal walking speed, the
+pipeline resolves surfaces to under a centimetre. That retires the whole class
+of per-return errors: the fan formula, the per-byte time slicing, the sample
+cadence, the mount extrinsic, the pose interpolation.
+
+What grows is the disagreement between passes, and both captures are LOOPS the
+app never closes:
+
+```
+$ engine_cli --d6-loopclose captures/scan-028.lscan --window 3
+  trajectory : 15.8 m walked, furthest from start 4.97 m, start->end 0.80 m
+  DECISION: correction-too-big
+  ICP: converged=1, 4519 inliers (0.756), rms 0.151 m
+  same place, mean nearest-neighbour distance: 51.39 cm -> 13.87 cm
+  measured drift over the loop: 0.7873 m, 18.870 deg
+```
+
+scan-026 ends **0.52 m** from where it started after 15.3 m; scan-028 ends
+**0.80 m** after 15.8 m. ROUND 11's `TrajectoryLoopCloser` finds the revisit on
+both and refuses both — 026 `icp-failed`, 028 `correction-too-big` /
+`geometry-rejected` depending on the submap window. Its refusals are *correct*
+given what it can observe: the rotations ICP proposes (14–19°) are impossible
+against the gyro cross-check above (≤1.1° over 16 s), which is the pushbroom
+null-space wander ROUND 11 built the observability gate for. **The gate is
+doing its job and the closure is therefore unavailable.** That is the honest
+state, and it is the largest open item.
+
+### 6. THE scan-028 TRIM ANOMALY — root-caused, three defects
+
+`sampleCount = 244, spreadDeg = 3.58, spreadP90Deg = 2.40`. 244 samples at
+30 Hz is 8.1 s, which is `MountTrimRefiner.DEFAULT_MAX_HOLD_MS` exactly — the
+**timeout** path, so `refined` was false and the label read "Set — … (as good
+as it got)".
+
+1. **The whole-hold mean was stored with its spread gated against nothing.**
+   `MountTrimSampler.capture` judges the trailing 1 s; the refiner then
+   discarded that trim and stored a mean over the whole hold, recomputing
+   `spreadDeg`/`spreadP90Deg` over the longer set and comparing them to no
+   threshold. A hold whose last second was perfect and whose first seven
+   wandered passed, with the wander in the stored mean. **Fixed**: the
+   whole-hold dispersion must clear the same gate, and falls back to the 1 s
+   trim (which did pass) when it does not — refusing would throw away a good
+   answer because a worse one existed.
+2. **The accuracy figure was computed and thrown away.** `stabilityDeg` (split
+   half) now reaches `MountTrim`, DataStore and `project.json`, defaulted to
+   −1 so every persisted 0.7.0 trim still decodes. `MountTrim.accuracyDeg` /
+   `accuracyIsPoor` / `qualityRank` are the API; `spreadP90Deg` keeps its
+   meaning and its name (ROUND 8's rule — silently redefining a number in a
+   field log is how the next report gets misread).
+3. **The auto-recapture at Start could make the trim worse, and ran constantly.**
+   Any gate-passing 1 s sample replaced the incumbent unconditionally, so a
+   0.35° guided hold could be overwritten by a 2.49° one. And `fromPreviousRun`
+   alone marks a trim stale — the owner's log shows `trimSource=restored-
+   previous-run` ~100 s after a `this-run` line, so the app process restarts far
+   more often than the "10 minutes" wording implies. **Fixed**: compares
+   `qualityRank` and keeps the better, logging which and why.
+
+Two smaller ones from the same reading, both in the owner's log:
+`mount hold released early: holdMs=0 samples=1 … gate=true` — the gate looked at
+the whole ring rather than the hold, so it reported a verdict on a hold that had
+not happened; and `evaluate()` did not filter `tracking` while `capture()` did,
+so the ring and the stored trim disagreed about what "the hold" was. Both fixed.
+
+### 7. THE START GATE — `TrackingWarmup`
+
+```
+14:13:20.167 [session] start: project=scan-025-…
+14:13:27.079 [ar] SECTION BREAK #1 reason=IMPOSSIBLE_STEP jump=2.015m/0.61deg gapMs=33
+14:13:53.646 [ar] SECTION BREAK #2 reason=IMPOSSIBLE_STEP jump=0.608m/0.45deg gapMs=33
+```
+
+**2.0 metres in 33 milliseconds, 6.9 seconds after Start**; scan-028 has the
+same shape 3.7 s in. Two of the session's three early breaks are inside the
+first seven seconds of a capture, and scan-026 — started after a 1.1 s mount
+hold from a settled tracker — has none in 61 s.
+
+**ARCore reported TRACKING with pose quality GOOD across every one of those
+jumps.** All three containers decode with `tracking_lost = 0` and a single pose
+quality throughout. The tracker does not report re-anchoring as a failure; it
+just moves. So the gate is not the tracking flag but a property of a WINDOW:
+2 s of poses with no step a person could not take. It **waits, never refuses**
+(4 s cap, then starts anyway with an amber note) — a Start that can refuse is
+ROUND 10 item 38 arriving by another road.
+
+### 8. THE GRADE STOPPED OVER-CLAIMING
+
+0.7.0 graded scan-026 **GOOD SCAN — "One section, no tracking drops, 8757
+points per metre"**, and scan-026 is the worst of the three captures measured.
+Every input to that grade is a count; nothing on the card looked at geometry,
+and the sentence did not say so.
+
+Now: the GOOD sentence says *"Coverage checks passed; alignment is not measured
+on the phone"*; a mount trim measured worse than 1.0° caps the grade at FAIR
+with a named reason (ROUND 11 measured 1.4° = 16.3 cm of doubled feature at
+3 m); and `LoopReturnTracker` reports the walk's return-to-start gap **under**
+the grade with its condition attached — *"if you finished where you began, that
+gap is tracker drift and it is the largest error in this scan"* — and
+deliberately NOT as a grade input, because the app cannot know whether the
+operator meant to finish where they started.
+
+### 9. TESTS
+
+* Engine **575 cases / 2,458,000 assertions**, ctest 7/7 serial (was 570 /
+  2,457,970). New: `test_round12_map_consistency.cpp` (5 cases).
+* `:core` **480**, `:app` unit **74**. New: `MountTrimRound12Test` (6),
+  `Round12StartGateAndGradeTest` (9).
+* Emulator (`b4_test`) instrumented: **17 / 17**, 0 failures — run against a
+  native library rebuilt from this round's engine sources, so the new
+  `map_consistency.cpp` is compiled into the Android ABI build too.
+* ABI unchanged at **9** — nothing new crosses the C ABI this round.
+
+### 10. WHAT IS STILL OPEN
+
+* **The drift itself is not corrected.** Both of the owner's walks are loops
+  with 0.5–0.8 m of end gap and the loop closer refuses them for reasons it can
+  state. Making closure work for a pushbroom means constraining the rotation
+  from the IMU (which the gyro cross-check shows is good to ~1° over 16 s)
+  instead of letting ICP invent 14–19° in its null space, and solving for
+  translation only. That is the next round's headline and it changes recorded
+  geometry, so it needs the same standard of proof ROUND 11 held itself to.
+* **`--d6-selfcheck` is not on the phone.** The score exists only in the engine
+  CLI; the summary card still cannot measure alignment. Wiring it would be an
+  additive C ABI call (ABI 10) plus JNI plus the card.
+* **scan-026's vertical extent is unexplained.** 9 % of its points are below
+  −2 m and 10 % above +2 m, with secondary clusters at ±3.0 and ±4.5 m at ~3.1 m
+  range, while scan-028 — minutes later — is a clean 3 m room (nothing below
+  −2.4 m or above +2.1 m). It may simply be a different, taller space; the
+  owner can say in one sentence and it is worth asking.
+* **The densifier's fallback accounting does not add up** (§4d).
+* Auto re-resolve on seal was scoped and dropped: with loop closure refusing,
+  an offline re-resolve reproduces the live cloud to within 0.02 %, so it would
+  cost a minute of phone time and change nothing.
+* The emulator suite passes but has no case for the start gate or the refined
+  trim path — those are covered by JVM tests only, because both need a pose
+  stream and `CaptureArController` needs ARCore.
+* Nothing was run on kc-m4; macOS/desktop untouched. No commit, no push.

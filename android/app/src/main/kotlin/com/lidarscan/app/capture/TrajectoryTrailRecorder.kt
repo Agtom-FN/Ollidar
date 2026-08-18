@@ -68,6 +68,19 @@ class TrajectoryTrailRecorder(
     private var lastKeptZ = Float.NaN
 
     /**
+     * ROUND 12: the walk's return to its own start, in constant space. The
+     * trail ring drops its oldest points, so the start is not in it after a
+     * long walk — see [com.lidarscan.core.capture.LoopReturnTracker].
+     */
+    private val loopReturn = com.lidarscan.core.capture.LoopReturnTracker()
+
+    /** Metres from the walk's current position to its start, once it is a loop. */
+    val loopEndGapM: Float? get() = loopReturn.endGapMeters
+
+    /** The closest the walk ever came back to its start. */
+    val loopClosestApproachM: Float? get() = loopReturn.closestApproachMeters
+
+    /**
      * One ARCore frame, from the GL thread. Cheap by construction: the trail
      * refuses points closer than its spacing, so a standing operator costs one
      * distance comparison per frame and publishes nothing.
@@ -90,6 +103,7 @@ class TrajectoryTrailRecorder(
         }
         lastKeptX = x
         lastKeptZ = z
+        loopReturn.add(x, z, _totalPathM.value)
         _points.value = trail.normalized()
         _pathLengthM.value = trail.pathLengthM()
     }
@@ -102,5 +116,6 @@ class TrajectoryTrailRecorder(
         _totalPathM.value = 0f
         lastKeptX = Float.NaN
         lastKeptZ = Float.NaN
+        loopReturn.reset()
     }
 }

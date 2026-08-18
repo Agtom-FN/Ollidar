@@ -2687,6 +2687,24 @@ private fun ScanGradeBanner(summary: com.lidarscan.core.capture.ScanSummary) {
         )
         Spacer(Modifier.height(4.dp))
         Text(summary.gradeReason, style = MonoMeta, color = InkFaint)
+        // ROUND 12: the conditional drift line, under the grade and not part of
+        // it — the app cannot know whether the operator meant to finish where
+        // they started, so it states the condition instead of assuming it.
+        summary.loopReturnNote?.let { note ->
+            Spacer(Modifier.height(4.dp))
+            Text(
+                note,
+                style = MonoMeta,
+                color = if ((summary.loopEndGapMeters ?: 0.0) >=
+                    com.lidarscan.core.capture.LoopReturnTracker.WORTH_MENTIONING_M
+                ) {
+                    SemWarn
+                } else {
+                    InkFaint
+                },
+                modifier = Modifier.testTag("scanSummaryLoopNote"),
+            )
+        }
     }
 }
 

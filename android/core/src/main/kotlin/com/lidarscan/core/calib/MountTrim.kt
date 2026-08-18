@@ -100,8 +100,61 @@ data class MountTrim(
      * would put us straight back in ROUND 7's field bug 1.
      */
     val spreadP90Deg: Double = 0.0,
+    /**
+     * ROUND 12 — the number that actually means "how accurate is this trim".
+     *
+     * The split-half repeatability of the stored mean: the hold is cut in two,
+     * each half averaged separately, and this is the angle between the two
+     * answers. ROUND 11 computed it, showed it in the ring, and then **threw it
+     * away** — nothing about it reached the container, so the only per-capture
+     * evidence of trim quality on disk was [spreadP90Deg], which measures a
+     * completely different thing (the jitter of individual ARCore frames about
+     * the mean, which holding longer does not reduce).
+     *
+     * That gap produced a real misreading. The owner's `scan-028` carries
+     * `sampleCount = 244, spreadP90Deg = 2.40` and `scan-026` carries
+     * `sampleCount = 34, spreadP90Deg = 0.44`, which reads as a 5x difference
+     * in trim quality — and the two stored trims are **1.33 apart**, which
+     * is at most 3 cm of point displacement at 1.3 m. Re-resolving each
+     * capture with the OTHER one's mount extrinsic moves the map by 0.15 % of
+     * its occupied voxels. The two numbers were never comparable: 0.44 is a
+     * one-second dispersion and 2.40 is an eight-second one.
+     *
+     * Negative means "not measured" (too few samples, or a pre-0.7.1 trim).
+     */
+    val stabilityDeg: Double = -1.0,
 ) {
     val rotation: Quat get() = Quat(qx, qy, qz, qw).normalized()
+
+    /**
+     * ROUND 12 — the one number to judge this trim by, in degrees, or `null`
+     * when it was never measured (a trim taken before 0.7.1, or from a hold too
+     * short to split).
+     *
+     * Read [stabilityDeg] and NOT [spreadP90Deg]: the latter is a dispersion
+     * over whatever window happened to be averaged, so it is not comparable
+     * between two trims taken with different hold lengths. See [stabilityDeg].
+     */
+    val accuracyDeg: Double? get() = stabilityDeg.takeIf { it >= 0.0 }
+
+    /**
+     * True when the trim is measured AND worse than [WARN_STABILITY_DEG] — i.e.
+     * the hold passed the movement gate but never converged, and the operator
+     * should be told before this trim goes into a scan. An unmeasured trim is
+     * not "poor", it is unknown, and is reported as such rather than as a
+     * warning nobody can act on.
+     */
+    val accuracyIsPoor: Boolean get() = accuracyDeg?.let { it > WARN_STABILITY_DEG } == true
+
+    /**
+     * Ranking for "is this candidate better than the one already held", used by
+     * the auto-refresh at Start. Lower is better. A measured stability wins over
+     * an unmeasured one; between two unmeasured trims the p90 breaks the tie,
+     * but only as a last resort, because p90s over different hold lengths are
+     * not comparable (which is exactly the trap ROUND 12 found).
+     */
+    val qualityRank: Double
+        get() = accuracyDeg ?: (MountTrim.UNMEASURED_RANK_BASE + spreadP90Deg)
 
     /** How far this trim tilts the mount away from the nominal, in degrees. 0 = the rig was held exactly nominal. */
     val magnitudeDeg: Double get() = Math.toDegrees(Quat.IDENTITY.angleTo(rotation))
@@ -272,6 +325,33 @@ data class MountTrim(
         const val MAX_SPREAD_OUTLIER_DEG = 6.0
 
         /**
+         * ROUND 12 — the accuracy floor, on [stabilityDeg].
+         *
+         * ROUND 11 measured what a trim error costs through the production
+         * assembler (`engine/tests/test_round11_mount_trim.cpp`): 0.8 degrees
+         * paints an overhead feature 6.6 cm apart between the two legs of an
+         * out-and-back at 3 m, 1.4 degrees paints it 16.3 cm apart. So one
+         * degree is where a trim stops being a rounding error and starts being
+         * the largest thing wrong with the scan.
+         *
+         * This is a WARNING threshold and not a refusal, deliberately. The gate
+         * ([MAX_SPREAD_P90_DEG]) refuses a rig that is moving; this one flags a
+         * hold that was still enough to pass and still did not converge, which
+         * is a thing the operator can fix by holding longer or bracing better —
+         * and refusing to start a scan over it would be worse than scanning
+         * with a 1.2 degree trim.
+         */
+        const val WARN_STABILITY_DEG = 1.0
+
+        /**
+         * Every measured stability sorts ahead of every unmeasured one. The
+         * gate already caps p90 at [MAX_SPREAD_P90_DEG] and stability at
+         * [WARN_STABILITY_DEG] is still acceptable, so 100 is far outside both
+         * scales and the ordering can never be ambiguous.
+         */
+        const val UNMEASURED_RANK_BASE = 100.0
+
+        /**
          * The trim for a rig whose phone attitude reads [hold] while it is held
          * in its scanning pose. See the class header for the derivation.
          */
@@ -282,6 +362,7 @@ data class MountTrim(
             sampleCount: Int = 0,
             spreadDeg: Double = 0.0,
             spreadP90Deg: Double = 0.0,
+            stabilityDeg: Double = -1.0,
         ): MountTrim {
             val q = (hold.normalized().conjugate() * REFERENCE_HOLD).normalized()
             return MountTrim(
@@ -291,6 +372,7 @@ data class MountTrim(
                 sampleCount = sampleCount,
                 spreadDeg = spreadDeg,
                 spreadP90Deg = spreadP90Deg,
+                stabilityDeg = stabilityDeg,
             )
         }
     }
