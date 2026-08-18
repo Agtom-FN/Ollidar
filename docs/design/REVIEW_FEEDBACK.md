@@ -1279,6 +1279,166 @@ VERSION stays **0.8.0**.
     card in plain words: "surfaces repeat within X cm" (or "not measurable — single
     pass"). The honest accuracy figure, replacing vibes with measurement.
 
+### Resolution — 2026-08-18 (0.9.0, round 15)
+
+**Headline: the break is now invisible while you walk, the scan processes
+itself when you stop, and the plan the app has been able to draw since A12 was
+being cut on the wrong axis.**
+
+54. **Fixed, and the direction is the opposite of the offline one.**
+
+    ROUND 13's correction was already analytic — `T_k = pose_after ·
+    pose_before⁻¹`, ARCore's own re-anchor written down in the pose stream —
+    and everything needed to apply it live was already on the phone. Offline,
+    sections are brought into the LAST section's frame because that is the
+    frame ARCore currently believes. **Live, the new frame is mapped onto the
+    OLD one** (`C ← C · T⁻¹`), because the map already on screen is what the
+    operator's hands are steering by: nothing drawn moves, and the points
+    arriving after the snap land where they are expected.
+
+    It is applied **before** the pose that announced the break is pushed
+    (`CaptureArController.publishPose`), so not even one frame of shattered map
+    reaches the display. `Engine::push_pose` now records the RAW pose and feeds
+    the CORRECTED one to the interpolator, the densifier and the assembler.
+
+    **Proof that the recording did not change** (`test_round15_live_heal.cpp`):
+    the same synthetic capture — a ROUND 8 walk past a wall with a 0.89 m /
+    11° re-anchor injected at t = 2.0 s — recorded twice, healed and unhealed.
+    `streams/lidar.bin` and `streams/poses_ar.bin` are compared byte for byte
+    after the stream header, plus a field-by-field check of the header itself
+    (it carries `t_start_utc_ns`, the wall clock, which two runs cannot share);
+    and the offline re-resolve of the two containers is **bit-identical,
+    including the discontinuity**. `streams/map.bin` — the resolved cache
+    `reprocess.h` already documents as a cache — is the one artifact that
+    legitimately differs, and the test asserts that too, so it is a stated
+    property rather than an accident.
+
+    | | seam offset |
+    | --- | ---: |
+    | unhealed live map | **1.463 m** |
+    | healed live map | **0.027 m** |
+    | control (no break at all) | 0.007 m |
+
+    The 2.7 cm residual is not slop: `T` is measured across a 33 ms interval in
+    which the operator was also moving, so their own ~1° of gait yaw is inside
+    it (11° injected, 12.0° recovered). That is the term ROUND 13 bounded and
+    deliberately did not try to remove, and it is why the offline stitch — with
+    submaps, refinement and a flat-floor referee — still has a job.
+
+    **The cue now fires only for a break that could NOT be healed.** The engine
+    refuses a bracket that cannot define a rigid transform (a pose the tracker
+    disowned, a degenerate rotation, non-increasing stamps) and refuses it
+    WITHOUT changing the accumulated correction; `CueConditions.sectionBreaks`
+    is fed from `unhealedSectionBreaks`, not from the section count. Every
+    break is still recorded, still goes in the manifest and still gets stitched
+    offline.
+
+55. **Done, and the ordering is the whole design.** Stop → seal → verify →
+    **process** → card → Projects:
+
+    1. Stop seals the container. Nothing about ROUND 10 changes: the card is
+       what holds navigation (`CaptureScreen` navigates when `sessionSummary`
+       goes null), so it is also the only place a progress bar can live without
+       inventing a second modal.
+    2. Processing starts **after** `projectStore.open()` has re-read the sealed
+       container and **before** `_sealedProjectId.tryEmit`. Both halves matter:
+       nothing that runs after a successful verify can lose the scan, and the
+       navigation is emitted whatever processing does.
+    3. It runs on `Dispatchers.IO` against the sealed **directory**.
+       `scan_lscan_reprocess_d6` is handle-less and opens its own PageStore, so
+       it shares nothing with the capture engine — which is what makes it safe
+       for the tab to have already re-armed and for ROUND 14's
+       `resetWorldFrame()` to be rebuilding the ARCore session on a new Start
+       while it works.
+    4. The card grows a line and a bar, then swaps to the POST-process numbers:
+       sections joined, height spread, the mount warning if the watchdog fired,
+       and item 57's repeat-accuracy line.
+
+    **Fast path:** one section and no warning skips the stitch and the second
+    cloud write but still runs the ruler — a clean capture is exactly the one
+    whose owner will believe the number.
+
+    **Failure never loses a scan.** Any throw, any null, and any `ran == false`
+    (ROUND 13's silent-cancel signature) all land on *"Processing failed — the
+    scan is saved. Open it and tap Process to try again."* Dismissing the card
+    does not cancel a run in flight.
+
+56. **Wired — and the plan the app could already draw was being cut on the
+    wrong axis.**
+
+    `processing_engine.cpp` hard-coded `plan::UpAxis::kZ`. That is right for a
+    Mid-360, whose session is gravity-aligned into a Z-up frame, and wrong for
+    every D6 capture this project has ever taken, because a D6 session's world
+    frame is ARCore's, where **+Y is up**. A Z cut takes a 50 cm VERTICAL slab
+    through the room and produces a plausible-looking drawing of a wall: it
+    yields walls, it yields a scale, and it can never close a room. Measured on
+    scan-033 the Z cut holds **9,211 points over an 8.4 × 2.8 m "footprint"**
+    (2.8 m being the ceiling) against **21,143 over 14.5 × 9.4 m** for Y.
+    Fixed, and the new path takes the axis as an option and defaults it to +Y.
+
+    New: `post::floor_plan_from_lscan()` (container in, plan out — prefers
+    `processed/map_stitched.bin`, then the live cache, then a re-resolve),
+    `plan::write_plan_png()` (a hand-rolled deterministic PNG writer: stored
+    deflate blocks, no zlib anywhere in the tree), ABI 10 → **11** with
+    `scan_lscan_floor_plan`, `nativeProcFloorPlan`, and a Review → Floor plan
+    screen that previews the PNG and shares PNG/PDF/DXF through MediaStore
+    Downloads like every other export. (The old plan export called
+    `ShareTargets.shareFile` on a file in private storage only — the exact
+    "file went nowhere" failure ROUND 7 fixed everywhere else.)
+
+    **And the honest part.** A COIN-D6's fan is vertical and its 10 Hz
+    revolution paints a LINE. A 50 cm horizontal band is thin evidence even on
+    the best walk: scan-033's plan slice holds 21,143 of 220,438 points in
+    1,327 cells over a 14 m room, which fits 9 walls / 15.0 m and **closes no
+    room**. So the pipeline has a stated ladder — `{3,2,1}` points per cell,
+    then coarser grids — and a second source of geometry, the **floor map**: a
+    5 cm downward projection in which a cell counts as structure only when its
+    returns span ≥ 0.60 m vertically. A wall is hit from skirting to coving as
+    the fan sweeps past; a floor, a tabletop and a sofa back are not. That one
+    test turns an unusable grey blob into a room outline. On scan-033 it gives
+    **10 walls / 24.9 m from 99,373 points in 679 structure cells**, tracing
+    three sides of the flat and an interior partition, over a 14.65 × 9.80 m
+    extent at 122 px/m. When nothing can be fitted at all the result is
+    `MODE density` and the picture is the returns themselves at a stated
+    scale — labelled on its own face, because an empty sheet called "floor
+    plan" is a lie and a scaled picture of real returns is a measurement.
+
+    Across all seven of the owner's captures the plan produces walls; **only
+    scan-029 closes a room, and that room is 1.60 m²**. Honest one-liner:
+    *this is a good, scaled floor MAP and a weak floor PLAN — the outlines are
+    real and measurable, the room polygons are not there yet.*
+
+57. **Done, and "not measurable" is an answer.** ROUND 12's
+    `measure_map_consistency` is now computed inside
+    `reprocess_d6_container()` — free, since the cloud and its point times are
+    already in hand — carried on `ReprocessReport::consistency`, written into
+    `processed/stitch.json`, and exposed through a new
+    `scan_lscan_reprocess_d6_ex()` plus six appended `double[]` slots (16–21).
+    Appended, not inserted, and `StitchResult.fromNative` still accepts a
+    16-long array, so a native library that has not been rebuilt reports no
+    self-check instead of reading a slot that is not there.
+
+    The card says **"Surfaces repeat within X cm (measured over N s; this
+    measurement's own floor is Y cm)."**, or, when the scan never covered the
+    same surface twice, **"Repeat accuracy: not measurable — nothing in this
+    scan was covered twice. Walk past the same wall again and it can be
+    measured."** A single pass down a corridor paints nothing twice, and a card
+    that printed 0.0 cm for that would be claiming a perfect map on no
+    evidence.
+
+    On the owner's fixtures, every one measurable: **0.70 cm** (scan-020, the
+    crawl), **1.74 cm** (scan-035), **1.97 cm** (scan-033), **2.45 cm**
+    (scan-034), **4.45 cm** (scan-028), **5.26 cm** (scan-026), **5.85 cm**
+    (scan-030), **6.00 cm** (scan-029) — against measurement floors of 0.42 to
+    2.17 cm. Unchanged to the second decimal from what ROUND 12 and ROUND 14
+    measured: item 57 moved the number onto a card, it did not move the number.
+
+VERSION **0.9.0**. Engine **603 cases / 2,509,102+ assertions**, ctest serial;
+`:core` **538**, `:app` **85**. ABI **10 → 11, additive only** — ABI 10's
+`scan_reprocess_options` and `scan_reprocess_result` are byte-identical, which
+is exactly why the ruler arrives on a new entry point rather than as two more
+fields on the old one.
+
 ## Round 14 — owner field test of 0.8.0 (2026-08-18, scan-033/034/035 + log 1909)
 
 > *"The new scan is much better when i go around … but its not good with tilting

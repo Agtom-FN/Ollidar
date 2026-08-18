@@ -87,6 +87,28 @@ data class PoseSectionBreak(
 }
 
 /**
+ * ROUND 15 item 54 — a break TOGETHER WITH THE TWO POSES THAT STRADDLE IT.
+ *
+ * [PoseSectionBreak] is `@Serializable` and goes into `project.json`, so it
+ * deliberately carries only the summary numbers; the poses themselves are a
+ * live-capture concern with a lifetime of one frame. But live re-anchor
+ * healing needs exactly those two poses — the analytic transform is
+ * `after * before⁻¹` and nothing downstream can reconstruct them — so the
+ * tracker hands them back beside the break instead of inside it.
+ *
+ * [before] is the last pose in the OLD world frame (for a tracking gap, the
+ * last one that was actually tracking, not the last one seen) and [after] is
+ * the first in the new one. That is the same pair
+ * `post::stitch_sections` re-derives from the recorded stream, so the live
+ * and offline corrections are the same arithmetic on the same inputs.
+ */
+data class SectionBreakBracket(
+    val breakInfo: PoseSectionBreak,
+    val before: PoseSample,
+    val after: PoseSample,
+)
+
+/**
  * Consumes the same [PoseSample] stream the keyframe recorder and the mount
  * re-zero already read, and reports section breaks. Pure `:core`, no ARCore
  * types, therefore unit-testable on a bare JVM — which matters, because no
@@ -109,14 +131,38 @@ class PoseSectionTracker(
     private var wasTracking = true
 
     @Synchronized
-    fun add(sample: PoseSample): PoseSectionBreak? {
+    fun add(sample: PoseSample): PoseSectionBreak? = addBracketed(sample)?.breakInfo
+
+    /**
+     * ROUND 15: [add], plus the two poses the break was measured between.
+     * One detector, one code path — [add] is this with the bracket dropped —
+     * so the live healer and the manifest can never disagree about which
+     * frames a seam sits between.
+     */
+    @Synchronized
+    fun addBracketed(sample: PoseSample): SectionBreakBracket? {
         val prev = previous
+        // The anchor a TRACKING_REGAINED break is measured against is
+        // `lastTracked`, and `detect` is about to consume it, so it is read
+        // here before the bookkeeping below overwrites it.
+        val trackedAnchor = lastTracked
         previous = sample
         val break_ = detect(prev, sample)
         if (sample.tracking) lastTracked = sample
         wasTracking = sample.tracking
-        if (break_ != null && breaksList.size < maxBreaks) breaksList.add(break_)
-        return break_
+        if (break_ == null) return null
+        if (breaksList.size < maxBreaks) breaksList.add(break_)
+        val before = when (break_.reason) {
+            PoseSectionBreak.Reason.TRACKING_REGAINED -> trackedAnchor
+            PoseSectionBreak.Reason.IMPOSSIBLE_STEP -> prev
+        } ?: // No usable anchor — a TRACKING_REGAINED break whose gap runs back
+            // to before the first tracked pose. Returned as a DEGENERATE
+            // bracket (both ends the same pose) rather than as null, because
+            // the break is real and must still be recorded and still counted;
+            // the healer refuses a bracket whose two stamps are equal, which
+            // is precisely the case the operator cue exists for.
+            return SectionBreakBracket(break_, sample, sample)
+        return SectionBreakBracket(break_, before, sample)
     }
 
     private fun detect(prev: PoseSample?, sample: PoseSample): PoseSectionBreak? {
@@ -204,9 +250,25 @@ class PoseSectionTracker(
     }
 }
 
-/** Convenience for the capture panel: what to say about [sectionCount] sections. */
-fun sectionHint(sectionCount: Int): String? = when {
+/**
+ * Convenience for the capture panel: what to say about [sectionCount] sections.
+ *
+ * ROUND 15 item 54 changed what there is to say, and it depends entirely on
+ * whether the live healer absorbed the break. A healed break is invisible: the
+ * map on screen never came apart, the seam is still recorded and the offline
+ * refine still runs on it, and telling the operator their scan is "in 3
+ * sections" while they are looking at a continuous room would be describing a
+ * problem they cannot see and cannot act on. So a fully-healed capture gets a
+ * quiet, factual line and no instruction; an unhealed break gets the ROUND 7
+ * sentence, because that one IS actionable.
+ */
+fun sectionHint(sectionCount: Int, unhealedBreaks: Int = sectionCount - 1): String? = when {
     sectionCount <= 1 -> null
+    unhealedBreaks <= 0 ->
+        "The camera re-anchored ${sectionCount - 1} time" +
+            (if (sectionCount == 2) "" else "s") +
+            " — the map on screen was corrected as it happened, and the joins are recorded " +
+            "so processing can refine them."
     else ->
         "Tracking jumped — this scan is now in $sectionCount sections. They are recorded with the scan and " +
             "aligned when you process it; walking the seam again with good texture in view helps."

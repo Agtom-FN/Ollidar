@@ -201,6 +201,17 @@ Java_com_lidarscan_app_engine_ScanEngineNative_nativeProcOpenRecordedCloud(JNIEn
 //   2 sections       6 moved_m         10 end_gap_after    14 poses
 //   3 seams          7 vertical_before 11 moved_deg        15 poses_untracked
 //
+// ROUND 15 item 57 APPENDS the ROUND 12 self-consistency ruler, which the
+// engine now computes inside the same resolve for free:
+//
+//   16 selfcheck_measurable   18 selfcheck_floor_m     20 selfcheck_seconds
+//   17 selfcheck_offset_m     19 selfcheck_windows     21 selfcheck_p90_m
+//
+// Appended rather than inserted, and the Kotlin decoder still accepts a
+// 16-long array, so an older StitchResult.fromNative reading a newer array
+// (or the reverse, in a partially-updated build) reads the same numbers in
+// the same slots and simply has no self-check.
+//
 // It runs the WHOLE resolve, so it blocks for tens of seconds — the Kotlin
 // side calls it on Dispatchers.IO and drives a progress bar from the callback
 // below. Progress crosses back as a plain jfloat through a global ref to the
@@ -209,9 +220,9 @@ Java_com_lidarscan_app_engine_ScanEngineNative_nativeProcOpenRecordedCloud(JNIEn
 JNIEXPORT jdoubleArray JNICALL
 Java_com_lidarscan_app_engine_ScanEngineNative_nativeProcReprocessD6(
     JNIEnv* env, jclass, jstring lscan_dir, jboolean refine, jobject progress) {
-  jdoubleArray out = env->NewDoubleArray(16);
+  jdoubleArray out = env->NewDoubleArray(22);
   if (out == nullptr) return nullptr;
-  jdouble v[16] = {0};
+  jdouble v[22] = {0};
 
   scan_reprocess_options opts{};
   opts.stitch_sections = 1;
@@ -232,8 +243,9 @@ Java_com_lidarscan_app_engine_ScanEngineNative_nativeProcReprocessD6(
   }
 
   scan_reprocess_result r{};
-  const scan_error_t e = scan_lscan_reprocess_d6(
-      ToStdString(env, lscan_dir).c_str(), &opts, &r,
+  scan_selfcheck_result sc{};
+  const scan_error_t e = scan_lscan_reprocess_d6_ex(
+      ToStdString(env, lscan_dir).c_str(), &opts, &r, &sc,
       ctx.cb == nullptr ? nullptr
                         : +[](float fraction, void* user) -> int32_t {
                             auto* c = static_cast<Ctx*>(user);
@@ -278,8 +290,125 @@ Java_com_lidarscan_app_engine_ScanEngineNative_nativeProcReprocessD6(
     v[13] = r.mount_impossible_fraction;
     v[14] = static_cast<jdouble>(r.poses);
     v[15] = static_cast<jdouble>(r.poses_untracked);
+    v[16] = sc.measurable ? 1 : 0;
+    v[17] = sc.nearest_offset_m;
+    v[18] = sc.self_floor_m;
+    v[19] = static_cast<jdouble>(sc.windows);
+    v[20] = static_cast<jdouble>(sc.nearest_separation) * sc.window_seconds;
+    v[21] = sc.p90_offset_m;
   }
-  env->SetDoubleArrayRegion(out, 0, 16, v);
+  env->SetDoubleArrayRegion(out, 0, 22, v);
+  return out;
+}
+
+// ── ROUND 15 item 56: the floor plan ──────────────────────────────────────
+//
+// Handle-less and static, like the reprocess above and for the same reason:
+// it works on a DIRECTORY, owns its own PageStore inside the engine, and must
+// not publish into the process-wide ProcessingEngine that Review is reading
+// from. (That sharing is exactly what makes the existing nativeProcRunPlan
+// path fragile — it slices whatever cloud happens to be loaded, with no
+// project scoping at all.)
+//
+// Returns a double[24] of numbers; the three output paths come back through
+// nativeProcPlanFilePaths so the strings do not have to be marshalled twice.
+//
+//   0 ran                  8 walls            16 largest_room_area_m2
+//   1 mode                 9 walls_paired     17 extent_x_m
+//   2 walls_from_floor_map 10 openings        18 extent_y_m
+//   3 no_room_closed       11 doors           19 png_px_per_m
+//   4 cloud_points         12 windows         20 png_scale_bar_m
+//   5 band_points          13 rooms           21 png_w
+//   6 map_points           14 wall_length_m   22 png_h
+//   7 occupied_cells       15 room_area_m2    23 map_cells
+namespace {
+scan_plan_result g_plan_result{};
+bool g_have_plan_result = false;
+}  // namespace
+
+JNIEXPORT jdoubleArray JNICALL
+Java_com_lidarscan_app_engine_ScanEngineNative_nativeProcFloorPlan(
+    JNIEnv* env, jclass, jstring lscan_dir, jdouble slice_min_m, jdouble slice_max_m,
+    jdouble grid_res_m, jint png_max_px, jstring out_dir, jstring base_name, jstring title) {
+  const std::string dir = ToStdString(env, lscan_dir);
+  const std::string odir = out_dir == nullptr ? std::string() : ToStdString(env, out_dir);
+  const std::string base = base_name == nullptr ? std::string() : ToStdString(env, base_name);
+  const std::string ttl = title == nullptr ? std::string() : ToStdString(env, title);
+
+  scan_plan_options opts{};
+  opts.slice_min_m = slice_min_m;
+  opts.slice_max_m = slice_max_m;
+  opts.grid_res_m = grid_res_m;
+  // ARCore's world is +Y up. The default is stated here as well as in the
+  // engine because getting it wrong produces a plausible-looking drawing of a
+  // VERTICAL slab, which is what the app shipped through nativeProcRunPlan.
+  opts.up_axis = 1;
+  opts.write_dxf = 1;
+  opts.write_pdf = 1;
+  opts.write_png = 1;
+  opts.png_max_px = static_cast<uint32_t>(png_max_px);
+  opts.out_dir = odir.empty() ? nullptr : odir.c_str();
+  opts.base_name = base.empty() ? nullptr : base.c_str();
+  opts.title = ttl.empty() ? nullptr : ttl.c_str();
+
+  scan_plan_result r{};
+  const scan_error_t e = scan_lscan_floor_plan(dir.c_str(), &opts, &r);
+  g_plan_result = r;
+  g_have_plan_result = (e == SCAN_OK);
+
+  jdoubleArray out = env->NewDoubleArray(24);
+  if (out == nullptr) return nullptr;
+  jdouble v[24] = {0};
+  if (e == SCAN_OK) {
+    v[0] = r.ran ? 1 : 0;
+    v[1] = static_cast<jdouble>(r.mode);
+    v[2] = r.walls_from_floor_map ? 1 : 0;
+    v[3] = r.no_room_closed ? 1 : 0;
+    v[4] = static_cast<jdouble>(r.cloud_points);
+    v[5] = static_cast<jdouble>(r.band_points);
+    v[6] = static_cast<jdouble>(r.map_points);
+    v[7] = static_cast<jdouble>(r.occupied_cells);
+    v[8] = static_cast<jdouble>(r.walls);
+    v[9] = static_cast<jdouble>(r.walls_paired);
+    v[10] = static_cast<jdouble>(r.openings);
+    v[11] = static_cast<jdouble>(r.doors);
+    v[12] = static_cast<jdouble>(r.windows);
+    v[13] = static_cast<jdouble>(r.rooms);
+    v[14] = r.total_wall_length_m;
+    v[15] = r.total_room_area_m2;
+    v[16] = r.largest_room_area_m2;
+    v[17] = r.extent_x_m;
+    v[18] = r.extent_y_m;
+    v[19] = r.png_px_per_m;
+    v[20] = r.png_scale_bar_m;
+    v[21] = static_cast<jdouble>(r.png_w);
+    v[22] = static_cast<jdouble>(r.png_h);
+    v[23] = static_cast<jdouble>(r.map_cells);
+  }
+  env->SetDoubleArrayRegion(out, 0, 24, v);
+  return out;
+}
+
+// [png, pdf, dxf, cloudSource]. An entry is "" when that file was not
+// written — a density-mode plan has no DXF and no PDF, deliberately.
+JNIEXPORT jobjectArray JNICALL
+Java_com_lidarscan_app_engine_ScanEngineNative_nativeProcPlanFilePaths(JNIEnv* env, jclass) {
+  jclass str_cls = env->FindClass("java/lang/String");
+  if (str_cls == nullptr) return nullptr;
+  jobjectArray out = env->NewObjectArray(4, str_cls, nullptr);
+  if (out == nullptr) return nullptr;
+  const char* empty = "";
+  const char* vals[4] = {
+      g_have_plan_result ? g_plan_result.png_path : empty,
+      g_have_plan_result ? g_plan_result.pdf_path : empty,
+      g_have_plan_result ? g_plan_result.dxf_path : empty,
+      g_have_plan_result ? g_plan_result.cloud_source : empty,
+  };
+  for (jsize i = 0; i < 4; ++i) {
+    jstring s = env->NewStringUTF(vals[i]);
+    env->SetObjectArrayElement(out, i, s);
+    env->DeleteLocalRef(s);
+  }
   return out;
 }
 

@@ -53,6 +53,7 @@
 #include "scanengine/record/lscan.h"
 #include "scanengine/slam/post/d6_resolve.h"
 #include "scanengine/slam/post/mount_watch.h"
+#include "scanengine/slam/post/lscan_plan.h"
 #include "scanengine/slam/post/map_consistency.h"
 #include "scanengine/slam/post/trajectory_loop.h"
 
@@ -1364,6 +1365,45 @@ int cmd_d6_dump(const std::string& lscan_dir, const std::string& out_prefix,
 // these bytes with that capture's trim" and "resolve them at a different
 // lidar->pose offset", and a score is only useful if the thing being scored
 // can be varied.
+
+// ROUND 15 item 56. The floor plan, from a sealed container, on the command
+// line — the same post::floor_plan_from_lscan() the C ABI and therefore the
+// phone call, so what the owner sees here is what the phone produces.
+int cmd_d6_plan(const std::string& lscan_dir, post::LscanPlanOptions opts) {
+  post::LscanPlanReport r;
+  const Status s = post::floor_plan_from_lscan(lscan_dir, opts, &r);
+  if (!s.ok()) {
+    std::fprintf(stderr, "d6-plan: %s (%s)\n", error_str(s.error()), last_error_message());
+    return kExitFailed;
+  }
+  std::printf("d6-plan: %s\n", lscan_dir.c_str());
+  std::printf("  cloud %llu points from %s\n", static_cast<unsigned long long>(r.cloud_points),
+              r.cloud_source);
+  std::printf("  slice %.2f-%.2f m (up %s), %llu points in band, %u occupied cells "
+              "%ux%u @ %.3f m (min %u pts/cell)\n",
+              r.slice_min_m, r.slice_max_m, plan::to_string(opts.up),
+              static_cast<unsigned long long>(r.band_points), r.occupied_cells, r.grid_w, r.grid_h,
+              r.grid_res_used_m, r.min_cell_points_used);
+  std::printf("  MODE %s — %s\n", plan::to_string(r.mode), r.summary);
+  std::printf("  floor map: %llu points spanning >=%.2f m in a %.2f m cell -> %u cells\n",
+              static_cast<unsigned long long>(r.map_band_points), opts.map_min_span_m,
+              opts.map_res_m, r.map_cells);
+  std::printf("  walls %u (%u with MEASURED thickness) from %s, openings %u (%u door, %u window), "
+              "rooms %u\n",
+              r.walls, r.walls_paired, r.walls_from_floor_map ? "the FLOOR MAP" : "the plan slice",
+              r.openings, r.doors, r.windows, r.rooms);
+  std::printf("  wall length %.2f m, room area %.2f m2 (largest %.2f m2), extent %.2f x %.2f m\n",
+              r.total_wall_length_m, r.total_room_area_m2, r.largest_room_area_m2, r.extent_x_m,
+              r.extent_y_m);
+  if (!r.png_path.empty()) {
+    std::printf("  PNG %s (%ux%u, %.1f px/m, scale bar %.2f m)\n", r.png_path.c_str(), r.png_w,
+                r.png_h, r.png_px_per_m, r.png_scale_bar_m);
+  }
+  if (!r.dxf_path.empty()) std::printf("  DXF %s\n", r.dxf_path.c_str());
+  if (!r.pdf_path.empty()) std::printf("  PDF %s\n", r.pdf_path.c_str());
+  return kExitOk;
+}
+
 int cmd_d6_selfcheck(const std::string& lscan_dir, const std::string& mount_from,
                      std::int64_t offset_ns, bool densify, double window_s, double cell_m) {
   bool is_d6 = false;
@@ -2295,6 +2335,38 @@ int main(int argc, char** argv) {
       else return usage();
     }
     return cmd_d6_loopclose(dir, lcfg, up_axis);
+  }
+  if (cmd == "--d6-plan") {
+    if (argc < 3) return usage();
+    const std::string dir = argv[2];
+    post::LscanPlanOptions o;
+    for (int i = 3; i < argc; ++i) {
+      const std::string a = argv[i];
+      if (a == "--slice" && i + 2 < argc) {
+        o.slice_min_m = std::atof(argv[i + 1]);
+        o.slice_max_m = std::atof(argv[i + 2]);
+        i += 2;
+      } else if (a == "--res" && i + 1 < argc) {
+        o.grid_res_m = std::atof(argv[++i]);
+      } else if (a == "--min-cell" && i + 1 < argc) {
+        o.min_cell_points = static_cast<std::uint32_t>(std::atoi(argv[++i]));
+        o.adapt_density = false;
+      } else if (a == "--no-adapt") {
+        o.adapt_density = false;
+      } else if (a == "--out" && i + 1 < argc) {
+        o.out_dir = argv[++i];
+      } else if (a == "--title" && i + 1 < argc) {
+        o.title = argv[++i];
+      } else if (a == "--png-px" && i + 1 < argc) {
+        o.png_max_px = static_cast<std::uint32_t>(std::atoi(argv[++i]));
+      } else if (a == "--up" && i + 1 < argc) {
+        const std::string u = argv[++i];
+        o.up = u == "x" ? plan::UpAxis::kX : (u == "z" ? plan::UpAxis::kZ : plan::UpAxis::kY);
+      } else if (a == "--quiet") {
+        continue;
+      }
+    }
+    return cmd_d6_plan(dir, o);
   }
   if (cmd == "--post-selftest") return cmd_post_selftest(quiet);
   if (cmd == "--discover") {

@@ -105,6 +105,12 @@ void write_sidecar(const std::string& path, const ReprocessReport& r) {
                "  \"endGapAfterM\": %.6f,\n"
                "  \"mountVerdict\": \"%s\",\n"
                "  \"mountImpossibleFraction\": %.6f,\n"
+               "  \"selfCheckMeasurable\": %s,\n"
+               "  \"selfCheckOffsetM\": %.6f,\n"
+               "  \"selfCheckFloorM\": %.6f,\n"
+               "  \"selfCheckWindows\": %llu,\n"
+               "  \"selfCheckSeconds\": %.3f,\n"
+               "  \"selfCheckBlocker\": \"%s\",\n"
                "  \"seams\": [\n",
                static_cast<unsigned long long>(r.points), static_cast<unsigned long long>(r.poses),
                static_cast<unsigned long long>(s.poses_untracked),
@@ -119,7 +125,13 @@ void write_sidecar(const std::string& path, const ReprocessReport& r) {
                s.total_translation_m, s.total_rotation_deg,
                s.trajectory_vertical_extent_before_m, s.trajectory_vertical_extent_after_m,
                s.trajectory_end_gap_before_m, s.trajectory_end_gap_after_m,
-               to_string(r.mount.verdict), r.mount.impossible_fraction);
+               to_string(r.mount.verdict), r.mount.impossible_fraction,
+               r.consistency.measurable ? "true" : "false", r.consistency.nearest_offset_m,
+               r.consistency.self_floor_m,
+               static_cast<unsigned long long>(r.consistency.windows),
+               static_cast<double>(r.consistency.nearest_separation) *
+                   r.consistency.window_seconds,
+               r.consistency.blocker);
   for (std::size_t i = 0; i < s.seams.size(); ++i) {
     const SectionSeam& x = s.seams[i];
     std::fprintf(f,
@@ -201,6 +213,15 @@ Status reprocess_d6_container(const std::string& lscan_dir, const ReprocessOptio
   // the answer to "why does this scan look wrong" that stitching cannot give.
   rep.mount = check_mount_consistency(traj, Span<const PointVertex>(pts.data(), pts.size()),
                                       Span<const std::int64_t>(ptimes.data(), ptimes.size()));
+
+  // ROUND 15 item 57. Measured on the STITCHED cloud, deliberately: that is
+  // the cloud the operator is about to look at, and on a multi-section
+  // capture the unstitched one disagrees with itself by the seam rather than
+  // by anything the sensor did. `measurable == false` is an answer, not a
+  // failure — see map_consistency.h.
+  if (opts.measure_self_consistency && !pts.empty()) {
+    rep.consistency = measure_map_consistency(pts, ptimes, opts.consistency);
+  }
 
   if (!pts.empty()) {
     // The container may have no `processed/` at all — a capture that produced

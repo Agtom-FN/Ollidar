@@ -114,6 +114,68 @@ Java_com_lidarscan_app_engine_ScanEngineNative_nativePushPose(
   return static_cast<jint>(scan_engine_push_pose(engine, &pose, confidence));
 }
 
+// --- 1c. ROUND 15 item 54: LIVE RE-ANCHOR HEALING ---------------------------
+//
+// One call, on the SAME thread and in the SAME function as nativePushPose,
+// and that placement is the whole design: CaptureArController calls this the
+// moment its detector sees a break and BEFORE it pushes the pose that
+// triggered it, so the pose that announced the re-anchor is itself the first
+// pose in the healed frame and not one frame of shattered map.
+//
+// Returns SCAN_OK when the live world frame was corrected, and
+// SCAN_ERR_INVALID_ARGUMENT when the bracket could not define a rigid
+// transform — the Kotlin side turns exactly that into the operator cue,
+// because a break that COULD be healed is not something to buzz about.
+//
+// Nothing here touches what is recorded; see Engine::heal_live_frame().
+JNIEXPORT jint JNICALL
+Java_com_lidarscan_app_engine_ScanEngineNative_nativeHealLiveFrame(
+    JNIEnv*, jclass, jlong handle, jlong before_ns, jdouble bpx, jdouble bpy, jdouble bpz,
+    jdouble bqx, jdouble bqy, jdouble bqz, jdouble bqw, jboolean before_lost, jlong after_ns,
+    jdouble apx, jdouble apy, jdouble apz, jdouble aqx, jdouble aqy, jdouble aqz, jdouble aqw,
+    jboolean after_lost) {
+  auto* engine = reinterpret_cast<scan_engine*>(handle);
+  scan_pose before{};
+  before.t_mono_ns = static_cast<int64_t>(before_ns);
+  before.position[0] = bpx;
+  before.position[1] = bpy;
+  before.position[2] = bpz;
+  before.orientation[0] = bqx;
+  before.orientation[1] = bqy;
+  before.orientation[2] = bqz;
+  before.orientation[3] = bqw;
+  before.source = SCAN_STREAM_POSE_AR;
+  before.tracking_lost = before_lost ? 1 : 0;
+
+  scan_pose after = before;
+  after.t_mono_ns = static_cast<int64_t>(after_ns);
+  after.position[0] = apx;
+  after.position[1] = apy;
+  after.position[2] = apz;
+  after.orientation[0] = aqx;
+  after.orientation[1] = aqy;
+  after.orientation[2] = aqz;
+  after.orientation[3] = aqw;
+  after.tracking_lost = after_lost ? 1 : 0;
+
+  return static_cast<jint>(scan_engine_heal_live_frame(engine, &before, &after));
+}
+
+// [applied, refused, active, translationM, rotationDeg]. Null on a bad handle.
+JNIEXPORT jdoubleArray JNICALL
+Java_com_lidarscan_app_engine_ScanEngineNative_nativeLiveHealStats(JNIEnv* env, jclass,
+                                                                   jlong handle) {
+  auto* engine = reinterpret_cast<scan_engine*>(handle);
+  scan_live_heal_stats st{};
+  if (scan_engine_live_heal_stats(engine, &st) != SCAN_OK) return nullptr;
+  jdouble v[5] = {static_cast<jdouble>(st.applied), static_cast<jdouble>(st.refused),
+                  st.active ? 1.0 : 0.0, st.translation_m, st.rotation_deg};
+  jdoubleArray out = env->NewDoubleArray(5);
+  if (out == nullptr) return nullptr;
+  env->SetDoubleArrayRegion(out, 0, 5, v);
+  return out;
+}
+
 // Interpolated lookup. Returns the GATE (SCAN_POSE_GATE_*), which is always
 // written even on failure — the five-outcome distinction §3.3 asks for is
 // exactly what a caller wants here, so it is the return value rather than

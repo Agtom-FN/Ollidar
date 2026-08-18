@@ -2,6 +2,7 @@ package com.lidarscan.app.ui.plan
 
 import android.content.Context
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -39,8 +40,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.testTag
+import com.lidarscan.core.capture.FloorPlanResult
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -98,7 +104,16 @@ fun PlanScreen(state: PlanUiState, vm: PlanViewModel, onBack: () -> Unit) {
         Column(Modifier.fillMaxSize().padding(padding)) {
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 val plan = state.plan
+                val rendered = state.rendered
                 when {
+                    state.rendering -> Column(
+                        Modifier.fillMaxSize().padding(32.dp),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text("Drawing the plan…", style = MaterialTheme.typography.titleMedium)
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 12.dp))
+                    }
                     state.running -> Column(
                         Modifier.fillMaxSize().padding(32.dp),
                         verticalArrangement = Arrangement.Center,
@@ -108,9 +123,15 @@ fun PlanScreen(state: PlanUiState, vm: PlanViewModel, onBack: () -> Unit) {
                         LinearProgressIndicator(progress = { state.progress }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp))
                         OutlinedButton(onClick = vm::cancel, modifier = Modifier.padding(top = 12.dp)) { Text("Cancel") }
                     }
+                    // ROUND 15 item 56: the RENDERED plan wins the viewport
+                    // when there is one. It is the artifact that leaves the
+                    // phone, so it is the one the operator judges — and it is
+                    // drawn from the sealed container by path, which the
+                    // in-memory PlanCanvas path below is not.
+                    rendered != null && rendered.hasImage -> RenderedPlanView(rendered)
                     plan == null -> CenteredText(
-                        "No plan yet.\n\nA floor plan is cut from the processed cloud, so run Post-process on the " +
-                            "project first, then Extract here.",
+                        "No plan yet.\n\nTap Floor plan below: the plan is cut from this scan's own " +
+                            "container, so it works on a sealed scan whether or not you have processed it.",
                     )
                     plan.isEmpty -> CenteredText(plan.emptyDiagnosis())
                     else -> PlanCanvas(plan)
@@ -118,13 +139,66 @@ fun PlanScreen(state: PlanUiState, vm: PlanViewModel, onBack: () -> Unit) {
             }
 
             HorizontalDivider()
+            // ROUND 15 item 56 — the row that does the thing this screen is
+            // named after. Deliberately ABOVE the options fold: eleven rounds
+            // of "Floor plan" led to a screen whose only actions were behind
+            // an Options button and whose empty state told the operator to go
+            // and run something else first.
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Button(
+                    onClick = vm::render,
+                    enabled = !state.rendering && !state.running,
+                    modifier = Modifier.testTag("planRenderButton"),
+                ) { Text(if (state.rendered == null) "Floor plan" else "Redraw") }
+                val r = state.rendered
+                OutlinedButton(
+                    onClick = { vm.shareRendered(context, PlanViewModel.RenderedKind.PNG) },
+                    enabled = r != null && r.pngPath.isNotEmpty(),
+                    modifier = Modifier.testTag("planSharePng"),
+                ) { Text("PNG") }
+                OutlinedButton(
+                    onClick = { vm.shareRendered(context, PlanViewModel.RenderedKind.PDF) },
+                    enabled = r != null && r.pdfPath.isNotEmpty(),
+                    modifier = Modifier.testTag("planSharePdf"),
+                ) { Text("PDF") }
+                OutlinedButton(
+                    onClick = { vm.shareRendered(context, PlanViewModel.RenderedKind.DXF) },
+                    enabled = r != null && r.dxfPath.isNotEmpty(),
+                    modifier = Modifier.testTag("planShareDxf"),
+                ) { Text("DXF") }
+            }
+            state.rendered?.let { r ->
+                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                    Text(
+                        r.headline,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.testTag("planHeadline"),
+                    )
+                    r.detail?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("planDetail"),
+                        )
+                    }
+                }
+            }
+            HorizontalDivider()
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    state.plan?.let {
+                    state.rendered?.let {
+                        "${it.walls} walls · ${it.openings} openings · ${it.rooms} rooms · " +
+                            "%.1f m²".format(it.roomAreaM2)
+                    } ?: state.plan?.let {
                         "${it.walls.size} walls · ${it.openings.size} openings · ${it.rooms.size} rooms · " +
                             "%.1f m²".format(it.stats.totalRoomAreaM2)
                     } ?: "—",
@@ -183,6 +257,53 @@ fun PlanScreen(state: PlanUiState, vm: PlanViewModel, onBack: () -> Unit) {
             }
         }
     }
+}
+
+/**
+ * ROUND 15 item 56 — the rendered plan, on screen.
+ *
+ * A plain zoom/pan of the PNG the engine wrote. Decoded once, keyed on the
+ * path, and with `inSampleSize` set from the view budget rather than loading a
+ * 1600 x 1600 bitmap at full depth for a phone viewport — a 5 MB PNG of stored
+ * deflate decodes to ~7.7 MB of ARGB, which is fine once and not fine on every
+ * recomposition.
+ */
+@Composable
+private fun RenderedPlanView(result: FloorPlanResult) {
+    val bitmap = remember(result.pngPath) {
+        runCatching {
+            val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = 2 }
+            android.graphics.BitmapFactory.decodeFile(result.pngPath, opts)
+        }.getOrNull()
+    }
+    if (bitmap == null) {
+        CenteredText("The floor plan was written but could not be opened for preview.")
+        return
+    }
+    var scale by remember(result.pngPath) { mutableFloatStateOf(1f) }
+    var panX by remember(result.pngPath) { mutableFloatStateOf(0f) }
+    var panY by remember(result.pngPath) { mutableFloatStateOf(0f) }
+    Image(
+        bitmap = bitmap.asImageBitmap(),
+        contentDescription = "Floor plan preview",
+        contentScale = ContentScale.Fit,
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag("planPreview")
+            .pointerInput(result.pngPath) {
+                detectTransformGestures { _, pan, zoom, _ ->
+                    scale = (scale * zoom).coerceIn(1f, 8f)
+                    panX += pan.x
+                    panY += pan.y
+                }
+            }
+            .graphicsLayer(
+                scaleX = scale,
+                scaleY = scale,
+                translationX = panX,
+                translationY = panY,
+            ),
+    )
 }
 
 @Composable

@@ -43,6 +43,11 @@ object ShareTargets {
         "zip" -> "application/zip"
         "pdf" -> "application/pdf"
         "dxf" -> "image/vnd.dxf"
+        // ROUND 15 (item 56): the floor plan's rendered preview. Without this
+        // the share sheet offers a PNG as application/octet-stream and every
+        // image-capable target disappears from it.
+        "png" -> "image/png"
+        "jpg", "jpeg" -> "image/jpeg"
         "ply", "las", "pcd" -> "application/octet-stream"
         else -> "application/octet-stream"
     }

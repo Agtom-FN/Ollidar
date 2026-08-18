@@ -363,7 +363,22 @@ bool ProcessingEngine::run_plan(const scanengine::plan::PlanOptions& opts,
   // Every page regardless of stream: a processed cloud lands on kSlamMap, but
   // a record-only D6 project that was never post-processed has only its raw
   // stream, and refusing to slice that would be a worse answer than slicing it.
-  in.up = scanengine::plan::UpAxis::kZ;
+  // ROUND 15 item 56 — THIS WAS WRONG, AND SILENTLY SO.
+  //
+  // A12 defaults to kZ because a Mid-360 session is gravity-aligned into a
+  // Z-up frame. A D6 session's world frame is ARCore's, where **+Y is up** —
+  // the same axis SectionStitchReport::up_axis = 1 reads and the same one the
+  // mount watchdog calls gravity. Slicing a D6 cloud at Z 1.0-1.5 m takes a
+  // 50 cm VERTICAL slab through the room and draws a picture of a wall, which
+  // is a plausible-looking drawing of the wrong thing: it produces walls, it
+  // produces a scale, and it never closes a room. Measured on the owner's
+  // scan-033 the Z cut holds 9,211 points over an 8.4 x 2.8 m "footprint"
+  // (2.8 m being the ceiling height) against 21,143 over 14.5 x 9.4 m for Y.
+  //
+  // The new post::floor_plan_from_lscan() path takes the axis as an option and
+  // defaults it to kY; this in-process path is kept for the existing Plan
+  // screen and is corrected to agree with it.
+  in.up = scanengine::plan::UpAxis::kY;
 
   scanengine::plan::PlanModel model;
   const Status s = scanengine::plan::extract_floor_plan(

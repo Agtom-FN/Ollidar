@@ -14,6 +14,7 @@
 #include "scanengine/color/frames_idx.h"
 #include "scanengine/core/log.h"
 #include "scanengine/jobs/job_queue.h"
+#include "scanengine/poses/se3.h"
 
 namespace scanengine {
 namespace {
@@ -243,6 +244,19 @@ struct Engine::Impl {
   bool have_imu_extrinsics = false;
   mutable std::mutex pushbroom_m;
   std::atomic<bool> pushbroom_on{false};
+
+  // --- ROUND 15 item 54: the LIVE-ONLY world-frame correction -------------
+  //
+  // Its own mutex, and the smallest one in the class: push_pose() is on the
+  // ARCore pump thread at ~30 Hz and heal_live_frame() is called from the
+  // same thread's break detector, but the C ABI does not promise that, so the
+  // read has to be guarded. Nothing else in Engine takes heal_m, so it can
+  // never participate in a lock cycle.
+  mutable std::mutex heal_m;
+  bool heal_active = false;
+  double heal_m4[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+  std::uint32_t heal_applied = 0;
+  std::uint32_t heal_refused = 0;
   // ROUND 8: the last extrinsic set_mount_extrinsics() accepted, kept so
   // start_session() can put it in the manifest. The assembler stores it too,
   // but only as its internal composed form; the manifest needs the number the
@@ -734,6 +748,18 @@ Status Engine::start_session(const SessionConfig& cfg) {
     impl_->densified_poses->reset();
   }
 
+  // 2b. ROUND 15: the live re-anchor correction. Same argument as everything
+  //     else in this block — it is a property of ONE capture's re-anchor
+  //     history and carrying it into the next capture would apply a
+  //     correction for a jump that scan never had.
+  {
+    std::lock_guard<std::mutex> hlock(impl_->heal_m);
+    se3::mat4_identity(impl_->heal_m4);
+    impl_->heal_active = false;
+    impl_->heal_applied = 0;
+    impl_->heal_refused = 0;
+  }
+
   // 3. The local ENU origin, on both halves of the georef stack. Both latch on
   //    the first good fix and neither ever un-latched, so capture N+1 measured
   //    itself against capture N's zero — see GnssSource::reset_frame() and
@@ -1160,20 +1186,134 @@ Status Engine::push_serial_bytes(DeviceId id, ByteSpan bytes, TimePoint t_arriva
 
 // --- A8: trajectory in ------------------------------------------------------
 
+// ROUND 15 item 54. `pose` is what the app measured and what gets RECORDED;
+// `live` is that pose in the healed frame and is what the live trajectory,
+// the densifier and therefore the pushbroom see. With no break healed the two
+// are the same object's value and this is the ABI-10 behaviour exactly.
+Pose Engine::live_pose_(const Pose& p) const {
+  std::lock_guard<std::mutex> lock(impl_->heal_m);
+  if (!impl_->heal_active) return p;
+  Pose out = p;
+  se3::mat4_apply(impl_->heal_m4, p.position, out.position);
+  double R[9], t[3], qc[4];
+  se3::mat4_get_rt(impl_->heal_m4, R, t);
+  se3::matrix_to_quat(R, qc);
+  se3::quat_mul(qc, p.orientation, out.orientation);
+  (void)se3::quat_normalize(out.orientation);
+  return out;
+}
+
 Status Engine::push_pose(const Pose& pose) {
-  const Status s = impl_->poses->push_pose(pose);
+  const Pose live = live_pose_(pose);
+  const Status s = impl_->poses->push_pose(live);
   if (!s.ok()) return s;
   record_pose_(pose);
-  publish_pose_(pose);
+  publish_pose_(live);
   return kOkStatus;
 }
 
 Status Engine::push_pose(const Pose& pose, float confidence) {
-  const Status s = impl_->poses->push_pose(pose, confidence);
+  const Pose live = live_pose_(pose);
+  const Status s = impl_->poses->push_pose(live, confidence);
   if (!s.ok()) return s;
   record_pose_(pose);
-  publish_pose_(pose);
+  publish_pose_(live);
   return kOkStatus;
+}
+
+Status Engine::heal_live_frame(const Pose& before, const Pose& after) {
+  // A pose the tracker disowned is not a world frame, so the step into or out
+  // of one measures nothing — the same rule section_stitch.cpp applies to the
+  // recorded stream, stated here so the live and offline detectors agree on
+  // which pairs are usable.
+  if (before.tracking_lost != 0 || after.tracking_lost != 0) {
+    std::lock_guard<std::mutex> lock(impl_->heal_m);
+    ++impl_->heal_refused;
+    return set_last_error(ScanError::kInvalidArgument,
+                          "heal_live_frame: a pose the tracker disowned cannot define a frame");
+  }
+  if (after.t_mono_ns <= before.t_mono_ns) {
+    std::lock_guard<std::mutex> lock(impl_->heal_m);
+    ++impl_->heal_refused;
+    return set_last_error(ScanError::kInvalidArgument,
+                          "heal_live_frame: the two poses are not in order");
+  }
+  double qb[4], qa[4];
+  for (int i = 0; i < 4; ++i) {
+    qb[i] = before.orientation[i];
+    qa[i] = after.orientation[i];
+  }
+  const bool finite =
+      std::isfinite(qb[0]) && std::isfinite(qb[1]) && std::isfinite(qb[2]) &&
+      std::isfinite(qb[3]) && std::isfinite(qa[0]) && std::isfinite(qa[1]) &&
+      std::isfinite(qa[2]) && std::isfinite(qa[3]) && std::isfinite(before.position[0]) &&
+      std::isfinite(before.position[1]) && std::isfinite(before.position[2]) &&
+      std::isfinite(after.position[0]) && std::isfinite(after.position[1]) &&
+      std::isfinite(after.position[2]);
+  if (!finite || !se3::quat_normalize(qb) || !se3::quat_normalize(qa)) {
+    std::lock_guard<std::mutex> lock(impl_->heal_m);
+    ++impl_->heal_refused;
+    return set_last_error(ScanError::kInvalidArgument,
+                          "heal_live_frame: a pose is not finite or its rotation is degenerate");
+  }
+
+  // T = pose_after * pose_before^-1 — literally section_stitch.cpp's line.
+  double ma[16], mb[16], mbi[16], T[16], Ti[16];
+  se3::mat4_from_quat_pos(qa, after.position, ma);
+  se3::mat4_from_quat_pos(qb, before.position, mb);
+  se3::mat4_inverse_rigid(mb, mbi);
+  se3::mat4_mul(ma, mbi, T);
+  if (!se3::mat4_is_rigid(T, 1e-4)) {
+    std::lock_guard<std::mutex> lock(impl_->heal_m);
+    ++impl_->heal_refused;
+    return set_last_error(ScanError::kInvalidArgument,
+                          "heal_live_frame: the pose pair does not define a rigid transform");
+  }
+  se3::mat4_inverse_rigid(T, Ti);
+
+  std::lock_guard<std::mutex> lock(impl_->heal_m);
+  double next[16];
+  se3::mat4_mul(impl_->heal_m4, Ti, next);
+  for (int i = 0; i < 16; ++i) impl_->heal_m4[i] = next[i];
+  impl_->heal_active = true;
+  ++impl_->heal_applied;
+  SCAN_LOG_INFO(kMod,
+                "live heal #%u: ARCore re-anchored by %.3f m / %.2f deg; the live map keeps the "
+                "frame it was already drawn in (recorded stream untouched)",
+                impl_->heal_applied,
+                std::sqrt(T[3] * T[3] + T[7] * T[7] + T[11] * T[11]),
+                [&] {
+                  double Ra[9], Rb[9];
+                  se3::quat_to_matrix(qb, Rb);
+                  se3::quat_to_matrix(qa, Ra);
+                  return se3::rot_angle_deg(Rb, Ra);
+                }());
+  return kOkStatus;
+}
+
+void Engine::clear_live_correction() {
+  std::lock_guard<std::mutex> lock(impl_->heal_m);
+  se3::mat4_identity(impl_->heal_m4);
+  impl_->heal_active = false;
+  impl_->heal_applied = 0;
+  impl_->heal_refused = 0;
+}
+
+Engine::LiveHealStats Engine::live_heal_stats() const {
+  std::lock_guard<std::mutex> lock(impl_->heal_m);
+  LiveHealStats s;
+  s.applied = impl_->heal_applied;
+  s.refused = impl_->heal_refused;
+  s.active = impl_->heal_active;
+  for (int i = 0; i < 16; ++i) s.matrix[i] = impl_->heal_m4[i];
+  s.translation_m = std::sqrt(impl_->heal_m4[3] * impl_->heal_m4[3] +
+                              impl_->heal_m4[7] * impl_->heal_m4[7] +
+                              impl_->heal_m4[11] * impl_->heal_m4[11]);
+  double R[9], t[3];
+  se3::mat4_get_rt(impl_->heal_m4, R, t);
+  const double eye[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+  s.rotation_deg = se3::rot_angle_deg(eye, R);
+  return s;
 }
 
 // --- ROUND 8: RECORD-ALWAYS FINALLY APPLIES TO THE TRAJECTORY ---------------

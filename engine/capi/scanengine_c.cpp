@@ -24,6 +24,7 @@
 #include "scanengine/discovery/discovery.h"
 #include "scanengine/jobs/job_types.h"
 #include "scanengine/slam/post/d6_resolve.h"
+#include "scanengine/slam/post/lscan_plan.h"
 #include "scanengine/slam/post/reprocess.h"
 #include "scanengine/slam/pushbroom/mount_calibration.h"
 
@@ -1980,6 +1981,220 @@ scan_error_t scan_lscan_mount_check(const char* lscan_dir, double window_seconds
   out->impossible_fraction = r.impossible_fraction;
   out->median_range_m = r.median_range_m;
   return to_c(kOkStatus);
+  SCAN_GUARD_END
+}
+
+/* ======================================================================== */
+/* ROUND 15 (ABI 11)                                                        */
+/* ======================================================================== */
+
+}  // extern "C"
+
+namespace {
+
+Pose pose_from_c(const scan_pose& p) {
+  Pose out;
+  out.t_mono_ns = p.t_mono_ns;
+  for (int i = 0; i < 3; ++i) out.position[i] = p.position[i];
+  for (int i = 0; i < 4; ++i) out.orientation[i] = p.orientation[i];
+  out.position_sigma_m = p.position_sigma_m;
+  out.orientation_sigma_deg = p.orientation_sigma_deg;
+  out.source = static_cast<StreamId>(p.source);
+  out.quality = static_cast<PoseQuality>(p.quality);
+  out.tracking_lost = p.tracking_lost;
+  return out;
+}
+
+void copy_cstr(char* dst, std::size_t cap, const std::string& src) {
+  if (cap == 0) return;
+  const std::size_t n = src.size() < cap - 1 ? src.size() : cap - 1;
+  std::memcpy(dst, src.data(), n);
+  dst[n] = '\0';
+}
+
+}  // namespace
+
+extern "C" {
+
+scan_error_t scan_engine_heal_live_frame(scan_engine* engine, const scan_pose* before,
+                                         const scan_pose* after) {
+  SCAN_GUARD_BEGIN
+  if (engine == nullptr || before == nullptr || after == nullptr) {
+    return fail(ScanError::kInvalidArgument, "null argument");
+  }
+  Engine& e = *handle_of(engine)->engine;
+  return to_c(e.heal_live_frame(pose_from_c(*before), pose_from_c(*after)));
+  SCAN_GUARD_END
+}
+
+scan_error_t scan_engine_clear_live_correction(scan_engine* engine) {
+  SCAN_GUARD_BEGIN
+  if (engine == nullptr) return fail(ScanError::kInvalidArgument, "engine is null");
+  handle_of(engine)->engine->clear_live_correction();
+  return SCAN_OK;
+  SCAN_GUARD_END
+}
+
+scan_error_t scan_engine_live_heal_stats(scan_engine* engine, scan_live_heal_stats* out) {
+  SCAN_GUARD_BEGIN
+  if (engine == nullptr || out == nullptr) {
+    return fail(ScanError::kInvalidArgument, "null argument");
+  }
+  const Engine::LiveHealStats s = handle_of(engine)->engine->live_heal_stats();
+  std::memset(out, 0, sizeof(*out));
+  out->applied = s.applied;
+  out->refused = s.refused;
+  out->active = s.active ? 1 : 0;
+  out->translation_m = s.translation_m;
+  out->rotation_deg = s.rotation_deg;
+  for (int i = 0; i < 16; ++i) out->matrix[i] = s.matrix[i];
+  return SCAN_OK;
+  SCAN_GUARD_END
+}
+
+scan_error_t scan_lscan_reprocess_d6_ex(const char* lscan_dir, const scan_reprocess_options* opts,
+                                        scan_reprocess_result* out,
+                                        scan_selfcheck_result* selfcheck,
+                                        scan_reprocess_progress_cb progress, void* user_data) {
+  SCAN_GUARD_BEGIN
+  if (lscan_dir == nullptr || lscan_dir[0] == '\0') {
+    return fail(ScanError::kInvalidArgument, "lscan_dir is null or empty");
+  }
+  if (out == nullptr) return fail(ScanError::kInvalidArgument, "out is null");
+  std::memset(out, 0, sizeof(*out));
+  if (selfcheck != nullptr) std::memset(selfcheck, 0, sizeof(*selfcheck));
+
+  scanengine::post::ReprocessOptions ro;
+  ro.measure_self_consistency = selfcheck != nullptr;
+  if (opts != nullptr) {
+    ro.stitch_sections = opts->stitch_sections != 0;
+    ro.close_loops = opts->close_loops != 0;
+    ro.densify_with_phone_imu = opts->densify_with_phone_imu != 0;
+    ro.sections.refine = opts->refine_seams != 0;
+    if (opts->max_refine_translation_m > 0.0) {
+      ro.sections.max_refine_translation_m = opts->max_refine_translation_m;
+    }
+  }
+
+  scanengine::post::CancelToken token;
+  scanengine::post::PostProgressFn fn;
+  if (progress != nullptr) {
+    fn = [progress, user_data, &token](const scanengine::post::PostProgress& p) {
+      if (progress(p.fraction, user_data) == 0) token.cancel();
+    };
+  }
+
+  scanengine::post::ReprocessReport rep;
+  const Status st = scanengine::post::reprocess_d6_container(
+      lscan_dir, ro, &rep, fn, progress != nullptr ? &token : nullptr);
+
+  out->ran = rep.ran ? 1 : 0;
+  out->map_written = rep.map_written ? 1 : 0;
+  out->sections = static_cast<uint32_t>(rep.stitch.sections);
+  out->seams = static_cast<uint32_t>(rep.stitch.seams.size());
+  uint32_t refined = 0;
+  for (const scanengine::post::SectionSeam& x : rep.stitch.seams) {
+    if (x.decision == scanengine::post::SeamDecision::kRefined) ++refined;
+  }
+  out->seams_refined = refined;
+  out->points = rep.points;
+  out->poses = rep.poses;
+  out->poses_untracked = rep.stitch.poses_untracked;
+  out->first_section_moved_m = rep.stitch.total_translation_m;
+  out->first_section_moved_deg = rep.stitch.total_rotation_deg;
+  out->vertical_extent_before_m = rep.stitch.trajectory_vertical_extent_before_m;
+  out->vertical_extent_after_m = rep.stitch.trajectory_vertical_extent_after_m;
+  out->end_gap_before_m = rep.stitch.trajectory_end_gap_before_m;
+  out->end_gap_after_m = rep.stitch.trajectory_end_gap_after_m;
+  out->mount_verdict = mount_verdict_to_c(rep.mount.verdict);
+  out->mount_impossible_fraction = rep.mount.impossible_fraction;
+  out->mount_revolution_extent_m = rep.mount.median_revolution_extent_m;
+
+  if (selfcheck != nullptr) {
+    const scanengine::post::MapConsistencyReport& c = rep.consistency;
+    selfcheck->measurable = c.measurable ? 1 : 0;
+    selfcheck->windows = static_cast<uint32_t>(c.windows);
+    selfcheck->nearest_separation = static_cast<uint32_t>(c.nearest_separation);
+    selfcheck->window_seconds = c.window_seconds;
+    selfcheck->nearest_offset_m = c.nearest_offset_m;
+    selfcheck->self_floor_m = c.self_floor_m;
+    for (const scanengine::post::MapConsistencySeparation& sp : c.by_separation) {
+      if (sp.separation == c.nearest_separation) {
+        selfcheck->p90_offset_m = sp.p90_offset_m;
+        selfcheck->cells = static_cast<uint32_t>(sp.cells);
+        break;
+      }
+    }
+    copy_cstr(selfcheck->blocker, sizeof(selfcheck->blocker),
+             c.blocker != nullptr ? c.blocker : "");
+  }
+  return to_c(st);
+  SCAN_GUARD_END
+}
+
+scan_error_t scan_lscan_floor_plan(const char* lscan_dir, const scan_plan_options* opts,
+                                   scan_plan_result* out) {
+  SCAN_GUARD_BEGIN
+  if (lscan_dir == nullptr || lscan_dir[0] == '\0') {
+    return fail(ScanError::kInvalidArgument, "lscan_dir is null or empty");
+  }
+  if (out == nullptr) return fail(ScanError::kInvalidArgument, "out is null");
+  std::memset(out, 0, sizeof(*out));
+
+  scanengine::post::LscanPlanOptions po;
+  if (opts != nullptr) {
+    if (opts->slice_min_m > 0.0) po.slice_min_m = opts->slice_min_m;
+    if (opts->slice_max_m > 0.0) po.slice_max_m = opts->slice_max_m;
+    if (opts->grid_res_m > 0.0) po.grid_res_m = opts->grid_res_m;
+    po.up = opts->up_axis == 0 ? scanengine::plan::UpAxis::kZ
+                               : (opts->up_axis == 2 ? scanengine::plan::UpAxis::kX
+                                                     : scanengine::plan::UpAxis::kY);
+    po.write_dxf = opts->write_dxf != 0;
+    po.write_pdf = opts->write_pdf != 0;
+    po.write_png = opts->write_png != 0;
+    if (opts->png_max_px > 0) po.png_max_px = opts->png_max_px;
+    if (opts->out_dir != nullptr) po.out_dir = opts->out_dir;
+    if (opts->base_name != nullptr) po.base_name = opts->base_name;
+    if (opts->title != nullptr) po.title = opts->title;
+  }
+  if (po.slice_max_m <= po.slice_min_m) {
+    return fail(ScanError::kInvalidArgument, "the plan slice has no height");
+  }
+
+  scanengine::post::LscanPlanReport r;
+  const Status st = scanengine::post::floor_plan_from_lscan(lscan_dir, po, &r);
+
+  out->ran = r.ran ? 1 : 0;
+  out->mode = r.mode == scanengine::plan::PlanRenderMode::kWalls ? SCAN_PLAN_MODE_WALLS
+                                                                 : SCAN_PLAN_MODE_DENSITY;
+  out->walls_from_floor_map = r.walls_from_floor_map ? 1 : 0;
+  out->no_room_closed = r.no_room_closed ? 1 : 0;
+  out->cloud_points = r.cloud_points;
+  out->band_points = r.band_points;
+  out->map_points = r.map_band_points;
+  out->occupied_cells = r.occupied_cells;
+  out->map_cells = r.map_cells;
+  out->walls = r.walls;
+  out->walls_paired = r.walls_paired;
+  out->openings = r.openings;
+  out->doors = r.doors;
+  out->windows = r.windows;
+  out->rooms = r.rooms;
+  out->total_wall_length_m = r.total_wall_length_m;
+  out->total_room_area_m2 = r.total_room_area_m2;
+  out->largest_room_area_m2 = r.largest_room_area_m2;
+  out->extent_x_m = r.extent_x_m;
+  out->extent_y_m = r.extent_y_m;
+  out->png_px_per_m = r.png_px_per_m;
+  out->png_scale_bar_m = r.png_scale_bar_m;
+  out->png_w = r.png_w;
+  out->png_h = r.png_h;
+  copy_cstr(out->png_path, sizeof(out->png_path), r.png_path);
+  copy_cstr(out->pdf_path, sizeof(out->pdf_path), r.pdf_path);
+  copy_cstr(out->dxf_path, sizeof(out->dxf_path), r.dxf_path);
+  copy_cstr(out->cloud_source, sizeof(out->cloud_source),
+           r.cloud_source != nullptr ? r.cloud_source : "");
+  return to_c(st);
   SCAN_GUARD_END
 }
 

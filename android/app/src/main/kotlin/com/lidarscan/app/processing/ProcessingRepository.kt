@@ -10,6 +10,7 @@ import com.lidarscan.core.jobs.JobKind
 import com.lidarscan.core.jobs.JobState
 import com.lidarscan.core.jobs.ProcessingJob
 import com.lidarscan.core.model.ExportFormat
+import com.lidarscan.core.capture.FloorPlanResult
 import com.lidarscan.core.plan.PlanModel
 import com.lidarscan.core.plan.PlanOptions
 import kotlinx.coroutines.CoroutineScope
@@ -239,6 +240,45 @@ class ProcessingRepository(private val scope: CoroutineScope) {
                 onProgress?.let { cb -> ScanEngineNative.ReprocessProgress { f -> cb(f) } },
             ),
         )
+    }.getOrNull()
+
+    // --- ROUND 15 item 56: the floor plan -----------------------------------
+
+    /**
+     * Extracts A12's floor plan from a SEALED container and writes a PNG (and,
+     * when walls were fitted, a PDF and a DXF) into `<lscan>/processed/`.
+     * **Blocking — seconds to tens of seconds.** Call from `Dispatchers.IO`.
+     *
+     * Handle-less, like [reprocessD6] and for the same reason: it owns its own
+     * PageStore inside the engine rather than slicing whatever cloud the
+     * process-wide ProcessingEngine happens to be holding. The existing Plan
+     * screen does the latter, and nothing there scopes it to a project.
+     *
+     * The slice band comes from the project's own `planSliceMinM/MaxM`; the
+     * up axis does not, and is +Y (ARCore's) inside the engine — see
+     * `slam/post/lscan_plan.h`.
+     */
+    fun floorPlan(
+        lscanDir: File,
+        sliceMinM: Double,
+        sliceMaxM: Double,
+        gridResM: Double = 0.02,
+        pngMaxPx: Int = 1600,
+        outDir: File? = null,
+        baseName: String? = null,
+        title: String? = null,
+    ): FloorPlanResult? = runCatching {
+        val v = ScanEngineNative.nativeProcFloorPlan(
+            lscanDir.absolutePath,
+            sliceMinM,
+            sliceMaxM,
+            gridResM,
+            pngMaxPx,
+            outDir?.absolutePath,
+            baseName,
+            title,
+        )
+        FloorPlanResult.fromNative(v, ScanEngineNative.nativeProcPlanFilePaths())
     }.getOrNull()
 
     /** ROUND 13 item 48: the mount watchdog over a sealed container. */

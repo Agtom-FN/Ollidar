@@ -220,7 +220,14 @@ TEST_CASE("engine/create_starts_idle_and_reports_a_version") {
   //    scan_reprocess_options/_result, scan_mount_check_result). Additive:
   //    nothing existing changed size, order or meaning, so an ABI-9 consumer
   //    relinks unmodified.
-  CHECK(kEngineAbiVersion == 10);
+  // 11: ROUND 15's live re-anchor healing (scan_engine_heal_live_frame,
+  //    scan_engine_clear_live_correction, scan_engine_live_heal_stats +
+  //    scan_live_heal_stats), the self-consistency ruler on the reprocess path
+  //    (scan_lscan_reprocess_d6_ex + scan_selfcheck_result) and the floor plan
+  //    (scan_lscan_floor_plan + scan_plan_options/_result). Additive: ABI 10's
+  //    scan_reprocess_options and scan_reprocess_result are byte-identical,
+  //    which is exactly why the ruler arrives on a NEW entry point.
+  CHECK(kEngineAbiVersion == 11);
 }
 
 TEST_CASE("engine/session_transitions_are_enforced_and_announced") {

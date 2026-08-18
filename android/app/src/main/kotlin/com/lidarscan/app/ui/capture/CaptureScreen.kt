@@ -297,6 +297,18 @@ fun CaptureRoute(
                         val eth = container.ethernetMonitor.state.value
                         eth.adapterPresent to eth.addresses.map { it.ip }
                     },
+                    // ROUND 15 (item 55): auto-process on seal. Handle-less by
+                    // construction — it takes a DIRECTORY and opens its own
+                    // PageStore inside the engine — so it shares nothing with
+                    // the capture engine and is safe to run while the tab has
+                    // already re-armed for the next scan.
+                    runAutoProcess = { dir, onProgress ->
+                        container.processingRepository.reprocessD6(
+                            lscanDir = dir,
+                            refineSeams = true,
+                            onProgress = onProgress,
+                        )
+                    },
                 )
             }
         },
@@ -383,6 +395,8 @@ fun CaptureRoute(
     val sessionSummary by viewModel.sessionSummary.collectAsStateWithLifecycle()
     // ROUND 11 (owner item 44): the graded card.
     val scanSummary by viewModel.scanSummary.collectAsStateWithLifecycle()
+    // ROUND 15 (item 55): auto-process on seal, reported on that same card.
+    val autoProcess by viewModel.autoProcess.collectAsStateWithLifecycle()
     // ROUND 11 (owner item 45a): the hold-still ring.
     val mountHold by viewModel.mountHold.collectAsStateWithLifecycle()
     val pointCloudSource by viewModel.pointCloudSource.collectAsStateWithLifecycle()
@@ -571,6 +585,7 @@ fun CaptureRoute(
         dndNote = dndNote,
         sessionSummary = sessionSummary,
         scanSummary = scanSummary,
+        autoProcess = autoProcess,
         mountHold = mountHold,
         pointCloudSource = pointCloudSource,
         colorMode = colorMode,
@@ -726,6 +741,7 @@ fun CaptureScreen(
     georefNote: String?,
     dndNote: String?,
     sessionSummary: CaptureStats?,
+    autoProcess: AutoProcessState = AutoProcessState(),
     scanSummary: com.lidarscan.core.capture.ScanSummary? = null,
     mountHold: com.lidarscan.core.calib.MountTrimRefiner.Progress? = null,
     pointCloudSource: PointCloudSource?,
@@ -1437,6 +1453,7 @@ fun CaptureScreen(
                 scanSummary = scanSummary,
                 savedPath = lastSavedProject,
                 saveError = saveError,
+                autoProcess = autoProcess,
                 onDismiss = onDismissSummary,
             )
         }
@@ -2700,6 +2717,7 @@ private fun SessionSummaryContent(
     scanSummary: com.lidarscan.core.capture.ScanSummary?,
     savedPath: String?,
     saveError: String?,
+    autoProcess: AutoProcessState,
     onDismiss: () -> Unit,
 ) {
     Column(Modifier.padding(horizontal = 22.dp, vertical = 8.dp)) {
@@ -2716,6 +2734,14 @@ private fun SessionSummaryContent(
         if (scanSummary != null && saveError == null) {
             Spacer(Modifier.height(12.dp))
             ScanGradeBanner(scanSummary)
+        }
+        // ROUND 15 (item 55): auto-process, right under the grade, because
+        // what it produces REPLACES numbers above it — a scan that recorded in
+        // five pieces is a different scan once they are back in one frame, and
+        // the operator should not have to open Review to learn that.
+        if (saveError == null && autoProcess.active) {
+            Spacer(Modifier.height(10.dp))
+            AutoProcessPanel(autoProcess)
         }
         Spacer(Modifier.height(16.dp))
         StatPanel(
@@ -2787,6 +2813,87 @@ private fun SessionSummaryContent(
  * liked; the sentence under the word names the WORST thing about the scan, in
  * the same order the grade decided, so the two can never disagree.
  */
+/**
+ * ROUND 15 item 55 + 57 — what processing did, on the card, in plain words.
+ *
+ * Three states and they read differently on purpose:
+ *
+ *  * RUNNING — a bar and a sentence. The card is modal and holds navigation
+ *    (see the LaunchedEffect in CaptureScreen), so this is the one place a
+ *    progress bar can live without a second dialog.
+ *  * DONE — the POST-process headline, the mount warning if the watchdog
+ *    fired, and item 57's repeat-accuracy line.
+ *  * FAILED — the scan is saved; here is what to do. Never an error code.
+ */
+@Composable
+private fun AutoProcessPanel(state: AutoProcessState) {
+    val bg = if (state.failed) {
+        MaterialTheme.colorScheme.errorContainer
+    } else {
+        MaterialTheme.colorScheme.surfaceVariant
+    }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(bg)
+            .padding(horizontal = 14.dp, vertical = 12.dp)
+            .testTag("autoProcessPanel"),
+    ) {
+        state.line?.let { line ->
+            Text(
+                line,
+                fontSize = 14.sp,
+                lineHeight = 19.sp,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.testTag("autoProcessLine"),
+            )
+        }
+        if (state.running) {
+            Spacer(Modifier.height(10.dp))
+            androidx.compose.material3.LinearProgressIndicator(
+                progress = { state.progress },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("autoProcessProgress"),
+            )
+        }
+        state.result?.detail?.let { detail ->
+            Spacer(Modifier.height(6.dp))
+            Text(
+                detail,
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag("autoProcessDetail"),
+            )
+        }
+        // ROUND 15 item 57. The honest accuracy figure, and it is deliberately
+        // shown for a skipped fast-path run too — a one-piece scan is exactly
+        // the one whose owner will believe the number.
+        state.result?.selfCheckLine?.let { line ->
+            Spacer(Modifier.height(6.dp))
+            Text(
+                line,
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.testTag("autoProcessSelfCheck"),
+            )
+        }
+        state.result?.mountWarning?.let { warning ->
+            Spacer(Modifier.height(6.dp))
+            Text(
+                warning,
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.testTag("autoProcessMountWarning"),
+            )
+        }
+    }
+}
+
 @Composable
 private fun ScanGradeBanner(summary: com.lidarscan.core.capture.ScanSummary) {
     val (accent, word) = when (summary.grade) {

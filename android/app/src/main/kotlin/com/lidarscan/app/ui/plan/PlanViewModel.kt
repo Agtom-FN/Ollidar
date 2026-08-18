@@ -4,7 +4,9 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.lidarscan.app.di.AppContainer
+import com.lidarscan.app.share.DownloadsExporter
 import com.lidarscan.app.share.ShareTargets
+import com.lidarscan.core.capture.FloorPlanResult
 import com.lidarscan.app.ui.common.exportBaseName
 import com.lidarscan.core.plan.PlanModel
 import com.lidarscan.core.plan.PlanOptions
@@ -28,6 +30,10 @@ data class PlanUiState(
     val running: Boolean = false,
     val progress: Float = 0f,
     val message: String? = null,
+    // --- ROUND 15 item 56 -------------------------------------------------
+    /** The rendered plan, from the sealed container. Null until [PlanViewModel.render]. */
+    val rendered: FloorPlanResult? = null,
+    val rendering: Boolean = false,
 )
 
 /**
@@ -77,6 +83,96 @@ class PlanViewModel(
     fun dismissMessage() {
         _uiState.value = _uiState.value.copy(message = null)
     }
+
+    /**
+     * ROUND 15 item 56 — the plan the operator can actually LOOK AT and send.
+     *
+     * Distinct from [extract], and the difference matters:
+     *
+     *  * [extract] slices whatever cloud the process-wide ProcessingEngine
+     *    happens to be holding — in practice the one Review loaded, but
+     *    nothing scopes it to this project — and produces an in-memory model
+     *    that only this screen's canvas can draw.
+     *  * this runs against the sealed CONTAINER by path, opens its own
+     *    PageStore inside the engine, prefers the ROUND 13 stitched map when
+     *    the scan has been processed, and leaves a PNG (plus a PDF and a DXF
+     *    when walls were fitted) in `processed/`. Nothing to share, nothing to
+     *    preview, and no project mix-up is possible.
+     *
+     * The slice band is the project's own `planSliceMinM/MaxM`. The UP AXIS is
+     * not a setting: a D6 session's world is ARCore's, where +Y is up, and the
+     * engine fixes that (`slam/post/lscan_plan.h`).
+     */
+    fun render() {
+        val p = _uiState.value.project ?: return
+        if (_uiState.value.rendering) return
+        _uiState.value = _uiState.value.copy(rendering = true, message = null)
+        viewModelScope.launch {
+            val o = _uiState.value.options
+            val r = withContext(Dispatchers.IO) {
+                repo.floorPlan(
+                    lscanDir = p.directory,
+                    sliceMinM = o.zMinM.toDouble(),
+                    sliceMaxM = o.zMaxM.toDouble(),
+                    gridResM = o.gridResM.toDouble(),
+                    title = p.manifest?.name ?: p.id,
+                )
+            }
+            _uiState.value = _uiState.value.copy(
+                rendering = false,
+                rendered = r,
+                message = when {
+                    r == null || !r.ran ->
+                        "No floor plan could be made from this scan."
+                    else -> r.headline
+                },
+            )
+        }
+    }
+
+    /**
+     * Copies one of the rendered files into Downloads/LidarScan and opens the
+     * share sheet — the SAME delivery every other export in this app uses
+     * (ProcessingViewModel). The old plan export called `ShareTargets.shareFile`
+     * on a file inside the app's private storage only, so a share target that
+     * did not resolve the content URI got nothing and the file was
+     * unreachable afterwards.
+     */
+    fun shareRendered(context: Context, kind: RenderedKind) {
+        val r = _uiState.value.rendered ?: return
+        val p = _uiState.value.project ?: return
+        val path = when (kind) {
+            RenderedKind.PNG -> r.pngPath
+            RenderedKind.PDF -> r.pdfPath
+            RenderedKind.DXF -> r.dxfPath
+        }
+        if (path.isEmpty()) return
+        val src = File(path)
+        viewModelScope.launch {
+            val name = "${exportBaseName(p.id)}-plan.${kind.extension}"
+            val copied = withContext(Dispatchers.IO) {
+                DownloadsExporter.copyToDownloads(context, src, name)
+            }
+            copied.fold(
+                { shown ->
+                    ShareTargets.shareFile(
+                        context,
+                        src,
+                        ShareTargets.mimeFor(src),
+                        "Send floor plan",
+                    )
+                    _uiState.value = _uiState.value.copy(message = "Saved to $shown")
+                },
+                {
+                    _uiState.value = _uiState.value.copy(
+                        message = it.message ?: "Could not save the floor plan.",
+                    )
+                },
+            )
+        }
+    }
+
+    enum class RenderedKind(val extension: String) { PNG("png"), PDF("pdf"), DXF("dxf") }
 
     fun extract() {
         viewModelScope.launch {

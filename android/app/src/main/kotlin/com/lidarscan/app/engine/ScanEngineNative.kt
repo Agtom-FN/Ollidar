@@ -153,6 +153,47 @@ object ScanEngineNative {
     /** Returns the `SCAN_POSE_GATE_*` value at [tMonoNs] (see [PoseGate]), or -1 if the call itself failed. */
     external fun nativePoseGateAt(handle: Long, tMonoNs: Long): Int
 
+    // --- ROUND 15 item 54: live re-anchor healing ---------------------------
+    //
+    // Called from the SAME thread and the SAME function as [nativePushPose],
+    // immediately BEFORE the push of the pose that announced the break, so
+    // that pose is itself the first one in the healed frame.
+    //
+    // Returns `SCAN_OK` when the live world frame was corrected and
+    // `SCAN_ERR_INVALID_ARGUMENT` when the bracket could not define a rigid
+    // transform. That distinction is the whole point: it is what decides
+    // whether the operator gets a buzz, because a break that WAS healed is not
+    // something they can act on.
+    //
+    // What is recorded does not change. The engine records the pose the app
+    // pushed, before any correction, so `streams/poses_ar.bin` is what an
+    // unhealed build would have written and an offline re-resolve is
+    // bit-identical either way.
+    external fun nativeHealLiveFrame(
+        handle: Long,
+        beforeNs: Long,
+        bpx: Double,
+        bpy: Double,
+        bpz: Double,
+        bqx: Double,
+        bqy: Double,
+        bqz: Double,
+        bqw: Double,
+        beforeLost: Boolean,
+        afterNs: Long,
+        apx: Double,
+        apy: Double,
+        apz: Double,
+        aqx: Double,
+        aqy: Double,
+        aqz: Double,
+        aqw: Double,
+        afterLost: Boolean,
+    ): Int
+
+    /** `[applied, refused, active, translationM, rotationDeg]`, or null on a bad handle. */
+    external fun nativeLiveHealStats(handle: Long): DoubleArray?
+
     // --- ROUND 9 (owner item 35): the phone's own IMU, in --------------------
     //
     // "lidar data and the imu position data need sync the frequency." ARCore
@@ -433,6 +474,31 @@ object ScanEngineNative {
 
     /** Does the container already carry a stitched cloud? */
     external fun nativeProcHasStitchedCloud(lscanDir: String): Boolean
+
+    /**
+     * ROUND 15 item 56 — A12's floor plan from a SEALED container.
+     *
+     * Handle-less on purpose: it owns its own PageStore inside the engine and
+     * must not publish into the process-wide ProcessingEngine that Review is
+     * drawing from. Blocks for seconds to tens of seconds; call it on
+     * `Dispatchers.IO`.
+     *
+     * Returns the 24 doubles `processing_jni.cpp` documents, or null. The
+     * three output paths come back from [nativeProcPlanFilePaths].
+     */
+    external fun nativeProcFloorPlan(
+        lscanDir: String,
+        sliceMinM: Double,
+        sliceMaxM: Double,
+        gridResM: Double,
+        pngMaxPx: Int,
+        outDir: String?,
+        baseName: String?,
+        title: String?,
+    ): DoubleArray?
+
+    /** `[png, pdf, dxf, cloudSource]` from the last [nativeProcFloorPlan]; "" for absent. */
+    external fun nativeProcPlanFilePaths(): Array<String>?
 
     /**
      * ROUND 13 item 48. [verdict, revolutions, points, extentM,

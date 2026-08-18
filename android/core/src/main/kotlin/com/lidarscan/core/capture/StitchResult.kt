@@ -42,6 +42,8 @@ data class StitchResult(
     val endGapAfterM: Double,
     val mountVerdict: MountVerdict,
     val mountImpossibleFraction: Double,
+    /** ROUND 15 item 57. Null on a build whose native side predates slot 16. */
+    val selfCheck: SelfCheck? = null,
 ) {
     val changedAnything: Boolean get() = ran && sections > 1 && mapWritten
 
@@ -86,6 +88,35 @@ data class StitchResult(
             return moved + refined + gap
         }
 
+    /**
+     * ROUND 15 item 57 — the accuracy line, in plain words.
+     *
+     * This is the only sentence on the card that is a statement about how good
+     * the map IS rather than about what processing did to it, and it is the
+     * ROUND 12 ruler: take every pair of moments that painted the same patch
+     * of wall and measure how far apart the two paintings are along that
+     * wall's normal (`slam/post/map_consistency.h`).
+     *
+     * "Not measurable" is an ANSWER and is said as one. A single pass down a
+     * corridor never paints anything twice, and a card that printed "0.0 cm"
+     * for that would be claiming a perfect map on the strength of no evidence.
+     */
+    val selfCheckLine: String?
+        get() {
+            val sc = selfCheck ?: return null
+            if (!sc.measurable) {
+                return "Repeat accuracy: not measurable — nothing in this scan was " +
+                    "covered twice. Walk past the same wall again and it can be measured."
+            }
+            val cm = sc.offsetMeters * 100.0
+            val floorCm = sc.floorMeters * 100.0
+            return "Surfaces repeat within %.1f cm".format(cm) +
+                " (measured over %.0f s; this measurement's own floor is %.1f cm)".format(
+                    sc.separationSeconds,
+                    floorCm,
+                ) + "."
+        }
+
     /** ROUND 13 item 48: shown only when the mount looks wrong. */
     val mountWarning: String?
         get() = when (mountVerdict) {
@@ -100,7 +131,14 @@ data class StitchResult(
         }
 
     companion object {
-        /** Slot layout is pinned by `processing_jni.cpp`'s documented table. */
+        /**
+         * Slot layout is pinned by `processing_jni.cpp`'s documented table.
+         *
+         * ROUND 15 grew that table from 16 to 22 by APPENDING, so this still
+         * accepts a 16-long array — from a build whose native library has not
+         * been rebuilt — and simply reports no self-check rather than
+         * throwing or, worse, reading a slot that is not there.
+         */
         fun fromNative(v: DoubleArray?): StitchResult? {
             if (v == null || v.size < 16) return null
             return StitchResult(
@@ -120,10 +158,36 @@ data class StitchResult(
                 mountImpossibleFraction = v[13],
                 poses = v[14].toLong(),
                 posesUntracked = v[15].toLong(),
+                selfCheck = if (v.size >= 22) {
+                    SelfCheck(
+                        measurable = v[16] != 0.0,
+                        offsetMeters = v[17],
+                        floorMeters = v[18],
+                        windows = v[19].toInt(),
+                        separationSeconds = v[20],
+                        p90Meters = v[21],
+                    )
+                } else {
+                    null
+                },
             )
         }
     }
 }
+
+/**
+ * ROUND 15 item 57 — `post::MapConsistencyReport`, reduced to what a card can
+ * say. [measurable] false means the scan never covered the same surface twice;
+ * every other field is then meaningless and must not be shown.
+ */
+data class SelfCheck(
+    val measurable: Boolean,
+    val offsetMeters: Double,
+    val floorMeters: Double,
+    val windows: Int,
+    val separationSeconds: Double,
+    val p90Meters: Double,
+)
 
 /** Mirrors `SCAN_MOUNT_*` / `post::MountWatchVerdict`. */
 enum class MountVerdict {

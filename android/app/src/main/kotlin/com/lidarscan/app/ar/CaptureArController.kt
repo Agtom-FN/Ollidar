@@ -17,6 +17,7 @@ import com.lidarscan.app.engine.ScanEngineNative
 import com.lidarscan.core.calib.Quat
 import com.lidarscan.core.calib.Vec3
 import com.lidarscan.core.capture.PoseSample
+import com.lidarscan.core.capture.SectionBreakBracket
 import com.lidarscan.core.capture.RigMotionTracker
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -247,9 +248,69 @@ class CaptureArController(
      */
     val sections = com.lidarscan.core.capture.PoseSectionTracker()
 
-    /** Set by the ViewModel: called on the AR thread for each detected discontinuity. */
+    /**
+     * Set by the ViewModel: called on the AR thread for each detected
+     * discontinuity.
+     *
+     * ROUND 15: the flag is whether the break was HEALED. A healed break is
+     * bookkeeping — it is still recorded, and the offline stitch still runs on
+     * it — and the operator has nothing to do about it, so it must not buzz.
+     * An unhealed one is the only kind worth interrupting a walk for.
+     */
     @Volatile
-    var onSectionBreak: ((com.lidarscan.core.capture.PoseSectionBreak) -> Unit)? = null
+    var onSectionBreak: ((com.lidarscan.core.capture.PoseSectionBreak, Boolean) -> Unit)? = null
+
+    /** ROUND 15 item 54. Reset by [resetSections]; read for the seal summary. */
+    private val healedBreaks = java.util.concurrent.atomic.AtomicInteger(0)
+    private val unhealedBreaks = java.util.concurrent.atomic.AtomicInteger(0)
+
+    val healedBreakCount: Int get() = healedBreaks.get()
+    val unhealedBreakCount: Int get() = unhealedBreaks.get()
+
+    /**
+     * Clears the section tracker AND the ROUND 15 heal counters. One call, so
+     * a Start cannot reset half of the pair — the counters and the tracker
+     * describe the same capture.
+     */
+    fun resetSections() {
+        sections.reset()
+        healedBreaks.set(0)
+        unhealedBreaks.set(0)
+    }
+
+    /**
+     * Returns true when the engine accepted the correction. False means the
+     * bracket could not define a rigid transform — a pose the tracker
+     * disowned, a degenerate rotation, two poses with the same stamp — and
+     * that is exactly the case the operator cue exists for.
+     */
+    private fun healLiveFrame(bracket: SectionBreakBracket): Boolean {
+        val handle = engineHandle
+        if (handle == 0L) return false
+        return runCatching {
+            ScanEngineNative.nativeHealLiveFrame(
+                handle = handle,
+                beforeNs = bracket.before.tMonoNs,
+                bpx = bracket.before.position.x,
+                bpy = bracket.before.position.y,
+                bpz = bracket.before.position.z,
+                bqx = bracket.before.orientation.x,
+                bqy = bracket.before.orientation.y,
+                bqz = bracket.before.orientation.z,
+                bqw = bracket.before.orientation.w,
+                beforeLost = !bracket.before.tracking,
+                afterNs = bracket.after.tMonoNs,
+                apx = bracket.after.position.x,
+                apy = bracket.after.position.y,
+                apz = bracket.after.position.z,
+                aqx = bracket.after.orientation.x,
+                aqy = bracket.after.orientation.y,
+                aqz = bracket.after.orientation.z,
+                aqw = bracket.after.orientation.w,
+                afterLost = !bracket.after.tracking,
+            ) == 0
+        }.getOrDefault(false)
+    }
 
     @Volatile
     var session: Session? = null
@@ -614,7 +675,19 @@ class CaptureArController(
         motion.add(sample)
         // ROUND 7: a relocalization moves ARCore's world frame under the
         // pushbroom. Record it here, where every pose passes exactly once.
-        sections.add(sample)?.let { br -> runCatching { onSectionBreak?.invoke(br) } }
+        // ROUND 15 item 54: HEAL FIRST, THEN PUSH.
+        //
+        // The correction is applied before `nativePushPose` below, so the very
+        // pose that announced the re-anchor is already in the healed frame and
+        // the live map never shows a single frame of the shattered one. The
+        // engine records the RAW pose regardless — healing is a live-view
+        // transform and the container is unaffected (see
+        // `Engine::heal_live_frame`).
+        sections.addBracketed(sample)?.let { bracket ->
+            val healed = healLiveFrame(bracket)
+            if (healed) healedBreaks.incrementAndGet() else unhealedBreaks.incrementAndGet()
+            runCatching { onSectionBreak?.invoke(bracket.breakInfo, healed) }
+        }
 
         val previousTracking = wasTracking
         wasTracking = tracking

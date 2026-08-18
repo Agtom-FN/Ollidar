@@ -104,7 +104,15 @@ class JobQueue;
 // ROUND 13: 9 -> 10, additive only. Two new C entry points
 // (scan_lscan_reprocess_d6, scan_lscan_mount_check) and two new PODs;
 // nothing existing changed size, order or meaning.
-inline constexpr std::uint32_t kEngineAbiVersion = 10;
+// ROUND 15: 10 -> 11, additive only. Three new C entry points for live
+// re-anchor healing (scan_engine_heal_live_frame / clear_live_correction /
+// live_heal_stats), one for the floor plan (scan_lscan_floor_plan) and one
+// extended reprocess (scan_lscan_reprocess_d6_ex) that also returns the
+// ROUND 12 self-consistency ruler. NOTHING existing changed size, order or
+// meaning: scan_reprocess_result and scan_reprocess_options are untouched, so
+// an ABI-10 consumer relinks unmodified and gets identical behaviour (the
+// live correction starts at identity and stays there unless asked).
+inline constexpr std::uint32_t kEngineAbiVersion = 11;
 const char* engine_version_string();  // "scanengine 0.1.0 (<clock backend>)"
 
 struct EngineConfig {
@@ -256,6 +264,57 @@ class Engine {
   PoseSample pose_at(std::int64_t t_mono_ns) const;
   ExternalPoseSource& poses();
   const ExternalPoseSource& poses() const;
+
+  // --- ROUND 15 item 54: LIVE RE-ANCHOR HEALING ---------------------------
+  //
+  // ROUND 13 established what a section break is: ARCore recognising a place
+  // and snapping its world frame, with the frame change written down in the
+  // pose stream as the jump itself (T_k = pose_after * pose_before^-1). That
+  // round applied it OFFLINE, after the seal. Everything needed to apply it
+  // the instant it happens was already on the phone, and until now the live
+  // map shattered anyway and the operator got a buzz telling them about it.
+  //
+  // THE DIRECTION MATTERS AND IT IS NOT THE OFFLINE ONE. Offline, sections
+  // are brought into the LAST section's frame, because that is the frame
+  // ARCore currently believes. Live, the map already on screen fills the
+  // display and the operator's hands are steering by it, so the new frame is
+  // mapped onto the OLD one instead: nothing that is already drawn moves, and
+  // the points arriving after the snap land where the operator expects them.
+  // Concretely the accumulated correction becomes C <- C * T^-1, and every
+  // subsequent pose is left-multiplied by C on its way to the assembler.
+  //
+  // WHAT IS RECORDED DOES NOT CHANGE. `record_pose_()` writes the pose the
+  // caller pushed, unmodified and before any of this is applied, so
+  // `streams/poses_ar.bin` is byte-for-byte what an unhealed build would have
+  // written and an offline re-resolve reproduces the capture exactly (Tech
+  // Spec §3 key rule 2). The section bookkeeping is unaffected, so ROUND 13's
+  // offline stitch — which has submaps, refinement and a flat-floor referee
+  // that a live pass cannot afford — still runs and still improves on this.
+  // The live correction is a VIEW transform with provenance, and the one
+  // artifact it does change is `streams/map.bin`, which reprocess.h already
+  // documents as a cache the Process path overwrites.
+  //
+  // `before` and `after` are the two poses that straddle the jump — the
+  // caller's own detector found them, and the caller is the only thing that
+  // knows which pair those were. Returns kInvalidArgument, WITHOUT changing
+  // the correction, when the pair cannot produce a rigid transform (a pose
+  // the tracker disowned, a non-finite or degenerate quaternion, a
+  // non-increasing timestamp). That refusal is what the operator cue is for:
+  // it fires only for a break that could NOT be healed.
+  Status heal_live_frame(const Pose& before, const Pose& after);
+  void clear_live_correction();
+
+  struct LiveHealStats {
+    std::uint32_t applied = 0;  // breaks folded into the correction
+    std::uint32_t refused = 0;  // breaks with no usable pose bracket
+    // What the accumulated correction moves a point by, i.e. how far apart
+    // the live map WOULD have been without it.
+    double translation_m = 0.0;
+    double rotation_deg = 0.0;
+    bool active = false;
+    double matrix[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+  };
+  LiveHealStats live_heal_stats() const;
 
   // --- ROUND 9 item 35: the phone's IMU ------------------------------------
   //
@@ -568,6 +627,9 @@ class Engine {
   // ChunkType::kPoseAr chunk — record-always, finally applied to the
   // trajectory. See the long note above the definition in engine.cpp.
   void record_pose_(const Pose& pose);
+  // ROUND 15: `pose` in the live-healed world frame. Identity until a break
+  // is healed, so this is the ABI-10 value exactly on a clean capture.
+  Pose live_pose_(const Pose& pose) const;
   // ROUND 9: the same thing for a phone IMU sample, as a kPhoneImu chunk.
   void record_phone_imu_(const PhoneImuSample& s);
   void on_gnss_fix_(const GnssFix& fix);

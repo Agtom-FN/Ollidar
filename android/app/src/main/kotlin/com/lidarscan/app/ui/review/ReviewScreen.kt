@@ -702,6 +702,19 @@ private fun ProcessSectionsCard(
                 modifier = Modifier.testTag("reviewProcessDetail"),
             )
         }
+        // ROUND 15 item 57: the ruler, wherever a StitchResult is shown. Same
+        // sentence on the capture card and here, from the same `:core`
+        // property, so the two can never drift apart.
+        val selfCheck = stitch?.selfCheckLine
+        if (selfCheck != null) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                selfCheck,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.testTag("reviewSelfCheck"),
+            )
+        }
         val mount = stitch?.mountWarning
         if (mount != null) {
             Spacer(Modifier.height(6.dp))

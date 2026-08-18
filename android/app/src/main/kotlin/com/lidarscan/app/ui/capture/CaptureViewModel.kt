@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.lidarscan.app.render.CameraMode
 import com.lidarscan.app.render.NativePointCloudProvider
 import com.lidarscan.app.render.PointCloudSource
+import com.lidarscan.core.capture.StitchResult
 import com.lidarscan.core.engine.CaptureState
 import com.lidarscan.core.engine.ConnectionState
 import com.lidarscan.core.engine.DeviceHealth
@@ -41,6 +42,46 @@ import kotlinx.coroutines.withContext
  * draws), and the screen only ever renders strings.
  */
 data class ManualSerialDevice(val path: String, val label: String)
+
+/**
+ * ROUND 15 item 55 — what auto-process is doing, for the summary card.
+ *
+ * [skipped] and [failed] are different states on purpose, and both are
+ * different from "no result". Skipped means the fast path decided there was
+ * nothing worth doing (one section, no warning) and the card should say so
+ * rather than showing a bar that never moves. Failed means the run did not
+ * complete, and the card must then say the one thing the operator can act on
+ * — the scan itself is sealed, verified and untouched either way.
+ */
+data class AutoProcessState(
+    val projectId: String? = null,
+    val running: Boolean = false,
+    val progress: Float = 0f,
+    val willStitch: Boolean = false,
+    val skipped: Boolean = false,
+    val failed: Boolean = false,
+    val result: StitchResult? = null,
+) {
+    val active: Boolean get() = projectId != null
+
+    /** The line under the grade banner while this is happening or after it. */
+    val line: String?
+        get() = when {
+            !active -> null
+            running && willStitch -> "Putting the pieces back together…"
+            running -> "Checking the scan…"
+            failed ->
+                "Processing failed — the scan is saved. Open it and tap Process to try again."
+            // The RESULT outranks `skipped`: once processing has answered, its
+            // own sentence is the honest one, and for a one-section scan that
+            // sentence already says the scan was recorded in one piece. Written
+            // the other way round first, which made the fast path hide its own
+            // findings behind a description of the route it took.
+            result != null -> result.headline
+            skipped -> "Recorded in one piece — nothing needed aligning."
+            else -> null
+        }
+}
 
 data class CaptureStats(
     val pointsCaptured: Long = 0,
@@ -249,6 +290,25 @@ class CaptureViewModel(
      * consults it.
      */
     private val ethernetSnapshot: () -> Pair<Boolean, List<String>> = { false to emptyList() },
+    /**
+     * ROUND 15 item 55 — auto-process on seal.
+     *
+     * Takes the sealed container's directory and a progress sink (return false
+     * to cancel) and returns what processing concluded, or null if it could
+     * not run. A lambda for the same reason every other capability here is
+     * one: the ViewModel holds no Context and no engine, and a bare-JVM test
+     * must be able to drive the whole Stop -> process -> card -> Projects
+     * choreography without a native library.
+     *
+     * The real implementation is `ProcessingRepository.reprocessD6`, which is
+     * HANDLE-LESS: it opens its own PageStore inside the engine from a
+     * directory. That is what makes it safe to run while the capture tab has
+     * already re-armed and the next scan may be starting on the live engine
+     * handle — the two share no state at all. The default is a no-op, so a
+     * test that does not care sees the ROUND 10 flow unchanged.
+     */
+    private val runAutoProcess: suspend (java.io.File, (Float) -> Boolean) -> StitchResult? =
+        { _, _ -> null },
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<CaptureUiState>(CaptureUiState.Loading)
@@ -1097,12 +1157,21 @@ class CaptureViewModel(
      * ("walk that stretch again with more texture in view") and cannot act on at
      * all once the phone is back in a pocket.
      */
+    /**
+     * ROUND 15 item 54 — breaks the live healer could NOT absorb. The section
+     * count still counts every break (they are all recorded, and the offline
+     * stitch still runs on all of them); this counts the ones the operator can
+     * actually see, and it is what the cue scheduler keys on.
+     */
+    private val _unhealedSectionBreaks = MutableStateFlow(0)
+    val unhealedSectionBreaks: StateFlow<Int> = _unhealedSectionBreaks.asStateFlow()
+
     private val _sectionCount = MutableStateFlow(1)
     val sectionCount: StateFlow<Int> = _sectionCount.asStateFlow()
 
-    val sectionHint: StateFlow<String?> = _sectionCount
-        .map { com.lidarscan.core.capture.sectionHint(it) }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    val sectionHint: StateFlow<String?> = combine(_sectionCount, _unhealedSectionBreaks) { n, u ->
+        com.lidarscan.core.capture.sectionHint(n, u)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     /** Wall-clock start of the running capture, for the no-data watchdog. 0 when not recording. */
     private var recordingStartedAtMillis = 0L
@@ -1735,7 +1804,12 @@ class CaptureViewModel(
         val conditions = com.lidarscan.core.capture.CueConditions(
             trackingDegraded = status != null && !status.tracking,
             movingTooFast = excessiveMotion || (recentlySkipping && _keyframesEnabled.value),
-            sectionBreaks = _sectionCount.value - 1,
+            // ROUND 15 item 54: only an UNHEALED break can reach the cue. A
+            // healed break leaves the live map continuous, so there is nothing
+            // for the operator to notice and nothing for them to do — and
+            // ROUND 13 measured that the buzz for one break was itself the
+            // cause of the next one.
+            sectionBreaks = _unhealedSectionBreaks.value,
             turningWithoutMoving = starved,
         )
         val fired = cues.tick(conditions, nowMillis, enabled = recording && cuesArmed)
@@ -2324,13 +2398,23 @@ class CaptureViewModel(
             // ROUND 7 (item 3): sections belong to a capture. A break detected
             // while framing the preview is not this scan's seam.
             arController?.let { controller ->
-                controller.sections.reset()
+                controller.resetSections()
                 _sectionCount.value = 1
-                controller.onSectionBreak = { br ->
+                _unhealedSectionBreaks.value = 0
+                controller.onSectionBreak = { br, healed ->
                     _sectionCount.value = controller.sections.sectionCount()
+                    // ROUND 15 item 54: only an UNHEALED break can reach the
+                    // cue. The count the scheduler keys on is this one, not
+                    // the section count, because a healed break is invisible
+                    // on screen and there is nothing for the operator to do
+                    // about it — buzzing would be telling them about work the
+                    // app already did, and ROUND 13 measured that a cue buzz
+                    // is itself capable of causing the next break.
+                    if (!healed) _unhealedSectionBreaks.value = controller.unhealedBreakCount
                     logEvent(
                         LOG_TAG_AR,
                         "SECTION BREAK #${controller.sections.sectionCount() - 1} " +
+                            (if (healed) "HEALED live " else "NOT healed (no usable bracket) ") +
                             "reason=${br.reason} jump=%.3fm/%.2fdeg gapMs=${br.gapMillis} t=${br.tMonoNs}"
                                 .format(br.positionJumpM, br.rotationJumpDeg),
                     )
@@ -3086,6 +3170,7 @@ class CaptureViewModel(
             lastStatsSampleMillis = 0L
             lastStatsSamplePoints = 0L
             _sectionCount.value = 1
+            _unhealedSectionBreaks.value = 0
             // ROUND 11 (item 43): per-session, like everything else here. A
             // scheduler carried across captures would open the next one with
             // the previous one's section count as its baseline and buzz on the
@@ -3119,6 +3204,25 @@ class CaptureViewModel(
         // list entry that vanishes under them on the next refresh; the red
         // no-data banner on THIS screen is the thing they need to read.
         if (verified != null && !prunedEmptyScan) {
+            // ── ROUND 15 item 55 ────────────────────────────────────────
+            // AFTER the read-back verify and BEFORE the navigation emit. The
+            // order is the whole safety argument: the container is on disk and
+            // has been re-opened successfully, so nothing below can lose it,
+            // and the navigation intent is still emitted whatever processing
+            // does — a failed reprocess must not strand the operator on the
+            // Capture tab with a scan they cannot reach.
+            val mountWarned = _storedMountTrim.value?.trim?.accuracyDeg?.let { it > 1.0 } ?: false
+            if (autoProcessPlan(sectionBreaks.size + 1, mountWarned)) {
+                startAutoProcess(activeId, verified.directory, sectionBreaks.size + 1)
+            } else {
+                // The fast path still runs the cheap ruler — that is the
+                // difference between "we skipped it" and "we have nothing to
+                // tell you". It is the same call; what it skips is the seam
+                // refinement and the second cloud write, neither of which has
+                // anything to do on one section.
+                startAutoProcess(activeId, verified.directory, 1)
+                _autoProcess.value = _autoProcess.value.copy(skipped = true)
+            }
             _sealedProjectId.tryEmit(activeId)
             // ROUND 10 (owner item 38): the navigation intent is LOGGED, so the
             // next field log answers "did the app try to navigate and the shell
@@ -3135,9 +3239,107 @@ class CaptureViewModel(
         }
     }
 
+    // ── ROUND 15 item 55: AUTO-PROCESS ON SEAL ──────────────────────────────
+    //
+    // > "Stop -> seal -> reprocess runs automatically, progress on the summary
+    // >  card, card shows POST-process numbers."
+    //
+    // The choreography, and why it is this and not something simpler:
+    //
+    //  1. Stop seals the container and the ROUND 10 card appears. Nothing about
+    //     that changes: the card is what holds navigation (CaptureScreen only
+    //     navigates once `sessionSummary` goes null), so it is also the only
+    //     place a progress bar can live without inventing a second modal.
+    //  2. Processing starts on `Dispatchers.IO` against the SEALED DIRECTORY.
+    //     It shares nothing with the capture engine — `reprocessD6` is
+    //     handle-less and opens its own PageStore — which is what makes it
+    //     safe for the tab to have already re-armed and for the operator to
+    //     press Start again while it runs. The ROUND 14 `resetWorldFrame()`
+    //     rebuilds the ARCore session on that Start; this job never touches it.
+    //  3. The card grows a line and a bar while it runs, and swaps to the
+    //     POST-process numbers when it finishes.
+    //  4. Done -> Projects, exactly as before.
+    //
+    // AND IT NEVER LOSES A SCAN. The container is sealed and verified before
+    // any of this starts; processing only ever ADDS `processed/` files. Every
+    // failure path leaves the scan on disk and says the one thing the operator
+    // can act on — open it and tap Process.
+    private val _autoProcess = MutableStateFlow(AutoProcessState())
+    val autoProcess: StateFlow<AutoProcessState> = _autoProcess.asStateFlow()
+
+    /**
+     * The FAST PATH (item 55): a capture that recorded in one piece and raised
+     * no warning has nothing to stitch, so the expensive part is skipped — but
+     * the cheap ruler is not, because "surfaces repeat within X cm" is the one
+     * number on the card that is about the map rather than about the run, and
+     * a clean capture is exactly the one whose owner will believe it.
+     *
+     * Implemented as a decision rather than a shortcut inside the engine: the
+     * engine's own `stitch_sections` is provably a no-op on one section
+     * (`SectionCorrection` is exactly identity), so this is about not paying
+     * for the refinement pass and the second cloud write, not about
+     * correctness.
+     */
+    private fun autoProcessPlan(sections: Int, mountWarned: Boolean): Boolean =
+        sections > 1 || mountWarned
+
+    private fun startAutoProcess(projectId: String, directory: java.io.File, sections: Int) {
+        _autoProcess.value = AutoProcessState(
+            projectId = projectId,
+            running = true,
+            progress = 0f,
+            willStitch = sections > 1,
+        )
+        // NonCancellable and on viewModelScope, the same posture the seal
+        // itself uses: an Activity recreation between Stop and Done must not
+        // abandon a half-written `processed/` directory.
+        viewModelScope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
+                    runAutoProcess(directory) { f ->
+                        _autoProcess.value = _autoProcess.value.copy(
+                            progress = f.coerceIn(0f, 1f),
+                        )
+                        true
+                    }
+                }
+            }.getOrNull()
+
+            if (result == null || !result.ran) {
+                _autoProcess.value = _autoProcess.value.copy(
+                    running = false,
+                    progress = 1f,
+                    failed = true,
+                )
+                logEvent(
+                    LOG_TAG_SEAL,
+                    "auto-process FAILED for $projectId — the scan is saved and untouched; " +
+                        "open it and tap Process",
+                )
+                return@launch
+            }
+            _autoProcess.value = _autoProcess.value.copy(
+                running = false,
+                progress = 1f,
+                result = result,
+            )
+            logEvent(
+                LOG_TAG_SEAL,
+                "auto-process done for $projectId: sections=${result.sections} " +
+                    "refined=${result.seamsRefined} points=${result.points} " +
+                    "selfCheckMeasurable=${result.selfCheck?.measurable} " +
+                    ("selfCheckCm=%.2f".format((result.selfCheck?.offsetMeters ?: 0.0) * 100)),
+            )
+        }
+    }
+
     fun dismissSessionSummary() {
         _sessionSummary.value = null
         _scanSummary.value = null
+        // Deliberately NOT cleared: a reprocess that is still running keeps
+        // running, and its result is on the project when Review opens it. What
+        // is cleared is only the card.
+        if (!_autoProcess.value.running) _autoProcess.value = AutoProcessState()
     }
 
     fun setLiveSlam(enabled: Boolean) {

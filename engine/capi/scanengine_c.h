@@ -200,7 +200,26 @@ extern "C" {
  * future consumer go through this header, and a correction that only one
  * platform can apply is a correction that will silently diverge. Same argument
  * that put scan_colorizer_run() here. */
-#define SCAN_ABI_VERSION 10u
+/* --- ABI 11 (ROUND 15): live healing, the floor plan, and the ruler --------
+ *
+ * FIVE new functions, three new PODs, and NOTHING existing changed — in
+ * particular `scan_reprocess_options` and `scan_reprocess_result` keep their
+ * exact ABI-10 layout, which is why the self-check arrives through a NEW
+ * entry point taking a SECOND out-struct rather than through two more fields
+ * on the old one. Appending to a POD a caller allocates is not an additive
+ * change; adding a function is.
+ *
+ *   * scan_engine_heal_live_frame() — apply ROUND 13's analytic re-anchor
+ *     transform to the LIVE map the instant a break is detected, so the
+ *     display stays continuous. The RECORDED pose stream is untouched and an
+ *     offline re-resolve is bit-identical either way; see
+ *     Engine::heal_live_frame() for the direction argument.
+ *   * scan_engine_clear_live_correction() / scan_engine_live_heal_stats().
+ *   * scan_lscan_reprocess_d6_ex() — scan_lscan_reprocess_d6() plus the
+ *     ROUND 12 self-consistency ruler over the cloud the run just produced.
+ *   * scan_lscan_floor_plan() — A12's floor-plan extractor over a sealed
+ *     container, writing DXF + PDF + a rendered PNG. */
+#define SCAN_ABI_VERSION 11u
 
 /* --- errors: mirror of scanengine::ScanError --------------------------- */
 typedef int32_t scan_error_t;
@@ -1743,6 +1762,138 @@ SCAN_API int32_t scan_lscan_has_stitched_cloud(const char* lscan_dir);
  * whole capture). Judged from where the returns land; warns, never refuses. */
 SCAN_API scan_error_t scan_lscan_mount_check(const char* lscan_dir, double window_seconds,
                                              scan_mount_check_result* out);
+
+/* ======================================================================== */
+/* ROUND 15 (ABI 11): live re-anchor healing, the ruler, and the floor plan  */
+/* ======================================================================== */
+
+/* --- item 54: live healing ---------------------------------------------- */
+
+/* Fold ARCore's own re-anchor transform into the LIVE world frame so the map
+ * on screen does not shatter. `before` and `after` are the two poses that
+ * straddle the jump, as the caller's detector found them.
+ *
+ * The recorded pose stream is NOT affected: scan_engine_push_pose() records
+ * what you pushed, before any correction, so a replay of the container
+ * reproduces the capture exactly. Section bookkeeping is unaffected, so the
+ * offline stitch still runs and still improves on this.
+ *
+ * SCAN_ERR_INVALID_ARGUMENT — with the correction left exactly as it was —
+ * when the pair cannot define a rigid transform (a pose the tracker disowned,
+ * a degenerate rotation, out-of-order stamps). That is the case in which the
+ * operator SHOULD be told, because nothing could be done about it. */
+SCAN_API scan_error_t scan_engine_heal_live_frame(scan_engine* engine,
+                                                  const scan_pose* before,
+                                                  const scan_pose* after);
+
+/* Back to identity. Also done automatically by scan_engine_start_session(). */
+SCAN_API scan_error_t scan_engine_clear_live_correction(scan_engine* engine);
+
+typedef struct scan_live_heal_stats {
+  uint32_t applied;  /* breaks folded into the live frame */
+  uint32_t refused;  /* breaks with no usable pose bracket — cue these */
+  uint8_t active;
+  /* What the accumulated correction moves a point by, i.e. how far apart the
+   * live map WOULD have been without it. */
+  double translation_m;
+  double rotation_deg;
+  double matrix[16]; /* row-major 4x4 */
+} scan_live_heal_stats;
+
+SCAN_API scan_error_t scan_engine_live_heal_stats(scan_engine* engine,
+                                                  scan_live_heal_stats* out);
+
+/* --- item 57: the ROUND 12 ruler, on the reprocess path ------------------ */
+
+typedef struct scan_selfcheck_result {
+  uint8_t measurable;        /* 0 = nothing could be compared; see `blocker` */
+  uint32_t windows;
+  uint32_t nearest_separation;
+  uint32_t cells;            /* shared planar cells that voted */
+  double window_seconds;
+  double nearest_offset_m;   /* THE number: how far the map disagrees with itself */
+  double p90_offset_m;
+  double self_floor_m;       /* the measurement's own floor on this capture */
+  char blocker[96];          /* "" when measurable */
+} scan_selfcheck_result;
+
+/* scan_lscan_reprocess_d6() plus the self-consistency measurement over the
+ * cloud this run produced. `selfcheck` may be NULL (then it is not computed,
+ * and the call is exactly scan_lscan_reprocess_d6()). */
+SCAN_API scan_error_t scan_lscan_reprocess_d6_ex(const char* lscan_dir,
+                                                 const scan_reprocess_options* opts,
+                                                 scan_reprocess_result* out,
+                                                 scan_selfcheck_result* selfcheck,
+                                                 scan_reprocess_progress_cb progress,
+                                                 void* user_data);
+
+/* --- item 56: the floor plan --------------------------------------------- */
+
+/* Which drawing came out. STABLE, APPEND-ONLY. */
+enum {
+  SCAN_PLAN_MODE_WALLS = 0,   /* walls were fitted */
+  SCAN_PLAN_MODE_DENSITY = 1  /* nothing fitted; the returns themselves are the map */
+};
+
+typedef struct scan_plan_options {
+  double slice_min_m; /* 0 = engine default (1.0) */
+  double slice_max_m; /* 0 = engine default (1.5) */
+  double grid_res_m;  /* 0 = engine default (0.02) */
+  uint8_t up_axis;    /* 0 = Z, 1 = Y (ARCore, and the default for 0), 2 = X */
+  uint8_t write_dxf;
+  uint8_t write_pdf;
+  uint8_t write_png;
+  uint32_t png_max_px; /* 0 = 1600 */
+  const char* out_dir;   /* NULL = <lscan_dir>/processed */
+  const char* base_name; /* NULL = "floorplan" */
+  const char* title;     /* NULL = "" */
+} scan_plan_options;
+
+typedef struct scan_plan_result {
+  uint8_t ran;
+  uint8_t mode;                 /* SCAN_PLAN_MODE_* */
+  uint8_t walls_from_floor_map; /* the 1.2 m cut was too sparse; see below */
+  uint8_t no_room_closed;
+
+  uint64_t cloud_points;
+  uint64_t band_points;   /* points inside the plan slice */
+  uint64_t map_points;    /* points inside the floor-map band */
+  uint32_t occupied_cells;
+  uint32_t map_cells;
+
+  uint32_t walls;
+  uint32_t walls_paired; /* both faces scanned -> MEASURED thickness */
+  uint32_t openings;
+  uint32_t doors;
+  uint32_t windows;
+  uint32_t rooms;
+  double total_wall_length_m;
+  double total_room_area_m2;
+  double largest_room_area_m2;
+  double extent_x_m;
+  double extent_y_m;
+  double png_px_per_m;
+  double png_scale_bar_m;
+  uint32_t png_w;
+  uint32_t png_h;
+
+  char png_path[512];
+  char pdf_path[512];
+  char dxf_path[512];
+  char cloud_source[64];
+} scan_plan_result;
+
+/* Extract A12's floor plan from a SEALED container and write the requested
+ * files. Prefers `processed/map_stitched.bin` when the container has been
+ * processed, then the live map cache, then a full re-resolve.
+ *
+ * A capture whose plan slice fits no wall is NOT an error: the call returns
+ * SCAN_OK with `mode == SCAN_PLAN_MODE_DENSITY` and a PNG of the occupancy at
+ * a stated metric scale. DXF and PDF are written only when something was
+ * fitted — the corresponding path is empty otherwise. */
+SCAN_API scan_error_t scan_lscan_floor_plan(const char* lscan_dir,
+                                            const scan_plan_options* opts,
+                                            scan_plan_result* out);
 
 
 #ifdef __cplusplus

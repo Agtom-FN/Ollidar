@@ -33,6 +33,7 @@
 
 #include "scanengine/cloud/point_page.h"
 #include "scanengine/core/error.h"
+#include "scanengine/slam/post/map_consistency.h"
 #include "scanengine/slam/post/mount_watch.h"
 #include "scanengine/slam/post/progress.h"
 #include "scanengine/slam/post/section_stitch.h"
@@ -51,6 +52,16 @@ struct ReprocessOptions {
   // Written even when nothing was stitched, so the sidecar always says what
   // the last processing run concluded.
   bool always_write_sidecar = true;
+
+  // ROUND 15 item 57. Run the ROUND 12 ruler (map_consistency.h) over the
+  // cloud this pass just produced. It is nearly free — the points and their
+  // times are already in hand, and the measurement is a voxel pass plus some
+  // 3x3 Jacobi — and it is the only number in this report that is an
+  // ACCURACY-shaped statement rather than a description of what moved. On by
+  // default, because a summary card that cannot say how well the map agrees
+  // with itself is a card that has to fall back on adjectives.
+  bool measure_self_consistency = true;
+  MapConsistencyConfig consistency{};
 };
 
 struct ReprocessReport {
@@ -60,6 +71,10 @@ struct ReprocessReport {
   std::uint64_t poses = 0;
   SectionStitchReport stitch{};
   MountWatchReport mount{};
+  // ROUND 15: `measurable` is false — with `blocker` saying why — on a scan
+  // that never painted the same surface twice. That is a legitimate answer
+  // for a single pass down a corridor and the card says so in those words.
+  MapConsistencyReport consistency{};
   std::string map_path;
   std::string sidecar_path;
 };
