@@ -277,6 +277,15 @@ fun CaptureRoute(
                     cuesEnabled = {
                         container.settingsRepository.settings.first().operatorCuesEnabled
                     },
+                    // ROUND 13 (owner item 47). Read at Start, so the switch
+                    // applies to the next capture and never changes the filter
+                    // under a walk already in progress.
+                    engageDnd = {
+                        container.dndGuard.engage(
+                            container.settingsRepository.settings.first().dndDuringCapture,
+                        )
+                    },
+                    releaseDnd = container.dndGuard::release,
                 )
             }
         },
@@ -1213,6 +1222,8 @@ fun CaptureScreen(
             onLiveMapEnabledChange = onLiveMapEnabledChange,
             liveSlam = liveSlam,
             liveSlamEditable = !live && connected,
+            // ROUND 13: a COIN-D6 can never feed the LIO this gates.
+            liveSlamSupported = sensor != SensorType.COIN_D6,
             onLiveSlamChange = onLiveSlamChange,
             connection = {
                 if (autoConnectState != null) {
@@ -2703,6 +2714,18 @@ private fun ScanGradeBanner(summary: com.lidarscan.core.capture.ScanSummary) {
                     InkFaint
                 },
                 modifier = Modifier.testTag("scanSummaryLoopNote"),
+            )
+        }
+        // ROUND 13 (owner item 49): what to DO before the next walk. The grade
+        // describes the scan that just happened; this describes the next one.
+        // "5 sections" is a count, not an instruction.
+        summary.nextWalkAdvice?.let { advice ->
+            Spacer(Modifier.height(6.dp))
+            Text(
+                advice,
+                style = MonoMeta,
+                color = SemWarn,
+                modifier = Modifier.testTag("scanSummaryNextWalk"),
             )
         }
     }

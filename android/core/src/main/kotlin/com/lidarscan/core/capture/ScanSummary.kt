@@ -119,13 +119,32 @@ data class ScanSummary(
             pointsCaptured <= 0L ->
                 "No points were recorded. Check the D6 cable and rescan."
             sections > MAX_SECTIONS_FAIR ->
-                "$sections sections — tracking restarted too many times for the pieces to line up. Rescan."
+                // ROUND 13. The old sentence said "tracking restarted", which is
+                // not what happens, and "Rescan", which does not tell the
+                // operator what to do differently. Measured against the recorded
+                // gyro, every one of the owner's section breaks is ARCore
+                // RE-ANCHORING — the phone rotated under 1.2 deg while the pose
+                // stream jumped 8-13 deg — so it is the camera losing confidence
+                // in where it is, and the two things that change that are light
+                // and texture in front of the lens.
+                "$sections sections — the camera re-anchored $breaks times, so the room was " +
+                    "rebuilt from scratch that often. Check nothing is covering the rear camera, " +
+                    "turn more lights on, and keep the lens pointed at furniture and edges rather " +
+                    "than blank wall. Process this scan to stitch the pieces back together."
             trackingDrops > MAX_DROPS_FAIR ->
-                "$trackingDrops tracking drops — large gaps in the room. Rescan more slowly, with more light."
+                "$trackingDrops tracking drops — the camera stopped knowing where it was, and " +
+                    "those seconds are holes in the room. More light, and keep the rear camera " +
+                    "clear and pointed at something with detail."
             pointsPerMeter < MIN_DENSITY_FAIR ->
                 "${pointsPerMeter.roundToInt()} points per metre — you walked too fast to fill in the walls. Rescan."
             sections > MAX_SECTIONS_GOOD ->
-                "$sections sections — usable, but the pieces may not line up perfectly."
+                // ROUND 13: "may not line up" was true and useless. It is now
+                // known exactly how far apart they are — the pose jump itself —
+                // and there is something to do about it.
+                "$sections sections — the camera re-anchored $breaks time" +
+                    (if (breaks == 1) "" else "s") +
+                    " and the pieces are about a metre apart until you Process this scan, " +
+                    "which stitches them back into one frame."
             trackingDrops > MAX_DROPS_GOOD ->
                 "$trackingDrops tracking drops — some gaps. Walk those parts again if they matter."
             pointsPerMeter < MIN_DENSITY_GOOD ->
@@ -149,6 +168,37 @@ data class ScanSummary(
                 // was not, which is whether the room lines up.
                 ("One section, no tracking drops, ${pointsPerMeter.roundToInt()} points per metre. " +
                     "Coverage checks passed; alignment is not measured on the phone.")
+        }
+
+    /** Re-anchoring events. One section means none happened. */
+    val breaks: Int get() = (sections - 1).coerceAtLeast(0)
+
+    /**
+     * ROUND 13 — what to DO before the next walk, or null when the scan needs
+     * nothing. Shown under the grade beside [loopReturnNote].
+     *
+     * Separate from [gradeReason] on purpose: the reason describes the scan
+     * that just happened, and this describes the next one. The owner's
+     * complaint was never that the app failed to count sections; it is that
+     * "5 sections" is not an instruction.
+     */
+    val nextWalkAdvice: String?
+        get() = when {
+            pointsCaptured <= 0L -> null
+            breaks >= 2 ->
+                "Before the next walk: uncover the rear camera (a case or the bracket edge is " +
+                    "enough), turn the lights up, and walk the turns slowly — the camera re-anchors " +
+                    "when it cannot recognise what it is looking at."
+            breaks == 1 ->
+                "Before the next walk: give the camera more to look at through turns — corners and " +
+                    "furniture rather than blank wall."
+            trackingDrops > 0 ->
+                "Before the next walk: more light. The camera lost tracking $trackingDrops time" +
+                    (if (trackingDrops == 1) "" else "s") + "."
+            pointsPerMeter < MIN_DENSITY_GOOD ->
+                "Before the next walk: slow down a little — the returns are thinner than the walls " +
+                    "want."
+            else -> null
         }
 
     /**

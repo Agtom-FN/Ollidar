@@ -113,6 +113,15 @@ struct TrajPose {
   std::int64_t t_ns = 0;
   double q[4] = {0.0, 0.0, 0.0, 1.0};  // (x, y, z, w), world_from_phone
   double p[3] = {0.0, 0.0, 0.0};       // world_from_phone translation
+  // ROUND 13 (additive, defaulted to "a good pose" so nothing that built one
+  // of these before has changed meaning). The recorded pose stream carries
+  // both — see lscan.h's kPoseAr layout, bytes 65 and 66 — and section
+  // stitching needs them: the owner's scan-030 opens with 14 poses at exactly
+  // (0, 0, 0) with quality 0 and tracking_lost 1, which are not a world frame
+  // but the ABSENCE of one. Treating the step out of them as a re-anchor
+  // invents a 1.2 m / 10.8 deg frame change that never happened.
+  std::uint8_t quality = 3;        // PoseQuality; 0 = kInvalid
+  std::uint8_t tracking_lost = 0;  // 0/1
 };
 
 struct TrajectoryLoopConfig {

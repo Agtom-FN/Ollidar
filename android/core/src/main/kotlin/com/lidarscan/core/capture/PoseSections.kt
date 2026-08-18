@@ -73,8 +73,16 @@ data class PoseSectionBreak(
                 "tracking re-acquired after ${gapMillis} ms — the frame may have shifted " +
                     "%.2f m / %.1f°".format(positionJumpM, rotationJumpDeg)
             Reason.IMPOSSIBLE_STEP ->
-                "pose stepped %.2f m / %.1f° in ${gapMillis} ms — faster than a walk, so the " +
-                    "tracker corrected itself".format(positionJumpM, rotationJumpDeg)
+                // ROUND 13: the placeholders live in the FIRST fragment, and a
+                // method call binds tighter than `+`, so `.format()` was being
+                // applied to the second fragment (which has none) and this
+                // sentence shipped reading "pose stepped %.2f m / %.1f°" to the
+                // operator. One string, one format call — same fix as the seal
+                // summary log line.
+                "pose stepped %.2f m / %.1f° in $gapMillis ms — faster than a walk, so the ".format(
+                    positionJumpM,
+                    rotationJumpDeg,
+                ) + "tracker corrected itself"
         }
 }
 

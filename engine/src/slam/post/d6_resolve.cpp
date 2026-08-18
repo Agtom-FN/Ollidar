@@ -152,6 +152,65 @@ Status lscan_is_d6_project(const std::string& lscan_dir, bool* is_d6) {
   return kOkStatus;
 }
 
+namespace {
+
+// Read ONE chunk file (stream header + framed chunks) directly, rather than
+// through FileRecordReader — that class walks a hard-coded list of
+// `streams/*.bin` (ROUND 9 named this) and a derived product in `processed/`
+// is deliberately not on it.
+Status load_chunk_file_(const std::string& path, PageStore* store, StreamId out_stream,
+                        std::uint64_t* out_points) {
+  if (out_points != nullptr) *out_points = 0;
+  std::FILE* f = std::fopen(path.c_str(), "rb");
+  if (f == nullptr) return ScanError::kNotFound;
+  std::uint8_t sh[lscan::kStreamHeaderBytes];
+  if (std::fread(sh, 1, sizeof(sh), f) != sizeof(sh)) {
+    std::fclose(f);
+    return ScanError::kIoError;
+  }
+  lscan::StreamFileHeader hdr{};
+  if (!lscan::decode_stream_header(ByteSpan(sh, sizeof(sh)), &hdr)) {
+    std::fclose(f);
+    return ScanError::kInvalidArgument;
+  }
+  std::uint64_t loaded = 0;
+  std::vector<std::uint8_t> payload;
+  for (;;) {
+    std::uint8_t ch[lscan::kChunkHeaderBytes];
+    if (std::fread(ch, 1, sizeof(ch), f) != sizeof(ch)) break;  // clean EOF
+    lscan::ChunkHeader h{};
+    if (!lscan::decode_chunk_header(ByteSpan(ch, sizeof(ch)), &h)) break;
+    payload.resize(h.payload_len);
+    if (h.payload_len > 0 && std::fread(payload.data(), 1, h.payload_len, f) != h.payload_len) {
+      break;
+    }
+    std::uint8_t trailer[lscan::kChunkTrailerBytes];
+    if (std::fread(trailer, 1, sizeof(trailer), f) != sizeof(trailer)) break;
+    const std::uint32_t want = static_cast<std::uint32_t>(trailer[0]) |
+                               (static_cast<std::uint32_t>(trailer[1]) << 8) |
+                               (static_cast<std::uint32_t>(trailer[2]) << 16) |
+                               (static_cast<std::uint32_t>(trailer[3]) << 24);
+    // A derived file is regenerable, so a bad CRC is a reason to fall back to
+    // the sealed cache rather than to fail: stop here and report what loaded.
+    if (lscan::chunk_crc(h, ByteSpan(payload.data(), payload.size())) != want) break;
+    if (h.type != lscan::ChunkType::kPointsXyzRgba) continue;
+    if (payload.empty() || (payload.size() % lscan::kPointVertexBytes) != 0) continue;
+    const std::size_t n = payload.size() / lscan::kPointVertexBytes;
+    std::vector<PointVertex> pts(n);
+    std::memcpy(pts.data(), payload.data(), payload.size());
+    if (!store->append(out_stream, Span<const PointVertex>(pts.data(), pts.size()), h.t_mono_ns)
+             .ok()) {
+      break;
+    }
+    loaded += n;
+  }
+  std::fclose(f);
+  if (out_points != nullptr) *out_points = loaded;
+  return loaded > 0 ? kOkStatus : Status(ScanError::kNotFound);
+}
+
+}  // namespace
+
 Status load_recorded_cloud(const std::string& lscan_dir, PageStore* store, StreamId out_stream,
                            std::uint64_t* out_points) {
   if (store == nullptr) {
@@ -162,6 +221,25 @@ Status load_recorded_cloud(const std::string& lscan_dir, PageStore* store, Strea
   static_assert(sizeof(PointVertex) == lscan::kPointVertexBytes,
                 "the kPointsXyzRgba payload IS a PointVertex array; if PointVertex changes size "
                 "the format changes with it and needs a new chunk type, not a silent reinterpret");
+
+  // ROUND 13: a container that has been Processed carries a CORRECTED cloud in
+  // `processed/map_stitched.bin`, and that is what the viewer must draw — the
+  // whole point of the button is that the room stops being in five pieces.
+  // Preferred here, at the one function every reader already goes through,
+  // rather than at each caller: Review, the thumbnail, Export and Colorize all
+  // reach the cloud this way and every one of them wants the corrected answer.
+  // Deleting the file returns the container to exactly what the phone sealed.
+  {
+    std::uint64_t n = 0;
+    const Status stitched = load_chunk_file_(lscan_dir + "/processed/map_stitched.bin", store,
+                                             out_stream, &n);
+    if (stitched.ok() && n > 0) {
+      if (out_points != nullptr) *out_points = n;
+      SCAN_LOG_INFO(kMod, "recorded cloud: %llu points loaded from the STITCHED map of '%s'",
+                    static_cast<unsigned long long>(n), lscan_dir.c_str());
+      return kOkStatus;
+    }
+  }
 
   lscan::FileRecordReader reader;
   SCAN_TRY(reader.open(lscan_dir));
@@ -388,7 +466,7 @@ Status D6ResolvePipeline::run(const std::string& lscan_dir) {
   // its config, and a sink attached afterwards would miss the first batch.
   s.traj = s.cfg.out_trajectory;
   s.times = s.cfg.out_point_times;
-  if (s.cfg.close_loops) {
+  if (s.cfg.close_loops || s.cfg.stitch_sections) {
     if (s.traj == nullptr) s.traj = &s.traj_own;
     if (s.times == nullptr) s.times = &s.times_own;
   }
@@ -476,6 +554,11 @@ Status D6ResolvePipeline::run(const std::string& lscan_dir) {
             tp.t_ns = p.t_mono_ns;
             for (int i = 0; i < 4; ++i) tp.q[i] = p.orientation[i];
             for (int i = 0; i < 3; ++i) tp.p[i] = p.position[i];
+            // ROUND 13: carry the tracker's own verdict through, so a
+            // consumer can tell "the phone was here" from "the phone did not
+            // know where it was".
+            tp.quality = static_cast<std::uint8_t>(rec.quality);
+            tp.tracking_lost = rec.tracking_lost;
             s.traj->push_back(tp);
           }
         }
@@ -529,6 +612,62 @@ Status D6ResolvePipeline::run(const std::string& lscan_dir) {
     s.stats.imu_densified = ist.densified;
     s.stats.imu_fallbacks = ist.fallbacks;
     s.stats.imu = ist;
+  }
+
+  // --- ROUND 13: section stitching -----------------------------------------
+  //
+  // BEFORE loop closure, and that order is the whole point. A capture with
+  // five sections is five maps in five world frames; a revisit detector run
+  // over it is comparing places that are not where the trajectory says they
+  // are. Stitching first makes the walk one walk, which is the state ROUND 11
+  // and ROUND 12's machinery was built to assume.
+  //
+  // Both the cloud AND `*s.traj` are corrected, so anything downstream — the
+  // closer, a caller's trajectory export, the CLI's rulers — sees one frame.
+  if (s.cfg.stitch_sections && s.traj != nullptr && s.times != nullptr) {
+    std::vector<PointVertex> cloud;
+    cloud.reserve(static_cast<std::size_t>(s.cfg.store->total_points()));
+    const std::vector<PageId> ids = s.cfg.store->page_ids();
+    for (const PageId id : ids) {
+      const PageView v = s.cfg.store->page_view(id);
+      if (!v.valid()) continue;
+      for (std::uint32_t k = 0; k < v.count; ++k) cloud.push_back(v.data[k]);
+    }
+    if (cloud.size() != s.times->size()) {
+      SCAN_LOG_WARN(kMod,
+                    "section stitching skipped: %zu points in the store but %zu point times",
+                    cloud.size(), s.times->size());
+      s.stats.sections.summary = "the cloud and its per-point timestamps disagree in length";
+    } else {
+      SectionCorrection corr;
+      s.stats.sections = stitch_sections(
+          *s.traj, Span<const PointVertex>(cloud.data(), cloud.size()),
+          Span<const std::int64_t>(s.times->data(), s.times->size()), s.cfg.sections, &corr);
+      if (corr.active()) {
+        std::size_t k = 0;
+        for (const PageId id : ids) {
+          const PageView v = s.cfg.store->page_view(id);
+          if (!v.valid()) continue;
+          PointVertex* w = s.cfg.store->page_data_mutable(id);
+          if (w == nullptr) {
+            k += v.count;
+            continue;
+          }
+          for (std::uint32_t i = 0; i < v.count; ++i, ++k) {
+            float xyz[3] = {w[i].x, w[i].y, w[i].z};
+            corr.apply_point((*s.times)[k], xyz);
+            w[i].x = xyz[0];
+            w[i].y = xyz[1];
+            w[i].z = xyz[2];
+          }
+          (void)s.cfg.store->notify_recoloured(id, 0, v.count);
+        }
+        for (TrajPose& tp : *s.traj) corr.apply_pose(tp.t_ns, tp.q, tp.p);
+        s.stats.sections_stitched = true;
+      }
+    }
+    SCAN_LOG_INFO(kMod, "section stitching: %zu sections — %s", s.stats.sections.sections,
+                  s.stats.sections.summary);
   }
 
   // --- ROUND 11 item 41: loop closure --------------------------------------

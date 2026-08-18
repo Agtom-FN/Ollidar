@@ -269,6 +269,14 @@ class AppContainer(context: Context) {
     val cuePlayer = com.lidarscan.app.capture.OperatorCuePlayer(appContext)
 
     /**
+     * ROUND 13 (owner item 47): one Do Not Disturb guard for the process. It
+     * holds the phone's pre-capture interruption filter, so it must outlive the
+     * Capture ViewModel — a screen rebuilt mid-capture would otherwise lose the
+     * value it has to restore.
+     */
+    val dndGuard = com.lidarscan.app.capture.DoNotDisturbGuard(appContext)
+
+    /**
      * ROUND 9 (owner item 35): the phone's own gyro + accelerometer, feeding the
      * engine's IMU-densified pose interpolator. App-lifetime for the same reason
      * [arController] is — it holds a `SensorManager` and a `HandlerThread`, and

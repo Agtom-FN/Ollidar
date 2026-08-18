@@ -414,6 +414,40 @@ object ScanEngineNative {
      */
     external fun nativeProcOpenRecordedCloud(handle: Long, lscanDir: String): Long
 
+    // ── ROUND 13: "Process this scan" ───────────────────────────────────
+    //
+    // Blocks for tens of seconds — it runs the whole offline resolve — so it
+    // must be called off the main thread. `progress` may be null; returning
+    // false from [ReprocessProgress.onProgress] cancels the run.
+    //
+    // The result is a flat DoubleArray(16); [ReprocessResult] names the slots.
+    // Flat rather than a marshalling class for the reason processing_jni.cpp
+    // documents at the top: no FindClass, no hand-typed descriptor, and a
+    // layout mismatch is a wrong number a test catches rather than a
+    // load-time abort.
+    external fun nativeProcReprocessD6(
+        lscanDir: String,
+        refine: Boolean,
+        progress: ReprocessProgress?,
+    ): DoubleArray?
+
+    /** Does the container already carry a stitched cloud? */
+    external fun nativeProcHasStitchedCloud(lscanDir: String): Boolean
+
+    /**
+     * ROUND 13 item 48. [verdict, revolutions, points, extentM,
+     * impossibleFraction, medianRangeM].
+     */
+    external fun nativeProcMountCheck(lscanDir: String, windowSeconds: Double): DoubleArray?
+
+    /**
+     * Called from the native thread running the resolve. Return false to
+     * cancel. Must not touch the engine or block.
+     */
+    fun interface ReprocessProgress {
+        fun onProgress(fraction: Float): Boolean
+    }
+
     /** Retires every page in the processing engine's store. */
     external fun nativeProcClearCloud(handle: Long)
 

@@ -496,6 +496,19 @@ fun CaptureConfigSheet(
     onLiveMapEnabledChange: (Boolean) -> Unit,
     liveSlam: Boolean,
     liveSlamEditable: Boolean,
+    /**
+     * ROUND 13: hidden entirely on a rig that cannot use it. `liveSlam` gates
+     * `Engine::start_session`'s `LioOdometry`, which is the **Mid-360's**
+     * lidar-inertial odometry — and `Impl::on_page_update` forwards points to
+     * it only under `if (u.stream != StreamId::kLidarMid360) return;`. On a D6
+     * the thread is created, blocks on a condition variable and is handed
+     * nothing, forever. ROUND 10 confirmed this and left the switch visible;
+     * three rounds of field logs later it is still the first thing anyone
+     * reaches for when a D6 capture goes wrong (the owner's scan-030 was the
+     * only walk with it on, and it cost exactly one sleeping thread). A
+     * control that does nothing is worse than no control.
+     */
+    liveSlamSupported: Boolean,
     onLiveSlamChange: (Boolean) -> Unit,
     /** The auto-detect line + the inline manual panel, exactly as the disconnected screen draws them. */
     connection: @Composable () -> Unit,
@@ -601,7 +614,7 @@ fun CaptureConfigSheet(
                     onCheckedChange = onLiveMapEnabledChange,
                     modifier = Modifier.testTag("liveMapSwitch"),
                 )
-                SheetSwitchRow(
+                if (liveSlamSupported) SheetSwitchRow(
                     title = "Live SLAM",
                     subtitle = if (liveSlamEditable) {
                         "registered map while recording · editable while idle · Mid-360"

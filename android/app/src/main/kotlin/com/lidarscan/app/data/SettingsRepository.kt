@@ -63,6 +63,7 @@ class SettingsRepository(private val context: Context) {
 
         /** ROUND 11 (item 43): haptic + audio operator cues. Unset means ON. */
         val OPERATOR_CUES = booleanPreferencesKey("operator_cues_enabled")
+        val DND_DURING_CAPTURE = booleanPreferencesKey("dnd_during_capture")
     }
 
     val settings: Flow<AppSettings> = context.settingsDataStore.data.map { prefs ->
@@ -98,6 +99,7 @@ class SettingsRepository(private val context: Context) {
             keepEmptyScans = prefs[Keys.KEEP_EMPTY_SCANS] ?: false,
             // ROUND 11 (item 43): default ON, so an unset preference buzzes.
             operatorCuesEnabled = prefs[Keys.OPERATOR_CUES] ?: true,
+            dndDuringCapture = prefs[Keys.DND_DURING_CAPTURE] ?: true,
         )
     }
 
@@ -217,6 +219,10 @@ class SettingsRepository(private val context: Context) {
     /** ROUND 11 (item 43). */
     suspend fun setOperatorCuesEnabled(enabled: Boolean) {
         context.settingsDataStore.edit { it[Keys.OPERATOR_CUES] = enabled }
+    }
+
+    suspend fun setDndDuringCapture(enabled: Boolean) {
+        context.settingsDataStore.edit { it[Keys.DND_DURING_CAPTURE] = enabled }
     }
 
     suspend fun setAllowPoorSyncColorize(allow: Boolean) {

@@ -21,6 +21,7 @@ import com.lidarscan.core.render.colorModeAvailability
 import com.lidarscan.core.render.profileDefaults
 import com.lidarscan.core.store.Project
 import com.lidarscan.core.store.ProjectStore
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -77,6 +78,16 @@ data class ReviewUiState(
     val loadMessage: String? = null,
     /** What the container turned out to contain — drives everything above. */
     val probe: com.lidarscan.app.engine.ProjectProbe = com.lidarscan.app.engine.ProjectProbe.NONE,
+    // --- ROUND 13: "Process this scan" ------------------------------------
+    /** Section count from the capture's own `project.json`; >1 means the map is in pieces. */
+    val sections: Int = 1,
+    /** True once `processed/map_stitched.bin` exists — the cloud on screen is the corrected one. */
+    val isStitched: Boolean = false,
+    val processing: Boolean = false,
+    val processProgress: Float = 0f,
+    /** What the last run did, in the operator's words. Survives until they leave the screen. */
+    val stitch: com.lidarscan.core.capture.StitchResult? = null,
+    val processError: String? = null,
 )
 
 /**
@@ -115,6 +126,77 @@ class ReviewViewModel(
      */
     private var pickCandidates: List<Vec3> = emptyList()
 
+    /** ROUND 13: the Process run, so leaving the screen cancels it. */
+    private var processJob: Job? = null
+
+    // ── ROUND 13 (owner: "5 sections" must be fixable, not just counted) ────
+    //
+    // A capture that broke into sections is five maps in five world frames, and
+    // until this runs the room genuinely is a metre apart — which is what the
+    // owner saw and called "result not satisfy". The correction is analytic
+    // (see engine slam/post/section_stitch.h): the frame change ARCore applied
+    // is written down in the pose jump itself.
+    //
+    // It runs on Dispatchers.IO because it is the WHOLE offline resolve — tens
+    // of seconds for a one-minute walk — and it publishes nothing into the
+    // viewer's store while it runs, for the same reason the engine gives it its
+    // own PageStore: a half-corrected map is two frames at once. When it
+    // finishes, the project is simply re-opened, and `load_recorded_cloud`
+    // prefers the stitched file from then on.
+    fun processScan() {
+        val p = _uiState.value.project ?: return
+        if (_uiState.value.processing) return
+        _uiState.value = _uiState.value.copy(
+            processing = true,
+            processProgress = 0f,
+            processError = null,
+            stitch = null,
+        )
+        processJob?.cancel()
+        processJob = viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                processing.reprocessD6(p.directory) { f ->
+                    // Hop to the main dispatcher rather than writing the flow
+                    // from the native thread; and returning false here is how a
+                    // cancelled ViewModel stops a run that would otherwise keep
+                    // a core busy after the screen is gone.
+                    viewModelScope.launch { setProgress(f) }
+                    isActive
+                }
+            }
+            if (result == null || !result.ran) {
+                _uiState.value = _uiState.value.copy(
+                    processing = false,
+                    processError = "This scan could not be processed. Its recorded data may be " +
+                        "incomplete — the raw files are untouched either way.",
+                )
+                return@launch
+            }
+            _uiState.value = _uiState.value.copy(
+                processing = false,
+                processProgress = 1f,
+                stitch = result,
+                isStitched = result.changedAnything,
+            )
+            // Re-open so the viewport draws the corrected map. Nothing else in
+            // the load path changes: the engine prefers the stitched file at
+            // the one function every reader already goes through.
+            if (result.changedAnything) {
+                processing.clearCloud()
+                openProjectCloud(p)
+            }
+        }
+    }
+
+    private fun setProgress(f: Float) {
+        val s = _uiState.value
+        // Monotone: a progress bar that goes backwards reads as a bug even when
+        // the underlying number is honest.
+        if (s.processing && f > s.processProgress) {
+            _uiState.value = s.copy(processProgress = f.coerceIn(0f, 1f))
+        }
+    }
+
     init {
         viewModelScope.launch {
             val p = withContext(Dispatchers.IO) { store.open(projectId) }
@@ -122,7 +204,16 @@ class ReviewViewModel(
                 project = p,
                 display = p?.manifest?.effectiveDisplayParams() ?: DisplayParams(),
             )
-            if (p != null) openProjectCloud(p)
+            if (p != null) {
+                // ROUND 13: how many pieces the capture is in, and whether it
+                // has already been put back together.
+                val stitched = withContext(Dispatchers.IO) { processing.hasStitchedCloud(p.directory) }
+                _uiState.value = _uiState.value.copy(
+                    sections = p.manifest.sectionBreaks.size + 1,
+                    isStitched = stitched,
+                )
+                openProjectCloud(p)
+            }
         }
         viewModelScope.launch {
             settings.settings.collect { s ->

@@ -225,6 +225,21 @@ class CaptureViewModel(
      * applies to the capture already running.
      */
     private val cuesEnabled: suspend () -> Boolean = { true },
+    /**
+     * ROUND 13 (owner item 47): silence notifications for the duration of a
+     * capture and put the filter back afterwards. A lambda pair rather than the
+     * guard itself so `:app` unit tests can drive the lifecycle without a
+     * framework NotificationManager; the real one is
+     * [com.lidarscan.app.capture.DoNotDisturbGuard].
+     *
+     * `engageDnd` returns the state that goes in the session-start log line;
+     * `releaseDnd` must be safe to call more than once and on a capture that
+     * never engaged.
+     */
+    private val engageDnd: suspend () -> com.lidarscan.core.capture.DndState = {
+        com.lidarscan.core.capture.DndState.DISABLED
+    },
+    private val releaseDnd: () -> Unit = {},
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<CaptureUiState>(CaptureUiState.Loading)
@@ -1213,6 +1228,14 @@ class CaptureViewModel(
         MutableStateFlow<com.lidarscan.core.capture.TrackingWarmup.Verdict?>(null)
 
     /** Non-null only while Start is waiting for the tracker to settle. */
+    /** ROUND 13 (owner item 47): what happened to the interruption filter. */
+    private val _dndState =
+        MutableStateFlow(com.lidarscan.core.capture.DndState.DISABLED)
+    val dndState: StateFlow<com.lidarscan.core.capture.DndState> = _dndState.asStateFlow()
+
+    private val _dndNote = MutableStateFlow<String?>(null)
+    val dndNote: StateFlow<String?> = _dndNote.asStateFlow()
+
     val startWarmup: StateFlow<com.lidarscan.core.capture.TrackingWarmup.Verdict?> =
         _startWarmup.asStateFlow()
 
@@ -2111,11 +2134,21 @@ class CaptureViewModel(
                 ?: createProjectForThisScan()
                 ?: return@launch
             val createdByThisStart = reopened == null
+            // ROUND 13 (owner item 47). BEFORE the engine session, so the
+            // filter is already in place for the first frame, and recorded in
+            // the same line the field report is read from — an unprotected walk
+            // has to be visible afterwards without anyone remembering.
+            val dnd = runCatching { engageDnd() }
+                .getOrDefault(com.lidarscan.core.capture.DndState.FAILED)
+            _dndState.value = dnd
+            _dndNote.value = com.lidarscan.core.capture.CaptureFocus.note(dnd)
             logEvent(
                 LOG_TAG_SESSION,
                 "start: project=${project.id} sensor=${project.manifest.sensor} " +
                     "profile=${project.manifest.profile} preset=${_preset.value} tier=$deviceTier " +
-                    "liveSlam=${_liveSlam.value} dir=${project.directory.absolutePath}",
+                    "liveSlam=${_liveSlam.value} " +
+                    "dnd=${com.lidarscan.core.capture.CaptureFocus.logToken(dnd)} " +
+                    "dir=${project.directory.absolutePath}",
             )
             val started = engineBridge.startCapture(
                 project.directory.absolutePath,
@@ -2580,6 +2613,13 @@ class CaptureViewModel(
     }
 
     private suspend fun sealAndStopLocked() {
+        // ROUND 13 (owner item 47): FIRST, before anything that can throw. The
+        // filter is the user's phone, not ours; a seal that fails must not
+        // leave it silenced. `releaseDnd` is idempotent, so the onCleared path
+        // calling it again costs nothing.
+        runCatching { releaseDnd() }
+        _dndState.value = com.lidarscan.core.capture.DndState.DISABLED
+        _dndNote.value = null
         val finalStats = _stats.value
         val noDataVerdict = _noDataAlert.value
         stopNoDataWatchdog()
@@ -2637,19 +2677,38 @@ class CaptureViewModel(
             loopEndGapMeters = trailRecorder.loopEndGapM?.toDouble(),
         )
         _scanSummary.value = summary
+        // ROUND 13, bug (A)+(B), and they were ONE bug.
+        //
+        // `"a" + "b".format(args)` does not format `"a" + "b"`: a method call
+        // binds tighter than `+`, so `.format()` applied to the LAST literal
+        // fragment only. The earlier fragment's `%.1f sections=%d drops=%d
+        // ptsPerM=%.0f` was never substituted and printed verbatim, and the
+        // six arguments were consumed by the two `%s` that WERE in scope —
+        // so `trimAccuracyDeg=` printed pathLengthMeters and `loopEndGapM=`
+        // printed the section count. That is where the owner's 0.7.1 log got
+        // `trimAccuracyDeg=15.99` beside a stored `stabilityDeg=0.39`: 15.99
+        // is 15.99 METRES WALKED, and `loopEndGapM=2` is 2 SECTIONS.
+        //
+        // Built as one string with one format call, so the arity is checked
+        // in one place. The card itself was never affected — it reads the
+        // `ScanSummary` fields directly — but the log is what field reports
+        // are written from, so a wrong number there is a wrong round.
         logEvent(
             LOG_TAG_SEAL,
-            "summary: grade=${summary.grade} points=${summary.pointsCaptured} " +
-                "durationMs=${summary.elapsedMillis} pathM=%.1f sections=%d drops=%d ptsPerM=%.0f " +
-                "trimAccuracyDeg=%s loopEndGapM=%s"
-                    .format(
-                        summary.pathLengthMeters,
-                        summary.sections,
-                        summary.trackingDrops,
-                        summary.pointsPerMeter,
-                        summary.mountTrimAccuracyDeg?.let { "%.2f".format(it) } ?: "none",
-                        summary.loopEndGapMeters?.let { "%.2f".format(it) } ?: "not-a-loop",
-                    ),
+            (
+                "summary: grade=%s points=%d durationMs=%d pathM=%.1f sections=%d drops=%d " +
+                    "ptsPerM=%.0f trimAccuracyDeg=%s loopEndGapM=%s"
+            ).format(
+                summary.grade,
+                summary.pointsCaptured,
+                summary.elapsedMillis,
+                summary.pathLengthMeters,
+                summary.sections,
+                summary.trackingDrops,
+                summary.pointsPerMeter,
+                summary.mountTrimAccuracyDeg?.let { "%.2f".format(it) } ?: "none",
+                summary.loopEndGapMeters?.let { "%.2f".format(it) } ?: "not-a-loop",
+            ),
         )
 
         // B5/B9: write what the capture actually produced back into the
@@ -3050,6 +3109,10 @@ class CaptureViewModel(
      * screen is destroyed mid-capture: those bytes are the operator's.
      */
     override fun onCleared() {
+        // ROUND 13 (owner item 47): the abandon path. A screen destroyed
+        // mid-capture must not leave the phone silenced — this is the same
+        // rule the phone-IMU stop below has followed since ROUND 9.
+        runCatching { releaseDnd() }
         stopPhoneGeoref()
         // ROUND 9 (item 35): a HandlerThread and two registered SensorEventListeners
         // outlive a ViewModel quite happily if nobody unregisters them, and this

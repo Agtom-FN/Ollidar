@@ -114,11 +114,30 @@ object CuePatterns {
         toneRepeats = 2,
     )
 
-    /** Three short, urgent buzzes, high tone. The most serious of the three. */
+    /**
+     * Three short buzzes, high tone. The most serious of the three, and
+     * **ROUND 13 turned its amplitude down from 255 to 150.**
+     *
+     * The reason is a measurement, not a preference. Isolating 30-200 Hz
+     * accelerometer energy across the owner's scan-028/029/030 finds bursts
+     * that map 1:1 onto this app's own logged cues (10 for 10 on scan-030) —
+     * so this pattern is, physically, the largest shake the phone experiences
+     * during a capture that nothing outside the app caused. And scan-030's
+     * FOURTH section break came 0.51 s after the buzz fired for the third: it
+     * is the only one of the four with any high-frequency energy in the half
+     * second before it (z = 178 against 2.0 / 7.3 / 10.2 for the others).
+     *
+     * One coincidence is not proof, and it is not claimed as one. But firing
+     * the loudest haptic the phone has at the exact moment ARCore is trying to
+     * re-establish itself is a risk taken for no benefit — the operator can
+     * feel three buzzes at 150 through a pocket perfectly well, which is the
+     * amplitude TRACKING_DEGRADED has always used. Paired with
+     * [CueScheduler.postBreakQuietMillis].
+     */
     val SECTION_BREAK = CuePattern(
         kind = CueKind.SECTION_BREAK,
         pattern = longArrayOf(0, 70, 60, 70, 60, 70),
-        amplitudes = intArrayOf(0, 255, 0, 255, 0, 255),
+        amplitudes = intArrayOf(0, 150, 0, 150, 0, 150),
         toneHz = 880,
         toneMillis = 90,
         toneRepeats = 3,
@@ -157,6 +176,20 @@ class CueScheduler(
     private val trackingRepeatMillis: Long = 4_000L,
     private val tooFastRepeatMillis: Long = 3_000L,
     private val sectionFloorMillis: Long = 1_000L,
+    /**
+     * ROUND 13. For this long after a section-break cue, NOTHING buzzes.
+     *
+     * A section break is ARCore re-anchoring, and the seconds immediately
+     * after one are the seconds it is re-establishing itself — the worst
+     * possible moment to shake the phone. scan-030's fourth break arrived
+     * 0.51 s after the third break's cue, inside this window.
+     *
+     * It is a quiet period and not a longer debounce on purpose: the danger is
+     * to the TRACKER, so every cue has to hold off, not just the one that
+     * fired. A break inside the window is still counted and still shown on
+     * screen; only the buzz is withheld.
+     */
+    private val postBreakQuietMillis: Long = 1_500L,
 ) {
     private val lastFiredAt = HashMap<CueKind, Long>()
     private var lastSectionBreaks = 0
@@ -181,6 +214,10 @@ class CueScheduler(
 
         val sectionFired = conditions.sectionBreaks > lastSectionBreaks
         lastSectionBreaks = conditions.sectionBreaks
+
+        // ROUND 13: the tracker's recovery window. Silent for everything.
+        val lastBreak = lastFiredAt[CueKind.SECTION_BREAK]
+        if (lastBreak != null && nowMillis - lastBreak < postBreakQuietMillis) return null
 
         val candidate = when {
             sectionFired && ready(CueKind.SECTION_BREAK, nowMillis, sectionFloorMillis) ->

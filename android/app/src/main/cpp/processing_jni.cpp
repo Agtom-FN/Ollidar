@@ -32,6 +32,7 @@
 #include "processing_engine.h"
 #include "scanengine/cloud/page_store.h"
 #include "scanengine/core/types.h"
+#include "scanengine_c.h"
 
 using lidarscan_jni::g_job_class;
 using lidarscan_jni::g_job_ctor;
@@ -187,6 +188,128 @@ Java_com_lidarscan_app_engine_ScanEngineNative_nativeProcOpenRecordedCloud(JNIEn
   auto* p = HandleOf(handle);
   if (p == nullptr) return 0;
   return static_cast<jlong>(p->open_recorded_cloud(ToStdString(env, lscan_dir)));
+}
+
+// ── ROUND 13: "Process this scan" ─────────────────────────────────────────
+//
+// Returns a double[16] rather than a struct, for the same reason every other
+// numeric result here does: a jdoubleArray needs no class lookup, no field
+// IDs and no ProGuard rule, and the Kotlin side names the slots once.
+//
+//   0 ran            4 seams_refined   8  vertical_after   12 mount_verdict
+//   1 map_written    5 points          9  end_gap_before   13 mount_impossible_fraction
+//   2 sections       6 moved_m         10 end_gap_after    14 poses
+//   3 seams          7 vertical_before 11 moved_deg        15 poses_untracked
+//
+// It runs the WHOLE resolve, so it blocks for tens of seconds — the Kotlin
+// side calls it on Dispatchers.IO and drives a progress bar from the callback
+// below. Progress crosses back as a plain jfloat through a global ref to the
+// callback object, attached to the calling thread (the pipeline calls the
+// progress function on the thread inside run(), which IS this thread).
+JNIEXPORT jdoubleArray JNICALL
+Java_com_lidarscan_app_engine_ScanEngineNative_nativeProcReprocessD6(
+    JNIEnv* env, jclass, jstring lscan_dir, jboolean refine, jobject progress) {
+  jdoubleArray out = env->NewDoubleArray(16);
+  if (out == nullptr) return nullptr;
+  jdouble v[16] = {0};
+
+  scan_reprocess_options opts{};
+  opts.stitch_sections = 1;
+  opts.densify_with_phone_imu = 1;
+  opts.refine_seams = refine ? 1 : 0;
+  opts.close_loops = 0;
+
+  struct Ctx {
+    JNIEnv* env;
+    jobject cb;
+    jmethodID mid;
+  } ctx{env, nullptr, nullptr};
+  if (progress != nullptr) {
+    jclass cls = env->GetObjectClass(progress);
+    ctx.mid = env->GetMethodID(cls, "onProgress", "(F)Z");
+    env->DeleteLocalRef(cls);
+    if (ctx.mid != nullptr) ctx.cb = progress;
+  }
+
+  scan_reprocess_result r{};
+  const scan_error_t e = scan_lscan_reprocess_d6(
+      ToStdString(env, lscan_dir).c_str(), &opts, &r,
+      ctx.cb == nullptr ? nullptr
+                        : +[](float fraction, void* user) -> int32_t {
+                            auto* c = static_cast<Ctx*>(user);
+                            // CallBooleanMethodA, NOT the varargs form. C
+                            // varargs promote a `float` to `double`, so
+                            // `CallBooleanMethod(obj, mid, fraction)` hands a
+                            // (F)Z method eight bytes where it expects four —
+                            // the call then throws, this wrapper reads the
+                            // exception as "the callback said stop", and the
+                            // whole reprocess silently CANCELS. That is
+                            // exactly how it failed on the emulator: `ran = 0`
+                            // with no error anywhere, and only on the code
+                            // path that passes a progress callback.
+                            jvalue arg;
+                            arg.f = fraction;
+                            const jboolean go =
+                                c->env->CallBooleanMethodA(c->cb, c->mid, &arg);
+                            // A Kotlin callback that throws must not be
+                            // swallowed into "keep going" — clear it and stop.
+                            if (c->env->ExceptionCheck()) {
+                              c->env->ExceptionClear();
+                              return 0;
+                            }
+                            return go == JNI_TRUE ? 1 : 0;
+                          },
+      &ctx);
+
+  if (e == SCAN_OK) {
+    v[0] = r.ran ? 1 : 0;
+    v[1] = r.map_written ? 1 : 0;
+    v[2] = static_cast<jdouble>(r.sections);
+    v[3] = static_cast<jdouble>(r.seams);
+    v[4] = static_cast<jdouble>(r.seams_refined);
+    v[5] = static_cast<jdouble>(r.points);
+    v[6] = r.first_section_moved_m;
+    v[7] = r.vertical_extent_before_m;
+    v[8] = r.vertical_extent_after_m;
+    v[9] = r.end_gap_before_m;
+    v[10] = r.end_gap_after_m;
+    v[11] = r.first_section_moved_deg;
+    v[12] = static_cast<jdouble>(r.mount_verdict);
+    v[13] = r.mount_impossible_fraction;
+    v[14] = static_cast<jdouble>(r.poses);
+    v[15] = static_cast<jdouble>(r.poses_untracked);
+  }
+  env->SetDoubleArrayRegion(out, 0, 16, v);
+  return out;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_lidarscan_app_engine_ScanEngineNative_nativeProcHasStitchedCloud(JNIEnv* env, jclass,
+                                                                          jstring lscan_dir) {
+  return scan_lscan_has_stitched_cloud(ToStdString(env, lscan_dir).c_str()) != 0 ? JNI_TRUE
+                                                                                : JNI_FALSE;
+}
+
+// ROUND 13 item 48. Returns [verdict, revolutions, points, extent_m,
+// impossible_fraction, median_range_m].
+JNIEXPORT jdoubleArray JNICALL
+Java_com_lidarscan_app_engine_ScanEngineNative_nativeProcMountCheck(JNIEnv* env, jclass,
+                                                                    jstring lscan_dir,
+                                                                    jdouble window_seconds) {
+  jdoubleArray out = env->NewDoubleArray(6);
+  if (out == nullptr) return nullptr;
+  jdouble v[6] = {static_cast<jdouble>(SCAN_MOUNT_NOT_MEASURABLE), 0, 0, 0, 0, 0};
+  scan_mount_check_result m{};
+  if (scan_lscan_mount_check(ToStdString(env, lscan_dir).c_str(), window_seconds, &m) == SCAN_OK) {
+    v[0] = static_cast<jdouble>(m.verdict);
+    v[1] = static_cast<jdouble>(m.revolutions);
+    v[2] = static_cast<jdouble>(m.points);
+    v[3] = m.median_revolution_extent_m;
+    v[4] = m.impossible_fraction;
+    v[5] = m.median_range_m;
+  }
+  env->SetDoubleArrayRegion(out, 0, 6, v);
+  return out;
 }
 
 JNIEXPORT void JNICALL

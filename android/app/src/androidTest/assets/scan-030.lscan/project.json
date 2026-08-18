@@ -1,0 +1,115 @@
+{
+    "name": "Scan-030-2026-08-18-1559",
+    "sensor": "COIN_D6",
+    "profile": "QUICK_SCAN",
+    "createdAtEpochMillis": 1787039985851,
+    "appVersion": "0.7.1",
+    "pointCountEstimate": 78035,
+    "crsEpsg": 32650,
+    "captureDefaults": {
+        "liveSlam": true,
+        "exportFormat": "PLY_BINARY",
+        "displayProfile": "QUICK_SCAN",
+        "captureCameraKeyframes": false,
+        "colorizeAfterProcessing": false,
+        "requireRtkFixForCapture": false,
+        "minFixForCapture": "NONE",
+        "planSliceMinM": 1.0,
+        "planSliceMaxM": 1.5
+    },
+    "displayParams": {
+        "pointSize": {
+            "mode": "FIXED_PIXELS",
+            "fixedPx": 1.0
+        },
+        "colorMode": "INTENSITY",
+        "height": {
+            "manualMax": 3.0,
+            "colormap": "GRAYSCALE"
+        },
+        "intensity": {
+            "colormap": "GRAYSCALE"
+        },
+        "background": {
+            "r": 11,
+            "g": 14,
+            "b": 18
+        }
+    },
+    "georef": {
+        "converged": false,
+        "epsg": 32650,
+        "yawDeg": 0.0,
+        "globalFromLocal": [
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0
+        ],
+        "enuOriginLatDeg": 0.0,
+        "enuOriginLonDeg": 0.0,
+        "enuOriginHeightM": 0.0,
+        "horizontalSigmaM": 0.0,
+        "verticalSigmaM": 0.0,
+        "cep95M": 0.0,
+        "samples": 0,
+        "inliers": 0,
+        "residualRmsM": 0.0,
+        "spanM": 0.0,
+        "dominantFix": "NONE",
+        "blocker": ""
+    },
+    "mountTrim": {
+        "qx": 0.05522205824351066,
+        "qy": 0.07153212189773138,
+        "qz": 0.6983573078851338,
+        "qw": 0.7100216548413062,
+        "capturedAtEpochMillis": 1787039861475,
+        "sampleCount": 31,
+        "spreadDeg": 0.3012606576369637,
+        "spreadP90Deg": 0.2812492700187451,
+        "stabilityDeg": 0.39198921689312904
+    },
+    "sectionBreaks": [
+        {
+            "tMonoNs": 99208728400384,
+            "positionJumpM": 0.7775830950310137,
+            "rotationJumpDeg": 13.53233109340493,
+            "gapMillis": 33,
+            "reason": "IMPOSSIBLE_STEP"
+        },
+        {
+            "tMonoNs": 99216131476105,
+            "positionJumpM": 0.9670911498632794,
+            "rotationJumpDeg": 11.548853368710631,
+            "gapMillis": 33,
+            "reason": "IMPOSSIBLE_STEP"
+        },
+        {
+            "tMonoNs": 99227260838629,
+            "positionJumpM": 1.2284192789356996,
+            "rotationJumpDeg": 11.578955352548656,
+            "gapMillis": 33,
+            "reason": "IMPOSSIBLE_STEP"
+        },
+        {
+            "tMonoNs": 99228227755676,
+            "positionJumpM": 1.0560117958216177,
+            "rotationJumpDeg": 8.082512966645226,
+            "gapMillis": 33,
+            "reason": "IMPOSSIBLE_STEP"
+        }
+    ]
+}

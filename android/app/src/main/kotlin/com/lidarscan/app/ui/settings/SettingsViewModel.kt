@@ -172,6 +172,11 @@ class SettingsViewModel(
         viewModelScope.launch { settingsRepository.setOperatorCuesEnabled(enabled) }
     }
 
+    /** ROUND 13 (owner item 47). */
+    fun setDndDuringCapture(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setDndDuringCapture(enabled) }
+    }
+
     /**
      * Deletes every 0-point project on the device.
      *

@@ -159,7 +159,7 @@ TEST_CASE("intfinal/crs_crosses_the_C_ABI") {
   c.log_level = SCAN_LOG_ERROR;
   REQUIRE(scan_engine_create(&c, &h) == SCAN_OK);
 
-  CHECK(scan_engine_abi_version() == 9u);  // 8 -> 9 with ROUND 10's pose-time offset
+  CHECK(scan_engine_abi_version() == 10u);  // 9 -> 10 with ROUND 13's reprocess entry points
   CHECK(SCAN_ABI_VERSION == kEngineAbiVersion);
 
   CHECK(scan_engine_set_crs(h, "EPSG:2326", kHk1980Wkt) == SCAN_OK);

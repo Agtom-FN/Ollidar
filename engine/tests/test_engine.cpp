@@ -215,7 +215,12 @@ TEST_CASE("engine/create_starts_idle_and_reports_a_version") {
   //    scan_imu_densify_stats, SCAN_STREAM_IMU_PHONE).
   // 9: ROUND 10 item 36's lidar->pose time offset
   //    (scan_engine_set_pose_time_offset_ns, scan_engine_pose_time_offset_ns).
-  CHECK(kEngineAbiVersion == 9);
+  // 10: ROUND 13's "Process this scan" (scan_lscan_reprocess_d6,
+  //    scan_lscan_has_stitched_cloud, scan_lscan_mount_check +
+  //    scan_reprocess_options/_result, scan_mount_check_result). Additive:
+  //    nothing existing changed size, order or meaning, so an ABI-9 consumer
+  //    relinks unmodified.
+  CHECK(kEngineAbiVersion == 10);
 }
 
 TEST_CASE("engine/session_transitions_are_enforced_and_announced") {

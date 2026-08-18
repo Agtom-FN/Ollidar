@@ -23,6 +23,8 @@
 #include "scanengine/core/instance_guard.h"
 #include "scanengine/discovery/discovery.h"
 #include "scanengine/jobs/job_types.h"
+#include "scanengine/slam/post/d6_resolve.h"
+#include "scanengine/slam/post/reprocess.h"
 #include "scanengine/slam/pushbroom/mount_calibration.h"
 
 using namespace scanengine;
@@ -1848,5 +1850,137 @@ void scan_instance_release(void) {
 }
 
 int64_t scan_current_process_id(void) { return CurrentProcessId(); }
+
+// ===== ROUND 13 (ABI 10) ===================================================
+
+namespace {
+
+int32_t mount_verdict_to_c(scanengine::post::MountWatchVerdict v) {
+  switch (v) {
+    case scanengine::post::MountWatchVerdict::kOk: return SCAN_MOUNT_OK;
+    case scanengine::post::MountWatchVerdict::kNotMeasurable: return SCAN_MOUNT_NOT_MEASURABLE;
+    case scanengine::post::MountWatchVerdict::kSuspect: return SCAN_MOUNT_SUSPECT;
+    case scanengine::post::MountWatchVerdict::kMismatch: return SCAN_MOUNT_MISMATCH;
+  }
+  return SCAN_MOUNT_NOT_MEASURABLE;
+}
+
+}  // namespace
+
+scan_error_t scan_lscan_reprocess_d6(const char* lscan_dir, const scan_reprocess_options* opts,
+                                     scan_reprocess_result* out,
+                                     scan_reprocess_progress_cb progress, void* user_data) {
+  SCAN_GUARD_BEGIN
+  if (lscan_dir == nullptr || lscan_dir[0] == '\0') {
+    return fail(ScanError::kInvalidArgument, "lscan_dir is null or empty");
+  }
+  if (out == nullptr) return fail(ScanError::kInvalidArgument, "out is null");
+  std::memset(out, 0, sizeof(*out));
+
+  scanengine::post::ReprocessOptions ro;
+  if (opts != nullptr) {
+    ro.stitch_sections = opts->stitch_sections != 0;
+    ro.close_loops = opts->close_loops != 0;
+    ro.densify_with_phone_imu = opts->densify_with_phone_imu != 0;
+    ro.sections.refine = opts->refine_seams != 0;
+    if (opts->max_refine_translation_m > 0.0) {
+      ro.sections.max_refine_translation_m = opts->max_refine_translation_m;
+    }
+  }
+
+  // The cancel token has to outlive the callback, and the callback is the
+  // ONLY way a C caller can ask to stop: there is no handle to cancel through
+  // because a reprocess owns nothing the caller can hold.
+  scanengine::post::CancelToken token;
+  scanengine::post::PostProgressFn fn;
+  if (progress != nullptr) {
+    fn = [progress, user_data, &token](const scanengine::post::PostProgress& p) {
+      if (progress(p.fraction, user_data) == 0) token.cancel();
+    };
+  }
+
+  scanengine::post::ReprocessReport rep;
+  const Status st = scanengine::post::reprocess_d6_container(
+      lscan_dir, ro, &rep, fn, progress != nullptr ? &token : nullptr);
+
+  out->ran = rep.ran ? 1 : 0;
+  out->map_written = rep.map_written ? 1 : 0;
+  out->sections = static_cast<uint32_t>(rep.stitch.sections);
+  out->seams = static_cast<uint32_t>(rep.stitch.seams.size());
+  uint32_t refined = 0;
+  for (const scanengine::post::SectionSeam& x : rep.stitch.seams) {
+    if (x.decision == scanengine::post::SeamDecision::kRefined) ++refined;
+  }
+  out->seams_refined = refined;
+  out->points = rep.points;
+  out->poses = rep.poses;
+  out->poses_untracked = rep.stitch.poses_untracked;
+  out->first_section_moved_m = rep.stitch.total_translation_m;
+  out->first_section_moved_deg = rep.stitch.total_rotation_deg;
+  out->vertical_extent_before_m = rep.stitch.trajectory_vertical_extent_before_m;
+  out->vertical_extent_after_m = rep.stitch.trajectory_vertical_extent_after_m;
+  out->end_gap_before_m = rep.stitch.trajectory_end_gap_before_m;
+  out->end_gap_after_m = rep.stitch.trajectory_end_gap_after_m;
+  out->mount_verdict = mount_verdict_to_c(rep.mount.verdict);
+  out->mount_impossible_fraction = rep.mount.impossible_fraction;
+  out->mount_revolution_extent_m = rep.mount.median_revolution_extent_m;
+  return to_c(st);
+  SCAN_GUARD_END
+}
+
+int32_t scan_lscan_has_stitched_cloud(const char* lscan_dir) {
+  try {
+    if (lscan_dir == nullptr || lscan_dir[0] == '\0') return 0;
+    return scanengine::post::has_stitched_cloud(lscan_dir) ? 1 : 0;
+  } catch (...) {
+    return 0;
+  }
+}
+
+scan_error_t scan_lscan_mount_check(const char* lscan_dir, double window_seconds,
+                                    scan_mount_check_result* out) {
+  SCAN_GUARD_BEGIN
+  if (lscan_dir == nullptr || lscan_dir[0] == '\0') {
+    return fail(ScanError::kInvalidArgument, "lscan_dir is null or empty");
+  }
+  if (out == nullptr) return fail(ScanError::kInvalidArgument, "out is null");
+  std::memset(out, 0, sizeof(*out));
+  out->verdict = SCAN_MOUNT_NOT_MEASURABLE;
+
+  PageStoreConfig psc;
+  psc.page_capacity = 1u << 20;
+  psc.max_pages = 4096;
+  PageStore store(psc);
+  std::vector<scanengine::post::TrajPose> traj;
+  std::vector<std::int64_t> ptimes;
+  scanengine::post::D6ResolveConfig cfg;
+  cfg.store = &store;
+  cfg.out_trajectory = &traj;
+  cfg.out_point_times = &ptimes;
+  scanengine::post::D6ResolvePipeline pipe(cfg);
+  const Status st = pipe.run(lscan_dir);
+  if (!st.ok()) return to_c(st);
+
+  std::vector<PointVertex> pts;
+  pts.reserve(static_cast<std::size_t>(store.total_points()));
+  for (const PageId id : store.page_ids()) {
+    const PageView v = store.page_view(id);
+    if (!v.valid()) continue;
+    for (std::uint32_t k = 0; k < v.count; ++k) pts.push_back(v.data[k]);
+  }
+  scanengine::post::MountWatchConfig mc;
+  mc.window_seconds = window_seconds;
+  const scanengine::post::MountWatchReport r = scanengine::post::check_mount_consistency(
+      traj, Span<const PointVertex>(pts.data(), pts.size()),
+      Span<const std::int64_t>(ptimes.data(), ptimes.size()), mc);
+  out->verdict = mount_verdict_to_c(r.verdict);
+  out->revolutions = static_cast<uint32_t>(r.revolutions);
+  out->points = r.points;
+  out->median_revolution_extent_m = r.median_revolution_extent_m;
+  out->impossible_fraction = r.impossible_fraction;
+  out->median_range_m = r.median_range_m;
+  return to_c(kOkStatus);
+  SCAN_GUARD_END
+}
 
 }  // extern "C"

@@ -7239,3 +7239,438 @@ operator meant to finish where they started.
   trim path — those are covered by JVM tests only, because both need a pose
   stream and `CaptureArController` needs ARCore.
 * Nothing was run on kc-m4; macOS/desktop untouched. No commit, no push.
+
+## ROUND 13 — THE BREAKS ARE ARCore RE-ANCHORING, AND THE FIX IS WRITTEN IN THE POSE STREAM
+
+Owner on 0.7.1, two walks minutes apart: *"result not satisfy"*. scan-029 broke
+once and graded FAIR; scan-030 cued `tracking_degraded` 0.14 s after Start, then
+broke four times and graded POOR.
+
+Field material: `captures/scan-029.lscan`, `captures/scan-030.lscan`,
+`captures/scan-028.lscan` (the clean reference), `captures/scan-026.lscan` (the
+contaminated mount), `captures/scan-020.lscan` (the only capture with camera
+keyframes), `captures/lidarscan-capture-log-2026-08-18-1707.txt`.
+
+### 1. THE MEASUREMENT THAT SETTLED IT
+
+`poses_ar.bin` and `imu_phone.bin` parsed directly, in the same clock domain.
+Over the same 33 ms as each break:
+
+| break | ARCore pose jump | gyro, integrated over the SAME 33 ms |
+| --- | ---: | ---: |
+| scan-030 #1 (t=8.13 s) | 0.78 m / **13.53°** | 0.23° |
+| scan-030 #2 (t=15.53 s) | 0.97 m / **11.55°** | 1.16° |
+| scan-030 #3 (t=26.66 s) | 1.23 m / **11.58°** | 0.94° |
+| scan-030 #4 (t=27.63 s) | 1.06 m / **8.08°** | 0.49° |
+| scan-029 #1 (t=50.87 s) | 1.05 m / 0.54° | 0.44° |
+| scan-028 #1 (t=3.73 s) | 0.30 m / 0.49° | 0.50° |
+
+**The phone did not rotate.** 13.53° in 33 ms is 410 °/s; the gyro says 7 °/s.
+
+And there is no warning. Rolling 1 s |ARCore − gyro| rotation disagreement,
+excluding windows containing a break:
+
+| | scan-028 | scan-029 | scan-030 |
+| --- | ---: | ---: | ---: |
+| median | 0.049° | 0.051° | 0.069° |
+| p90 | 0.178° | 0.143° | 0.282° |
+| median over the 4 s BEFORE each break | 0.062° | 0.040° | 0.037–0.209° |
+
+VIO is healthy at 0.05°/s right up to the frame it snaps. **A section break is
+not a failure the app could have prevented by gating harder at Start — it is
+ARCore doing its own loop closure**: recognising a place, deciding it had
+drifted, and moving its world frame. Everything before the snap is in the old
+frame, everything after in the new one, and the pushbroom keeps resolving
+against whichever is current — which is exactly the metre-apart map the owner
+saw.
+
+There are two flavours, and they matter: scan-028/029's breaks are
+**translation-only** (0.3–1.05 m, rotation matching the gyro) — ARCore
+correcting accumulated position drift; scan-030's four are **full 6-DoF
+re-anchors** with 8–13.5° the phone never made.
+
+### 2. FOUR HYPOTHESES, EACH KILLED BY ITS OWN MEASUREMENT
+
+**(a) The mount occluding the rear camera — REFUTED. No bracket redesign.**
+scan-029/030 have **no keyframes at all** (`captureCameraKeyframes=false`; ROUND
+11 item 39 gated the recorder at the flow when colorize was hidden), so the
+brief's premise that both bundles hold `kf_*.jpg` is wrong and is recorded here
+so it is not assumed again. `scan-020` has 403 frames from the same rig and the
+same mount, and answers the question: exposure-normalised per-pixel over all
+403, **not one pixel is dark in more than 80 % of frames**; 1.6 % are dark in
+more than half, and those are a smooth bottom-right gradient (vignetting plus
+shadowed floor), not a hard-edged silhouette. A bracket intruding into the FOV
+would be a stationary dark region at ~100 %. It is not there.
+
+What the frames DO show is a real environmental hazard: `kf_000200.jpg` is a
+featureless close-up of wood grain at well under half a metre. Across all five
+captures the D6's own returns say the same thing — **57 % of returns are inside
+1.5 m and 17–20 % inside 1 m, median range 1.31–1.39 m**. This is a small flat,
+the camera is often close to a blank surface, and that is the condition ARCore
+re-anchors in.
+
+**(b) Puck vibration — REFUTED, and it points the other way.** Band-limited gyro
+RMS, 8–12 Hz (the D6 spins at 10 Hz):
+
+| | 020 | 026 | 028 | 029 | 030 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| gyro 8–12 Hz | 2.82° | 2.47° | 2.63° | 2.21° | **1.75°** |
+| gyro >12 Hz | 0.96° | 0.69° | 0.77° | 0.73° | 0.91° |
+
+The capture that broke four times has the least spin-band vibration of the five.
+
+**(c) CPU starvation from `liveSlam=true` — REFUTED at the source and in the
+data.** scan-029 ran `liveSlam=false` and scan-030 `liveSlam=true` (the log line
+is authoritative; `project.json`'s `captureDefaults` says `true` for both, which
+is the persisted default and not what the session ran with — worth knowing when
+reading a container). But `Impl::on_page_update` forwards points to the LIO only
+under `if (u.stream != StreamId::kLidarMid360) return;`, and the IMU path is
+`on_mid360_imu`. On a D6 the odometry thread is created, waits on a condition
+variable and is fed nothing; `map_store` is the caller's PageStore so there is
+not even an allocation. And the streams agree — chunk inter-arrival:
+
+| | D6 median / gaps>200 ms | pose median / gaps>200 ms | IMU median |
+| --- | ---: | ---: | ---: |
+| scan-028 | 6.3 ms / 2 | 33.3 ms / 1 | 2.5 ms |
+| scan-029 | 6.3 ms / 1 | 33.3 ms / 1 | 2.5 ms |
+| scan-030 | 6.3 ms / 1 | 33.3 ms / **0** | 2.5 ms |
+
+scan-030 is the *healthiest* of the three by cadence. `liveSlam` on a D6 costs
+one sleeping thread. (It is still wrong to offer the switch on a D6 rig —
+**backlog**.)
+
+**(d) Turning too fast — explains two of four.** Net rotation over the 2 s before
+each scan-030 break: 2.5°, 8.9°, **133.5°**, 51.5°. Breaks 3 and 4 follow a real
+135°-in-2 s spin. Breaks 1 and 2 follow almost nothing. Instantaneous gyro rate
+at every break was 8–37 °/s, at or below the capture's own p90 of 38 °/s.
+
+**(e) And one that is OURS.** Isolating 30–200 Hz accelerometer energy in a
+25 ms envelope finds bursts that map **1:1 onto the app's own logged cues** —
+10 bursts / 10 cues on scan-030, 1/1 on scan-028 and scan-029, each burst
+~0.28 s ahead of its log line and of the right duration for `CuePatterns`.
+**No external notification fired in any of the three captures.** But scan-030's
+break #4 came **0.51 s after the 130 ms buzz fired for break #3**, and is the
+only one of the four with high-frequency energy in the half second before it
+(z = 178 vs 2.0 / 7.3 / 10.2). Buzzing at full amplitude while ARCore is
+re-establishing itself is a self-inflicted risk. Fix named, not yet built:
+defer the section-break cue until tracking has re-settled and drop its
+amplitude. **Backlog.**
+
+### 3. SECTION STITCHING — `post::stitch_sections`
+
+`slam/post/section_stitch.{h,cpp}`. Hand-rolled, no Eigen, no RNG, no clock.
+
+**The correction is analytic.** `T_k = pose_after · pose_before⁻¹` is the frame
+change ARCore applied, and by the same identity `trajectory_loop.h` derives
+(`p' = C·p` for a world-frame left-multiplication) the cloud needs no
+re-resolve. Per-section corrections compose `C_N = I`, `C_k = C_{k+1}·T_k`, so
+everything lands in the **last** section's frame — the most recently re-anchored
+one, i.e. the frame ARCore currently believes. The correction is piecewise
+CONSTANT where `TrajectoryCorrection`'s is an arc-length geodesic, and that
+difference is the physics: VIO drift accumulates smoothly with distance, a
+re-anchor happens in one frame.
+
+**The refinement solves for TRANSLATION ONLY**, rotation frozen at `T_k`. This
+is ROUND 12 §10's open item answered. The 14–19° rotations ICP proposed were
+always the pushbroom null space; the rotation was never the unknown. With three
+unknowns instead of six the point-to-plane normal equations reduce to a 3×3
+solve, and **the system matrix `Σ wᵢ nᵢ nᵢᵀ` IS the observability** — λ_min/λ_max
+of it, no sampled-normal proxy. On scan-030 it reads 0.05 / 0.09 / 0.42 / 0.65
+and declines three of four seams by name (`unobservable`, `not-converged`,
+`refinement-too-big`), keeping the analytic transform each time. On scan-029 it
+accepts, and earns it: across-seam mismatch **14.65 cm → 12.56 cm**.
+
+**Two bugs found while proving it, both worth naming.**
+
+1. **The detector fired on poses the tracker had disowned.** scan-030 opens with
+   **14 poses at exactly (0,0,0) with `quality=0`, `tracking_lost=1`** — ARCore
+   had no pose yet. The step out of them is 1.20 m / 10.79 deg in 67 ms and
+   looks exactly like a re-anchor, so the engine found 6 sections where the app
+   found 5, and folding that phantom transform into the composition made the
+   stitched map *worse*. `TrajPose` gained `quality` / `tracking_lost` (additive,
+   defaulted to a good pose) and the detector skips any pair involving a pose
+   the tracker disowned — which also makes it agree with the Android
+   `PoseSectionTracker`, which is only ever fed tracking poses.
+2. **`section_of` used `lower_bound` where the comment said `upper_bound`.** A
+   point or pose stamped exactly at a seam is `pose_after`'s stamp and belongs to
+   the NEW frame. Getting it backwards misplaces exactly one pose per seam — and
+   since each of those is then a metre out, it took scan-030's stitched
+   trajectory from 0.27 m of vertical wander to **1.56 m**. Four poses. There is
+   now a test case for the composition order specifically.
+
+Wired into `D6ResolvePipeline` behind `stitch_sections` (default **OFF** — same
+"replay == capture" argument as `close_loops`), running **before** loop closure
+and correcting `*out_trajectory` as well as the cloud, so the closer sees one
+walk instead of five. `engine_cli --d6-stitch` resolves the container both ways
+and prints the comparison.
+
+### 4. THE RESULT, AND THE ONE NUMBER THAT IS NOT SELF-REFERENTIAL
+
+```
+$ engine_cli --d6-stitch captures/scan-030.lscan
+```
+
+| | scan-028 | scan-029 | scan-030 |
+| --- | ---: | ---: | ---: |
+| sections | 2 | 2 | **5** |
+| first section moved into the last frame | 0.303 m / 0.49° | 1.040 m / 0.55° | 0.517 m / 5.53° |
+| **trajectory vertical extent** | 0.167 → **0.102 m** | 0.637 → **0.359 m** | 0.820 → **0.271 m** |
+| start→end gap | 0.799 → 0.576 m | 0.724 → **0.353 m** | 0.828 → 0.616 m |
+| `--d6-selfcheck` @8 s | 4.45 → 4.45 cm | 6.00 → **5.72 cm** | 5.85 → 5.83 cm |
+
+**The vertical extent is the proof.** It is the only quantity here that does not
+come from the same measurement that produced the correction: the operator walks
+on a flat floor, so the trajectory's extent along gravity is bounded by the
+reach of an arm. Forward, scan-030 goes 0.82 m → 0.27 m. Inverted, it goes to
+1.55 m; scan-029 0.64 m → 0.30 m forward, 1.20 m inverted. **The sign is not a
+matter of opinion.**
+
+**And the honest negative: `--d6-selfcheck` is nearly blind to a section break,
+which is why nothing in this repository ever caught one.** It compares 25 cm
+cells filled twice — and two sections a metre apart fill *different* cells, so
+there are no pairs and the ruler reports nothing wrong. That is the same class
+of structural blindness ROUND 9 found in sign-blind metrics and ROUND 11 found
+in flatness metrics, a third time. Stitching makes the sections overlap, which
+CREATES cross-section pairs carrying ARCore's residual drift, so a few
+longer-separation buckets get slightly worse while the map gets dramatically
+better. The number that speaks about a seam is the across-seam mismatch.
+
+**Is the stitched scan-030 usable?** Structurally yes — one frame, a flat
+trajectory, five pieces registered to within the seam residual. But four of its
+five sections are 8–13 s long and its end gap is still 0.62 m over 15 m, which
+is ARCore's own drift and is the loop closer's job, not this one's. The honest
+grade for a 5-section walk is still RESCAN; stitching turns "worthless" into
+"recognisable", not into "good".
+
+### 5. THE MOUNT WATCHDOG — AND THE CHECK THE BRIEF ASKED FOR CANNOT WORK
+
+`slam/post/mount_watch.{h,cpp}`, `engine_cli --d6-mountcheck`.
+
+**"Fan-vs-gravity" is not observable.** Every D6 return leaves the fan formula
+with `z == 0` exactly (`d6_fan.h`), so the returns lie in the *assumed* plane by
+construction; the fan plane in the phone frame is `M·ẑ`, a function of the
+assumed mount and of nothing measured. Comparing it with gravity compares an
+assumption with itself, and a rotation about the puck's own spin axis is
+invisible to any test of that shape.
+
+**Where the returns LAND is observable.** A vertical fan on a phone held at
+~1.4 m paints floor to ceiling, and nothing can be further from the sensor
+vertically than the room is tall. First **six seconds** of each capture:
+
+| capture | median per-revolution vertical extent | returns >2.5 m above/below | median range |
+| --- | ---: | ---: | ---: |
+| scan-020 | 2.71 m | **0.00 %** | 1.29 m |
+| **scan-026** (owner rotated the puck) | **6.15 m** | **19.49 %** | 1.54 m |
+| scan-028 | 2.64 m | **0.00 %** | 1.58 m |
+| scan-029 | 2.59 m | **0.00 %** | 1.55 m |
+| scan-030 | 2.60 m | **0.00 %** | 1.59 m |
+
+Exactly zero on four good captures, 19.5 % on the bad one, at the *same median
+return range* — so it is not a taller room, it is the same ranges arriving where
+no room is. The gate is the impossible-elevation fraction (2 %, two orders of
+margin either side); the extent is supporting evidence that cannot fire alone
+because a genuine atrium exceeds it honestly. It **warns, never refuses**, and
+returns `not-measurable` rather than `ok` when it has seen too few revolutions.
+
+**Remaining seam, named:** the phone-side wiring needs an additive C ABI call
+(ABI 10) + JNI + the cue, exactly as ROUND 12 scoped for `--d6-selfcheck`. The
+measurement, the gate and the proof are shipped.
+
+### 6. DO NOT DISTURB (owner item 47)
+
+`core/.../capture/CaptureFocus.kt` holds every decision and is unit-tested;
+`app/.../capture/DoNotDisturbGuard.kt` only talks to the framework.
+
+`INTERRUPTION_FILTER_PRIORITY`, deliberately not ALARMS or NONE. An
+interruption filter governs *notifications*; a foreground `Vibrator.vibrate()`
+is not one and is unaffected — but `ToneGenerator` plays on
+`STREAM_NOTIFICATION`, which ALARMS **would** mute, silencing the app's own
+audio cue. PRIORITY is the weakest filter that does the job, and taking more
+than is needed from a user's phone is how a default-ON feature gets switched
+off. It engages only from `INTERRUPTION_FILTER_ALL`, because taking over a
+filter the user already set would mean restoring a *weaker* one at stop — this
+feature turning somebody's DND off. Restore is skipped if anything moved the
+filter mid-capture (bedtime rule, the user, a work profile): that is a newer
+decision than ours. Released on Stop, on a failed seal, and in `onCleared`
+(abandon), all idempotent; `restoreOrphaned()` covers process death. Never
+blocks Start — `dnd=unprotected-no-permission` goes in the session-start log
+line instead, so the next field report says whether the walk was protected.
+Default ON, one Settings switch.
+
+Measured caveat, stated at the top of `CaptureFocus`: §2(e) found **no external
+notification during any of the three captures**, so this is hygiene that removes
+a real failure mode before it bites, not the explanation for scan-030.
+
+### 7. THE 0.7.1 BUGS — ONE ROOT CAUSE, THREE PLACES
+
+`"a %f" + "b".format(x)` does not format `"a" + "b"`. A method call binds
+tighter than `+`, so `.format()` applied to the LAST literal fragment only.
+
+* **The seal summary log line.** `pathM=%.1f sections=%d drops=%d ptsPerM=%.0f`
+  was never substituted and printed verbatim; the six arguments were consumed by
+  the two `%s` that *were* in scope, so **`trimAccuracyDeg=15.99` was metres
+  walked and `loopEndGapM=2` was the section count**. That is the whole of bug
+  (B): nothing was wrong with the trim, `stabilityDeg=0.39` was correct, and
+  15.99/0.39 was never a unit conversion. The summary **card** was never
+  affected — it reads the `ScanSummary` fields directly.
+* **`PoseSectionBreak.summary`, IMPOSSIBLE_STEP.** Shipped reading *"pose
+  stepped %.2f m / %.1f°"* to the operator — the sentence shown when a scan
+  breaks, which is the sentence that mattered most this round.
+* **`MountCalibrationScreen`** — *"Pattern size: %.2f x %.2f m"*.
+
+A repository-wide sweep for the pattern found six candidate sites; three were
+correct (the placeholders happened to live in the formatted fragment) and the
+three above were not. All fixed as one string with one format call, so the arity
+is checked in one place.
+
+### 8. TESTS
+
+* Engine **584 cases / 2,503,041 assertions** (was 575 / 2,458,000), ctest
+  **7/7 serial**. New `test_round13_section_stitch.cpp` (8 cases): a clean
+  capture is a **bit-identical** no-op (`corr.active()` false, max error exactly
+  0.0); one injected 0.9 m/11° re-anchor is undone to the operator's own motion
+  across the pose gap and nothing more; four re-anchors compose in the right
+  order (the reversed order is metres out, so it discriminates by two orders);
+  a disowned pose is not a seam, and clearing the flags on the same stream
+  restores the seam; the answer is identical with the cloud presented in reverse
+  order. Plus the watchdog: a good mount passes, a rotated one is caught in six
+  seconds, and too few revolutions returns `not-measurable` rather than `ok`.
+  Plus `round13/reprocess/...`, which tests the derived-product FORMAT rather
+  than its arithmetic: 9,000 points across several chunks, written and read back
+  **bit-identically** through the single-file reader, `has_stitched_cloud`
+  flipping either side, and deleting the file returning the container to zero.
+* `:core` **498** (was 480), `:app` unit **74**. New `Round13FocusAndAdviceTest`
+  (9) and `Round13StitchResultTest` (9) — the latter pins the flat
+  `DoubleArray(16)` JNI slot layout against the REAL numbers the engine produced
+  for scan-030, because a wrong index there is a plausible number in the wrong
+  place rather than a crash.
+* Emulator (`b4_test`) instrumented: **19 / 19**, 0 failures (was 17), against a
+  native library rebuilt from this round's engine sources — so `JNI_OnLoad`'s
+  startup check validated **ABI 10** on device. New `Round13ProcessScanTest` (2)
+  runs the owner's scan-030 bytes through the real JNI binding and asserts the
+  numbers, the words, the untouched sealed streams and idempotency. It is the
+  test that found the varargs bug.
+* ABI **9 → 10**, additive.
+
+### 9. THE PROCESS BUTTON — ABI 10, AND THE WHOLE PATH
+
+Section stitching shipped engine-side first and the summary card promised a
+button that did not exist. It exists now, end to end.
+
+**`post::reprocess_d6_container`** (`slam/post/reprocess.{h,cpp}`) is the one
+implementation; both surfaces are thin wrappers over it — the Android app
+through `processing_jni.cpp` (which links `scanengine` directly, as
+`processing_engine.h` has documented since B6), and everything else through
+**ABI 10**: `scan_lscan_reprocess_d6()`, `scan_lscan_has_stitched_cloud()`,
+`scan_lscan_mount_check()`, plus `scan_reprocess_options/_result` and
+`scan_mount_check_result`. Additive: nothing existing changed size, order or
+meaning, so an ABI-9 consumer relinks unmodified. The three tests that pin the
+ABI number exist precisely so a bump is deliberate, and all three were updated
+by hand.
+
+**The corrected cloud is a NEW file, and that is the doctrine decision.**
+`streams/map.bin` is a cache, not a raw stream, so overwriting it would have
+been defensible — engine.cpp already says deleting it costs only speed. It is
+still not done, because after an overwrite nothing on disk can say whether the
+cloud in front of you is the live pass or a correction, and the next field
+report would be written from a cloud whose provenance nobody could recover. So
+the corrected cloud goes to **`processed/map_stitched.bin`** in the same chunk
+framing, beside **`processed/stitch.json`** recording every seam and its
+decision. `load_recorded_cloud()` prefers it — at the one function Review, the
+thumbnail, Export and Colorize all already go through — so the viewer draws the
+corrected map with no change to any caller, and **deleting the two files
+restores exactly what the phone sealed.** Verified by checksum: after a full
+reprocess of scan-030, `lidar.bin`, `poses_ar.bin`, `imu_phone.bin`, `map.bin`,
+`manifest.json` and `project.json` are all byte-identical.
+
+Because a derived product in `processed/` is deliberately NOT on
+`FileRecordReader`'s hard-coded stream list (ROUND 9 named that hazard; this is
+the first thing to depend on it), it is read by a small single-file chunk
+reader with its own CRC check — and a bad CRC there falls back to the sealed
+cache rather than failing, because a derived file is regenerable.
+
+**On the phone**: `ReviewViewModel.processScan()` on `Dispatchers.IO`, a
+determinate progress bar (the run is tens of seconds; a spinner on that is how
+an operator decides the app has hung), and then the result in words — the card
+appears only when `sections > 1`, because a button that is always there and
+usually does nothing teaches people to ignore it. The headline is the **height
+spread**, for the reason §4 gives: it is the only number in the report that is
+not self-referential. The end gap is stated and deliberately never sold as an
+improvement.
+
+**scan-030 through the real Android path**, on the emulator, against the
+owner's actual bytes (`Round13ProcessScanTest`):
+
+```
+5 pieces aligned — height spread 0.82 → 0.27 m.
+The first piece moved 0.52 m to meet the last. The joins kept the camera's own
+correction — the walls here could not measure a better one. Your walk still ends
+65 cm from where it began — that is the camera's own drift over the walk, and
+aligning the pieces does not remove it.
+```
+
+**Two bugs found by putting it on a device, and the second is the interesting
+one.**
+
+1. `reprocess` assumed `processed/` existed. A container that never produced a
+   preview, or an exported and re-imported `.lscan`, has no such directory and
+   the write failed with `kFileError`. It creates it now.
+2. **A JNI varargs float promotion that presented as a silent cancel.** The
+   progress callback crossed as `CallBooleanMethod(obj, mid, fraction)` — and C
+   varargs promote a `float` to `double`, so a `(F)Z` method received eight
+   bytes where it expected four. The call threw, the wrapper read the exception
+   as "the callback said stop", and the entire reprocess **cancelled with no
+   error anywhere**: `ran = 0`, nothing written, and only on the code path that
+   passes a progress callback — which is every real one. `CallBooleanMethodA`
+   with a typed `jvalue` fixes it. Nothing but running it on a device would have
+   found this; the desktop harness over the same C entry point passed.
+
+**The mount watchdog is on the phone too** (`scan_lscan_mount_check` →
+`ProcessingRepository.mountCheck`), and it also runs for free inside every
+reprocess, so `StitchResult.mountWarning` surfaces *"the lidar is not where the
+mount reference says it is — N% of returns landed at heights no room has"*
+whenever it fires. It stays silent on OK and NOT_MEASURABLE.
+
+### 10. THE TWO QUICK FIXES §2 NAMED
+
+**The section-break cue is quieter and yields to the tracker.** Amplitude
+255 → 150 (the value `TRACKING_DEGRADED` has always used, and three pulses
+through a pocket are recognised by count, not by force), plus a **1.5 s quiet
+window after any break cue in which nothing buzzes at all** — the risk is to
+the TRACKER, not to the operator's attention, so it covers every cue and not
+just the one that fired. scan-030's fourth break arrived 0.51 s after the third
+break's buzz, inside that window.
+
+This supersedes half of a ROUND 11 test (`a losing cue keeps its debounce and
+fires on the next tick`), which asserted the loser fires 100 ms later. Rather
+than delete it, it now proves the property more sharply than the original did:
+the loser is silent at 1.1 s and fires at 2.6 s — i.e. the moment the quiet
+window ends, and not four seconds after the tick it lost, which is what a
+consumed debounce would have cost.
+
+**`liveSlam` is hidden on a D6 rig.** ROUND 10 confirmed it gates the Mid-360's
+`LioOdometry`, which `on_page_update` can never feed from a D6, and left the
+switch visible; three rounds of field logs later it was still the first thing
+anyone reached for when a D6 capture went wrong. A control that does nothing is
+worse than no control.
+
+### 11. WHAT IS STILL OPEN
+
+* **Auto-Process on seal is not wired.** The button exists in Review; a capture
+  that ends with 5 sections still has to be opened and processed by hand. Doing
+  it automatically at seal is a minute of phone time on a walk the operator has
+  just finished, and worth it — but it changes the "Stop → Projects" flow ROUND
+  10 item 38 fixed, so it wants its own round.
+* **The end gap is still ARCore drift** — 0.35–0.62 m after stitching. The
+  translation-only, gyro-locked solver built here is exactly the machinery the
+  loop closer needs; applying it at the loop end (rather than only at seams) is
+  a small change to `TrajectoryLoopConfig` and was left out of this round only
+  for scope.
+* ROUND 12's open items that did not move: the densifier's fallback accounting
+  still does not add up (32 % fall back on all three of this round's captures
+  too); scan-026's vertical extent is now explained (§5 — the puck was rotated).
+* The mount watchdog runs on a SEALED container, not live during a walk. Firing
+  it in the first seconds of a capture needs the statistic accumulated inside
+  the pushbroom assembler as points resolve; the measurement, the gate and the
+  proof are shipped and the phone can already run it on a finished scan.
+* Nothing was run on kc-m4; macOS/desktop untouched. No commit, no push.

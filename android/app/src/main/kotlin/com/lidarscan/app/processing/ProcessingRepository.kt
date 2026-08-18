@@ -1,5 +1,7 @@
 package com.lidarscan.app.processing
 
+import com.lidarscan.core.capture.MountVerdict
+import com.lidarscan.core.capture.StitchResult
 import android.util.Log
 import com.lidarscan.app.engine.NativePlanArrays
 import com.lidarscan.app.engine.ProjectProbe
@@ -204,6 +206,47 @@ class ProcessingRepository(private val scope: CoroutineScope) {
         // `hasProcessedCloud()` honest without a second concept.
         if (n > 0L) openedProjects.add(projectId)
         return n
+    }
+
+    // --- ROUND 13: "Process this scan" (put the sections back in one frame) --
+
+    /** Does this container already carry a corrected, stitched cloud? */
+    fun hasStitchedCloud(lscanDir: File): Boolean =
+        runCatching { ScanEngineNative.nativeProcHasStitchedCloud(lscanDir.absolutePath) }
+            .getOrDefault(false)
+
+    /**
+     * Runs the offline resolve with section stitching and leaves the corrected
+     * cloud in `processed/map_stitched.bin`. **Blocking — tens of seconds.**
+     * Call from `Dispatchers.IO`.
+     *
+     * It deliberately does NOT publish into this repository's PageStore: the
+     * viewer is reading the cloud that is being replaced, and a half-written
+     * correction is a map made of two frames at once. The caller re-opens the
+     * project afterwards, which now picks up the stitched file.
+     *
+     * @param onProgress return false to cancel.
+     */
+    fun reprocessD6(
+        lscanDir: File,
+        refineSeams: Boolean = true,
+        onProgress: ((Float) -> Boolean)? = null,
+    ): StitchResult? = runCatching {
+        StitchResult.fromNative(
+            ScanEngineNative.nativeProcReprocessD6(
+                lscanDir.absolutePath,
+                refineSeams,
+                onProgress?.let { cb -> ScanEngineNative.ReprocessProgress { f -> cb(f) } },
+            ),
+        )
+    }.getOrNull()
+
+    /** ROUND 13 item 48: the mount watchdog over a sealed container. */
+    fun mountCheck(lscanDir: File, windowSeconds: Double = 6.0): MountVerdict {
+        val v = runCatching {
+            ScanEngineNative.nativeProcMountCheck(lscanDir.absolutePath, windowSeconds)
+        }.getOrNull() ?: return MountVerdict.NOT_MEASURABLE
+        return if (v.isEmpty()) MountVerdict.NOT_MEASURABLE else MountVerdict.of(v[0].toInt())
     }
 
     /** Clears whatever project's cloud is currently loaded. */

@@ -101,7 +101,10 @@ class JobQueue;
 //             else touched; zero is the ABI-8 behaviour exactly, so an ABI-8
 //             consumer relinks unmodified and resolves the same cloud.
 //             slam/pushbroom/pushbroom_assembler.h.
-inline constexpr std::uint32_t kEngineAbiVersion = 9;
+// ROUND 13: 9 -> 10, additive only. Two new C entry points
+// (scan_lscan_reprocess_d6, scan_lscan_mount_check) and two new PODs;
+// nothing existing changed size, order or meaning.
+inline constexpr std::uint32_t kEngineAbiVersion = 10;
 const char* engine_version_string();  // "scanengine 0.1.0 (<clock backend>)"
 
 struct EngineConfig {

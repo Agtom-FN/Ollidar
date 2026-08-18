@@ -177,7 +177,30 @@ extern "C" {
  * it and cannot derive it; only the app (which owns the transport and the
  * user-facing calibration) can supply it. Same argument that put
  * scan_engine_set_imu_extrinsics() here in ABI 8. */
-#define SCAN_ABI_VERSION 9u
+/* --- ABI 10 (ROUND 13): reprocess a sealed container, and the mount check --
+ *
+ * TWO new functions and two new PODs. Nothing existing changed size, order or
+ * meaning, so an ABI-9 consumer that never calls them is byte-compatible.
+ *
+ *   * scan_lscan_reprocess_d6() — take a SEALED .lscan whose capture broke
+ *     into sections, resolve it offline with section stitching on, and leave
+ *     the corrected cloud in `processed/map_stitched.bin` beside a
+ *     `processed/stitch.json` recording what moved. The sealed streams are
+ *     never touched, so "replay == capture" still holds over the raw data and
+ *     deleting the two derived files restores exactly what the phone wrote.
+ *
+ *   * scan_lscan_mount_check() — has the puck been rotated since the mount
+ *     reference was set? Judged from where the returns LAND, because the fan's
+ *     own attitude is unobservable from the fan (every return leaves the
+ *     formula at z == 0). Warns; never refuses.
+ *
+ * WHY THEY CROSS THE ABI. The Android app reaches the engine's processing
+ * through processing_engine.cpp, which links `scanengine` directly — so on
+ * that platform these would not need to be here. The desktop shells and every
+ * future consumer go through this header, and a correction that only one
+ * platform can apply is a correction that will silently diverge. Same argument
+ * that put scan_colorizer_run() here. */
+#define SCAN_ABI_VERSION 10u
 
 /* --- errors: mirror of scanengine::ScanError --------------------------- */
 typedef int32_t scan_error_t;
@@ -1618,6 +1641,100 @@ SCAN_API int64_t scan_current_process_id(void);
 
 /* Logging is process-global, not per engine. */
 SCAN_API void scan_engine_set_log_callback(scan_log_cb cb, void* user_data, int32_t min_level);
+
+/* ======================================================================== */
+/* ROUND 13 (ABI 10): reprocess a sealed container + the mount watchdog      */
+/* ======================================================================== */
+
+/* Mirrors post::SeamDecision. STABLE, APPEND-ONLY. */
+enum {
+  SCAN_SEAM_ANALYTIC = 0,
+  SCAN_SEAM_REFINED = 1,
+  SCAN_SEAM_NO_TRAJECTORY = 2,
+  SCAN_SEAM_THIN_SUBMAP = 3,
+  SCAN_SEAM_UNOBSERVABLE = 4,
+  SCAN_SEAM_NOT_CONVERGED = 5,
+  SCAN_SEAM_REFINEMENT_TOO_BIG = 6,
+  SCAN_SEAM_MAP_GOT_WORSE = 7
+};
+
+/* Mirrors post::MountWatchVerdict. STABLE, APPEND-ONLY. */
+enum {
+  SCAN_MOUNT_OK = 0,
+  SCAN_MOUNT_NOT_MEASURABLE = 1,
+  SCAN_MOUNT_SUSPECT = 2,
+  SCAN_MOUNT_MISMATCH = 3
+};
+
+typedef struct scan_reprocess_options {
+  uint8_t stitch_sections; /* 1 = put the sections back into one frame */
+  uint8_t close_loops;     /* runs AFTER stitching; off by default */
+  uint8_t densify_with_phone_imu;
+  uint8_t refine_seams; /* the translation-only, rotation-locked solve */
+  double max_refine_translation_m; /* <= 0 uses the engine default (0.30) */
+} scan_reprocess_options;
+
+typedef struct scan_reprocess_result {
+  uint8_t ran;         /* the pipeline resolved */
+  uint8_t map_written; /* processed/map_stitched.bin was (re)written */
+  uint32_t sections;   /* 1 = the capture never broke; nothing was moved */
+  uint32_t seams;
+  uint32_t seams_refined; /* the rest kept the analytic transform, by name */
+  uint64_t points;
+  uint64_t poses;
+  uint64_t poses_untracked; /* recorded with no world frame at all */
+
+  /* What the correction moved the FIRST section by, into the last section's
+   * frame. This is the "your map was this far apart" number. */
+  double first_section_moved_m;
+  double first_section_moved_deg;
+
+  /* The check that does NOT come from the same measurement: the operator
+   * walks on a flat floor, so this must SHRINK. */
+  double vertical_extent_before_m;
+  double vertical_extent_after_m;
+
+  /* Start-to-end gap. Before stitching this compares two points in different
+   * world frames and means nothing; after, it is ARCore's own drift. */
+  double end_gap_before_m;
+  double end_gap_after_m;
+
+  /* The mount watchdog, run for free on the same cloud. */
+  int32_t mount_verdict; /* SCAN_MOUNT_* */
+  double mount_impossible_fraction;
+  double mount_revolution_extent_m;
+} scan_reprocess_result;
+
+typedef struct scan_mount_check_result {
+  int32_t verdict; /* SCAN_MOUNT_* */
+  uint32_t revolutions;
+  uint64_t points;
+  double median_revolution_extent_m;
+  double impossible_fraction;
+  double median_range_m;
+} scan_mount_check_result;
+
+/* Progress, 0..1, called on the caller's thread inside the run. May be NULL.
+ * Returning 0 cancels; returning non-zero continues. */
+typedef int32_t (*scan_reprocess_progress_cb)(float fraction, void* user_data);
+
+/* Resolve `lscan_dir` offline with section stitching and write the corrected
+ * cloud into `processed/`. `opts` may be NULL for the defaults (stitch on,
+ * refine on, loops off). Tens of seconds on a phone for a one-minute walk. */
+SCAN_API scan_error_t scan_lscan_reprocess_d6(const char* lscan_dir,
+                                              const scan_reprocess_options* opts,
+                                              scan_reprocess_result* out,
+                                              scan_reprocess_progress_cb progress,
+                                              void* user_data);
+
+/* True (1) when the container already carries a stitched cloud. */
+SCAN_API int32_t scan_lscan_has_stitched_cloud(const char* lscan_dir);
+
+/* The mount watchdog over the first `window_seconds` of a container (0 = the
+ * whole capture). Judged from where the returns land; warns, never refuses. */
+SCAN_API scan_error_t scan_lscan_mount_check(const char* lscan_dir, double window_seconds,
+                                             scan_mount_check_result* out);
+
 
 #ifdef __cplusplus
 }  /* extern "C" */

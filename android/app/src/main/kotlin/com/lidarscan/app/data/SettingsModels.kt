@@ -132,4 +132,17 @@ data class AppSettings(
      * silence the tone.
      */
     val operatorCuesEnabled: Boolean = true,
+
+    /**
+     * ROUND 13 (owner item 47): silence notifications while a capture runs.
+     *
+     * A notification is not a distraction on this rig, it is a MEASUREMENT
+     * ERROR — the buzz fires the vibration motor, which shakes the IMU and
+     * smears the camera for the ~100-300 ms it lasts, at a phone that is being
+     * used as an inertial sensor. Default ON, because the operator is walking
+     * and cannot dismiss anything. Requires Do Not Disturb access, which is a
+     * Settings grant; without it the capture runs unprotected and says so
+     * rather than refusing.
+     */
+    val dndDuringCapture: Boolean = true,
 )

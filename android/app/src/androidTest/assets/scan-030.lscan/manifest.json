@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "formatVersion": 1,
+  "engineVersion": "0.1.0",
+  "createdAtUtcNs": 1787039985859273000,
+  "sealed": true,
+  "sealedAtUtcNs": 1787040026793740000,
+  "profile": "quickscan",
+  "sensors": [{"id": "1", "kind": "coin-d6", "model": "d6"}, {"id": "1", "kind": "coin-d6", "model": "d6"}, {"id": "2", "kind": "rtk-rover", "model": "rtk-rover"}],
+  "mountCalibration": {"phoneFromLidar": [0.014360452120472988, -0.98379732082680771, 0.17870816698990288, 0, 0.99959792483368137, 0.018495189613557339, 0.021492245796020965, -0.059999999999999998, -0.024449255266646208, 0.1783276745072227, 0.98366735964031682, -0.035000000000000003, 0, 0, 0, 1]},
+  "imuCalibration": {"cameraFromImu": [0, 0, 0.70710678118654746, 0.70710678118654757]},
+  "crs": null,
+  "clockOffsets": {},
+  "streams": {"streams/lidar.bin": {"stream": 1}, "streams/poses_ar.bin": {"stream": 4}, "streams/gnss.bin": {"stream": 5}, "streams/map.bin": {"stream": 8}, "streams/imu_phone.bin": {"stream": 10}}
+}

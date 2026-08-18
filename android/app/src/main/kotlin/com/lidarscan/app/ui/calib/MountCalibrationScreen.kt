@@ -218,10 +218,14 @@ private fun PrepareStep(
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Pattern size: %.2f x %.2f m. Print at 100%% scale on rigid backing (foam board bows by " +
-                        "several millimetres — aluminium composite is better).".format(
-                            state.spec.patternWidthM, state.spec.patternHeightM,
-                        ),
+                    // ROUND 13: `.format()` bound to the SECOND fragment (no
+                    // placeholders), so this read "Pattern size: %.2f x %.2f m"
+                    // on screen. One string, one format call.
+                    (
+                        "Pattern size: %.2f x %.2f m. Print at 100%% scale on rigid backing " +
+                            "(foam board bows by several millimetres — aluminium composite is " +
+                            "better)."
+                    ).format(state.spec.patternWidthM, state.spec.patternHeightM),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

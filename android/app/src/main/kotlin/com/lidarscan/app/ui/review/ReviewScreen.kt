@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.ui.draw.clip
+import androidx.compose.material3.LinearProgressIndicator
+import com.lidarscan.app.ui.theme.SemBad
 import androidx.compose.ui.platform.testTag
 import com.lidarscan.app.ui.components.BackBar
 import com.lidarscan.app.ui.components.Hint
@@ -255,6 +257,16 @@ fun ReviewScreen(
                     }
                 }
             }
+        }
+
+        // ── ROUND 13: "Process this scan" ───────────────────────────────
+        //
+        // Shown only when the capture is actually in pieces. A button that is
+        // always there and usually does nothing teaches the operator to ignore
+        // it, and this one is the answer to the complaint that opened the
+        // round: a 5-section scan was worthless and there was nothing to press.
+        if (state.sections > 1) {
+            ProcessSectionsCard(state = state, onProcess = vm::processScan)
         }
 
         // ── colour chips ────────────────────────────────────────────────
@@ -634,5 +646,106 @@ private fun SwitchRow(label: String, checked: Boolean, detail: String, onChange:
             Switch(checked = checked, onCheckedChange = onChange)
         }
         Text(detail, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+
+// ── ROUND 13: the Process card ──────────────────────────────────────────────
+//
+// The numbers it shows are the ones that mean something to a person holding a
+// phone: how many pieces, and the HEIGHT SPREAD before and after. The height
+// spread is the headline because it is the only number in the report that does
+// not come from the same measurement that produced the correction — the
+// operator walks on a flat floor, so it has to shrink, and on the owner's
+// scan-030 it goes 0.82 m -> 0.27 m.
+//
+// The start-to-end gap is stated but never sold as an improvement: before
+// stitching it compares two points in different world frames and means
+// nothing, and after, it is ARCore's own drift, which this does not fix.
+@Composable
+private fun ProcessSectionsCard(
+    state: ReviewUiState,
+    onProcess: () -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp)
+            .padding(top = 12.dp)
+            .background(SemWarn.copy(alpha = 0.10f), RoundedCornerShape(12.dp))
+            .padding(14.dp)
+            .testTag("reviewProcessCard"),
+    ) {
+        val stitch = state.stitch
+        Text(
+            when {
+                stitch != null -> stitch.headline
+                state.isStitched ->
+                    "${state.sections} pieces, already aligned — you are looking at the " +
+                        "corrected map."
+                else ->
+                    "This scan is in ${state.sections} pieces. The camera re-anchored " +
+                        "${state.sections - 1} time" + (if (state.sections == 2) "" else "s") +
+                        " while you walked, so the room is about a metre apart at each join. " +
+                        "Processing puts it back into one frame."
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        val detail = stitch?.detail
+        if (detail != null) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag("reviewProcessDetail"),
+            )
+        }
+        val mount = stitch?.mountWarning
+        if (mount != null) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                mount,
+                style = MaterialTheme.typography.bodySmall,
+                color = SemBad,
+                modifier = Modifier.testTag("reviewMountWarning"),
+            )
+        }
+        if (state.processError != null) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                state.processError,
+                style = MaterialTheme.typography.bodySmall,
+                color = SemBad,
+            )
+        }
+        Spacer(Modifier.height(10.dp))
+        if (state.processing) {
+            // Determinate, because the pipeline reports a real fraction. A
+            // spinner on a job that can take forty seconds is how an operator
+            // decides the app has hung.
+            LinearProgressIndicator(
+                progress = { state.processProgress },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("reviewProcessProgress"),
+                color = ScanTeal,
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Aligning the pieces… ${(state.processProgress * 100).toInt()}%. " +
+                    "This takes a few tens of seconds and only reads the scan's raw files.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            OutlinedButton(
+                onClick = onProcess,
+                modifier = Modifier.testTag("reviewProcessButton"),
+            ) {
+                Text(if (state.isStitched) "Process again" else "Process this scan")
+            }
+        }
     }
 }

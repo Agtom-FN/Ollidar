@@ -61,11 +61,22 @@ class Round11CuesAndSummaryTest {
         // patterns at once are one unrecognizable pattern.
         val both = CueConditions(trackingDegraded = true, sectionBreaks = 1)
         assertEquals(CueKind.SECTION_BREAK, s.tick(both, 1_000L))
-        // ...and the one that lost is still due immediately, not four seconds
-        // later — it never consumed its debounce.
+        // ROUND 13 SUPERSEDES THE SECOND HALF OF THIS TEST, deliberately.
+        //
+        // It used to assert that the loser fires 100 ms later — "still due
+        // immediately". It is now silent for 1.5 s, because a section break is
+        // ARCore re-anchoring and those are the seconds it is re-establishing
+        // itself; scan-030's fourth break arrived 0.51 s after the third
+        // break's buzz. The risk is to the TRACKER, so the quiet window covers
+        // every cue and not just the one that fired.
+        assertNull(s.tick(CueConditions(trackingDegraded = true, sectionBreaks = 1), 1_100L))
+        // The PROPERTY the test exists for is untouched, and this proves it
+        // more sharply than the original did: the loser never consumed its
+        // debounce, so it fires the moment the quiet window ends rather than
+        // four seconds after the tick it lost.
         assertEquals(
             CueKind.TRACKING_DEGRADED,
-            s.tick(CueConditions(trackingDegraded = true, sectionBreaks = 1), 1_100L),
+            s.tick(CueConditions(trackingDegraded = true, sectionBreaks = 1), 2_600L),
         )
     }
 

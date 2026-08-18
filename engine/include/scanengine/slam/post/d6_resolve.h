@@ -68,6 +68,7 @@
 #include "scanengine/core/error.h"
 #include "scanengine/core/types.h"
 #include "scanengine/slam/post/progress.h"
+#include "scanengine/slam/post/section_stitch.h"
 #include "scanengine/poses/imu_densified_pose.h"
 #include "scanengine/slam/post/trajectory_loop.h"
 #include "scanengine/slam/pushbroom/pushbroom_assembler.h"
@@ -162,6 +163,19 @@ struct D6ResolveConfig {
   bool close_loops = false;
   TrajectoryLoopConfig loop{};
 
+  // --- ROUND 13: section stitching -----------------------------------------
+  //
+  // OFF by default for exactly the reason `close_loops` is: it moves points
+  // the live pass could not have moved. It runs BEFORE loop closure and it
+  // corrects the TRAJECTORY as well as the cloud, so a closure that follows
+  // sees one coherent walk instead of N pieces — which is the only way the
+  // closer's revisit detector can mean anything on a broken capture.
+  //
+  // See slam/post/section_stitch.h: a section break is ARCore re-anchoring,
+  // and the frame change it applied is recorded in the pose jump itself.
+  bool stitch_sections = false;
+  SectionStitchConfig sections{};
+
   // Optional outputs, for a caller that wants to look at what was used. Both
   // are appended to (never cleared) so a caller can accumulate across runs if
   // it really wants to; `out_point_times` is the pairing described over
@@ -203,6 +217,12 @@ struct D6ResolveStats {
   // one bit that says whether the points in the store were moved.
   LoopClosureReport loop{};
   bool loop_applied = false;
+
+  // --- ROUND 13 -----------------------------------------------------------
+  // What section stitching found and did. `sections.sections == 1` on a clean
+  // capture and `sections_stitched` is false, which is the provable no-op.
+  SectionStitchReport sections{};
+  bool sections_stitched = false;
 
   // ROUND 10 (additive): the densifier's OWN verdict, verbatim, including the
   // per-reason fallback breakdown and the closing-error statistics.

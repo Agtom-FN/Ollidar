@@ -81,6 +81,17 @@
         feature that ships default-ON. The tone needs no permission at all.
     -->
     <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!--
+      ROUND 13 (owner item 47). Silencing notifications for the duration of a
+      capture is a MEASUREMENT concern, not a UX one: a notification buzz fires
+      the vibration motor, which shakes the IMU and smears the camera on a phone
+      that is being used as an inertial sensor. This is a special access grant,
+      not a runtime permission — the user visits
+      Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS. A capture never
+      blocks on it; without the grant it runs unprotected and logs that it did.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     <uses-feature android:name="android.hardware.sensor.gyroscope" android:required="false" />
 
     <!-- B9 (Tech Spec §2.3, §3.1's "RTK rover: Bluetooth SPP (Android)").

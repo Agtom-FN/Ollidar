@@ -52,6 +52,7 @@
 #include "scanengine/poses/se3.h"
 #include "scanengine/record/lscan.h"
 #include "scanengine/slam/post/d6_resolve.h"
+#include "scanengine/slam/post/mount_watch.h"
 #include "scanengine/slam/post/map_consistency.h"
 #include "scanengine/slam/post/trajectory_loop.h"
 
@@ -111,6 +112,25 @@ int usage() {
       "      script can separate an out-and-back walk into its two legs.\n"
       "      --mount-from resolves THESE bytes with ANOTHER capture's mount\n"
       "      extrinsic, which is how a trim hypothesis is adjudicated.\n"
+      "\n"
+      "  engine_cli --d6-stitch <lscan-dir> [--no-refine] [--no-densify]\n"
+      "                            [--window S] [--cell M] [--max-refine M]\n"
+      "      ROUND 13. A section break is ARCore RE-ANCHORING, and the frame\n"
+      "      change it applied is recorded in the pose jump itself. Resolve a\n"
+      "      capture as shipped and again with the sections put back into ONE\n"
+      "      frame, and print what moved, what each seam decided, and whether\n"
+      "      the map agrees with itself better afterwards. The check that does\n"
+      "      NOT come from the same measurement: the operator walks on a FLAT\n"
+      "      FLOOR, so the trajectory vertical extent must shrink.\n"
+      "\n"
+      "  engine_cli --d6-mountcheck <lscan-dir> [--window S] [--up X|Y|Z]\n"
+      "      ROUND 13 item 48. Has the puck been rotated since the mount\n"
+      "      reference was set? The fan plane cannot answer (every return\n"
+      "      leaves the formula at z=0, so it lies in the assumed plane by\n"
+      "      construction) — where the returns LAND can. On the owner's own\n"
+      "      captures the contaminated scan-026 puts 15.2%% of returns more\n"
+      "      than 2.5 m above or below the sensor; scan-020/028/029/030 put\n"
+      "      exactly 0.0%%, at the same median range.\n"
       "\n"
       "  engine_cli --d6-selfcheck <lscan-dir> [--window S] [--cell M]\n"
       "                               [--mount-from OTHER.lscan] [--offset-ms MS]\n"
@@ -1425,6 +1445,182 @@ int cmd_d6_selfcheck(const std::string& lscan_dir, const std::string& mount_from
   return kExitOk;
 }
 
+// ROUND 13. Resolve a COIN-D6 capture twice — as shipped, and with section
+// stitching — and report what moved and whether the map agrees with itself
+// better afterwards.
+int cmd_d6_stitch(const std::string& lscan_dir, bool refine, bool densify, double window_s,
+                  double cell_m, double max_refine_m) {
+  bool is_d6 = false;
+  const Status probe = post::lscan_is_d6_project(lscan_dir, &is_d6);
+  if (!probe.ok() || !is_d6) {
+    std::fprintf(stderr, "d6-stitch: '%s' is not a readable COIN-D6 project\n", lscan_dir.c_str());
+    return kExitFailed;
+  }
+
+  struct Run {
+    std::vector<PointVertex> pts;
+    std::vector<std::int64_t> times;
+    std::vector<post::TrajPose> traj;
+    post::D6ResolveStats stats;
+  };
+  Run before, after;
+
+  auto resolve = [&](bool stitch, Run* r) -> bool {
+    PageStoreConfig psc;
+    psc.page_capacity = 1u << 20;
+    psc.max_pages = 4096;
+    PageStore store(psc);
+    post::D6ResolveConfig cfg;
+    cfg.store = &store;
+    cfg.densify_with_phone_imu = densify;
+    cfg.out_trajectory = &r->traj;
+    cfg.out_point_times = &r->times;
+    cfg.stitch_sections = stitch;
+    cfg.sections.refine = refine;
+    cfg.sections.max_refine_translation_m = max_refine_m;
+    post::D6ResolvePipeline pipe(cfg);
+    const Status s = pipe.run(lscan_dir);
+    if (!s.ok()) {
+      std::fprintf(stderr, "d6-stitch: resolve failed: %s\n", error_str(s.error()));
+      return false;
+    }
+    r->stats = pipe.stats();
+    r->pts.reserve(static_cast<std::size_t>(store.total_points()));
+    for (const PageId id : store.page_ids()) {
+      const PageView v = store.page_view(id);
+      if (!v.valid()) continue;
+      for (std::uint32_t k = 0; k < v.count; ++k) r->pts.push_back(v.data[k]);
+    }
+    return true;
+  };
+  if (!resolve(false, &before)) return kExitFailed;
+  if (!resolve(true, &after)) return kExitFailed;
+
+  auto vertical = [](const std::vector<post::TrajPose>& t) {
+    if (t.empty()) return 0.0;
+    double lo = t[0].p[1], hi = t[0].p[1];
+    for (const post::TrajPose& p : t) {
+      lo = std::min(lo, p.p[1]);
+      hi = std::max(hi, p.p[1]);
+    }
+    return hi - lo;
+  };
+  auto endgap = [](const std::vector<post::TrajPose>& t) {
+    if (t.size() < 2) return 0.0;
+    const double dx = t.back().p[0] - t.front().p[0];
+    const double dy = t.back().p[1] - t.front().p[1];
+    const double dz = t.back().p[2] - t.front().p[2];
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+  };
+
+  post::MapConsistencyConfig mcfg;
+  mcfg.window_seconds = window_s;
+  mcfg.cell_m = cell_m;
+  const post::MapConsistencyReport rb =
+      post::measure_map_consistency(before.pts, before.times, mcfg);
+  const post::MapConsistencyReport ra = post::measure_map_consistency(after.pts, after.times, mcfg);
+
+  const post::SectionStitchReport& sr = after.stats.sections;
+  std::printf("d6-stitch: %s\n", lscan_dir.c_str());
+  std::printf("  %zu points, %zu poses, %zu sections, refine=%s\n", before.pts.size(),
+              before.traj.size(), sr.sections, refine ? "on" : "off");
+  if (sr.sections <= 1) {
+    std::printf("  one section — nothing to stitch (this is the clean case)\n");
+  }
+  for (const post::SectionSeam& s : sr.seams) {
+    std::printf("  seam %zu at t=%.2f s: ARCore jumped %.3f m / %.2f deg in %.0f ms -> %s\n",
+                s.index + 1, static_cast<double>(s.t_ns - before.traj.front().t_ns) * 1e-9,
+                s.jump_translation_m, s.jump_rotation_deg, s.gap_s * 1e3,
+                post::to_string(s.decision));
+    std::printf("       %s\n", s.reason);
+    if (s.pairs > 0 || s.submap_before_points > 0) {
+      std::printf("       submaps %zu/%zu pts, %zu pairs, observability %.3f\n",
+                  s.submap_before_points, s.submap_after_points, s.pairs, s.observability);
+    }
+    if (s.decision == post::SeamDecision::kRefined ||
+        s.decision == post::SeamDecision::kMapGotWorse) {
+      std::printf("       across-seam mismatch %.2f cm -> %.2f cm; refinement %+.3f %+.3f %+.3f m\n",
+                  s.mismatch_analytic_m * 100.0, s.mismatch_refined_m * 100.0, s.refine_delta[0],
+                  s.refine_delta[1], s.refine_delta[2]);
+    }
+  }
+  std::printf("\n  first section moved %.3f m / %.2f deg into the last section's frame\n",
+              sr.total_translation_m, sr.total_rotation_deg);
+  std::printf("  trajectory VERTICAL extent (flat floor, so smaller is right): %.3f m -> %.3f m\n",
+              vertical(before.traj), vertical(after.traj));
+  std::printf("  trajectory start->end gap: %.3f m -> %.3f m\n", endgap(before.traj),
+              endgap(after.traj));
+  std::printf("  map self-consistency at %.0f s: ", window_s);
+  if (!rb.measurable || !ra.measurable) {
+    std::printf("not measurable (%s)\n", rb.measurable ? ra.blocker : rb.blocker);
+  } else {
+    std::printf("%.2f cm -> %.2f cm  (floor %.2f -> %.2f cm, %zu -> %zu cells)\n",
+                rb.nearest_offset_m * 100.0, ra.nearest_offset_m * 100.0, rb.self_floor_m * 100.0,
+                ra.self_floor_m * 100.0, rb.self_cells, ra.self_cells);
+    std::printf("  separation      before       after     cells(before/after)\n");
+    for (std::size_t i = 0; i < rb.by_separation.size() && i < ra.by_separation.size(); ++i) {
+      std::printf("   %5.0f s      %7.2f cm  %7.2f cm   %5zu / %zu\n", rb.by_separation[i].seconds,
+                  rb.by_separation[i].median_offset_m * 100.0,
+                  ra.by_separation[i].median_offset_m * 100.0, rb.by_separation[i].cells,
+                  ra.by_separation[i].cells);
+    }
+  }
+  return kExitOk;
+}
+
+// ROUND 13 (owner item 48). Does the PHYSICAL mount still match the stored
+// trim? Judged from where the returns land, because the fan's own attitude is
+// unobservable from the fan — see slam/post/mount_watch.h.
+int cmd_d6_mountcheck(const std::string& lscan_dir, double window_s, int up_axis, bool densify) {
+  bool is_d6 = false;
+  const Status probe = post::lscan_is_d6_project(lscan_dir, &is_d6);
+  if (!probe.ok() || !is_d6) {
+    std::fprintf(stderr, "d6-mountcheck: '%s' is not a readable COIN-D6 project\n",
+                 lscan_dir.c_str());
+    return kExitFailed;
+  }
+  PageStoreConfig psc;
+  psc.page_capacity = 1u << 20;
+  psc.max_pages = 4096;
+  PageStore store(psc);
+  std::vector<post::TrajPose> traj;
+  std::vector<std::int64_t> ptimes;
+  post::D6ResolveConfig cfg;
+  cfg.store = &store;
+  cfg.densify_with_phone_imu = densify;
+  cfg.out_trajectory = &traj;
+  cfg.out_point_times = &ptimes;
+  post::D6ResolvePipeline pipe(cfg);
+  const Status s = pipe.run(lscan_dir);
+  if (!s.ok()) {
+    std::fprintf(stderr, "d6-mountcheck: resolve failed: %s\n", error_str(s.error()));
+    return kExitFailed;
+  }
+  std::vector<PointVertex> pts;
+  pts.reserve(static_cast<std::size_t>(store.total_points()));
+  for (const PageId id : store.page_ids()) {
+    const PageView v = store.page_view(id);
+    if (!v.valid()) continue;
+    for (std::uint32_t k = 0; k < v.count; ++k) pts.push_back(v.data[k]);
+  }
+  post::MountWatchConfig mc;
+  mc.window_seconds = window_s;
+  mc.up_axis = up_axis;
+  const post::MountWatchReport r = post::check_mount_consistency(
+      traj, Span<const PointVertex>(pts.data(), pts.size()),
+      Span<const std::int64_t>(ptimes.data(), ptimes.size()), mc);
+
+  std::printf("d6-mountcheck: %s\n", lscan_dir.c_str());
+  std::printf("  window %.1f s (0 = whole capture), up axis %d\n", window_s, up_axis);
+  std::printf("  %zu revolutions, %zu returns, median range %.2f m\n", r.revolutions, r.points,
+              r.median_range_m);
+  std::printf("  median per-revolution vertical extent : %.2f m\n", r.median_revolution_extent_m);
+  std::printf("  returns at impossible elevations      : %.2f %%\n", 100.0 * r.impossible_fraction);
+  std::printf("\n  VERDICT: %s — %s\n", post::to_string(r.verdict), r.reason);
+  if (r.operator_message[0] != '\0') std::printf("  operator: \"%s\"\n", r.operator_message);
+  return r.verdict == post::MountWatchVerdict::kMismatch ? kExitFailed : kExitOk;
+}
+
 int cmd_d6_timesweep(const std::string& lscan_dir, double from_ms, double to_ms, double step_ms,
                      bool densify, int up_axis) {
   if (step_ms <= 0.0 || to_ms < from_ms) {
@@ -2005,6 +2201,41 @@ int main(int argc, char** argv) {
       else return usage();
     }
     return cmd_d6_selfcheck(dir, mount_from, offset_ns, densify, window_s, cell_m);
+  }
+  if (cmd == "--d6-stitch") {
+    if (argc < 3) return usage();
+    const std::string dir = argv[2];
+    bool refine = true, densify = true;
+    double window_s = 8.0, cell_m = 0.25, max_refine_m = 0.30;
+    for (int i = 3; i < argc; ++i) {
+      const std::string a2 = argv[i];
+      if (a2 == "--no-refine") refine = false;
+      else if (a2 == "--no-densify") densify = false;
+      else if (a2 == "--window" && i + 1 < argc) window_s = std::atof(argv[++i]);
+      else if (a2 == "--cell" && i + 1 < argc) cell_m = std::atof(argv[++i]);
+      else if (a2 == "--max-refine" && i + 1 < argc) max_refine_m = std::atof(argv[++i]);
+      else if (a2 == "--quiet") continue;
+      else return usage();
+    }
+    return cmd_d6_stitch(dir, refine, densify, window_s, cell_m, max_refine_m);
+  }
+  if (cmd == "--d6-mountcheck") {
+    if (argc < 3) return usage();
+    const std::string dir = argv[2];
+    double window_s = 6.0;
+    int up_axis = 1;
+    bool densify = true;
+    for (int i = 3; i < argc; ++i) {
+      const std::string a2 = argv[i];
+      if (a2 == "--window" && i + 1 < argc) window_s = std::atof(argv[++i]);
+      else if (a2 == "--up" && i + 1 < argc) {
+        const std::string u = argv[++i];
+        up_axis = (u == "X" || u == "x") ? 0 : (u == "Z" || u == "z") ? 2 : 1;
+      } else if (a2 == "--no-densify") densify = false;
+      else if (a2 == "--quiet") continue;
+      else return usage();
+    }
+    return cmd_d6_mountcheck(dir, window_s, up_axis, densify);
   }
   if (cmd == "--d6-dump") {
     if (argc < 3) return usage();

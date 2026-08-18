@@ -127,6 +127,7 @@ fun SettingsRoute(
         emptyScanNote = emptyScanNote,
         onKeepEmptyScansChange = viewModel::setKeepEmptyScans,
         onOperatorCuesChange = viewModel::setOperatorCuesEnabled,
+        onDndDuringCaptureChange = viewModel::setDndDuringCapture,
         onCleanUpEmptyScans = viewModel::cleanUpEmptyScans,
         onDismissEmptyScanNote = viewModel::dismissEmptyScanNote,
         onReplaySyntheticCapture = { viewModel.replaySyntheticCapture(onReplaySyntheticCapture) },
@@ -175,6 +176,7 @@ fun SettingsScreen(
     emptyScanNote: String? = null,
     onKeepEmptyScansChange: (Boolean) -> Unit = {},
     onOperatorCuesChange: (Boolean) -> Unit = {},
+    onDndDuringCaptureChange: (Boolean) -> Unit = {},
     onCleanUpEmptyScans: () -> Unit = {},
     onDismissEmptyScanNote: () -> Unit = {},
     onReplaySyntheticCapture: () -> Unit = {},
@@ -263,6 +265,20 @@ fun SettingsScreen(
                         checked = settings.operatorCuesEnabled,
                         onCheckedChange = onOperatorCuesChange,
                         modifier = Modifier.testTag("operatorCuesRow"),
+                    )
+                }
+                ScanCard {
+                    ScanSwitchRow(
+                        title = "Silence notifications while scanning",
+                        detail = "On (the default). A notification does not just distract you — the " +
+                            "buzz fires the vibration motor, and this phone IS the scan's inertial " +
+                            "sensor, so a 200 ms buzz shakes the IMU and smears the camera mid-" +
+                            "measurement. Your own scan cues still buzz. Needs Do Not Disturb " +
+                            "access; without it the scan runs anyway and the log records that it " +
+                            "was unprotected. Your previous setting is restored when the scan ends.",
+                        checked = settings.dndDuringCapture,
+                        onCheckedChange = onDndDuringCaptureChange,
+                        modifier = Modifier.testTag("dndDuringCaptureRow"),
                     )
                 }
             }

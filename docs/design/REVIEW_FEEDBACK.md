@@ -989,3 +989,267 @@ Owner verdict, walking at normal pace: **"quality not so good, still shift."**
     largest error in this scan"* — because the app cannot know whether the
     operator meant to finish where they started, and quietly assuming it would
     be the same unearned confidence that produced item 49.
+
+46. **Owner question (2026-08-18): drop ARCore/rear camera, IMU-only?** Answer on record:
+    pure IMU dead-reckoning is physics-barred (double-integration, meters of error in
+    30-60 s on phone MEMS — 10x worse than current drift). The real architecture: demote
+    the camera from single-point-of-failure to one vote of three — ARCore primary while
+    healthy; during degradation windows BRIDGE with (a) gyro heading (proven <1.1°/16 s),
+    (b) pedestrian dead reckoning (step detect + stride, ~1-2% of distance), (c) D6
+    scan-to-scan matching (fan-plane self-odometry; the reference video rig was
+    camera-less). Bridged gaps replace section breaks; stitching becomes safety net.
+    Scope for ROUND 14, shaped by round 13's keyframe verdict.
+
+47. **Owner directive: Do Not Disturb during capture.** At capture start, enable DND
+    (NotificationManager interruption filter; needs ACCESS_NOTIFICATION_POLICY granted
+    via Settings — graceful ask-once flow, degrade politely if refused) and restore the
+    user's previous filter at stop/seal — always, including crash/abandon paths. Note the
+    physics: a notification buzz shakes the IMU and camera mid-measurement — this is a
+    plausible contributor to IMPOSSIBLE_STEP breaks, not just UX. Our own cue haptics
+    must still fire under DND (app-local Vibrator is unaffected). Log DND state at
+    session start so field captures record whether the walk was protected.
+
+### Resolution — 2026-08-18 (0.8.0, round 13)
+
+**The headline: a section break is not a tracking failure. It is ARCore
+re-anchoring, and the frame change it applied is written down in the pose
+stream.**
+
+Measured against the owner's own recorded 400 Hz gyro, over the same 33 ms as
+each break:
+
+| break | ARCore pose jump | gyro over the SAME 33 ms |
+| --- | ---: | ---: |
+| scan-030 #1 | 0.78 m / **13.53°** | 0.23° |
+| scan-030 #2 | 0.97 m / **11.55°** | 1.16° |
+| scan-030 #3 | 1.23 m / **11.58°** | 0.94° |
+| scan-030 #4 | 1.06 m / **8.08°** | 0.49° |
+| scan-029 #1 | 1.05 m / 0.54° | 0.44° |
+
+The phone did not rotate. And there is **no ramp**: the rolling 1 s
+ARCore-vs-gyro disagreement is 0.049° / 0.051° / 0.069° (median, 028/029/030)
+and stays at 0.04–0.21° in the four seconds before every break, right up to the
+frame it happens. Tracking does not degrade and then fail; the world frame
+snaps. In a small flat walked in loops ARCore will keep recognising places and
+keep snapping, and walking more slowly will not stop it.
+
+**Four hypotheses tested and killed, each with the measurement that killed it.**
+
+* **Camera occlusion by the D6/bracket — REFUTED, and this is the owner-hardware
+  answer: the bracket does NOT block the rear camera.** scan-029/030 carry no
+  keyframes (`captureCameraKeyframes=false` since ROUND 11 hid colorize), so the
+  test ran on scan-020's 403 frames from the same rig and mount. Per-pixel over
+  all 403: **not one pixel is dark in more than 80 % of frames**, and only 1.6 %
+  are dark in more than half — and those form a smooth corner gradient
+  (vignetting plus a shadowed floor), not a hard-edged occluder. A bracket in
+  frame would read as a stationary silhouette at ~100 %. **No bracket redesign is
+  indicated.**
+* **Puck vibration blurring the camera — REFUTED, and backwards.** Gyro RMS in
+  the 8–12 Hz D6-spin band: scan-020 2.82°, scan-026 2.47°, scan-028 2.63°,
+  scan-029 2.21°, **scan-030 1.75°**. The capture that broke four times has the
+  *least* vibration of the five.
+* **CPU starvation from `liveSlam=true` — REFUTED at the source and in the
+  data.** `Impl::on_page_update` forwards to the LIO only when
+  `u.stream == StreamId::kLidarMid360`, so on a D6 the odometry thread is
+  constructed, blocks on a condition variable and is handed nothing; the map
+  store is the caller's, so not even an allocation. And the streams agree:
+  scan-030's D6 chunk cadence (6.3 ms median), pose cadence (33.3 ms) and IMU
+  cadence (2.5 ms) are identical to scan-028/029's, with **zero** pose gaps over
+  200 ms against one each on the other two. The `liveSlam=true`/four-breaks
+  coincidence is n = 1 with a refuted mechanism.
+* **Turning too fast — explains two of four, not the rule.** Net rotation in the
+  2 s before each scan-030 break: 2.5°, 8.9°, **133.5°**, 51.5°. Breaks 3 and 4
+  follow a real 135°-in-2 s spin; breaks 1 and 2 follow almost no rotation at
+  all. Instantaneous gyro rate at every break was 8–37 °/s, below the capture's
+  own p90 of 38 °/s.
+
+**One finding is ours, and it is actionable.** Every high-frequency vibration
+burst in all three captures maps **1:1 onto one of the app's own logged cues**
+(10 bursts / 10 cues on scan-030, 1/1 on scan-028 and scan-029) — so **no
+external notification fired during any of them**, and item 47 is hygiene rather
+than the explanation. But scan-030's fourth break at t = 27.63 s came **0.51 s
+after the 130 ms haptic this app fired for the third break** at t = 27.12 s, and
+it is the only one of the four with any high-frequency energy in the half second
+before it (z = 178 against 2.0 / 7.3 / 10.2). Buzzing the phone at full
+amplitude while ARCore is re-establishing itself is a self-inflicted risk.
+**Backlogged** with the fix named: hold the section-break cue until the tracker
+has re-settled, and drop its amplitude.
+
+**What was built.**
+
+* **`post::stitch_sections`** (`slam/post/section_stitch.{h,cpp}`, hand-rolled,
+  no Eigen, deterministic) — the correction is **analytic, not a search**:
+  `T_k = pose_after · pose_before⁻¹` is the frame change ARCore applied, so
+  pushing section *k* through it lands it in section *k+1*'s frame, and the
+  per-section correction composes to bring everything into the last (most
+  recently re-anchored) frame. Wired into `D6ResolvePipeline` behind
+  `stitch_sections` (default OFF — same "replay == capture" doctrine as
+  `close_loops`) and it runs **before** loop closure, correcting the trajectory
+  as well as the cloud, so the closer finally sees one walk instead of five.
+  New `engine_cli --d6-stitch`.
+* **The refinement solves for translation only, with rotation frozen at `T_k`.**
+  That is ROUND 12's open item answered: ICP's 14–19° proposals were always the
+  pushbroom null space, the rotation was never the unknown, and with three
+  unknowns instead of six **the system matrix `Σ wᵢnᵢnᵢᵀ` *is* the
+  observability** — λ_min/λ_max, no proxy needed. On scan-030 it reports 0.05 /
+  0.09 / 0.42 / 0.65 and declines three of four seams **by name**.
+* **`post::check_mount_consistency`** (owner item 48) + `engine_cli
+  --d6-mountcheck`.
+
+**The result on the owner's captures**, first six seconds and whole walk:
+
+| | scan-028 | scan-029 | scan-030 |
+| --- | ---: | ---: | ---: |
+| sections | 2 | 2 | **5** |
+| trajectory vertical extent, before → after | 0.167 → **0.102 m** | 0.637 → **0.359 m** | 0.820 → **0.271 m** |
+| start→end gap, before → after | 0.799 → 0.576 m | 0.724 → **0.353 m** | 0.828 → 0.616 m |
+| map self-consistency @8 s | 4.45 → 4.45 cm | 6.00 → **5.72 cm** | 5.85 → 5.83 cm |
+
+**The vertical extent is the proof, and it is the only number here that does not
+come from the same measurement that produced the correction.** The operator
+walks on a flat floor. Applying `T_k` forward flattens scan-030's trajectory
+from 0.82 m of vertical wander to 0.27 m — a phone moving in a hand. Applying
+the inverse takes it to 1.55 m. The sign is not a matter of opinion.
+
+**And an honest negative: `--d6-selfcheck` is nearly blind to a section break.**
+It compares 25 cm cells filled twice, and two sections a metre apart fill
+*different* cells — so there are no pairs to compare and the ruler reports
+nothing wrong. That is why every geometric metric this project owns scored
+scan-030 as ordinary while the owner's eyes saw a wrecked map, and it is why the
+8 s number barely moves above. Stitching makes the sections overlap, which
+*creates* cross-section pairs carrying ARCore's residual drift — so a few of the
+longer-separation buckets get slightly worse while the map gets dramatically
+better. The across-seam mismatch is the number that speaks: on scan-029 the
+refinement took it from 14.65 cm to 12.56 cm.
+
+48. **Built, and the check the brief asked for is not the check that works —
+    the honest version is.** A "fan-vs-gravity" test cannot detect a rotated
+    puck: every D6 return leaves the fan formula with `z == 0` exactly, so the
+    returns lie in the *assumed* plane by construction and the test would
+    compare an assumption with itself. What is observable is where the returns
+    LAND. A vertical fan on a phone held at ~1.4 m paints floor to ceiling and
+    **nothing can be further from the sensor vertically than the room is tall**.
+
+    | capture | median per-revolution vertical extent | returns >2.5 m above/below sensor | median range |
+    | --- | ---: | ---: | ---: |
+    | scan-020 | 2.71 m | **0.00 %** | 1.29 m |
+    | **scan-026** (owner rotated the puck) | **6.15 m** | **19.49 %** | 1.54 m |
+    | scan-028 | 2.64 m | **0.00 %** | 1.58 m |
+    | scan-029 | 2.59 m | **0.00 %** | 1.55 m |
+    | scan-030 | 2.60 m | **0.00 %** | 1.59 m |
+
+    Judged on the **first six seconds** only, which is the point. Exactly zero
+    on four good captures and 19.5 % on the bad one at the *same median return
+    range*, so this is not a taller room — it is the same ranges arriving where
+    no room is. The gate is the impossible-elevation fraction (2 %, two orders
+    of margin either side); the extent is supporting evidence that cannot fire
+    alone, because a genuine atrium exceeds it honestly. It **warns and never
+    refuses**. Remaining seam, named rather than hidden: the phone-side wiring
+    needs an additive C ABI call (ABI 10) + JNI + the cue, exactly as ROUND 12
+    scoped for `--d6-selfcheck`; the measurement, the gate and the proof are
+    shipped and the CLI runs them.
+
+49. **The card says what to DO, and the sentence that described the mechanism
+    was wrong.** "N sections — tracking restarted too many times" is not what
+    happens; the gyro says the tracker re-anchored. `ScanSummary.gradeReason`
+    now names re-anchoring, says the pieces are about a metre apart *until you
+    Process this scan*, and a new `nextWalkAdvice` line — separate on purpose,
+    because the grade describes the walk that happened and this describes the
+    next one — tells the operator to uncover the rear camera, add light, and
+    slow through turns. A GOOD scan is given nothing to fix.
+
+47. **Shipped.** `CaptureFocus` (`:core`, every decision, unit-tested) +
+    `DoNotDisturbGuard` (`:app`, framework only). `INTERRUPTION_FILTER_PRIORITY`
+    and deliberately not ALARMS or NONE: an interruption filter governs
+    *notifications*, a foreground `Vibrator.vibrate()` is not one and is
+    unaffected, but `ToneGenerator` plays on `STREAM_NOTIFICATION` — which
+    ALARMS would mute, silencing the app's own audio cue. PRIORITY is the
+    weakest filter that does the job. It engages only from
+    `INTERRUPTION_FILTER_ALL`, because taking over a filter the user already set
+    would mean *restoring a weaker one* at stop — this feature turning somebody's
+    DND off. Restore is skipped if anything moved the filter mid-capture (a
+    bedtime rule, the user, a work profile): that is a newer decision than ours.
+    Released on Stop, on a failed seal, and in `onCleared` (the abandon path),
+    all idempotent; `restoreOrphaned()` covers process death. Never blocks
+    Start: without the grant the walk runs and the session-start log line
+    records `dnd=unprotected-no-permission`, so a field report says whether the
+    walk was protected without anyone remembering. Default ON, one Settings
+    switch.
+
+**Two shipped 0.7.1 bugs, and they were ONE bug in three places.**
+`"a %f" + "b".format(x)` does not format `"a" + "b"` — a method call binds
+tighter than `+`, so `.format()` applied to the last literal fragment only.
+(A) The seal summary's `pathM=%.1f sections=%d drops=%d ptsPerM=%.0f` was never
+substituted and printed verbatim; (B) the six arguments were then consumed by
+the two `%s` that *were* in scope, so **`trimAccuracyDeg=15.99` was metres
+walked and `loopEndGapM=2` was the section count** — which is why it sat beside
+a stored `stabilityDeg=0.39` and looked like a unit error. Nothing was wrong
+with the trim, and the summary **card** was never affected (it reads the
+`ScanSummary` fields directly). A sweep of the same pattern across the whole app
+found two more, both user-facing and both fixed: the IMPOSSIBLE_STEP section-
+break sentence has been telling operators *"pose stepped %.2f m / %.1f°"*, and
+the mount-calibration screen *"Pattern size: %.2f x %.2f m"*.
+
+### Resolution addendum — 2026-08-18 (0.8.0): the Process button
+
+The round's own report flagged this as ship-blocking and it is closed in the
+same version. **`post::reprocess_d6_container` is the one implementation**;
+the Android app reaches it through `processing_jni.cpp` (which links
+`scanengine` directly, as it has since B6) and every other consumer through
+**ABI 10** — `scan_lscan_reprocess_d6()`, `scan_lscan_has_stitched_cloud()`,
+`scan_lscan_mount_check()`, additive, nothing existing changed.
+
+**The corrected cloud is a derived file, not an overwrite.** It goes to
+`processed/map_stitched.bin` beside a `processed/stitch.json` naming every seam
+and its decision; `load_recorded_cloud()` prefers it at the one function every
+reader already goes through, so Review draws the corrected map with no change
+to any caller. After a full reprocess of scan-030, `lidar.bin`,
+`poses_ar.bin`, `imu_phone.bin`, `map.bin`, `manifest.json` and `project.json`
+are **byte-identical by checksum** — "replay == capture" still holds over the
+raw data, and deleting the two derived files restores exactly what the phone
+sealed. Verified on the emulator, not merely intended.
+
+**What the owner sees**, produced by the real Android path on scan-030's actual
+bytes:
+
+> **5 pieces aligned — height spread 0.82 → 0.27 m.**
+> The first piece moved 0.52 m to meet the last. The joins kept the camera's own
+> correction — the walls here could not measure a better one. Your walk still
+> ends 65 cm from where it began — that is the camera's own drift over the walk,
+> and aligning the pieces does not remove it.
+
+The height spread is the headline because it is the only number in the report
+that is not self-referential; the end gap is stated and deliberately never sold
+as an improvement.
+
+**Two bugs came out of putting it on a device, and the second could not have
+been found any other way.** `reprocess` assumed `processed/` existed (an
+exported and re-imported `.lscan` has no empty directories). And the progress
+callback crossed JNI as `CallBooleanMethod(obj, mid, fraction)` — **C varargs
+promote a `float` to `double`, so a `(F)Z` method got eight bytes where it
+expected four**; the call threw, the wrapper read the exception as "the caller
+said stop", and the whole reprocess **cancelled silently** with `ran = 0` and no
+error anywhere — only on the path that passes a progress callback, which is
+every real one. `CallBooleanMethodA` with a typed `jvalue` fixes it. The
+desktop harness over the same C entry point passed throughout.
+
+48. **Also on the phone now.** `scan_lscan_mount_check` → `ProcessingRepository`,
+    and it runs for free inside every reprocess, so the warning *"the lidar is
+    not where the mount reference says it is — N% of returns landed at heights
+    no room has"* reaches the operator. Silent on OK and NOT_MEASURABLE. Still
+    sealed-container only; firing it live in the first seconds of a walk needs
+    the statistic accumulated inside the pushbroom assembler.
+
+**Plus the two quick fixes the diagnosis named.** The section-break haptic drops
+from amplitude 255 to 150 and now imposes a **1.5 s quiet window in which
+nothing buzzes at all** — the risk is to the tracker, not to the operator's
+attention, so it covers every cue. (scan-030's fourth break arrived 0.51 s after
+the third break's buzz, inside that window.) And `liveSlam` is **hidden on a D6
+rig**: ROUND 10 established it gates the Mid-360's LIO, which a D6 capture can
+never feed, and it was still the first thing anyone reached for when a D6 walk
+went wrong.
+
+Engine **584 cases / 2,503,041 assertions**, ctest 7/7 serial, werror clean;
+`:core` **498**, `:app` **74**; emulator **19/19** with the native library
+rebuilt from this round's sources, so `JNI_OnLoad` validated ABI 10 on device.
+VERSION stays **0.8.0**.
