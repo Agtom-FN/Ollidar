@@ -167,6 +167,11 @@ class SettingsViewModel(
         viewModelScope.launch { settingsRepository.setKeepEmptyScans(keep) }
     }
 
+    /** ROUND 11 (owner item 43). */
+    fun setOperatorCuesEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setOperatorCuesEnabled(enabled) }
+    }
+
     /**
      * Deletes every 0-point project on the device.
      *

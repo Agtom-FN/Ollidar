@@ -51,6 +51,28 @@ package com.lidarscan.core.capture
  *    the reader thread, which then samples `elapsedRealtimeNanos()` as its very
  *    first act (`D6SerialConnection`). ~0.5–1 ms on a warm, non-throttled phone.
  *
+ * ## ROUND 10: it was finally MEASURED, and 2 ms was about right
+ *
+ * The owner's `scan-020` carries the D6 stream, the ARCore poses AND 80,661
+ * phone-IMU samples at 399.1 Hz in one container, which makes both clock
+ * crossings measurable after the fact:
+ *
+ *  * **phone IMU vs ARCore pose: −1.5 ms** (r = 0.982), by cross-correlating
+ *    the recorded gyro's angular rate against the rate implied by the poses
+ *    over all 5,961 pose intervals. The CLOCK_BOOTTIME claim above is not just
+ *    documented, it is true on the hardware.
+ *  * **D6 vs ARCore pose: +4 ms**, by re-resolving the whole capture at a
+ *    sweep of offsets and taking the crispest map
+ *    (`engine_cli --d6-timesweep`). The entire ±30 ms window varies by 0.1 %,
+ *    so the measurement's honest reading is "under 10 ms, sign uncertain".
+ *
+ * Either way it is millimetres at walking pace against the 4.8 cm of wall
+ * thickness that capture actually has, so **this is not what makes a scan
+ * shift when the operator turns around** — see `android/NOTES.md` ROUND 10 §1.
+ * [DEFAULT_SENSOR_LATENCY_MS] is left at 2 because the data cannot tell 2 from
+ * 0 from 6, and inventing precision here would be the same mistake in the
+ * opposite direction.
+ *
  * So **2 ms**, which at 1 m/s is 2 mm — an order of magnitude under the D6's own
  * range noise, and therefore not a number worth arguing about. It is exposed
  * anyway, because the derivation above assumes a healthy USB stack and a phone

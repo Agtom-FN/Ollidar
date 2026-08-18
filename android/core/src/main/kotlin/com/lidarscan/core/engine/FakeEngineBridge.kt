@@ -25,7 +25,11 @@ import kotlinx.coroutines.launch
  * delays, a steady fake point rate) — it is a UI-development aid, not a
  * simulator of engine semantics or failure modes.
  */
-class FakeEngineBridge(
+// ROUND 10 (owner item 38): `open` so a test can count `resetLiveView()`
+// calls. That call is the difference between capture #2 opening on an empty
+// map and opening on capture #1's cloud, and it is invisible from any state
+// this class exposes — there is no fake PageStore to inspect.
+open class FakeEngineBridge(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
 ) : EngineBridge {
 

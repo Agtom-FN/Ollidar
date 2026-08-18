@@ -162,7 +162,22 @@ extern "C" {
  * struct layout or function signature from ABI 7 changed. An ABI-7 consumer
  * relinks against this header unmodified and, pushing no IMU, gets
  * byte-for-byte the trajectory and the cloud it got before. */
-#define SCAN_ABI_VERSION 8u
+
+/* --- ABI 9 (ROUND 10 item 36): the lidar -> pose time offset -------------
+ *
+ * ONE new pair of functions, no struct or signature changed:
+ *
+ *   * scan_engine_set_pose_time_offset_ns() / scan_engine_pose_time_offset_ns()
+ *     — the constant delay between the clock a D6 return is dated in and the
+ *     clock ARCore stamps its poses in. Zero is the ABI-8 behaviour exactly,
+ *     so an ABI-8 consumer that never calls it gets the cloud it got before.
+ *
+ * WHY IT HAS TO CROSS THE ABI. The offset is a property of the phone's USB
+ * stack and its reader thread, not of the sensor, so the engine cannot know
+ * it and cannot derive it; only the app (which owns the transport and the
+ * user-facing calibration) can supply it. Same argument that put
+ * scan_engine_set_imu_extrinsics() here in ABI 8. */
+#define SCAN_ABI_VERSION 9u
 
 /* --- errors: mirror of scanengine::ScanError --------------------------- */
 typedef int32_t scan_error_t;
@@ -1144,6 +1159,35 @@ SCAN_API scan_error_t scan_engine_pushbroom_enable(scan_engine* engine, int on);
 SCAN_API scan_error_t scan_engine_pushbroom_flush(scan_engine* engine);
 SCAN_API scan_error_t scan_engine_pushbroom_stats(scan_engine* engine,
                                                   scan_pushbroom_stats* out);
+
+/* --- the lidar -> pose time offset (ABI 9, ROUND 10 item 36) --------------
+ *
+ * Nanoseconds ADDED to a return's own timestamp before its pose is looked up.
+ * POSITIVE means "the return was really taken later than its stamp says, pair
+ * it with a later pose", which is the sign a transport delay takes: the D6
+ * has no clock of its own, so a return is dated when the phone's reader
+ * thread sees its bytes, which is after the mirror actually swept past.
+ *
+ * WHAT IT COSTS TO GET WRONG, and why it hides. A constant offset `dt` moves
+ * the cloud `v*dt` along the walk — 2 cm at 1 m/s and 20 ms, the same shift
+ * for every point, so walls stay straight and nothing looks wrong — and
+ * rotates it `omega*dt` about the operator, which at a 60 deg/s turn and
+ * 20 ms is 1.2 deg, i.e. 6 cm of tangential error at 3 m, with the SIGN
+ * FOLLOWING THE TURN. So it is invisible walking in a straight line and
+ * obvious the moment the operator turns around, which is exactly how the
+ * owner described it.
+ *
+ * Settable at any time, including mid-capture: it takes effect for every
+ * point resolved after the call, including points still pending. There is no
+ * reconnect and no session restart, because the app exposes this as a live
+ * calibration and losing a capture to change a number would be absurd.
+ *
+ * Zero is the ABI-8 behaviour. `engine/tools/engine_cli.cpp --d6-timesweep`
+ * measures the right value from a real capture. */
+SCAN_API scan_error_t scan_engine_set_pose_time_offset_ns(scan_engine* engine,
+                                                          int64_t offset_ns);
+/* Writes the current offset. SCAN_ERR_INVALID_ARGUMENT if `out` is NULL. */
+SCAN_API scan_error_t scan_engine_pose_time_offset_ns(scan_engine* engine, int64_t* out);
 
 /* --- mount calibration (A8) ----------------------------------------------
  *

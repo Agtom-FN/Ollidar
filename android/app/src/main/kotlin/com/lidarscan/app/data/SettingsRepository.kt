@@ -60,6 +60,9 @@ class SettingsRepository(private val context: Context) {
 
         /** ROUND 9 (item 33): keep 0-point scans instead of pruning them. Default false. */
         val KEEP_EMPTY_SCANS = booleanPreferencesKey("keep_empty_scans")
+
+        /** ROUND 11 (item 43): haptic + audio operator cues. Unset means ON. */
+        val OPERATOR_CUES = booleanPreferencesKey("operator_cues_enabled")
     }
 
     val settings: Flow<AppSettings> = context.settingsDataStore.data.map { prefs ->
@@ -93,6 +96,8 @@ class SettingsRepository(private val context: Context) {
             // ROUND 9 (item 33): the default IS the fix — an unset preference
             // means empty scans are pruned.
             keepEmptyScans = prefs[Keys.KEEP_EMPTY_SCANS] ?: false,
+            // ROUND 11 (item 43): default ON, so an unset preference buzzes.
+            operatorCuesEnabled = prefs[Keys.OPERATOR_CUES] ?: true,
         )
     }
 
@@ -207,6 +212,11 @@ class SettingsRepository(private val context: Context) {
     /** ROUND 9 (item 33): see [AppSettings.keepEmptyScans]. */
     suspend fun setKeepEmptyScans(keep: Boolean) {
         context.settingsDataStore.edit { it[Keys.KEEP_EMPTY_SCANS] = keep }
+    }
+
+    /** ROUND 11 (item 43). */
+    suspend fun setOperatorCuesEnabled(enabled: Boolean) {
+        context.settingsDataStore.edit { it[Keys.OPERATOR_CUES] = enabled }
     }
 
     suspend fun setAllowPoorSyncColorize(allow: Boolean) {

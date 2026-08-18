@@ -68,6 +68,8 @@
 #include "scanengine/core/error.h"
 #include "scanengine/core/types.h"
 #include "scanengine/slam/post/progress.h"
+#include "scanengine/poses/imu_densified_pose.h"
+#include "scanengine/slam/post/trajectory_loop.h"
 #include "scanengine/slam/pushbroom/pushbroom_assembler.h"
 
 namespace scanengine {
@@ -142,6 +144,31 @@ struct D6ResolveConfig {
   // BACKWARD over one ARCore bracket (~33 ms), so it needs only the recent
   // tail, and the chronological read guarantees that tail has arrived.
   std::size_t imu_capacity = 3200;
+
+  // --- ROUND 11 item 41: loop closure -------------------------------------
+  //
+  // OFF by default, and that default is a decision rather than caution. This
+  // pipeline's contract is "replay == capture" (Tech Spec §3 key rule 2): the
+  // same container through the same assembler produces the same points as the
+  // live pass did. Loop closure deliberately produces DIFFERENT points — it
+  // is a correction the live pass could not have made — so it may never be
+  // something a re-resolve does behind the caller's back. The offline
+  // "Process" action asks for it explicitly; the Review fast path does not.
+  //
+  // When it fires, the resolved cloud in `store` is rewritten IN PLACE
+  // (PageStore::page_data_mutable) rather than re-derived, because
+  // `p' = C(t) * p` is exact — see slam/post/trajectory_loop.h. When it does
+  // not fire, not one point is touched and `stats.loop.decision` says why.
+  bool close_loops = false;
+  TrajectoryLoopConfig loop{};
+
+  // Optional outputs, for a caller that wants to look at what was used. Both
+  // are appended to (never cleared) so a caller can accumulate across runs if
+  // it really wants to; `out_point_times` is the pairing described over
+  // PushbroomConfig::out_point_times and is filled whenever it is set OR
+  // `close_loops` is on (the pipeline needs it either way).
+  std::vector<TrajPose>* out_trajectory = nullptr;
+  std::vector<std::int64_t>* out_point_times = nullptr;
 };
 
 struct D6ResolveStats {
@@ -168,6 +195,25 @@ struct D6ResolveStats {
   std::uint64_t imu_accepted = 0;
   std::uint64_t imu_densified = 0;
   std::uint64_t imu_fallbacks = 0;
+
+  // --- ROUND 11 item 41 ---------------------------------------------------
+  // What loop closure decided, ALWAYS — including the two answers that are
+  // not "closed": `kNoRevisit` (the correct verdict for a one-way walk) and
+  // every rejection, each naming the gate that refused. `loop_applied` is the
+  // one bit that says whether the points in the store were moved.
+  LoopClosureReport loop{};
+  bool loop_applied = false;
+
+  // ROUND 10 (additive): the densifier's OWN verdict, verbatim, including the
+  // per-reason fallback breakdown and the closing-error statistics.
+  //
+  // `imu_fallbacks` above answers "how often did the gyro path not run"; this
+  // answers "why", which is the only version of the question a person can act
+  // on. On the owner's scan-020 the first version of this field showed 43 % of
+  // returns falling back with no way to tell a stuttering sensor from a
+  // too-wide bracket from a rig whose gyro and ARCore genuinely disagree —
+  // three completely different problems with three different fixes.
+  ImuDensifyStats imu{};
 };
 
 class D6ResolvePipeline {

@@ -73,7 +73,10 @@ data class DisplayParams(
             ColorMode.TIME -> time
             // A correct shader branches on colorMode before reading these, so a
             // neutral identity mapping is what the other two modes get.
-            ColorMode.RGB, ColorMode.FIX_QUALITY ->
+            // ROUND 11 (item 42): coverage's colour is computed per point by the
+            // renderer from its own density grid, not from a scalar the shader
+            // ramps, so it takes the same neutral identity as RGB.
+            ColorMode.RGB, ColorMode.FIX_QUALITY, ColorMode.COVERAGE ->
                 ScalarColorParams(autoRange = false, manualMin = 0f, manualMax = 1f, gamma = 1f, brightness = 1f, colormap = Colormap.GRAYSCALE, invert = false)
         }
 
@@ -143,6 +146,20 @@ data class DisplayParams(
         const val CAPTURE_BRIGHTNESS: Float = 1.0f
 
         /**
+         * ROUND 10 (owner item 39): **GRAYSCALE**, stated once instead of
+         * being inherited.
+         *
+         * The owner asked for "3d orbit, intensity, grey scale" and this was
+         * *nearly* already true, which is the dangerous kind of true: the
+         * QUICK_SCAN profile default set GRAYSCALE, [captureDefaults] set no
+         * colormap at all and therefore inherited `ScalarColorParams`' own
+         * SPECTRUM, and `CaptureViewModel` initialised its own colormap flow to
+         * SPECTRUM independently. Three sources, two answers, and which one
+         * won depended on which path a given screen took.
+         */
+        val CAPTURE_COLORMAP: Colormap = Colormap.GRAYSCALE
+
+        /**
          * The whole block, for callers that want the value rather than the
          * four constants. Runs through [clamped] so it can never be a shape
          * `clamp_display_params()` would disagree with.
@@ -153,12 +170,17 @@ data class DisplayParams(
                 mode = PointSizeMode.FIXED_PIXELS,
                 fixedPx = CAPTURE_POINT_SIZE_PX,
             ),
-            intensity = ScalarColorParams(gamma = CAPTURE_GAMMA, brightness = CAPTURE_BRIGHTNESS),
+            intensity = ScalarColorParams(
+                gamma = CAPTURE_GAMMA,
+                brightness = CAPTURE_BRIGHTNESS,
+                colormap = CAPTURE_COLORMAP,
+            ),
             height = ScalarColorParams(
                 manualMin = 0f,
                 manualMax = 3f,
                 gamma = CAPTURE_GAMMA,
                 brightness = CAPTURE_BRIGHTNESS,
+                colormap = CAPTURE_COLORMAP,
             ),
         ).clamped()
 
@@ -383,6 +405,12 @@ fun evaluatePointColor(
 
     return when (params.colorMode) {
         ColorMode.RGB -> passthrough()
+        // ROUND 11 (item 42): the density is a property of the CLOUD, not of the
+        // point, so this function — which is the CPU mirror of the shader and
+        // sees exactly one point — cannot compute it. Pass through, which is
+        // also what the renderer asks the shader to do; the tint arrives in the
+        // vertex colour from CoverageGrid before the shader ever runs.
+        ColorMode.COVERAGE -> passthrough()
         ColorMode.HEIGHT -> scalar(z, params.height)
         ColorMode.INTENSITY -> {
             // The RGB-derived-intensity bridge `export/exporter.h` documents for
@@ -411,7 +439,17 @@ fun evaluatePointColor(
  * @param gnssActive true when a rover is attached and publishing fixes (B9)
  */
 fun colorModeAvailability(gnssActive: Boolean): Map<ColorMode, String?> = mapOf(
-    ColorMode.RGB to null,
+    // ROUND 10 (owner item 39): paused with the camera. A D6 return has no
+    // colour of its own, so RGB on this rig is a pass-through of the intensity
+    // triple the driver already writes into r/g/b — INTENSITY renders the same
+    // data with a colormap, a gamma and a brightness the operator can use.
+    // The enum value stays (its ordinal crosses the C ABI into the shader);
+    // this is the map every picker reads to decide what to OFFER.
+    ColorMode.RGB to if (com.lidarscan.core.FeatureFlags.RGB_COLOR_MODE_ENABLED) {
+        null
+    } else {
+        "Paused — the camera is not in use on this rig. Use INTENSITY, which is the same returns with a colormap."
+    },
     ColorMode.HEIGHT to null,
     ColorMode.INTENSITY to null,
     // PointVertex is 16 bytes of position + RGBA8 and carries no per-point
@@ -423,4 +461,9 @@ fun colorModeAvailability(gnssActive: Boolean): Map<ColorMode, String?> = mapOf(
     } else {
         "Needs a connected RTK rover — points carry no fix tag, so the colour comes from the live fix."
     },
+    // ROUND 11 (owner item 42): always offered. It needs nothing the live view
+    // does not already have — the density is counted from the points as they
+    // reach the GPU — and it is the one mode that answers "where have I not
+    // been yet" while the operator is still standing in the room.
+    ColorMode.COVERAGE to null,
 )

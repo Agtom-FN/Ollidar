@@ -118,8 +118,8 @@ class CaptureLog(context: Context) {
      * returns it, or null. `cacheDir/shared/` is what `ShareTargets`'
      * `FileProvider` root already exposes.
      */
-    fun exportTo(cacheRoot: File): File? = runCatching {
-        val out = File(cacheRoot, EXPORT_NAME)
+    fun exportTo(cacheRoot: File, atEpochMillis: Long = System.currentTimeMillis()): File? = runCatching {
+        val out = File(cacheRoot, exportFileName(atEpochMillis))
         out.parentFile?.mkdirs()
         out.writeText(readAll())
         out
@@ -137,13 +137,42 @@ class CaptureLog(context: Context) {
 
     companion object {
         private const val FILE_NAME = "capture.log"
-        private const val EXPORT_NAME = "lidarscan-capture-log.txt"
         private const val LOGCAT_TAG = "LidarScanCapture"
 
         /** 512 KB live + 512 KB rotated. Thousands of lines; nothing a phone notices. */
         const val MAX_BYTES = 512L * 1024L
 
         private const val MAX_EXPORT_CHARS = 1_000_000
+
+        /**
+         * ROUND 10 (owner item 40) — **`lidarscan-capture-log-YYYY-MM-DD-HHMM.txt`,
+         * in the device's local time.**
+         *
+         * The owner's words: *"the capture log please save with date and time
+         * in the file name."* The export name was a bare constant, so every
+         * export landed on the same `Downloads/LidarScan/lidarscan-capture-log.txt`
+         * and MediaStore de-duplicated it into `… (1).txt`, `… (2).txt`. The
+         * evidence of that is quoted in the repository itself: `MountTrim.kt`
+         * cites a real field artifact called `lidarscan-capture-log (1).txt`.
+         * Nobody can tell those apart, and pairing one with the scan it
+         * describes means opening it and reading timestamps.
+         *
+         * LOCAL time, not UTC, and to the MINUTE: this name exists to be read
+         * next to a scan named `Scan-020-2026-08-18-1106`, which
+         * `ScanAutoName` also formats in local time to the minute. Two
+         * different clocks in two filenames that are meant to be compared by
+         * eye is how you get a support thread instead of an answer.
+         *
+         * Seconds are deliberately absent for the same reason — the scan names
+         * do not carry them — and two exports inside one minute are the one
+         * case where MediaStore's `(1)` suffix is the correct behaviour rather
+         * than a silent collision.
+         */
+        fun exportFileName(epochMillis: Long): String {
+            val stamp = java.text.SimpleDateFormat("yyyy-MM-dd-HHmm", java.util.Locale.US)
+                .format(java.util.Date(epochMillis))
+            return "lidarscan-capture-log-$stamp.txt"
+        }
 
         // Tags, so the log greps cleanly and every call site spells them the
         // same way. These are the capture-survival path end to end.

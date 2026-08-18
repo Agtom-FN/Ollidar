@@ -28,6 +28,7 @@
 #include "scanengine/poses/external_pose_source.h"
 #include "scanengine/poses/imu_densified_pose.h"
 #include "scanengine/record/lscan.h"
+#include "scanengine/slam/post/trajectory_loop.h"
 
 namespace scanengine {
 namespace post {
@@ -219,6 +220,13 @@ struct D6ResolvePipeline::Impl {
   std::unique_ptr<ImuDensifiedPoseSource> densified;
   std::unique_ptr<D6PushbroomAssembler> assembler;
 
+  // ROUND 11 item 41. Owned when the caller did not supply its own sinks, so
+  // that `close_loops` works without the caller having to know it needs them.
+  std::vector<TrajPose> traj_own;
+  std::vector<std::int64_t> times_own;
+  std::vector<TrajPose>* traj = nullptr;
+  std::vector<std::int64_t>* times = nullptr;
+
   void report(PostStage stage, float fraction, float stage_fraction, std::uint64_t done,
               std::uint64_t total) {
     if (!progress) return;
@@ -374,8 +382,20 @@ Status D6ResolvePipeline::run(const std::string& lscan_dir) {
   }
   s.densified = std::make_unique<ImuDensifiedPoseSource>(s.poses.get(), icfg);
 
+  // --- ROUND 11 item 41: the sinks loop closure needs -----------------------
+  //
+  // Chosen BEFORE the assembler is built because `out_point_times` is part of
+  // its config, and a sink attached afterwards would miss the first batch.
+  s.traj = s.cfg.out_trajectory;
+  s.times = s.cfg.out_point_times;
+  if (s.cfg.close_loops) {
+    if (s.traj == nullptr) s.traj = &s.traj_own;
+    if (s.times == nullptr) s.times = &s.times_own;
+  }
+
   PushbroomConfig bc = s.cfg.pushbroom;
   bc.out_stream = s.cfg.out_stream;
+  bc.out_point_times = s.times;
   s.assembler = std::make_unique<D6PushbroomAssembler>(s.cfg.store, bc);
   s.assembler->set_pose_source(s.cfg.densify_with_phone_imu
                                    ? static_cast<const PoseInterpolator*>(s.densified.get())
@@ -445,7 +465,20 @@ Status D6ResolvePipeline::run(const std::string& lscan_dir) {
         p.source = static_cast<StreamId>(rec.source);
         p.quality = static_cast<PoseQuality>(rec.quality);
         p.tracking_lost = rec.tracking_lost;
-        if (s.poses->push_pose(p).ok()) ++s.stats.poses_accepted;
+        if (s.poses->push_pose(p).ok()) {
+          ++s.stats.poses_accepted;
+          if (s.traj != nullptr) {
+            // The ACCEPTED poses only, and in the order the interpolator took
+            // them: loop closure's arc-length parameterisation has to be built
+            // over the same trajectory the points were resolved against, not
+            // over everything the file happened to contain.
+            TrajPose tp;
+            tp.t_ns = p.t_mono_ns;
+            for (int i = 0; i < 4; ++i) tp.q[i] = p.orientation[i];
+            for (int i = 0; i < 3; ++i) tp.p[i] = p.position[i];
+            s.traj->push_back(tp);
+          }
+        }
       }
     } else if (h.type == lscan::ChunkType::kPhoneImu) {
       // Decoded even when densification is off, so `imu_read` always reports
@@ -495,6 +528,72 @@ Status D6ResolvePipeline::run(const std::string& lscan_dir) {
     const ImuDensifyStats ist = s.densified->stats();
     s.stats.imu_densified = ist.densified;
     s.stats.imu_fallbacks = ist.fallbacks;
+    s.stats.imu = ist;
+  }
+
+  // --- ROUND 11 item 41: loop closure --------------------------------------
+  //
+  // After the resolve, never during it. The detector needs the WHOLE
+  // trajectory (a revisit is a statement about two moments that may be three
+  // minutes apart) and the whole cloud, so there is nothing to gain from
+  // interleaving and a great deal of clarity to lose.
+  if (s.cfg.close_loops && s.traj != nullptr && s.times != nullptr) {
+    // Flatten the store in page order. PageStore appends pages in creation
+    // order and never reorders them, and points inside a page are in append
+    // order, so this is exactly the emit order `out_point_times` was written
+    // in — which is the pairing the whole correction depends on.
+    std::vector<PointVertex> cloud;
+    cloud.reserve(static_cast<std::size_t>(s.cfg.store->total_points()));
+    const std::vector<PageId> ids = s.cfg.store->page_ids();
+    for (const PageId id : ids) {
+      const PageView v = s.cfg.store->page_view(id);
+      if (!v.valid()) continue;
+      for (std::uint32_t k = 0; k < v.count; ++k) cloud.push_back(v.data[k]);
+    }
+    if (cloud.size() != s.times->size()) {
+      // Not fatal, and it must not be silent: it would mean the store took
+      // points this pipeline did not publish (a shared store) or dropped some
+      // without saying so. Either way the pairing is void and closing on a
+      // void pairing would smear the cloud.
+      SCAN_LOG_WARN(kMod,
+                    "loop closure skipped: %zu points in the store but %zu point times — the "
+                    "pairing is not trustworthy",
+                    cloud.size(), s.times->size());
+      s.stats.loop.decision = LoopDecision::kNoTrajectory;
+      s.stats.loop.reason = "loop: the cloud and its per-point timestamps disagree in length";
+    } else {
+      TrajectoryCorrection corr;
+      s.stats.loop = close_trajectory_loop(
+          *s.traj, Span<const PointVertex>(cloud.data(), cloud.size()),
+          Span<const std::int64_t>(s.times->data(), s.times->size()), s.cfg.loop, &corr);
+      if (corr.active()) {
+        std::size_t k = 0;
+        for (const PageId id : ids) {
+          const PageView v = s.cfg.store->page_view(id);
+          if (!v.valid()) continue;
+          PointVertex* w = s.cfg.store->page_data_mutable(id);
+          if (w == nullptr) {
+            k += v.count;
+            continue;
+          }
+          for (std::uint32_t i = 0; i < v.count; ++i, ++k) {
+            float xyz[3] = {w[i].x, w[i].y, w[i].z};
+            corr.apply_point((*s.times)[k], xyz);
+            w[i].x = xyz[0];
+            w[i].y = xyz[1];
+            w[i].z = xyz[2];
+          }
+          // INT-34's seam is named for colour because colour was its first
+          // user; what it actually means to a subscriber is "re-read this
+          // page, it changed under you", which is exactly what a moved point
+          // needs. Offline there are usually no subscribers at all.
+          (void)s.cfg.store->notify_recoloured(id, 0, v.count);
+        }
+        s.stats.loop_applied = true;
+      }
+    }
+    SCAN_LOG_INFO(kMod, "loop closure: %s — %s", to_string(s.stats.loop.decision),
+                  s.stats.loop.reason);
   }
 
   SCAN_LOG_INFO(kMod,

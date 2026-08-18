@@ -1,5 +1,6 @@
 #include "scanengine/slam/pushbroom/pushbroom_assembler.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include "scanengine/core/log.h"
@@ -46,7 +47,9 @@ void D6PushbroomAssembler::set_pose_source(const PoseInterpolator* poses) { pose
 void D6PushbroomAssembler::reset() {
   pending_.clear();
   batch_.clear();
+  batch_times_.clear();
   batch_t_ns_ = 0;
+  batch_t_first_ns_ = 0;
   overflow_warned_ = false;
   stats_ = PushbroomStats{};
 }
@@ -128,7 +131,15 @@ Status D6PushbroomAssembler::flush_batch_(std::int64_t t_ns) {
   if (batch_.empty()) return kOkStatus;
   if (points_ == nullptr) {
     stats_.points_out += batch_.size();
+    // A dry run (points_ == nullptr) still "published" them as far as the
+    // stats are concerned, so the time sink has to agree or the two would
+    // disagree in length for a caller that set both.
+    if (cfg_.out_point_times != nullptr) {
+      cfg_.out_point_times->insert(cfg_.out_point_times->end(), batch_times_.begin(),
+                                   batch_times_.end());
+    }
     batch_.clear();
+    batch_times_.clear();
     return kOkStatus;
   }
   std::uint32_t appended = 0;
@@ -136,7 +147,18 @@ Status D6PushbroomAssembler::flush_batch_(std::int64_t t_ns) {
                                    t_ns, &appended);
   stats_.points_out += appended;
   if (appended < batch_.size()) stats_.dropped_page_full += batch_.size() - appended;
+  // ROUND 11 item 41: only the points the store actually TOOK. PageStore::append
+  // fills from the front, so the first `appended` entries are the survivors —
+  // which is what keeps out_point_times[k] the k-th published point rather
+  // than the k-th attempted one.
+  if (cfg_.out_point_times != nullptr && appended > 0) {
+    const std::size_t n = std::min(static_cast<std::size_t>(appended), batch_times_.size());
+    cfg_.out_point_times->insert(cfg_.out_point_times->end(), batch_times_.begin(),
+                                 batch_times_.begin() + static_cast<std::ptrdiff_t>(n));
+  }
   batch_.clear();
+  batch_times_.clear();
+  batch_t_first_ns_ = 0;
   return s;
 }
 
@@ -152,7 +174,14 @@ Status D6PushbroomAssembler::resolve_(bool force) {
   Status result = kOkStatus;
   while (!pending_.empty()) {
     const ProfilePoint p = pending_.front();
-    const PoseSample s = poses_->sample_at(p.t_mono_ns);
+    // ROUND 10 item 36: the lidar clock and the pose clock are offset by a
+    // constant transport delay. `pose_time_offset_ns` is added HERE and only
+    // here, so the point's own stamp (and therefore the recorded stream, the
+    // stats and the batch times) keeps meaning "when the bytes were dated" —
+    // the correction is a property of the JOIN, not of either stream. See the
+    // derivation over PushbroomConfig::pose_time_offset_ns.
+    const std::int64_t t_pose_ns = p.t_mono_ns + cfg_.pose_time_offset_ns;
+    const PoseSample s = poses_->sample_at(t_pose_ns);
 
     if (s.retryable() && !force) {
       // The queue is time-ordered, so if the OLDEST point is still in the
@@ -205,9 +234,19 @@ Status D6PushbroomAssembler::resolve_(bool force) {
     v.a = flagged ? cfg_.flagged_alpha : static_cast<std::uint8_t>(255);
     if (flagged) ++stats_.flagged_emitted;
 
+    if (batch_.empty()) batch_t_first_ns_ = p.t_mono_ns;
     emit_(v);
+    if (cfg_.out_point_times != nullptr) batch_times_.push_back(p.t_mono_ns);
     batch_t_ns_ = p.t_mono_ns;
-    if (batch_.size() >= cfg_.batch_points) {
+    // ROUND 10 item 36: close the batch on COUNT or on POINT-TIME SPAN,
+    // whichever comes first. On a D6 the span is what fires (1,453 points/s
+    // means 4096 points is 2.8 s), and on a fast sensor the count still is.
+    // Point time only — see the note over PushbroomConfig::max_batch_span_ns
+    // for why a wall clock here would break replay == capture.
+    const bool full = batch_.size() >= cfg_.batch_points;
+    const bool aged = cfg_.max_batch_span_ns > 0 &&
+                      (p.t_mono_ns - batch_t_first_ns_) >= cfg_.max_batch_span_ns;
+    if (full || aged) {
       const Status st = flush_batch_(batch_t_ns_);
       if (!st.ok() && result.ok()) result = st;
     }

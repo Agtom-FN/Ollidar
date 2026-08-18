@@ -513,6 +513,45 @@ Java_com_lidarscan_app_engine_ScanEngineNative_nativeStopSession(JNIEnv*, jclass
   return static_cast<jint>(scan_engine_stop(reinterpret_cast<scan_engine*>(handle)));
 }
 
+// --- ROUND 10 item 38: the live page store, between captures ---------------
+//
+// `scan_engine*` is created once per PROCESS on Android (RealEngineBridge holds
+// one handle for the app's lifetime) and its `PageStore` is created with it —
+// per Engine, not per session. So without these two calls, capture #2 opens on
+// top of capture #1's pages and the operator is shown the previous scan in the
+// live view of the new one. That is the owner's "when click capture after
+// capture, it still show with the previous capture", exactly.
+//
+// The engine has had the fix since ABI 7 (`start_session()` calls
+// `recycle_all()` and says why in a comment about "a preview + N record cycles
+// on ONE connect all stacked into the same 64 pages") — but that reset is
+// GATED on eviction being enabled, and eviction is opt-in, and the Android app
+// never opted in. Two calls that existed and were never bound.
+JNIEXPORT jint JNICALL
+Java_com_lidarscan_app_engine_ScanEngineNative_nativeSetLivePageEviction(
+    JNIEnv*, jclass, jlong handle, jboolean enabled) {
+  return static_cast<jint>(scan_engine_set_live_page_eviction(
+      reinterpret_cast<scan_engine*>(handle), enabled ? 1 : 0));
+}
+
+JNIEXPORT jint JNICALL
+Java_com_lidarscan_app_engine_ScanEngineNative_nativeRecycleLivePages(JNIEnv*, jclass,
+                                                                     jlong handle) {
+  return static_cast<jint>(
+      scan_engine_recycle_live_pages(reinterpret_cast<scan_engine*>(handle)));
+}
+
+// ROUND 10 item 36: the constant lidar -> pose time offset (ABI 9). The engine
+// cannot derive it — it is a property of THIS phone's USB stack and reader
+// thread — so it has to cross the boundary from the app that owns both.
+JNIEXPORT jint JNICALL
+Java_com_lidarscan_app_engine_ScanEngineNative_nativeSetPoseTimeOffsetNs(JNIEnv*, jclass,
+                                                                        jlong handle,
+                                                                        jlong offset_ns) {
+  return static_cast<jint>(scan_engine_set_pose_time_offset_ns(
+      reinterpret_cast<scan_engine*>(handle), static_cast<int64_t>(offset_ns)));
+}
+
 JNIEXPORT jint JNICALL
 Java_com_lidarscan_app_engine_ScanEngineNative_nativeEngineState(JNIEnv*, jclass, jlong handle) {
   int32_t state = -1;

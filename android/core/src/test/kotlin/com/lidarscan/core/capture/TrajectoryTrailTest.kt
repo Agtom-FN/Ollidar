@@ -88,13 +88,88 @@ class TrajectoryTrailTest {
         assertTrue("the short axis must not be stretched to fill the box", spanY < spanX / 3f)
     }
 
+    /**
+     * ROUND 10 (owner item 37) — **this test used to assert the bug.**
+     *
+     * It was called "screen y is flipped so north is up" and it checked that
+     * a point at larger world **+Z** sat HIGHER on screen. That is precisely
+     * the mirror: with screen-right = +X and screen-up = +Z, the out-of-screen
+     * normal is `X x Z = -Y`, i.e. the tile is a view from UNDER the floor.
+     * The name was the give-away — the recorder's own comment calls ARCore's
+     * +Z "south-ish", so "+Z at the top" is a south-up map with east still on
+     * the right, which no map is.
+     *
+     * ARCore's forward is **-Z**. Walking forward must go UP the tile.
+     */
     @Test
-    fun `screen y is flipped so north is up`() {
+    fun `walking forward goes up the tile, because ARCore forward is minus Z`() {
         val trail = TrajectoryTrail(minSpacingM = 0.1f)
-        trail.add(0f, 0f, true) // south end
-        trail.add(0f, 5f, true) // north end
+        trail.add(0f, 0f, true) // start
+        trail.add(0f, -5f, true) // 5 m forward, i.e. -Z
         val norm = trail.normalized()
-        assertTrue("the later, more northerly point must sit HIGHER on screen", norm[1].y < norm[0].y)
+        assertTrue(
+            "walking forward (-Z) must move UP the tile — canvas y decreases upward",
+            norm[1].y < norm[0].y,
+        )
+    }
+
+    /**
+     * ROUND 10 (owner item 37) — **the chirality test the trail never had.**
+     *
+     * Every previous assertion on this class measured a sign-blind quantity
+     * (spans, aspect, centring) or asserted the mirror outright, which is
+     * exactly the gap ROUND 9 found on the POINTS side: a mirrored L has the
+     * same extent, the same aspect and the same point count as the real one.
+     *
+     * The stimulus is the owner's acceptance test verbatim: *"walk an L-shaped
+     * path, the on-screen trail turns the same way the operator turned."*
+     *
+     * ARCore's world frame is right-handed with +Y up and the camera looking
+     * along -Z, so for an operator walking forward:
+     *
+     *     forward = -Z,  up = +Y,  LEFT = up x forward = Y x (-Z) = -X
+     *
+     * So an L that goes forward and then turns LEFT ends at negative X. On
+     * screen that has to be: up the tile, then to the LEFT of the tile.
+     */
+    @Test
+    fun `an L-shaped walk turning LEFT renders a trail turning LEFT`() {
+        val trail = TrajectoryTrail(minSpacingM = 0.1f)
+        // Leg 1: 4 m forward along -Z from the origin.
+        var z = 0f
+        while (z > -4f) {
+            trail.add(0f, z, true)
+            z -= 0.5f
+        }
+        // Leg 2: turn LEFT (which is -X) and walk 3 m.
+        var x = 0f
+        while (x > -3f) {
+            trail.add(x, -4f, true)
+            x -= 0.5f
+        }
+
+        val norm = trail.normalized()
+        val start = norm.first()
+        val corner = norm[8] // the corner itself: (0, -4), first point of leg 2
+        val end = norm.last()
+
+        // Leg 1 goes UP the tile (canvas y decreases upward) and does not
+        // wander sideways.
+        assertTrue("leg 1 (forward) must go up the tile", corner.y < start.y)
+        assertEquals("leg 1 must not drift sideways", start.x, corner.x, 1e-4f)
+
+        // Leg 2 goes LEFT across the tile, and stays at the same height.
+        assertTrue("leg 2 (a LEFT turn) must go left on screen", end.x < corner.x)
+        assertEquals("leg 2 must not change height", corner.y, end.y, 1e-4f)
+
+        // ...and the falsifiable half, stated so a future regression cannot be
+        // read as an improvement: under the pre-ROUND-10 projection
+        // (`y = 1 - nz`) leg 1 would run DOWN the tile. Reintroduce that flip
+        // and the first assertion above fails, which is the whole point.
+        assertTrue(
+            "sanity: the trail must actually have two legs",
+            kotlin.math.abs(end.x - start.x) > 0.1f && kotlin.math.abs(end.y - start.y) > 0.1f,
+        )
     }
 
     @Test

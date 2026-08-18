@@ -69,6 +69,18 @@
          PhoneImuRecorder measures the rate it actually gets and reports it, so
          a device that grants less says so rather than being assumed. -->
     <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS" />
+
+    <!--
+        ROUND 11 (owner item 43): haptic operator cues.
+
+        The phone is the sensor mount and faces away from the operator while
+        they walk, so tracking loss, a section break and "moving too fast" are
+        delivered by vibration and tone as well as on screen. VIBRATE is a
+        normal permission — granted at install, no runtime prompt, no dialog in
+        the middle of a capture — which is why it is the right one for a
+        feature that ships default-ON. The tone needs no permission at all.
+    -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <uses-feature android:name="android.hardware.sensor.gyroscope" android:required="false" />
 
     <!-- B9 (Tech Spec §2.3, §3.1's "RTK rover: Bluetooth SPP (Android)").

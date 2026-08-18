@@ -126,6 +126,7 @@ fun SettingsRoute(
         emptyScanCount = emptyScanCount,
         emptyScanNote = emptyScanNote,
         onKeepEmptyScansChange = viewModel::setKeepEmptyScans,
+        onOperatorCuesChange = viewModel::setOperatorCuesEnabled,
         onCleanUpEmptyScans = viewModel::cleanUpEmptyScans,
         onDismissEmptyScanNote = viewModel::dismissEmptyScanNote,
         onReplaySyntheticCapture = { viewModel.replaySyntheticCapture(onReplaySyntheticCapture) },
@@ -173,6 +174,7 @@ fun SettingsScreen(
     /** What the last "clean up empty scans" actually did. */
     emptyScanNote: String? = null,
     onKeepEmptyScansChange: (Boolean) -> Unit = {},
+    onOperatorCuesChange: (Boolean) -> Unit = {},
     onCleanUpEmptyScans: () -> Unit = {},
     onDismissEmptyScanNote: () -> Unit = {},
     onReplaySyntheticCapture: () -> Unit = {},
@@ -223,8 +225,14 @@ fun SettingsScreen(
                 CloudCard(settings.cloudBaseUrl, settings.cloudToken, onCloudChange)
             }
 
-            SettingsSection("Processing") {
-                ProcessingOptionsCard(settings.allowPoorSyncColorize, onAllowPoorSyncChange)
+            // ROUND 10 (owner item 39): the only setting in this section is a
+            // colorize policy, so with colorization paused the section itself
+            // has nothing to say. Hidden whole rather than left as an empty
+            // heading — "owner hates clutter" (ROUND 9).
+            if (com.lidarscan.core.FeatureFlags.COLORIZE_ENABLED) {
+                SettingsSection("Processing") {
+                    ProcessingOptionsCard(settings.allowPoorSyncColorize, onAllowPoorSyncChange)
+                }
             }
 
             // ROUND 9 (owner item 33): "owner hates clutter". One switch and one
@@ -239,6 +247,24 @@ fun SettingsScreen(
                     onCleanUp = onCleanUpEmptyScans,
                     onDismissNote = onDismissEmptyScanNote,
                 )
+            }
+
+            // ROUND 11 (owner item 43): the phone is the sensor mount and faces
+            // away from the operator, so the app has to be able to speak.
+            SettingsSection("Operator cues") {
+                ScanCard {
+                    ScanSwitchRow(
+                        title = "Vibrate and beep during a scan",
+                        detail = "On (the default). Two buzzes when phone tracking degrades, three short " +
+                            "buzzes when the scan breaks into a new section, one long soft buzz when you " +
+                            "are moving too fast for the returns to keep up. The phone faces away from you " +
+                            "while you walk, so these are the only hints you can actually receive. Turn " +
+                            "them off for a scan somewhere quiet — everything they say is on screen too.",
+                        checked = settings.operatorCuesEnabled,
+                        onCheckedChange = onOperatorCuesChange,
+                        modifier = Modifier.testTag("operatorCuesRow"),
+                    )
+                }
             }
 
             SettingsSection("Sensor timing (advanced)") {
@@ -438,7 +464,11 @@ private fun WorkflowProfilesCard() {
                         if (d.liveSlam) "Live-SLAM" else "Record-only",
                         "export ${d.exportFormat.displayName}",
                         "display ${d.displayProfile.displayName}",
-                        if (d.captureCameraKeyframes) "camera keyframes on" else "no camera",
+                        if (d.captureCameraKeyframes && com.lidarscan.core.FeatureFlags.COLORIZE_ENABLED) {
+                            "camera keyframes on"
+                        } else {
+                            "no camera"
+                        },
                         if (d.requireRtkFixForCapture) "blocks below ${d.minFixForCapture.label}" else "no RTK gate",
                     ).joinToString(" · "),
                     style = MonoMeta,

@@ -9,6 +9,8 @@ import com.lidarscan.core.engine.ConnectionState
 import com.lidarscan.core.engine.DeviceHealth
 import com.lidarscan.core.engine.EngineBridge
 import com.lidarscan.core.engine.EngineEvent
+import com.lidarscan.core.capture.PointCountTally
+import com.lidarscan.core.capture.PointStreamRole
 import com.lidarscan.core.engine.EngineTarget
 import com.lidarscan.core.model.SensorType
 import kotlinx.coroutines.CoroutineScope
@@ -77,7 +79,20 @@ class RealEngineBridge(
     private var deviceId: Int = -1
     private var healthPollJob: Job? = null
     private var recordingStartNs = 0L
-    private var pointsSinceStart = 0L
+
+    /**
+     * ROUND 11 — was `pointsSinceStart`, a single Long summing every
+     * `POINTS_AVAILABLE` event regardless of which stream it came from. The
+     * engine's one PageStore carries the raw sensor-frame preview AND the
+     * resolved pushbroom map during a D6 capture, so that sum was roughly
+     * double the truth (scan-020: 584,315 shown, 293,166 real). See
+     * [PointCountTally] for the whole story and for why the roles rather than
+     * the stream ids cross into `:core`.
+     */
+    private val tally = PointCountTally()
+
+    /** ROUND 11: the honest count, for the status line and for the ViewModel. */
+    val pointsThisSession: Long get() = tally.points
     private var lastDevicePath: String? = null
 
     /** B3: `"<lidarIp>|<hostIp>"` while a Mid-360 is the connected device, else null. */
@@ -276,6 +291,15 @@ class RealEngineBridge(
             // all. It is real-USB state, and it is now re-armed on every start
             // rather than only on a Pause→Resume.
             activeConnection()?.resumeForwarding()
+            // ── ROUND 10 (owner item 38) ────────────────────────────────────
+            // Empty the live window BEFORE the session opens, so the first
+            // frame of capture #2 is capture #2. `Engine::start_session()` does
+            // this itself — but only when the store is in kEvictOldest, which
+            // is opt-in and which this app enables in createEngineHandle(). The
+            // explicit call is kept anyway: it is one JNI hop, it is the only
+            // thing standing between the operator and someone else's scan, and
+            // it must not silently depend on a policy flag set somewhere else.
+            ScanEngineNative.nativeRecycleLivePages(engineHandle)
             val err = ScanEngineNative.nativeStartSession(
                 engineHandle, projectDirectory, profile, true, liveSlam,
             )
@@ -285,7 +309,7 @@ class RealEngineBridge(
                 return@withContext Result.failure(IllegalStateException(message))
             }
             recordingStartNs = System.nanoTime()
-            pointsSinceStart = 0L
+            tally.reset()
             _captureState.value = CaptureState.RECORDING
             _events.emit(
                 EngineEvent.StatusMessage(
@@ -294,6 +318,24 @@ class RealEngineBridge(
             )
             Result.success(Unit)
         }
+
+    /**
+     * ROUND 10 (owner item 38). See [EngineBridge.resetLiveView]. Never fails a
+     * caller: with no engine handle there is nothing to empty, which is success.
+     */
+    override suspend fun resetLiveView(): Result<Unit> = withContext(Dispatchers.IO) {
+        if (engineHandle == 0L) return@withContext Result.success(Unit)
+        val err = ScanEngineNative.nativeRecycleLivePages(engineHandle)
+        if (err != ScanEngineNative.ErrorCode.OK) {
+            _events.emit(
+                EngineEvent.StatusMessage(
+                    "Live view reset returned ${ScanEngineNative.nativeErrorStr(err)} " +
+                        "(the recording is unaffected)",
+                ),
+            )
+        }
+        Result.success(Unit)
+    }
 
     override suspend fun pauseCapture(): Result<Unit> {
         if (_captureState.value != CaptureState.RECORDING) return Result.success(Unit)
@@ -354,8 +396,23 @@ class RealEngineBridge(
             _events.emit(EngineEvent.Fault("STOP_FAILED", message))
             return@withContext Result.failure(IllegalStateException(message))
         }
-        _events.emit(EngineEvent.StatusMessage("Capture stopped — $pointsSinceStart pts"))
+        _events.emit(EngineEvent.StatusMessage("Capture stopped — ${tally.logSuffix()}"))
         Result.success(Unit)
+    }
+
+    /**
+     * ROUND 11: which of the store's simultaneous point streams an event came
+     * from. `SLAM_MAP` is the registered world-frame cloud (A6's live map and
+     * A8's pushbroom both publish there — INT24-wiring.md §2), which is the one
+     * the operator means by "points"; the sensor streams are the raw preview
+     * fan of the same returns.
+     */
+    private fun streamRole(stream: Int): PointStreamRole = when (stream) {
+        ScanEngineNative.StreamId.SLAM_MAP -> PointStreamRole.RESOLVED_MAP
+        ScanEngineNative.StreamId.LIDAR_D6,
+        ScanEngineNative.StreamId.LIDAR_MID360,
+        -> PointStreamRole.RAW_SENSOR
+        else -> PointStreamRole.OTHER
     }
 
     /** Called from scanengine_jni's native event-pump thread — must not block or call back into ScanEngineNative. */
@@ -372,9 +429,14 @@ class RealEngineBridge(
     ) {
         when (type) {
             ScanEngineNative.EventType.POINTS_AVAILABLE -> {
-                pointsSinceStart += i2 // payload.points.count
+                // ROUND 11: i3 is `payload.points.stream`, and it has been in
+                // the payload since B2 — the counter simply never read it. The
+                // mapping from the C ABI's numeric stream space to a role is
+                // here, in `:app`, because that space belongs to the ABI (see
+                // EngineBridge's own KDoc).
+                tally.add(streamRole(i3.toInt()), i2)
                 val elapsedMs = ((System.nanoTime() - recordingStartNs) / 1_000_000L).coerceAtLeast(1L)
-                _events.tryEmit(EngineEvent.CaptureStats(pointsSinceStart, elapsedMs))
+                _events.tryEmit(EngineEvent.CaptureStats(tally.points, elapsedMs))
             }
             ScanEngineNative.EventType.DEVICE_STATE -> {
                 val errorCode = i4.toInt() // payload.device.error
@@ -423,13 +485,31 @@ class RealEngineBridge(
      * the Mid-360 one (which is exactly the shape the two copies of this call
      * had before).
      */
-    private fun createEngineHandle(): Long = ScanEngineNative.nativeCreateEngine(
-        "lidarscan-android",
-        LOG_LEVEL_INFO,
-        pageStoreSizing.pageCapacityPoints,
-        pageStoreSizing.maxPages,
-        0,
-    )
+    private fun createEngineHandle(): Long {
+        val handle = ScanEngineNative.nativeCreateEngine(
+            "lidarscan-android",
+            LOG_LEVEL_INFO,
+            pageStoreSizing.pageCapacityPoints,
+            pageStoreSizing.maxPages,
+            0,
+        )
+        if (handle != 0L) {
+            // ROUND 10 (owner item 38). Two things this buys, and the second is
+            // the one that was actually hurting:
+            //
+            //  1. A live window that RECYCLES its oldest page instead of
+            //     dead-ending. `LivePageStoreSizing`'s KDoc still says
+            //     "eviction is an engine change and the engine tree is
+            //     read-only for this task" — that was true when it was written
+            //     and stopped being true at ABI 7. The note it left behind
+            //     (`fullNote`) has been the app's answer ever since.
+            //  2. `Engine::start_session()` resets the store between sessions
+            //     ONLY when this policy is on. That reset is what makes capture
+            //     #2 start from an empty map.
+            ScanEngineNative.nativeSetLivePageEviction(handle, true)
+        }
+        return handle
+    }
 
     private fun activeConnection() = lastDevicePath?.let { connectionRegistry.get(it) }
 

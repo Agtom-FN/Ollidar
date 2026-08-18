@@ -270,6 +270,13 @@ fun CaptureRoute(
                     keepEmptyScans = {
                         container.settingsRepository.settings.first().keepEmptyScans
                     },
+                    // ROUND 11 (owner item 43): the ViewModel holds no Context,
+                    // so the buzzing arrives as a lambda exactly the way
+                    // `logEvent` does.
+                    playCue = container.cuePlayer::play,
+                    cuesEnabled = {
+                        container.settingsRepository.settings.first().operatorCuesEnabled
+                    },
                 )
             }
         },
@@ -280,6 +287,10 @@ fun CaptureRoute(
     val stats by viewModel.stats.collectAsStateWithLifecycle()
     val health by viewModel.deviceHealth.collectAsStateWithLifecycle()
     val sessionSummary by viewModel.sessionSummary.collectAsStateWithLifecycle()
+    // ROUND 11 (owner item 44): the graded card.
+    val scanSummary by viewModel.scanSummary.collectAsStateWithLifecycle()
+    // ROUND 11 (owner item 45a): the hold-still ring.
+    val mountHold by viewModel.mountHold.collectAsStateWithLifecycle()
     val pointCloudSource by viewModel.pointCloudSource.collectAsStateWithLifecycle()
     val colorMode by viewModel.colorMode.collectAsStateWithLifecycle()
     val colormap by viewModel.colormap.collectAsStateWithLifecycle()
@@ -334,9 +345,29 @@ fun CaptureRoute(
     // Keyed on the ViewModel so the collector is re-established with it and
     // never on two ViewModels at once; the flow itself has `replay = 0`, so
     // a recomposition cannot re-deliver a seal that has already navigated.
+    //
+    // ROUND 11 (owner item 44): ...and the jump WAITS for the summary card.
+    //
+    // The two features fight if this is left alone: ROUND 10 made the seal
+    // navigate to Projects, and a card shown on the Capture screen at the same
+    // instant would be visible for one frame before `goTab` disposes the whole
+    // back-stack entry. So the id is HELD here and spent when the card is
+    // dismissed. Nothing about the seal changes — `sealedProjectId` still
+    // emits exactly when it did, still with `replay = 1`, so a recomposition
+    // (or an Activity recreation mid-seal, which is ROUND 10's own bug) still
+    // recovers the pending navigation.
+    var pendingNavigationId by remember { mutableStateOf<String?>(null) }
     if (onScanSealed != null) {
         LaunchedEffect(viewModel) {
-            viewModel.sealedProjectId.collect { onScanSealed(it) }
+            viewModel.sealedProjectId.collect { pendingNavigationId = it }
+        }
+        LaunchedEffect(pendingNavigationId, sessionSummary) {
+            val id = pendingNavigationId ?: return@LaunchedEffect
+            // A seal with no summary (a path that produced none) navigates
+            // immediately, exactly as ROUND 10 shipped it.
+            if (sessionSummary != null) return@LaunchedEffect
+            pendingNavigationId = null
+            onScanSealed(id)
         }
     }
 
@@ -440,6 +471,8 @@ fun CaptureRoute(
         georefSource = georefSource,
         georefNote = georefNote,
         sessionSummary = sessionSummary,
+        scanSummary = scanSummary,
+        mountHold = mountHold,
         pointCloudSource = pointCloudSource,
         colorMode = colorMode,
         colormap = colormap,
@@ -554,6 +587,8 @@ fun CaptureRoute(
         onDismissNoDataAlert = viewModel::dismissNoDataAlert,
         sectionHint = sectionHint,
         onSetMountReference = viewModel::setMountReference,
+        onBeginMountHold = { viewModel.beginMountHold() },
+        onCancelMountHold = viewModel::cancelMountHold,
         onClearMountReference = viewModel::clearMountReference,
         onDismissMountTrimNote = viewModel::dismissMountTrimNote,
         nowMillis = System.currentTimeMillis(),
@@ -591,6 +626,8 @@ fun CaptureScreen(
     georefSource: GeorefSourceState,
     georefNote: String?,
     sessionSummary: CaptureStats?,
+    scanSummary: com.lidarscan.core.capture.ScanSummary? = null,
+    mountHold: com.lidarscan.core.calib.MountTrimRefiner.Progress? = null,
     pointCloudSource: PointCloudSource?,
     colorMode: ColorMode,
     colormap: Colormap,
@@ -708,6 +745,8 @@ fun CaptureScreen(
     /** ROUND 7 (item 3): non-null once ARCore's frame has jumped and the scan is in sections. */
     sectionHint: String? = null,
     onSetMountReference: () -> Unit = {},
+    onBeginMountHold: () -> Unit = {},
+    onCancelMountHold: () -> Unit = {},
     onClearMountReference: () -> Unit = {},
     onDismissMountTrimNote: () -> Unit = {},
     nowMillis: Long = 0L,
@@ -1025,7 +1064,10 @@ fun CaptureScreen(
                             MountStateRow(
                                 provenance = mountTrimProvenance,
                                 hasTrim = mountTrim != null,
+                                hold = mountHold,
                                 onSetMountReference = onSetMountReference,
+                                onBeginMountHold = onBeginMountHold,
+                                onCancelMountHold = onCancelMountHold,
                             )
                         }
                         CaptureChipRow(
@@ -1277,7 +1319,13 @@ fun CaptureScreen(
             // ROUND 6 (item 20): the summary now answers "is it saved?" rather
             // than only "how many points?" — the previous sheet was perfectly
             // confident about a capture that had vanished.
-            SessionSummaryContent(sessionSummary, savedPath = lastSavedProject, saveError = saveError, onDismissSummary)
+            SessionSummaryContent(
+                summary = sessionSummary,
+                scanSummary = scanSummary,
+                savedPath = lastSavedProject,
+                saveError = saveError,
+                onDismiss = onDismissSummary,
+            )
         }
     }
 }
@@ -1310,10 +1358,15 @@ fun CaptureScreen(
 private fun MountStateRow(
     provenance: com.lidarscan.core.calib.MountTrimProvenance?,
     hasTrim: Boolean,
+    hold: com.lidarscan.core.calib.MountTrimRefiner.Progress? = null,
     onSetMountReference: () -> Unit,
+    onBeginMountHold: () -> Unit = onSetMountReference,
+    onCancelMountHold: () -> Unit = {},
 ) {
     val shape = RoundedCornerShape(50)
+    val holding = hold != null
     val accent = when {
+        holding -> if (hold?.gatePasses == true) ScanTeal else SemWarn
         !hasTrim -> SemWarn
         provenance?.warn == true -> SemWarn
         else -> ScanTeal
@@ -1336,23 +1389,63 @@ private fun MountStateRow(
                 .testTag("mountStateChip"),
             contentAlignment = Alignment.CenterStart,
         ) {
-            Text(
-                provenance?.chipLabel ?: "NO MOUNT REF · CAD NOMINAL",
-                style = MonoLabel,
-                color = accent,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            // ROUND 11 (owner item 45a): while a hold is running, this chip IS
+            // the ring — the same 46 dp row, no new chrome, no height budget to
+            // renegotiate with CaptureLayout. The bar under the label sweeps
+            // with the hold and empties the instant the gate stops passing,
+            // which is the feedback the seven-refusals-in-44-seconds log was
+            // missing.
+            if (hold != null) {
+                Column(Modifier.fillMaxWidth()) {
+                    Text(
+                        hold.label,
+                        style = MonoLabel,
+                        color = accent,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.testTag("mountHoldLabel"),
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    androidx.compose.material3.LinearProgressIndicator(
+                        progress = { hold.fraction },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(4.dp)
+                            .testTag("mountHoldRing"),
+                        color = accent,
+                        trackColor = accent.copy(alpha = 0.18f),
+                    )
+                }
+            } else {
+                Text(
+                    provenance?.chipLabel ?: "NO MOUNT REF · CAD NOMINAL",
+                    style = MonoLabel,
+                    color = accent,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         // The Set button stays on the screen next to the state rather than
         // inside the Capture sheet: a re-zero is taken while holding the rig in
         // the pose you are about to walk with, and reaching it through a sheet
         // is one more hand movement during the exact second that has to be
         // still. The explanation and Clear live in the sheet; the tap does not.
+        //
+        // ROUND 11 (owner item 45a): the tap now STARTS a hold instead of
+        // judging one that has already finished. Tap, hold the rig still,
+        // watch it fill, and it sets itself; tap again to abandon. The
+        // one-second gate underneath is unchanged — the difference is that the
+        // operator can see it passing instead of being told afterwards that it
+        // did not.
         SecondaryPill(
-            text = if (hasTrim) "Re-zero" else "Set mount ref",
+            text = when {
+                holding -> "Cancel"
+                hasTrim -> "Re-zero"
+                else -> "Set mount ref"
+            },
             height = 38.dp,
-            onClick = onSetMountReference,
+            onClick = if (holding) onCancelMountHold else onBeginMountHold,
             modifier = Modifier.testTag("setMountReferenceButton"),
         )
     }
@@ -2088,7 +2181,9 @@ private fun CaptureViewport(
         // departure): the Capture-settings sheet covers the lower ~74 %, so a
         // bottom-corner chip would be hidden by the very sheet whose switch
         // controls it.
-        if (recording && keyframesEnabled) {
+        // ROUND 10 (owner item 39): nothing writes keyframes with colorization
+        // paused, so the counter would sit at 0 for every capture.
+        if (recording && keyframesEnabled && com.lidarscan.core.FeatureFlags.COLORIZE_ENABLED) {
             ScanChip(
                 text = "KF $keyframesWritten",
                 modifier = Modifier.align(Alignment.TopStart).padding(12.dp).testTag("keyframeChip"),
@@ -2096,6 +2191,14 @@ private fun CaptureViewport(
         }
 
         // ── top-right: orbit / follow ───────────────────────────────────
+        //
+        // ROUND 10 (owner item 39): with FOLLOW paused there is one camera
+        // mode, and a one-option radio group is not a control — it is chrome
+        // over the live map. The whole pill goes. `FeatureFlags
+        // .FOLLOW_CAMERA_ENABLED` brings it back; note it is a SECOND control
+        // for the same state as the Display sheet's View row, which is why
+        // both had to be found.
+        if (com.lidarscan.core.FeatureFlags.FOLLOW_CAMERA_ENABLED) {
         Row(
             Modifier
                 .align(Alignment.TopEnd)
@@ -2120,6 +2223,7 @@ private fun CaptureViewport(
                     )
                 }
             }
+        }
         }
 
         // ── tracking quality, inline, because 3D quality depends on it ──
@@ -2480,32 +2584,51 @@ private fun FixChipStrip(fix: GnssFixSnapshot, ntrip: NtripStatsSnapshot, georef
 @Composable
 private fun SessionSummaryContent(
     summary: CaptureStats,
+    scanSummary: com.lidarscan.core.capture.ScanSummary?,
     savedPath: String?,
     saveError: String?,
     onDismiss: () -> Unit,
 ) {
     Column(Modifier.padding(horizontal = 22.dp, vertical = 8.dp)) {
         Text(
-            if (saveError != null) "Session ended — NOT saved" else "Session summary",
+            if (saveError != null) "Session ended — NOT saved" else "Scan summary",
             fontFamily = DisplayFontFamily,
             fontWeight = FontWeight.SemiBold,
             fontSize = 22.sp,
             color = MaterialTheme.colorScheme.onSurface,
         )
+        // ROUND 11 (owner item 44): the grade, first, because it is the whole
+        // point of the card — "keep or rescan in five seconds". The numbers
+        // below it are the evidence for the word above them.
+        if (scanSummary != null && saveError == null) {
+            Spacer(Modifier.height(12.dp))
+            ScanGradeBanner(scanSummary)
+        }
         Spacer(Modifier.height(16.dp))
         StatPanel(
             listOf(
+                // ROUND 11: this is now the RESOLVED map count, not the raw
+                // preview stream added to it. See PointCountTally.
                 Stat(formatPoints(summary.pointsCaptured), "points"),
                 Stat(formatDuration(summary.elapsedMillis), "duration"),
-                Stat(formatMegabytes(summary.recordingSizeBytes), ".lscan"),
                 Stat(
-                    formatRate(
-                        if (summary.elapsedMillis > 0) summary.pointsCaptured * 1000.0 / summary.elapsedMillis else 0.0,
-                    ),
-                    "avg pts/s",
+                    scanSummary?.let { "%.1f m".format(it.pathLengthMeters) } ?: "—",
+                    "walked",
                 ),
+                Stat(formatMegabytes(summary.recordingSizeBytes), ".lscan"),
             ),
         )
+        if (scanSummary != null) {
+            Spacer(Modifier.height(10.dp))
+            StatPanel(
+                listOf(
+                    Stat("${scanSummary.sections}", "sections"),
+                    Stat("${scanSummary.trackingDrops}", "tracking drops"),
+                    Stat("%.0f".format(scanSummary.pointsPerMeter), "pts / metre"),
+                    Stat(formatRate(scanSummary.pointsPerSecond), "avg pts/s"),
+                ),
+            )
+        }
         Spacer(Modifier.height(12.dp))
         // ROUND 6 (item 20): the one line the owner could not get last time —
         // where it went, or why it did not.
@@ -2520,8 +2643,50 @@ private fun SessionSummaryContent(
             modifier = Modifier.testTag("sessionSavedPath"),
         )
         Spacer(Modifier.height(16.dp))
-        PrimaryPill(text = "Done", onClick = onDismiss, modifier = Modifier.fillMaxWidth())
+        // "Done" and not "Close": dismissing this card is what carries the
+        // operator to Projects (see the pending-navigation effect in
+        // CaptureRoute), so the button ends the scan rather than hiding a sheet.
+        PrimaryPill(
+            text = "Done",
+            onClick = onDismiss,
+            modifier = Modifier.fillMaxWidth().testTag("summaryDone"),
+        )
         Spacer(Modifier.height(20.dp))
+    }
+}
+
+/**
+ * ROUND 11 (owner item 44) — one word and one sentence.
+ *
+ * The grade's thresholds are in `:core`
+ * ([com.lidarscan.core.capture.ScanSummary]) and every one of them is a
+ * consequence of a number this project measured rather than a number someone
+ * liked; the sentence under the word names the WORST thing about the scan, in
+ * the same order the grade decided, so the two can never disagree.
+ */
+@Composable
+private fun ScanGradeBanner(summary: com.lidarscan.core.capture.ScanSummary) {
+    val (accent, word) = when (summary.grade) {
+        com.lidarscan.core.capture.ScanGrade.GOOD -> SemGood to "GOOD SCAN"
+        com.lidarscan.core.capture.ScanGrade.FAIR -> SemWarn to "USABLE"
+        com.lidarscan.core.capture.ScanGrade.POOR -> SemBad to "RESCAN"
+    }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(accent.copy(alpha = 0.12f), RoundedCornerShape(12.dp))
+            .padding(horizontal = 14.dp, vertical = 12.dp)
+            .testTag("scanGradeBanner"),
+    ) {
+        Text(
+            word,
+            fontFamily = DisplayFontFamily,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 16.sp,
+            color = accent,
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(summary.gradeReason, style = MonoMeta, color = InkFaint)
     }
 }
 

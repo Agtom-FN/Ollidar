@@ -28,6 +28,7 @@
 //   1  the work failed — a bad .lscan, an unwritable output, a pipeline error
 //   2  usage: a missing or unrecognized argument
 //   3  cancelled
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -50,6 +51,8 @@
 #include "scanengine/jobs/job_runner_adapter.h"
 #include "scanengine/poses/se3.h"
 #include "scanengine/record/lscan.h"
+#include "scanengine/slam/post/d6_resolve.h"
+#include "scanengine/slam/post/trajectory_loop.h"
 
 using namespace scanengine;
 
@@ -83,6 +86,22 @@ int usage() {
       "verdict on the capture's camera/lidar time sync, only the capture side knows\n"
       "it, and colorizing on a guess produces a plausible, wrong cloud. Omitting it\n"
       "is refused (docs/A11-color.md §2 — the gate fails closed).\n"
+      "\n"
+      "  engine_cli --d6-timesweep <lscan-dir> [--from MS] [--to MS] [--step MS]\n"
+      "                              [--no-densify] [--up X|Y|Z]\n"
+      "      ROUND 10 item 36. Resolve a COIN-D6 capture at a sweep of\n"
+      "      lidar->pose time offsets and print a crispness metric for each,\n"
+      "      so the transport delay is MEASURED on real data instead of\n"
+      "      guessed. Defaults: -60..+60 ms in 5 ms steps.\n"
+      "\n"
+      "  engine_cli --d6-loopclose <lscan-dir> [--radius M] [--min-seconds S]\n"
+      "                              [--min-path M] [--window S] [--up X|Y|Z]\n"
+      "      ROUND 11 item 41. Resolve a COIN-D6 capture twice — once as\n"
+      "      shipped, once with trajectory loop closure — and print the\n"
+      "      decision, the measured drift, the same-place mismatch before and\n"
+      "      after, and the ROUND 10 crispness score for both. Prints WHY it\n"
+      "      refused when it refuses, which for a one-way walk is the correct\n"
+      "      answer and not a failure.\n"
       "\n"
       "exit: 0 ok, 1 failed, 2 usage, 3 cancelled\n");
   return kExitUsage;
@@ -798,6 +817,618 @@ int cmd_post(const std::string& lscan_dir, const std::string& out_dir, const Pos
   return kExitOk;
 }
 
+// --- ROUND 10 item 36: measuring the lidar->pose time offset ---------------
+//
+// THE PROBLEM, in one sentence: a constant offset between the clock the D6's
+// returns are dated in and the clock ARCore's poses are dated in costs
+// `v * dt` along the walk (invisible: the whole cloud shifts together, walls
+// stay straight) and `omega * dt` of yaw (glaring: at a 60 deg/s turn, 20 ms
+// is 1.2 deg, which is 6 cm of tangential smear at 3 m, and it REVERSES SIGN
+// with the turn direction — so the same wall is painted in two places when
+// the operator walks past it out and back).
+//
+// It cannot be derived, because it is a property of the USB stack, the CH340's
+// buffering and the reader thread's scheduling. So it is MEASURED, from a real
+// capture, the way a focus is measured: resolve the SAME container at a sweep
+// of candidate offsets and keep the one that makes the map sharpest. Nothing
+// here is a fit to a model — it is the container's own geometry disagreeing
+// with itself less at one offset than at another.
+//
+// THREE METRICS, all computed on the same resolved cloud, all deterministic
+// (no RNG, no threading, fixed grids, sorts broken by index):
+//
+//  1. `wall_rms_cm` — THE headline. Take the horizontal band between the floor
+//     and ceiling peaks, grid it at 4 cm in the two ground axes, and for the
+//     busiest cells fit a LINE (2-D PCA) to the neighbours within 25 cm. The
+//     RMS perpendicular distance is literally "how thick is this wall". A
+//     mis-paired pose smears a wall into a wedge, and this is the number that
+//     goes up. Cells that are not wall-like (too few points, or not elongated)
+//     are rejected, so a corner or a chair cannot dominate the average.
+//  2. `occupied_voxels` — how many 3 cm voxels the same points need. Smearing
+//     spreads the same returns over more voxels; this is a shape-free check on
+//     (1) that no fitting decision can influence.
+//  3. `entropy_bits` — Shannon entropy of the voxel occupancy histogram, the
+//     mean-map-entropy family's crispness measure. Same direction as (2), but
+//     sensitive to HOW the mass redistributes rather than only to its support.
+//
+// A sweep is trustworthy only if the population being measured does not move
+// with the offset, so `points` is printed per row: it must be flat (only the
+// handful of returns at the very ends of the capture can change bracket).
+struct CrispnessMetrics {
+  std::uint64_t points = 0;
+  std::uint64_t occupied_voxels = 0;
+  double entropy_bits = 0.0;
+  double wall_rms_cm = 0.0;
+  std::uint64_t wall_cells = 0;
+};
+
+// Which world axis is "up".
+//
+// NOT detected, and that is deliberate. A COIN-D6 project is by construction
+// an ARCore project — the D6 has no IMU, so the ONLY thing that can supply
+// its trajectory is the phone, and ARCore's world frame is gravity-aligned
+// with +Y up. So the up axis is known from the container's sensor list, not
+// guessed from its point distribution.
+//
+// The first version of this tool DID guess (tallest histogram peak relative
+// to the median) and picked X on the owner's scan-020, which silently emptied
+// the wall band and reported zero walls at every offset. A heuristic that can
+// be wrong about the single most load-bearing assumption in the metric is
+// worse than a constant, because a constant cannot be wrong quietly.
+// `--up X|Y|Z` overrides it for a Mid-360 (+Z up) container.
+constexpr int kArCoreUpAxis = 1;  // +Y
+
+// A candidate wall segment: a fixed world location in the two ground axes.
+//
+// The centres are chosen ONCE, from the REFERENCE resolve, and every offset in
+// the sweep is then measured at those same places. That is what makes the
+// comparison honest: if each offset picked its own wall segments, the metric
+// would be measuring which offset produces the most selectable walls rather
+// than how thick the same walls are, and "crispest" would be circular.
+struct WallProbe {
+  double u = 0.0, v = 0.0;
+};
+
+struct BandGrid {
+  std::vector<float> u, v;              // band points, two ground axes
+  std::vector<std::uint32_t> head;      // CSR cell starts, size nu*nv+1
+  std::vector<std::uint32_t> order;     // point indices, bucketed by cell
+  double umin = 0, vmin = 0, cell = 0;
+  int nu = 0, nv = 0;
+  bool ok = false;
+};
+
+// The horizontal band between the floor and the ceiling, bucketed into a
+// uniform grid by counting sort. No hashing and no per-cell vector, so the
+// layout — and therefore every sum computed from it — is bit-reproducible.
+BandGrid build_band_grid(const std::vector<PointVertex>& pts, int up_axis, double cell) {
+  BandGrid g;
+  g.cell = cell;
+  if (pts.size() < 2000) return g;
+  const int a0 = (up_axis + 1) % 3;
+  const int a1 = (up_axis + 2) % 3;
+
+  // Cut the band from the QUANTILES of the height distribution rather than
+  // from its range: the floor and the ceiling are by construction the two
+  // extremes, and [20 %, 80 %] drops both without assuming a ceiling height.
+  std::vector<float> hs;
+  hs.reserve(pts.size());
+  for (const PointVertex& p : pts) hs.push_back((&p.x)[up_axis]);
+  std::sort(hs.begin(), hs.end());
+  const float lo_h = hs[static_cast<std::size_t>(0.20 * (hs.size() - 1))];
+  const float hi_h = hs[static_cast<std::size_t>(0.80 * (hs.size() - 1))];
+
+  double umin = 1e30, vmin = 1e30, umax = -1e30, vmax = -1e30;
+  for (const PointVertex& p : pts) {
+    const float h = (&p.x)[up_axis];
+    if (h < lo_h || h > hi_h) continue;
+    const float u = (&p.x)[a0], v = (&p.x)[a1];
+    g.u.push_back(u);
+    g.v.push_back(v);
+    umin = std::min(umin, static_cast<double>(u));
+    vmin = std::min(vmin, static_cast<double>(v));
+    umax = std::max(umax, static_cast<double>(u));
+    vmax = std::max(vmax, static_cast<double>(v));
+  }
+  if (g.u.size() < 2000) return g;
+
+  // One cell of margin on every side, so a probe centre from the reference
+  // pass still has its full neighbourhood in range when a different offset
+  // shifts the cloud by a few centimetres.
+  const double pad = 1.0;
+  g.umin = umin - pad;
+  g.vmin = vmin - pad;
+  g.nu = static_cast<int>((umax - umin + 2 * pad) / cell) + 2;
+  g.nv = static_cast<int>((vmax - vmin + 2 * pad) / cell) + 2;
+  if (g.nu < 4 || g.nv < 4) return g;
+  if (static_cast<std::int64_t>(g.nu) * g.nv > 40'000'000) return g;
+
+  auto cell_of = [&](std::size_t i) {
+    const int cu = static_cast<int>((g.u[i] - g.umin) / cell);
+    const int cv = static_cast<int>((g.v[i] - g.vmin) / cell);
+    return static_cast<std::size_t>(cu) * g.nv + static_cast<std::size_t>(cv);
+  };
+  g.head.assign(static_cast<std::size_t>(g.nu) * g.nv + 1, 0);
+  for (std::size_t i = 0; i < g.u.size(); ++i) ++g.head[cell_of(i) + 1];
+  for (std::size_t i = 1; i < g.head.size(); ++i) g.head[i] += g.head[i - 1];
+  g.order.resize(g.u.size());
+  {
+    std::vector<std::uint32_t> cur(g.head.begin(), g.head.end() - 1);
+    for (std::uint32_t i = 0; i < g.u.size(); ++i) g.order[cur[cell_of(i)]++] = i;
+  }
+  g.ok = true;
+  return g;
+}
+
+// Second moment of the neighbourhood of (u0, v0) within `radius`, in the
+// direction ACROSS the local line — i.e. half the wall's thickness, as a
+// standard deviation. Returns false when the neighbourhood is too sparse or
+// too round to be a wall.
+bool probe_thickness(const BandGrid& g, double u0, double v0, double radius,
+                     std::size_t min_points, double min_elongation, double* out_sigma_m,
+                     std::size_t* out_n) {
+  const int ring = static_cast<int>(std::ceil(radius / g.cell));
+  const int cu = static_cast<int>((u0 - g.umin) / g.cell);
+  const int cv = static_cast<int>((v0 - g.vmin) / g.cell);
+  if (cu < ring || cv < ring || cu + ring >= g.nu || cv + ring >= g.nv) return false;
+
+  const double r2 = radius * radius;
+  std::size_t n = 0;
+  double su = 0, sv = 0, suu = 0, suv = 0, svv = 0;
+  for (int du = -ring; du <= ring; ++du) {
+    for (int dv = -ring; dv <= ring; ++dv) {
+      const std::size_t c =
+          static_cast<std::size_t>(cu + du) * g.nv + static_cast<std::size_t>(cv + dv);
+      for (std::uint32_t k = g.head[c]; k < g.head[c + 1]; ++k) {
+        const std::uint32_t i = g.order[k];
+        const double du2 = g.u[i] - u0, dv2 = g.v[i] - v0;
+        if (du2 * du2 + dv2 * dv2 > r2) continue;
+        ++n;
+        su += du2; sv += dv2;
+        suu += du2 * du2; suv += du2 * dv2; svv += dv2 * dv2;
+      }
+    }
+  }
+  if (out_n != nullptr) *out_n = n;
+  if (n < min_points) return false;
+  const double inv = 1.0 / static_cast<double>(n);
+  const double mu = su * inv, mv = sv * inv;
+  const double cuu = suu * inv - mu * mu;
+  const double cuv = suv * inv - mu * mv;
+  const double cvv = svv * inv - mv * mv;
+  // Closed-form eigenvalues of a symmetric 2x2 — no Eigen (determinism
+  // doctrine), and a 2x2 needs none.
+  const double tr = cuu + cvv;
+  const double det = cuu * cvv - cuv * cuv;
+  const double disc = std::sqrt(std::max(0.0, tr * tr * 0.25 - det));
+  const double l1 = tr * 0.5 + disc;  // along the wall
+  const double l2 = tr * 0.5 - disc;  // across it
+  if (l2 <= 0.0 || l1 < min_elongation * l2) return false;
+  *out_sigma_m = std::sqrt(l2);
+  return true;
+}
+
+// Radius, minimum neighbourhood and elongation for a wall probe.
+//
+// 0.5 m is chosen so the discrimination actually works. Over a 1 m span a
+// straight wall has an along-length variance of ~0.083 m^2 against a 3 cm
+// thickness's 0.0009 m^2 — a ratio near 90, so an elongation floor of 20
+// separates walls from corners and furniture with a wide margin AND still
+// admits a smeared wall up to ~6 cm thick, which matters: a filter that
+// rejects the blurry version of the same wall would measure how many walls
+// survive selection instead of how thick they are. At 0.25 m the same ratio
+// is only ~23 and the filter starts selecting for the answer.
+constexpr double kProbeRadiusM = 0.5;
+constexpr std::size_t kProbeMinPoints = 200;
+constexpr double kProbeMinElongation = 20.0;
+
+// Pick the probe centres from the reference cloud: the busiest 10 cm cells
+// that pass the wall test, spread out so two probes cannot sit on the same
+// half-metre of wall and count it twice.
+std::vector<WallProbe> choose_wall_probes(const BandGrid& g, std::size_t max_probes) {
+  std::vector<WallProbe> out;
+  if (!g.ok) return out;
+  std::vector<std::pair<std::uint32_t, std::uint32_t>> cells;
+  for (std::size_t c = 0; c + 1 < g.head.size(); ++c) {
+    const std::uint32_t n = g.head[c + 1] - g.head[c];
+    if (n >= 40) cells.push_back({n, static_cast<std::uint32_t>(c)});
+  }
+  // (count desc, cell index asc) — ties broken by index so two runs cannot
+  // disagree about the order.
+  std::sort(cells.begin(), cells.end(), [](const auto& a, const auto& b) {
+    if (a.first != b.first) return a.first > b.first;
+    return a.second < b.second;
+  });
+  std::vector<std::uint8_t> taken(g.head.size(), 0);
+  const int excl = static_cast<int>(std::ceil(0.5 * kProbeRadiusM / g.cell));
+  for (const auto& c : cells) {
+    if (out.size() >= max_probes) break;
+    if (taken[c.second]) continue;
+    const int cu = static_cast<int>(c.second / static_cast<std::uint32_t>(g.nv));
+    const int cv = static_cast<int>(c.second % static_cast<std::uint32_t>(g.nv));
+    const double u0 = g.umin + (cu + 0.5) * g.cell;
+    const double v0 = g.vmin + (cv + 0.5) * g.cell;
+    double sigma = 0.0;
+    if (!probe_thickness(g, u0, v0, kProbeRadiusM, kProbeMinPoints, kProbeMinElongation, &sigma,
+                         nullptr)) {
+      continue;
+    }
+    out.push_back(WallProbe{u0, v0});
+    for (int du = -excl; du <= excl; ++du) {
+      for (int dv = -excl; dv <= excl; ++dv) {
+        const int nu2 = cu + du, nv2 = cv + dv;
+        if (nu2 < 0 || nv2 < 0 || nu2 >= g.nu || nv2 >= g.nv) continue;
+        taken[static_cast<std::size_t>(nu2) * g.nv + static_cast<std::size_t>(nv2)] = 1;
+      }
+    }
+  }
+  return out;
+}
+
+CrispnessMetrics measure_crispness(const std::vector<PointVertex>& pts, int up_axis,
+                                   const BandGrid& band,
+                                   const std::vector<WallProbe>& probes) {
+  CrispnessMetrics m;
+  m.points = pts.size();
+  (void)up_axis;
+  if (pts.size() < 1000) return m;
+
+  // --- (2) and (3): 3 cm voxels over everything --------------------------
+  constexpr double kVoxel = 0.03;
+  {
+    // A packed 64-bit key, sorted. std::map would be O(n log n) with a huge
+    // constant on 600k points; the packing is exact for any room inside
+    // +/-16 km at 3 cm, which is every room.
+    std::vector<std::uint64_t> keys;
+    keys.reserve(pts.size());
+    for (const PointVertex& p : pts) {
+      const std::int64_t i = static_cast<std::int64_t>(std::floor(p.x / kVoxel));
+      const std::int64_t j = static_cast<std::int64_t>(std::floor(p.y / kVoxel));
+      const std::int64_t k = static_cast<std::int64_t>(std::floor(p.z / kVoxel));
+      keys.push_back((static_cast<std::uint64_t>(i + 2'097'152) << 42) |
+                     (static_cast<std::uint64_t>(j + 2'097'152) << 21) |
+                     static_cast<std::uint64_t>(k + 2'097'152));
+    }
+    std::sort(keys.begin(), keys.end());
+    const double n = static_cast<double>(keys.size());
+    std::size_t i = 0;
+    while (i < keys.size()) {
+      std::size_t j = i;
+      while (j < keys.size() && keys[j] == keys[i]) ++j;
+      const double p = static_cast<double>(j - i) / n;
+      m.entropy_bits -= p * std::log2(p);
+      ++m.occupied_voxels;
+      i = j;
+    }
+  }
+
+  // --- (1) wall thickness, at the REFERENCE probe locations --------------
+  if (band.ok && !probes.empty()) {
+    double sum = 0.0;
+    std::uint64_t n = 0;
+    for (const WallProbe& w : probes) {
+      double sigma = 0.0;
+      // The elongation floor is dropped to 1.0 HERE (i.e. off): the probe has
+      // already been established as a wall by the reference pass, and
+      // re-applying the shape filter at every offset would quietly delete the
+      // worst-smeared walls from the average — which is the one bias that
+      // would make a bad offset look good.
+      if (!probe_thickness(band, w.u, w.v, kProbeRadiusM, kProbeMinPoints, 1.0, &sigma, nullptr)) {
+        continue;
+      }
+      sum += sigma;
+      ++n;
+    }
+    if (n > 0) {
+      m.wall_rms_cm = 100.0 * sum / static_cast<double>(n);
+      m.wall_cells = n;
+    }
+  }
+  return m;
+}
+
+// Resolve `lscan_dir` once at `offset_ns` and return every world point.
+bool resolve_at(const std::string& lscan_dir, std::int64_t offset_ns, bool densify,
+                std::vector<PointVertex>* out, post::D6ResolveStats* out_stats) {
+  PageStoreConfig psc;
+  psc.page_capacity = 1u << 20;
+  psc.max_pages = 4096;
+  PageStore store(psc);
+
+  post::D6ResolveConfig cfg;
+  cfg.store = &store;
+  cfg.densify_with_phone_imu = densify;
+  cfg.pushbroom.pose_time_offset_ns = offset_ns;
+  post::D6ResolvePipeline pipe(cfg);
+  const Status s = pipe.run(lscan_dir);
+  if (!s.ok()) {
+    std::fprintf(stderr, "d6-timesweep: resolve failed at %+.2f ms: %s\n",
+                 static_cast<double>(offset_ns) / 1e6, error_str(s.error()));
+    return false;
+  }
+  if (out_stats != nullptr) *out_stats = pipe.stats();
+  out->clear();
+  out->reserve(static_cast<std::size_t>(store.total_points()));
+  for (const PageId id : store.page_ids()) {
+    const PageView v = store.page_view(id);
+    if (!v.valid()) continue;
+    for (std::uint32_t k = 0; k < v.count; ++k) out->push_back(v.data[k]);
+  }
+  return true;
+}
+
+int cmd_d6_timesweep(const std::string& lscan_dir, double from_ms, double to_ms, double step_ms,
+                     bool densify, int up_axis) {
+  if (step_ms <= 0.0 || to_ms < from_ms) {
+    std::fprintf(stderr, "d6-timesweep: bad sweep range\n");
+    return kExitUsage;
+  }
+  bool is_d6 = false;
+  const Status probe = post::lscan_is_d6_project(lscan_dir, &is_d6);
+  if (!probe.ok()) {
+    std::fprintf(stderr, "d6-timesweep: cannot read '%s': %s\n", lscan_dir.c_str(),
+                 error_str(probe.error()));
+    return kExitFailed;
+  }
+  if (!is_d6) {
+    std::fprintf(stderr, "d6-timesweep: '%s' is not a COIN-D6 project\n", lscan_dir.c_str());
+    return kExitFailed;
+  }
+
+  std::printf("d6-timesweep: %s\n", lscan_dir.c_str());
+  std::printf("  sweep %+.1f .. %+.1f ms step %.1f ms, IMU densification %s, up = %c\n", from_ms,
+              to_ms, step_ms, densify ? "ON" : "off", "XYZ"[up_axis]);
+
+  // --- the reference pass -------------------------------------------------
+  //
+  // Offset 0 — i.e. what the app shipped — chooses the wall probes, and every
+  // row below is measured at those same places. See choose_wall_probes().
+  std::vector<PointVertex> ref;
+  post::D6ResolveStats rstats;
+  if (!resolve_at(lscan_dir, 0, densify, &ref, &rstats)) return kExitFailed;
+  const BandGrid ref_grid = build_band_grid(ref, up_axis, 0.10);
+  const std::vector<WallProbe> probes = choose_wall_probes(ref_grid, 400);
+  std::printf("  reference: %zu points, %zu band points, %zu wall probes "
+              "(r = %.2f m, min %zu pts, elongation >= %.0f)\n",
+              ref.size(), ref_grid.u.size(), probes.size(), kProbeRadiusM, kProbeMinPoints,
+              kProbeMinElongation);
+  std::printf("  densify  : %llu returns on the gyro path, %llu fell back\n",
+              static_cast<unsigned long long>(rstats.imu_densified),
+              static_cast<unsigned long long>(rstats.imu_fallbacks));
+  std::printf("             fallbacks by reason: no-imu %llu, imu-gap %llu, wide-bracket %llu, "
+              "closing %llu\n",
+              static_cast<unsigned long long>(rstats.imu.fallback_no_imu),
+              static_cast<unsigned long long>(rstats.imu.fallback_gap),
+              static_cast<unsigned long long>(rstats.imu.fallback_bracket),
+              static_cast<unsigned long long>(rstats.imu.fallback_closing));
+  std::printf("             closing error: mean %.3f deg, worst %.3f deg; "
+              "gyro bias (%.5f, %.5f, %.5f) rad/s from %llu updates\n",
+              rstats.imu.mean_closing_deg, rstats.imu.worst_closing_deg, rstats.imu.bias_rad_s[0],
+              rstats.imu.bias_rad_s[1], rstats.imu.bias_rad_s[2],
+              static_cast<unsigned long long>(rstats.imu.bias_updates));
+
+  {
+    const PushbroomStats& pb = rstats.pushbroom;
+    std::printf("  pushbroom: in %llu -> out %llu  (dropped: range %llu, no-pose %llu, "
+                "overflow %llu, page-full %llu)\n",
+                static_cast<unsigned long long>(pb.points_in),
+                static_cast<unsigned long long>(pb.points_out),
+                static_cast<unsigned long long>(pb.dropped_range),
+                static_cast<unsigned long long>(pb.dropped_no_pose),
+                static_cast<unsigned long long>(pb.dropped_overflow),
+                static_cast<unsigned long long>(pb.dropped_page_full));
+    std::printf("             flagged: tracking-lost %llu, stale %llu, low-confidence %llu "
+                "(emitted %llu)\n",
+                static_cast<unsigned long long>(pb.flagged_tracking_lost),
+                static_cast<unsigned long long>(pb.flagged_stale_pose),
+                static_cast<unsigned long long>(pb.flagged_low_confidence),
+                static_cast<unsigned long long>(pb.flagged_emitted));
+  }  if (probes.empty()) {
+    std::fprintf(stderr,
+                 "d6-timesweep: no wall probes — this capture has no straight surface to "
+                 "measure against\n");
+    return kExitFailed;
+  }
+  std::printf("\n");
+  std::printf("  offset_ms      points  occupied_vox  entropy_bits  wall_rms_cm  probes\n");
+
+  double best_ms = 0.0;
+  double best_rms = 1e30;
+  double zero_rms = -1.0;
+  const int steps = static_cast<int>(std::llround((to_ms - from_ms) / step_ms));
+  std::vector<PointVertex> pts;
+  for (int i = 0; i <= steps; ++i) {
+    const double off_ms = from_ms + step_ms * i;
+    const std::int64_t off_ns = static_cast<std::int64_t>(std::llround(off_ms * 1e6));
+    if (!resolve_at(lscan_dir, off_ns, densify, &pts, nullptr)) return kExitFailed;
+    const BandGrid grid = build_band_grid(pts, up_axis, 0.10);
+    const CrispnessMetrics m = measure_crispness(pts, up_axis, grid, probes);
+    std::printf("  %+9.2f  %10llu  %12llu  %12.5f  %11.4f  %6llu%s\n", off_ms,
+                static_cast<unsigned long long>(m.points),
+                static_cast<unsigned long long>(m.occupied_voxels), m.entropy_bits, m.wall_rms_cm,
+                static_cast<unsigned long long>(m.wall_cells),
+                std::fabs(off_ms) < 1e-9 ? "   <- zero (what 0.6.0 shipped)" : "");
+    std::fflush(stdout);
+    if (m.wall_cells > 0 && m.wall_rms_cm < best_rms) {
+      best_rms = m.wall_rms_cm;
+      best_ms = off_ms;
+    }
+    if (std::fabs(off_ms) < 1e-9) zero_rms = m.wall_rms_cm;
+  }
+
+  std::printf("\n");
+  std::printf("  BEST offset: %+.2f ms  (wall RMS %.4f cm)\n", best_ms, best_rms);
+  if (zero_rms > 0.0) {
+    std::printf("  at zero    :  +0.00 ms  (wall RMS %.4f cm)  ->  %.1f%% thinner walls\n",
+                zero_rms, 100.0 * (zero_rms - best_rms) / zero_rms);
+  }
+  return kExitOk;
+}
+
+// --- ROUND 11 item 41: loop closure on a real capture -----------------------
+//
+// Two resolves of the same container: as shipped, and with close_loops on.
+// Both are scored with the SAME ROUND 10 crispness metric, at the SAME wall
+// probes (chosen from the as-shipped pass), because a metric that re-chooses
+// its own reference points after the correction can only flatter it.
+int cmd_d6_loopclose(const std::string& lscan_dir, const post::TrajectoryLoopConfig& lcfg,
+                     int up_axis) {
+  bool is_d6 = false;
+  const Status probe = post::lscan_is_d6_project(lscan_dir, &is_d6);
+  if (!probe.ok()) {
+    std::fprintf(stderr, "d6-loopclose: cannot read '%s': %s\n", lscan_dir.c_str(),
+                 error_str(probe.error()));
+    return kExitFailed;
+  }
+  if (!is_d6) {
+    std::fprintf(stderr, "d6-loopclose: '%s' is not a COIN-D6 project\n", lscan_dir.c_str());
+    return kExitFailed;
+  }
+
+  std::printf("d6-loopclose: %s\n", lscan_dir.c_str());
+  std::printf("  gates: revisit <= %.2f m, >= %.0f s apart, >= %.1f m of path, "
+              "excursion >= %.1f m, submap +/-%.1f s\n",
+              lcfg.max_revisit_m, lcfg.min_loop_seconds, lcfg.min_loop_path_m,
+              lcfg.min_excursion_m, lcfg.submap_half_window_s);
+
+  std::vector<post::TrajPose> traj;
+  auto run = [&](bool close, std::vector<PointVertex>* pts, post::D6ResolveStats* st) -> bool {
+    PageStoreConfig psc;
+    psc.page_capacity = 1u << 20;
+    psc.max_pages = 4096;
+    PageStore store(psc);
+    post::D6ResolveConfig cfg;
+    cfg.store = &store;
+    cfg.close_loops = close;
+    cfg.loop = lcfg;
+    traj.clear();
+    cfg.out_trajectory = &traj;
+    post::D6ResolvePipeline pipe(cfg);
+    const Status s = pipe.run(lscan_dir);
+    if (!s.ok()) {
+      std::fprintf(stderr, "d6-loopclose: resolve failed: %s\n", error_str(s.error()));
+      return false;
+    }
+    *st = pipe.stats();
+    pts->clear();
+    pts->reserve(static_cast<std::size_t>(store.total_points()));
+    for (const PageId id : store.page_ids()) {
+      const PageView v = store.page_view(id);
+      if (!v.valid()) continue;
+      for (std::uint32_t k = 0; k < v.count; ++k) pts->push_back(v.data[k]);
+    }
+    return true;
+  };
+
+  std::vector<PointVertex> before, after;
+  post::D6ResolveStats sb{}, sa{};
+  if (!run(false, &before, &sb)) return kExitFailed;
+
+  // The trajectory itself, before any geometry: this is what decides whether
+  // there is a loop to find at all, and a person reading a refusal needs it.
+  if (traj.size() >= 2) {
+    double lo[3] = {traj[0].p[0], traj[0].p[1], traj[0].p[2]};
+    double hi[3] = {lo[0], lo[1], lo[2]};
+    double path = 0.0;
+    double far_from_start = 0.0;
+    for (std::size_t i = 0; i < traj.size(); ++i) {
+      for (int k = 0; k < 3; ++k) {
+        if (traj[i].p[k] < lo[k]) lo[k] = traj[i].p[k];
+        if (traj[i].p[k] > hi[k]) hi[k] = traj[i].p[k];
+      }
+      if (i > 0) {
+        double d = 0.0;
+        for (int k = 0; k < 3; ++k) {
+          const double e = traj[i].p[k] - traj[i - 1].p[k];
+          d += e * e;
+        }
+        path += std::sqrt(d);
+      }
+      double d0 = 0.0;
+      for (int k = 0; k < 3; ++k) {
+        const double e = traj[i].p[k] - traj[0].p[k];
+        d0 += e * e;
+      }
+      d0 = std::sqrt(d0);
+      if (d0 > far_from_start) far_from_start = d0;
+    }
+    double end_gap = 0.0;
+    for (int k = 0; k < 3; ++k) {
+      const double e = traj.back().p[k] - traj.front().p[k];
+      end_gap += e * e;
+    }
+    end_gap = std::sqrt(end_gap);
+    std::printf("  trajectory : %zu poses over %.1f s, %.1f m walked, extent "
+                "%.2f x %.2f x %.2f m, furthest from start %.2f m, start->end %.2f m\n",
+                traj.size(),
+                static_cast<double>(traj.back().t_ns - traj.front().t_ns) * 1e-9, path,
+                hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2], far_from_start, end_gap);
+  }
+
+  const BandGrid ref_grid = build_band_grid(before, up_axis, 0.10);
+  const std::vector<WallProbe> probes = choose_wall_probes(ref_grid, 400);
+  const CrispnessMetrics mb = measure_crispness(before, up_axis, ref_grid, probes);
+  std::printf("  as shipped : %zu points, %llu occupied 3 cm voxels, entropy %.5f bits, "
+              "wall RMS %.4f cm over %llu probes\n",
+              before.size(), static_cast<unsigned long long>(mb.occupied_voxels), mb.entropy_bits,
+              mb.wall_rms_cm, static_cast<unsigned long long>(mb.wall_cells));
+
+  if (!run(true, &after, &sa)) return kExitFailed;
+
+  const post::LoopClosureReport& r = sa.loop;
+  std::printf("\n  DECISION: %s\n", post::to_string(r.decision));
+  std::printf("  %s\n", r.reason);
+  std::printf("  spatial candidates examined: %zu\n", r.candidates_seen);
+  if (r.decision != post::LoopDecision::kNoRevisit &&
+      r.decision != post::LoopDecision::kNoTrajectory) {
+    std::printf("  revisit: t=%.1f s -> t=%.1f s  (%.1f s apart, %.1f m of path, "
+                "gap %.2f m, excursion %.1f m)\n",
+                static_cast<double>(r.t_a_ns) * 1e-9, static_cast<double>(r.t_b_ns) * 1e-9,
+                r.loop_seconds, r.loop_path_m, r.revisit_gap_m, r.excursion_m);
+    std::printf("  submaps: %zu / %zu points\n", r.submap_a_points, r.submap_b_points);
+    std::printf("  ICP: converged=%d, %u iterations, %llu inliers (%.3f), rms %.4f m\n",
+                r.icp.converged ? 1 : 0, r.icp.iterations,
+                static_cast<unsigned long long>(r.icp.inliers), r.icp.inlier_ratio, r.icp.rms_m);
+    std::printf("  same place, mean nearest-neighbour distance: %.2f cm -> %.2f cm "
+                "(%zu pairs)\n",
+                100.0 * r.submap_mismatch_before_m, 100.0 * r.submap_mismatch_after_m,
+                r.mismatch_pairs);
+    std::printf("  measured drift over the loop: %.4f m, %.3f deg\n", r.drift_translation_m,
+                r.drift_rotation_deg);
+    if (r.occupied_voxels_before > 0) {
+      std::printf("  whole-map crispness gate: %llu -> %llu occupied 3 cm voxels (%+.2f %%)\n",
+                  static_cast<unsigned long long>(r.occupied_voxels_before),
+                  static_cast<unsigned long long>(r.occupied_voxels_after),
+                  100.0 * (static_cast<double>(r.occupied_voxels_after) -
+                           static_cast<double>(r.occupied_voxels_before)) /
+                      static_cast<double>(r.occupied_voxels_before));
+    }
+  }
+
+  if (!sa.loop_applied) {
+    std::printf("\n  NOTHING WAS MOVED. The cloud is byte-for-byte what the app produces.\n");
+    return kExitOk;
+  }
+
+  const CrispnessMetrics ma = measure_crispness(after, up_axis, ref_grid, probes);
+  std::printf("\n  closed     : %zu points, %llu occupied 3 cm voxels, entropy %.5f bits, "
+              "wall RMS %.4f cm over %llu probes\n",
+              after.size(), static_cast<unsigned long long>(ma.occupied_voxels), ma.entropy_bits,
+              ma.wall_rms_cm, static_cast<unsigned long long>(ma.wall_cells));
+  if (mb.occupied_voxels > 0) {
+    std::printf("  occupancy  : %+.2f %% (fewer occupied voxels = the same surface painted "
+                "in fewer places = crisper)\n",
+                100.0 * (static_cast<double>(ma.occupied_voxels) -
+                         static_cast<double>(mb.occupied_voxels)) /
+                    static_cast<double>(mb.occupied_voxels));
+  }
+  if (mb.wall_cells > 0 && ma.wall_cells > 0 && mb.wall_rms_cm > 0.0) {
+    std::printf("  wall RMS   : %+.2f %%\n",
+                100.0 * (ma.wall_rms_cm - mb.wall_rms_cm) / mb.wall_rms_cm);
+  }
+  return kExitOk;
+}
+
 // Synthesize, post-process, export, verify, clean up. Registered as the
 // `engine_cli_post` ctest — the only way to smoke-test --post without
 // committing a binary .lscan fixture.
@@ -1058,6 +1689,54 @@ int main(int argc, char** argv) {
       if (std::strcmp(argv[i], "--frames") == 0) frames = std::atoi(argv[i + 1]);
     }
     return cmd_synth_lscan(argv[2], seconds, frames);
+  }
+  if (cmd == "--d6-timesweep") {
+    if (argc < 3 || argv[2][0] == '-') return usage();
+    const std::string dir = argv[2];
+    double from_ms = -60.0, to_ms = 60.0, step_ms = 5.0;
+    bool densify = true;
+    int up_axis = kArCoreUpAxis;
+    for (int i = 3; i < argc; ++i) {
+      const std::string a = argv[i];
+      if (a == "--from" && i + 1 < argc) from_ms = std::atof(argv[++i]);
+      else if (a == "--to" && i + 1 < argc) to_ms = std::atof(argv[++i]);
+      else if (a == "--step" && i + 1 < argc) step_ms = std::atof(argv[++i]);
+      else if (a == "--no-densify") densify = false;
+      else if (a == "--up" && i + 1 < argc) {
+        const std::string ax = argv[++i];
+        if (ax == "X" || ax == "x") up_axis = 0;
+        else if (ax == "Y" || ax == "y") up_axis = 1;
+        else if (ax == "Z" || ax == "z") up_axis = 2;
+        else return usage();
+      }
+      else if (a == "--quiet") continue;
+      else return usage();
+    }
+    return cmd_d6_timesweep(dir, from_ms, to_ms, step_ms, densify, up_axis);
+  }
+  if (cmd == "--d6-loopclose") {
+    if (argc < 3 || argv[2][0] == '-') return usage();
+    const std::string dir = argv[2];
+    post::TrajectoryLoopConfig lcfg;
+    int up_axis = kArCoreUpAxis;
+    for (int i = 3; i < argc; ++i) {
+      const std::string a = argv[i];
+      if (a == "--radius" && i + 1 < argc) lcfg.max_revisit_m = std::atof(argv[++i]);
+      else if (a == "--min-seconds" && i + 1 < argc) lcfg.min_loop_seconds = std::atof(argv[++i]);
+      else if (a == "--min-path" && i + 1 < argc) lcfg.min_loop_path_m = std::atof(argv[++i]);
+      else if (a == "--min-excursion" && i + 1 < argc) lcfg.min_excursion_m = std::atof(argv[++i]);
+      else if (a == "--window" && i + 1 < argc) lcfg.submap_half_window_s = std::atof(argv[++i]);
+      else if (a == "--up" && i + 1 < argc) {
+        const std::string ax = argv[++i];
+        if (ax == "X" || ax == "x") up_axis = 0;
+        else if (ax == "Y" || ax == "y") up_axis = 1;
+        else if (ax == "Z" || ax == "z") up_axis = 2;
+        else return usage();
+      }
+      else if (a == "--quiet") continue;
+      else return usage();
+    }
+    return cmd_d6_loopclose(dir, lcfg, up_axis);
   }
   if (cmd == "--post-selftest") return cmd_post_selftest(quiet);
   if (cmd == "--discover") {

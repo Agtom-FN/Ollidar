@@ -47,6 +47,27 @@ class TrajectoryTrailRecorder(
     val pathLengthM: StateFlow<Float> = _pathLengthM.asStateFlow()
 
     /**
+     * ROUND 11 (owner item 44): the TOTAL distance walked, accumulated as
+     * points are kept and never reduced.
+     *
+     * [pathLengthM] is the length of the DRAWN trail, and the trail is a ring —
+     * once a walk exceeds the preset's point budget the oldest points fall off
+     * and that number stops growing. Correct for the overlay it feeds
+     * (`where have I just been`), wrong for a scan summary, which wants the
+     * whole walk. Both exist rather than one being fixed, because the ring
+     * falling off is the overlay's feature.
+     *
+     * Accumulated from the KEPT points, so it is a polyline through 15 cm
+     * samples: it can under-read a very twisty path by a few percent and can
+     * never over-read one.
+     */
+    private val _totalPathM = MutableStateFlow(0f)
+    val totalPathM: StateFlow<Float> = _totalPathM.asStateFlow()
+
+    private var lastKeptX = Float.NaN
+    private var lastKeptZ = Float.NaN
+
+    /**
      * One ARCore frame, from the GL thread. Cheap by construction: the trail
      * refuses points closer than its spacing, so a standing operator costs one
      * distance comparison per frame and publishes nothing.
@@ -59,7 +80,16 @@ class TrajectoryTrailRecorder(
         // rotated for rendering and would make the trail turn when the phone is
         // rotated in the hand.
         val pose = camera.pose
-        if (!trail.add(pose.tx(), pose.tz(), tracking)) return
+        val x = pose.tx()
+        val z = pose.tz()
+        if (!trail.add(x, z, tracking)) return
+        if (!lastKeptX.isNaN()) {
+            val dx = x - lastKeptX
+            val dz = z - lastKeptZ
+            _totalPathM.value += kotlin.math.sqrt(dx * dx + dz * dz)
+        }
+        lastKeptX = x
+        lastKeptZ = z
         _points.value = trail.normalized()
         _pathLengthM.value = trail.pathLengthM()
     }
@@ -69,5 +99,8 @@ class TrajectoryTrailRecorder(
         trail.clear()
         _points.value = emptyList()
         _pathLengthM.value = 0f
+        _totalPathM.value = 0f
+        lastKeptX = Float.NaN
+        lastKeptZ = Float.NaN
     }
 }

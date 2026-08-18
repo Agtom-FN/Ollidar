@@ -324,11 +324,16 @@ class CaptureRound7FieldBugsTest {
         // failure was `sealed OK … points=0 elapsedMs=0`.
         val sealLine = synchronized(logs) { logs.last { it.contains("sealed OK") } }
         assertTrue(sealLine, sealLine.contains("NO-DATA=true"))
-        assertNotNull(
-            "a saved-but-empty scan must still be saying so after the stop",
-            vm.noDataAlert.value,
-        )
-        assertTrue(vm.noDataAlert.value!!.contains("RECORDED NO POINTS"))
+        // ROUND 10: WAIT for the banner rather than sampling it the instant the
+        // `sealed OK` line appears. The two are not simultaneous and never
+        // were — between them the seal decides whether to prune, which is a
+        // `withContext(Dispatchers.IO)` hop — so the original assertion was a
+        // race that happened to win. The claim being made is unchanged ("still
+        // saying so AFTER the stop", i.e. the alert is not cleared by sealing);
+        // only the sampling is no longer a coin flip.
+        val afterStop = withTimeout(5_000) { vm.noDataAlert.first { it != null } }
+        assertNotNull("a saved-but-empty scan must still be saying so after the stop", afterStop)
+        assertTrue(afterStop!!.contains("RECORDED NO POINTS"))
     }
 
     @Test

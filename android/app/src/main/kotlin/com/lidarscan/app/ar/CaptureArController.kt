@@ -212,8 +212,18 @@ class CaptureArController(
     private val _status = MutableStateFlow(ArStatus())
     val status: StateFlow<ArStatus> = _status.asStateFlow()
 
-    /** The pose stream, also consumed by the wizard's hold-still check and B8's motion gate. */
-    val motion = RigMotionTracker()
+    /**
+     * The pose stream, also consumed by the wizard's hold-still check and B8's
+     * motion gate.
+     *
+     * ROUND 11 (owner item 45): the ring is 320 samples rather than the default
+     * 64. `MountTrimRefiner` averages over the WHOLE hold-still gesture — up to
+     * 8 s — and 64 samples is 2 s at ARCore's measured 30 Hz, so the refinement
+     * would have silently stopped improving after two seconds while the ring
+     * showed it still filling. `estimateAt` filters by its own 100 ms window and
+     * is unaffected by the capacity; the cost is ~256 extra PoseSamples.
+     */
+    val motion = RigMotionTracker(capacity = 320)
 
     /**
      * ROUND 7, item 3: the section-break detector, fed from the same pose stream

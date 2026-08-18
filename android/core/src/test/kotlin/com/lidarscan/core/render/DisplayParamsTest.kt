@@ -210,7 +210,17 @@ class DisplayParamsTest {
     @Test
     fun `colour-mode availability explains the two modes that have no data`() {
         val offline = colorModeAvailability(gnssActive = false)
-        assertNull(offline[ColorMode.RGB])
+        // ROUND 10 (owner item 39): RGB is PAUSED with the camera, and the map
+        // is where that is expressed — so it now carries a sentence too, for
+        // exactly the reason the two below do: "not merely disabled, the UI
+        // has a sentence for why". The assertion follows the flag rather than
+        // pinning one side of it, so reviving the feature does not leave a
+        // stale red test behind.
+        if (com.lidarscan.core.FeatureFlags.RGB_COLOR_MODE_ENABLED) {
+            assertNull(offline[ColorMode.RGB])
+        } else {
+            assertNotNull(offline[ColorMode.RGB])
+        }
         assertNull(offline[ColorMode.HEIGHT])
         assertNull(offline[ColorMode.INTENSITY])
         // Not merely disabled — the UI has a sentence for why.

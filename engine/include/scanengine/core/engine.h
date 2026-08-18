@@ -95,7 +95,13 @@ class JobQueue;
 //             value of an existing mirrored enum — no ABI-7 layout changed, so
 //             an ABI-7 consumer relinks unmodified and, pushing no IMU, gets
 //             byte-for-byte the ABI-7 trajectory. poses/imu_densified_pose.h.
-inline constexpr std::uint32_t kEngineAbiVersion = 8;
+// 9 (ROUND 10 item 36): the lidar -> pose time offset.
+//             scan_engine_set_pose_time_offset_ns() /
+//             scan_engine_pose_time_offset_ns(). Two new symbols, nothing
+//             else touched; zero is the ABI-8 behaviour exactly, so an ABI-8
+//             consumer relinks unmodified and resolves the same cloud.
+//             slam/pushbroom/pushbroom_assembler.h.
+inline constexpr std::uint32_t kEngineAbiVersion = 9;
 const char* engine_version_string();  // "scanengine 0.1.0 (<clock backend>)"
 
 struct EngineConfig {
@@ -330,6 +336,20 @@ class Engine {
   // out during a live preview.
   Status pushbroom_flush();
   PushbroomStats pushbroom_stats() const;
+
+  // --- ROUND 10 item 36 ---------------------------------------------------
+  //
+  // The constant lidar-clock -> pose-clock offset, in nanoseconds, applied
+  // when the assembler looks a pose up (PushbroomConfig::pose_time_offset_ns
+  // carries the full derivation). Settable mid-session, because the app
+  // exposes it as a live calibration slider and a reconnect to change a
+  // number would lose the capture.
+  //
+  // Takes effect for every point resolved after the call, INCLUDING points
+  // already pending — which is correct: they have not been placed yet, so
+  // they should be placed with the operator's newest answer.
+  Status set_pose_time_offset_ns(std::int64_t offset_ns);
+  std::int64_t pose_time_offset_ns() const;
 
   // Swap the assembler's trajectory between the pushed pose stream and the
   // RTK rover's. Takes effect for points assembled after the call; points

@@ -13,7 +13,8 @@ package com.lidarscan.core.capture
  *
  * Ground-plane only, and that is a decision: ARCore's world frame is Y-up, so the
  * trail is (x, z) and the height is dropped. A 3D ribbon would be prettier and
- * would tell a walking operator less.
+ * would tell a walking operator less. The screen order of those two axes is NOT
+ * arbitrary — see [normalized], which had it backwards until ROUND 10.
  *
  * Pure `:core` so the decimation and the fit are unit-testable; `:app` owns the
  * pose subscription and the Canvas.
@@ -78,8 +79,35 @@ class TrajectoryTrail(
     /**
      * Fits the trail into a [width] × [height] box with [paddingFraction] margin,
      * **preserving aspect** so a corridor looks like a corridor, and returns
-     * points in 0..1 with y already flipped for screen coordinates (canvas y grows
-     * downward, world z grows "up" in a top-down plot).
+     * points in 0..1 canvas space.
+     *
+     * ## ROUND 10 item 37 — this projection was MIRRORED, and here is the whole
+     * derivation, because "it looked backwards" is how the last one got shipped
+     *
+     * ARCore's world frame is right-handed and gravity-aligned: **+X right,
+     * +Y up, −Z forward** (the direction the camera looks). A trail tile is a
+     * bird's-eye view — the viewer is ABOVE the floor at +Y looking down −Y —
+     * so the screen basis has to satisfy
+     *
+     *     right × up = +Y     (the axis pointing OUT of the screen, at the viewer)
+     *
+     * Take `right = +X`. Then `up` must be **−Z**, because
+     * `X × (−Z) = −(X × Z) = −(−Y) = +Y`. World +Z is therefore *down* the
+     * tile. Canvas y also grows downward, so the mapping is `canvas_y = nz`
+     * with **no flip at all**.
+     *
+     * What shipped through 0.6.0 was `y = 1 − nz`, i.e. `right = +X, up = +Z`,
+     * whose out-of-screen normal is `X × Z = −Y` — a view from **underneath the
+     * floor looking up**. Every trail was therefore its own mirror image, and
+     * an operator turning left watched the trail turn right. That is exactly
+     * what the owner reported after ROUND 9 fixed the *points*: the two had
+     * never agreed, and fixing the points made the disagreement visible.
+     *
+     * It is the same rule the floor-plan canvas already follows and the same
+     * one the engine's own `plan/occupancy.cpp` uses for a Y-up cloud
+     * (`plan_x = world z, plan_y = world x` — the transpose of this, which is
+     * the same chirality with the tile rotated 90°). Those two were right; this
+     * file was the outlier.
      *
      * A trail with fewer than two distinct points has no extent to fit, so it maps
      * to the centre rather than dividing by zero.
@@ -114,7 +142,9 @@ class TrajectoryTrail(
         return pts.map { p ->
             val nx = pad + usable * ((p.x - minX + offsetX) / span)
             val nz = pad + usable * ((p.z - minZ + offsetZ) / span)
-            NormalizedPoint(x = nx, y = 1f - nz, tracking = p.tracking)
+            // NO flip: see the KDoc. World +Z goes DOWN the tile, which is what
+            // makes the tile a view from above rather than from below.
+            NormalizedPoint(x = nx, y = nz, tracking = p.tracking)
         }
     }
 

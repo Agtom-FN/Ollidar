@@ -301,3 +301,131 @@ Two assertions had to change, and both changes are the point:
   works off each packet's byte *offset* inside the reassembly buffer, so it
   recovers per-point structure even with slicing off — a real improvement that
   would otherwise have quietly disarmed the control.
+
+---
+
+## 10. ROUND 10 — MEASURING the lidar↔pose offset instead of assuming it
+
+ROUND 7 §4 named a "genuinely constant transport delay" on the D6 path, derived
+a **2 ms** default from first principles (one USB bulk frame plus one reader
+wake-up) and said honestly that no D6 existed here to measure against. ROUND 10
+had one: the owner's `scan-020` — 202.1 s, 293,524 in-range returns, 5,966
+ARCore poses and **80,661 phone-IMU samples at 399.1 Hz, all in the same
+container and the same clock domain**.
+
+### 10.1 The two crossings, measured separately
+
+| crossing | method | result |
+| --- | --- | ---: |
+| phone IMU ↔ ARCore pose | cross-correlate \|gyro\| (integrated over each pose interval) against the pose-derived angular rate, sweeping the lag | **−1.5 ms**, r = 0.982 |
+| D6 lidar ↔ ARCore pose | resolve the whole container at a sweep of `pose_time_offset_ns` and take the crispest map | **+4 ms**, curve flat to ±0.1 % over ±30 ms |
+
+The first is the stronger measurement and the more useful one: it says
+`Frame.getTimestamp()` and `SensorEvent.timestamp` agree to under two
+milliseconds on a Pixel 8 Pro, i.e. the CLOCK_BOOTTIME claim in ROUND 7 §4 is
+not just a documented intention, it is true on the hardware. It also removes
+that crossing from suspicion permanently, which is worth more than the number.
+
+The second is a **null result and should be read as one.** +4 ms is 4 mm at
+1 m/s and 0.24° at a 60 °/s turn, against the 4.8 cm wall thickness the same
+capture actually shows — two orders of magnitude down. The turn-around shift
+the owner reported is not a clock offset.
+
+### 10.2 The tool
+
+`tools/engine_cli.cpp --d6-timesweep <lscan-dir> [--from MS] [--to MS]
+[--step MS] [--no-densify] [--up X|Y|Z]` resolves the same container once per
+offset through the production `post::D6ResolvePipeline` and prints three
+crispness metrics per row:
+
+* **`wall_rms_cm`** — 2-D PCA thickness at wall probes chosen ONCE from the
+  reference (offset-0) pass and reused at every offset. Choosing them per
+  offset would measure "which offset yields the most selectable walls", which
+  is circular; the elongation filter is therefore applied only when the probes
+  are picked, never when they are measured.
+* **`occupied_vox`** — 3 cm voxels. Selection-free, so no fitting decision can
+  influence it. This is the metric that actually resolved on scan-020.
+* **`entropy_bits`** — Shannon entropy of the voxel histogram (the mean-map-
+  entropy family). Same direction, sensitive to how mass redistributes rather
+  than only to its support.
+
+`points` is printed per row and must stay flat: a sweep is only a measurement
+if the population being measured does not move with the knob.
+
+The up axis is **not detected**, deliberately. The first version guessed it
+from the tallest histogram peak, picked X on scan-020, silently emptied the
+wall band and reported zero walls at every offset. A D6 project is by
+construction an ARCore project (the D6 has no IMU, so only the phone can supply
+its trajectory) and ARCore's world is gravity-aligned with **+Y up**. A
+constant that can only be wrong loudly beats a heuristic that can be wrong
+quietly.
+
+### 10.3 What the sweep did find
+
+`--d6-timesweep` also prints the pipeline's own accounting, and two rows of it
+mattered more than the offset:
+
+* **`fallbacks by reason`** — the raw `imu_fallbacks` counter looked alarming
+  (196,823 of 455,402 queries, 43 %) until it was broken out: 162,236 of those
+  are `sample_at()` calls that returned no pose at all, which are the
+  assembler's *retries* on a point whose pose has not arrived yet, not
+  densification failures. The real fallback rate among resolved returns is
+  **11.8 %, essentially all `imu-gap`**.
+* **`imuCalibration` was `null`** in scan-020's manifest even though the
+  session log for that capture records `camera_from_imu = Rz(+90)`. That is
+  ROUND 8's `mountCalibration` bug one sensor down — `start_session()` writes
+  the manifest at `open()`, and the app applies the IMU extrinsic ~24 ms later
+  — so every offline re-resolve integrated the gyro in the wrong frame. Fixed
+  in `Engine::set_imu_extrinsics()` the same way ROUND 8 fixed the mount: push
+  it at an already-open recorder.
+
+### 10.4 The latency that WAS there
+
+`PushbroomConfig::batch_points` (4096) is a throughput number written for a
+Mid-360. At scan-020's measured **1,453 resolved points/s** it is **2.8 seconds**
+of points held in a `std::vector` before the PageStore, the renderer or the map
+cache sees one — which is most of "the scanning speed seems a bit slow and
+delay", and it is invisible to every offline test because offline nobody is
+watching. `max_batch_span_ns` (100 ms, one D6 revolution) bounds the batch in
+**point time**, never wall time, so the batch boundaries stay a pure function
+of the data and `assembles_identically_live_and_offline` still holds bit for
+bit. Measured in `tests/test_round10_time_offset.cpp`: first point visible
+after **2,825 ms → 100 ms**, 2,560 of 2,560 points bit-identical across the two
+batchings.
+
+## 11. ROUND 11 — the mount trim's cost, per metre of range
+
+`--d6-timesweep` (§10) measures the lidar↔pose clock offset and found it
+negligible. The error that is NOT negligible on this rig is the mount trim, and
+it has a closed form worth having written down beside the timing one because the
+two are confused easily and behave completely differently.
+
+A mount trim error is a small rotation `d` of the lidar inside the phone frame.
+It never changes a range, so it displaces every return **perpendicular to its own
+ray** by `r·sin(d)` in a direction fixed in the PHONE. Turning around does not
+change the trim — it changes which way the phone's axes point in the world — so
+the world-frame displacement reverses and the same feature is painted twice:
+
+    split = 2 · r · sin(d)
+
+Measured through the production assembler in
+`tests/test_round11_mount_trim.cpp` at r = 1.66 m: **13.1 cm at 2.4°**, 9.0 cm at
+1.4°, 3.7 cm at 0.8°. Scale linearly with range.
+
+Three properties distinguish it from a clock offset, which is why ROUND 10's
+sweep could not see it and ROUND 11's fixture could:
+
+* **rate-independent.** A clock offset costs `v·dt` and `ω·dt`; this costs the
+  same whether the operator walks or crawls. scan-020 was walked at 5.3 cm/s and
+  still shows the symptom.
+* **it doubles a FEATURE, it does not thicken a WALL.** The displacement is
+  perpendicular to the ray, so on a surface the fan looks at square-on the points
+  slide along it and the plane-fit RMS does not move. Every geometry metric in
+  this repository before ROUND 11 was a wall-flatness metric.
+* **only part of it reverses.** About the phone's RIGHT axis (camera +X) it
+  reverses in full and displaces overhead/underfoot returns along the walk;
+  about the phone's UP axis it does not reverse at all (for a vertically-held
+  phone that axis IS world up whichever way the operator faces) and simply
+  displaces the room by `r·sin(d)`, consistently, which is an error nobody
+  reports; about the forward axis it does nothing at all, because that is a
+  rotation inside the fan's own plane and the fan is 360°.

@@ -120,4 +120,16 @@ data class AppSettings(
      * would be deleting something this capture did not create.
      */
     val keepEmptyScans: Boolean = false,
+    /**
+     * ROUND 11 (owner item 43): haptic + audio operator cues, **default ON**.
+     *
+     * The phone is the sensor mount: on this rig it faces sideways at hip
+     * height while the operator walks and looks where they are going, so every
+     * on-screen hint the app has added since ROUND 5.3 is written for a reader
+     * who is not there. Default ON because a cue the operator has to go and
+     * find is a cue that is off during the one capture that needed it; the
+     * switch exists because a scan in a quiet building is a real reason to
+     * silence the tone.
+     */
+    val operatorCuesEnabled: Boolean = true,
 )

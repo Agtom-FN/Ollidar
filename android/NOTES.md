@@ -6086,3 +6086,837 @@ Android: `:core` 405 → **433**, `:app` unit 62 → **66**, emulator **16**.
    bytes.
 5. **Whether scan-015's recorded keyframe descriptors carry usable poses** —
    §6 step 1, which decides how expensive item 32 actually is. Not opened.
+
+---
+
+## ROUND 10 — THE CLOCKS WERE FINE, AND THE DELAY WAS SOMEWHERE ELSE
+
+Owner verdict on 0.6.0: *"the mirror issue fixed, the scan quality much better
+and real now. The thing on the left show on the left."* The handedness chain is
+closed. Five items came back; this section is what each one turned out to be.
+
+Field material: `captures/scan-020.lscan` (202.1 s walk, `sections=1`, streams
+`lidar.bin` / `poses_ar.bin` / `gnss.bin` / `map.bin` / `imu_phone.bin` at
+399.1 Hz, `mountTrim` 92.35°) and `captures/pixel_capture_log_2026-08-18_3.txt`.
+
+### 1. ITEM 36 — "i need to move very slow… when i turn around the scan position shifted"
+
+#### 1.1 The hypothesis was good, and it was wrong
+
+A constant offset between the pose timeline and the lidar timeline is the
+textbook explanation for that sentence: it costs `v·dt` along the walk (the
+whole cloud slides together, walls stay straight, nobody notices) and `ω·dt` of
+yaw (tangential, proportional to range, sign following the turn). It is
+invisible walking straight and glaring in a turn. It fits perfectly.
+
+So it was measured rather than assumed, twice, on the owner's own capture.
+
+**Crossing 1 — phone IMU ↔ ARCore pose: −1.5 ms, r = 0.982.** For every one of
+the 5,961 ARCore pose intervals, the pose-derived angular speed
+(`2·acos|q_i·q_{i+1}| / Δt`) against the same interval's mean |gyro|, integrated
+by trapezoid from the recorded 400 Hz stream, swept over lag. The peak is at
+−1.5 ms and does not move: first half −1.5, second half −1.5, and the fastest
+30 % of intervals (the turns, where the signal is strongest) −1.5 with r rising
+to 0.987. ROUND 7 §4 asserted from documentation that `Frame.getTimestamp()` and
+`SensorEvent.timestamp` are the same CLOCK_BOOTTIME; this is the hardware
+agreeing, and it retires that crossing as a suspect for good.
+
+**Crossing 2 — D6 lidar ↔ ARCore pose: +4 ms, and the curve is flat.** New tool,
+`engine/tools/engine_cli.cpp --d6-timesweep`: resolve the same container once per
+candidate offset through the production `post::D6ResolvePipeline`, score the
+resulting cloud, take the minimum. Swept −150 ms … +150 ms. The 3 cm
+occupied-voxel count bottoms out at +2.5…+5 ms (69,803 voxels against 69,879 at
+zero) and **the entire ±30 ms window varies by 0.1 %**. The wall-probe thickness
+is flat at 4.85 cm across the same range.
+
++4 ms is 4 mm at 1 m/s and 0.24° at a 60 °/s turn. scan-020's actual wall
+thickness is 4.8 cm. **The turn-shift is not a clock offset**, and the default
+stays 0 rather than shipping a 4 mm correction the data cannot distinguish from
+zero. `kD6PoseTimeOffsetMeasuredNs` records the number so the next round does
+not re-derive it.
+
+#### 1.2 What a real offset WOULD look like — `engine/tests/test_round10_time_offset.cpp`
+
+The null result is only useful if the method could have detected a positive one,
+so the same fixture proves the mechanism and the blind spot:
+
+| motion | 40 ms of injected lidar-stamp skew | wall RMS |
+| --- | --- | ---: |
+| straight walk, 1 m/s | none | 9.88e-06 cm → **9.88e-06 cm** |
+| turn in place, 60 °/s | same 40 ms | 3.37e-05 cm → **8.81 cm** |
+
+A 260,000× difference from the *same* error, decided entirely by whether the rig
+was rotating. **Every geometry fixture in this repository before ROUND 10 walked
+in a straight line**, which is why eight rounds of green tests could not have
+caught this class of bug — the same structural blind spot ROUND 9 found on the
+handedness side (every test measured a sign-blind quantity). The correction
+recovers the skew exactly, and a sweep's minimum lands on the injected truth
+(`best_ns == -kSkew`), which is what makes "resolve at a sweep and take the
+crispest" a measurement rather than a story.
+
+#### 1.3 The delay that WAS there: 2.8 seconds of it
+
+`PushbroomConfig::batch_points = 4096` — a throughput number, written for a
+Mid-360 doing hundreds of thousands of points a second, where 4096 points is a
+few milliseconds. The owner's D6 resolves **1,453 points/s** (measured: 293,524
+in-range returns over 202.1 s), so 4096 points is **2.8 seconds** of geometry
+sitting in a `std::vector` before the PageStore, the renderer or the map cache
+sees any of it. No refresh rate, no phone and no preset could be faster than
+that. It is invisible to every offline test because offline nobody is watching
+the screen.
+
+The batch now also closes on **point-time span** (`max_batch_span_ns`, default
+100 ms = one D6 revolution). Point time and not wall time is load-bearing: the
+assembler's header promises it "never reads a clock, never samples wall time",
+which is what makes `pushbroom/assembles_identically_live_and_offline` true. A
+wall-clock flush would make page boundaries depend on how busy the phone was.
+Measured: **first point visible 2,825 ms → 100 ms**, and **2,560 of 2,560 points
+bit-identical** between the two batchings.
+
+#### 1.4 The audit — every clock-domain crossing on this path
+
+| crossing | domain | correction applied | verdict |
+| --- | --- | --- | --- |
+| ARCore `Frame.getTimestamp()` | CLOCK_BOOTTIME | none needed | correct; measured at −1.5 ms against the gyro |
+| `SensorEvent.timestamp` | CLOCK_BOOTTIME | none needed | correct |
+| engine `timesync/clock.h` | `clock_gettime(CLOCK_BOOTTIME)` on Android | none | correct — bionic backs `steady_clock` with CLOCK_MONOTONIC, which stops during suspend |
+| D6 UART bytes → engine time | none (the D6 has no clock) | ROUND 7 per-byte back-dating at 230400 baud; ROUND 9 per-sample cadence + min-delay anchor; app's 2 ms sensor-latency setting | correct to within the +4 ms measured |
+| lidar time → pose lookup | — | **NEW** `PushbroomConfig::pose_time_offset_ns`, default 0, ABI 9 | the knob this round added |
+| `TimeSync` min-delay estimator | — | deliberately NOT on the D6/pose path (`stream_has_device_clock` is false for both) | correct — there is no device clock to estimate against |
+
+**`liveSlam=false` on OPTIMAL gates nothing for a D6**, re-confirmed at the
+source: `engine.cpp`'s `if (cfg.live_slam)` block constructs a `LioOdometry`,
+which is the Mid-360's lidar-inertial odometry. The D6's live map is the
+pushbroom, enabled separately, and the owner's log shows
+`pushbroomEnabled=true` on every capture. **IMU densification IS live**: the
+`ImuDensifiedPoseSource` is built in `Engine::create` and wired between the pose
+source and the assembler unconditionally (`engine.cpp` ~line 574), not behind a
+session flag.
+
+#### 1.5 Two real bugs found while measuring
+
+**`imuCalibration` was never recorded.** scan-020's manifest says
+`"imuCalibration": null` while the session log for that same capture says
+`camera_from_imu=derived (… Rz(+90) …)`. Identical in shape to ROUND 8's
+`mountCalibration` bug: `start_session()` writes the manifest at `open()`, and
+the app applies the IMU extrinsic ~24 ms later (log: `[session] start`
+11:06:25.799 → `phone IMU start` 11:06:25.823). Consequence:
+`D6ResolvePipeline` falls back to the identity `camera_from_imu`, so **every
+offline re-resolve so far integrated the gyro in the wrong frame** — the
+endpoints stay pinned to ARCore so it cannot run away, but the path between them
+is distorted, and "replay == capture" silently stopped holding for the one
+stream ROUND 9 added to shape the geometry. Fixed the way ROUND 8 fixed the
+mount: `Engine::set_imu_extrinsics()` also pushes at an already-open recorder,
+under `pushbroom_m → imu_m → record_m`.
+
+**The point count shown is ~2× the truth.** `[seal] … points=584315` for
+scan-020; re-resolving yields **293,166** world points and the pushbroom's own
+accounting is 293,524 in / 293,166 out / **0 dropped**. The live counter is
+summing the raw sensor-frame preview stream and the resolved map stream. Not
+fixed — reporting, not data. **Backlog.**
+
+**And one that looked like a bug and was not:** `imu_fallbacks` read 196,823 of
+455,402 queries (43 %) with only 34,587 accounted for by reason. The missing
+162,236 are `sample_at()` calls that returned no pose — the assembler's
+*retries* on a point whose bracketing pose has not arrived yet, not
+densification failures. `D6ResolveStats` now carries the full `ImuDensifyStats`
+so the breakdown is visible: the real fallback rate among resolved returns is
+**11.8 %**, essentially all `imu-gap`.
+
+### 2. ITEM 37 — the trail was mirrored, and its test asserted the mirror
+
+`TrajectoryTrail.normalized()` projected `screen_right = +X, screen_up = +Z`.
+In ARCore's right-handed +Y-up world the out-of-screen normal of that basis is
+`X × Z = −Y` — **a view from beneath the floor looking up**. A bird's-eye view
+requires `X × (−Z) = +Y`, so world +Z goes *down* the tile, and since canvas y
+already grows downward the correct mapping has **no flip at all**. Shipped:
+`y = 1 − nz`. Now: `y = nz`.
+
+Two siblings already had it right and disagreed with this file: `PlanScreen`'s
+canvas, and the engine's `plan/occupancy.cpp` (`kY → plan_x = world z,
+plan_y = world x` — the same chirality with the tile rotated 90°). The trail was
+the outlier, and three comments in its own data path contradicted each other
+about whether +Z was "north" or "south-ish".
+
+**Everything else that consumes poses for display was audited and is clean.**
+The 3D orbit view uploads world XYZ to Filament verbatim (no negation, no swap,
+right-handed `lookAt`, `upVector(0,1,0)`); `FollowCamera`'s `atan2(dz, dx)` is
+the exact inverse of its own `headingVector(θ) = (cos θ, 0, sin θ)`, so the
+angle round-trips and its rotational sense is unobservable, and its default
+heading `−π/2` resolves to `(0,0,−1)` = ARCore forward; the review screen draws
+no path; the project thumbnail's "trajectory" is a decorative bezier drawn at
+`alpha = 0` on the placeholder only. There was exactly one 2-D projection of
+poses in the app.
+
+`TrajectoryTrailTest`'s `screen y is flipped so north is up` **asserted the
+bug** and is replaced by two cases: forward (−Z) must go up the tile, and the
+owner's acceptance test verbatim — an L-shaped walk turning **LEFT** must render
+a trail turning left, with left derived as `up × forward = −X` rather than
+hard-coded.
+
+### 3. ITEM 38 — the live cloud belongs to the process, not to the capture
+
+Root cause, in one sentence: **`RealEngineBridge` holds one `scan_engine*` for
+the app's lifetime and the engine's `PageStore` is created with the engine, not
+with the session, so capture #2 opened on top of capture #1's pages.**
+
+Everything in the ViewModel was already being reset — `_uiState` to `NewScan`,
+the typed name, the stats, the section count, all of it, with ROUND 8's comment
+listing what was "deliberately NOT touched" and `_pointCloudSource` on that
+list. That list was wrong about one entry, and it happened to be the one filling
+the screen.
+
+The engine has had the fix since ABI 7: `Engine::start_session()` calls
+`recycle_all()` and its comment names this exact failure ("a preview + N record
+cycles on ONE connect all stacked into the same 64 pages"). But that reset is
+gated on `PageFullPolicy::kEvictOldest`, eviction is opt-in, and **Android never
+opted in** — there was no `nativeSetLivePageEviction` and no
+`nativeRecycleLivePages` in `ScanEngineNative` at all. Two C-ABI calls that had
+existed for three rounds and were never bound. (`LivePageStoreSizing`'s KDoc
+still said "eviction is an engine change and the engine tree is read-only for
+this task", which was true when it was written.)
+
+Now: both bound; eviction enabled at `createEngineHandle()` (which also means
+the live map recycles instead of dead-ending when its page budget fills — the
+`fullNote` path becomes unreachable in normal use); the window emptied before
+`nativeStartSession`, on entering the Capture tab, and on every seal. The
+renderer half matters too — `PointCloudRenderer.setSource()` only clears its GPU
+pages when handed `null`, so `clearLiveViewport()` recycles first and *then*
+null-and-re-reads the source flow.
+
+**The navigation was a second, independent bug.** `sealedProjectId` was
+`MutableSharedFlow(replay = 0, extraBufferCapacity = 4)` with a comment claiming
+the buffer covered "a collector that is momentarily absent". It does not:
+`extraBufferCapacity` is slack for a **slow** subscriber, and with **zero**
+subscribers a `replay = 0` flow discards the value while `tryEmit` still returns
+true. The seal runs `NonCancellable` inside `viewModelScope`, so it survives the
+composition being disposed — an Activity recreation mid-seal keeps the scan and
+loses the navigation, which is exactly "sealed fine, stayed on Capture". Now
+`replay = 1`, and both branches log (`navigate -> Projects id=…` or the reason
+for staying) so the next field log settles it without inference.
+
+Verification: `CaptureRound10LifecycleTest` (JVM) — a collector that subscribes
+*after* the seal completes still receives the id; capture→stop→capture in one
+ViewModel seals two scans and re-arms with a fresh auto-name, a cleared typed
+name and zeroed stats; the live window is emptied on entry and again after each
+seal (counted through an overridable `FakeEngineBridge`).
+`CaptureRound10LiveWindowTest` (instrumented, emulator) — the real native
+engine: eviction enabled, session #1 fed **real COIN-D6 UART bytes** from the
+bundled `assets/replay/synth.lscan` fixture through the production driver seam
+(`nativeAddD6Device` + `nativePushSerialBytes`), sealed, recycled, session #2
+started on the same handle with the page count asserted **0**, fed, sealed —
+both projects listable with points.
+
+**What was deliberately NOT changed:** a capture that recorded zero points is
+still pruned and still does *not* navigate (ROUND 9 item 33). The red no-data
+banner lives on the Capture tab and navigating away from it would hide the only
+explanation the operator gets.
+
+### 4. ITEM 39 — de-clutter, flagged rather than deleted
+
+`core/FeatureFlags.kt` — three `const val`s in `:core` (which has no
+`BuildConfig`, and these have to be readable from `:core` defaults as well as
+`:app` composables), following the `AR_OVERLAY_ARCHIVED` precedent from ROUND 7.
+
+* **Follow camera** — hidden in *both* places it lived: the Display sheet's View
+  row and a second Orbit/Follow pill on the viewport. Two controls for one piece
+  of state; finding only one would have left the feature reachable. Default
+  camera mode is now ORBIT for capture as well as replay. `FollowCamera`, its
+  config and its tests are untouched.
+* **RGB** — removed from the capture sheet, the review chip strip and the review
+  Display panel (which iterated `ColorMode.entries` and so surfaced RGB *and*
+  FIX_QUALITY regardless of what the rest of the app did), and it now carries a
+  reason string in `colorModeAvailability` like every other unavailable mode.
+  `ColorMode.RGB` itself stays: its ordinal crosses the C ABI into the shader
+  (`colorMode.ordinal`) and it is the fallback every unsupported mode degrades
+  to.
+* **Colorize** — the keyframe switch, the rate row, the viewport KF chip, the
+  Processing tab's Colorize action and Settings' whole "Processing" section.
+  Gated at the **state** as well as the UI (`_keyframesEnabled`, `applyTuning`,
+  `setKeyframesEnabled`), because `CaptureTuning` writes that flow on every
+  preset change and would otherwise have turned the recorder back on behind a
+  hidden switch. ARCore is untouched — it is the pose engine and the D6's third
+  dimension.
+
+**Defaults checked one by one, and one was wrong in three places at once.**
+
+| setting | before | after |
+| --- | --- | --- |
+| view mode | FOLLOW (capture) | **3D orbit** |
+| colour mode | INTENSITY | unchanged |
+| colormap | **SPECTRUM or GRAYSCALE depending on the path** | **GRAYSCALE**, from one constant |
+| point size | 1.0 px, FIXED_PIXELS | unchanged |
+| gamma / brightness | 1.0 / 1.0 | unchanged |
+| live refresh | 30 fps on STANDARD/FLAGSHIP | unchanged |
+
+The colormap was the interesting one: the QUICK_SCAN profile default said
+GRAYSCALE, `DisplayParams.captureDefaults()` set no colormap at all and
+therefore inherited `ScalarColorParams`' own SPECTRUM, and `CaptureViewModel`
+initialised its own flow to SPECTRUM independently. Three sources, two answers,
+and which one won depended on which screen the value came through. There is now
+one constant, `DisplayParams.CAPTURE_COLORMAP`, and all three read it.
+
+Live refresh is left tier-dependent on purpose: 30 fps is what the owner's Pixel
+gets, and a MODEST-tier phone starting at 15 fps is ROUND 6 item 21's
+conservative-defaults rule, not an oversight.
+
+### 5. ITEM 40 — the capture log's filename
+
+`CaptureLog.exportFileName(epochMillis)` →
+`lidarscan-capture-log-YYYY-MM-DD-HHMM.txt`, **device local time, to the
+minute** — deliberately the same format and the same clock `ScanAutoName` uses,
+so `Scan-020-2026-08-18-1106` and `lidarscan-capture-log-2026-08-18-1111.txt`
+can be paired by eye. The old `EXPORT_NAME` was a bare constant, which is why
+MediaStore had been de-duplicating exports into `lidarscan-capture-log (1).txt`
+— an artifact this repository quotes in its own source (`MountTrim.kt` cites one
+from the owner's 0.4.0 session). Seconds are omitted for the same reason the
+scan names omit them; two exports inside one minute are the one case where
+MediaStore's `(1)` suffix is the right answer.
+
+### 6. FILES
+
+Engine:
+* `include/scanengine/slam/pushbroom/pushbroom_assembler.h` — `pose_time_offset_ns`,
+  `max_batch_span_ns`, `kD6PoseTimeOffsetMeasuredNs`
+* `src/slam/pushbroom/pushbroom_assembler.cpp` — the offset at the pose lookup,
+  the point-time batch bound
+* `include/scanengine/core/engine.h`, `src/core/engine.cpp` — ABI 9,
+  `set_pose_time_offset_ns`, and the `imuCalibration`-at-an-open-recorder fix
+* `capi/scanengine_c.h`, `capi/scanengine_c.cpp` — ABI 9 (two new symbols,
+  additive)
+* `include/scanengine/slam/post/d6_resolve.h`, `src/slam/post/d6_resolve.cpp` —
+  full `ImuDensifyStats` in `D6ResolveStats`
+* `tools/engine_cli.cpp` — `--d6-timesweep`
+* `tests/test_round10_time_offset.cpp` — 5 cases
+* `src/drivers/d6/d6_driver.cpp` — a leftover unused `kDegToRad` from ROUND 9's
+  fan extraction (it broke the `-Werror` build)
+* `docs/A2-d6-driver.md` §10
+
+Android:
+* `core/FeatureFlags.kt` (new)
+* `core/render/DisplayParams.kt` — `CAPTURE_COLORMAP`, RGB availability reason
+* `core/capture/TrajectoryTrail.kt` — the projection
+* `core/engine/EngineBridge.kt` — `resetLiveView()`
+* `core/engine/FakeEngineBridge.kt` — `open`, so a test can count resets
+* `app/engine/ScanEngineNative.kt`, `app/src/main/cpp/scanengine_jni.cpp` —
+  `nativeSetLivePageEviction`, `nativeRecycleLivePages`,
+  `nativeSetPoseTimeOffsetNs`
+* `app/engine/RealEngineBridge.kt` — eviction on, recycle at start,
+  `resetLiveView`
+* `app/ui/capture/CaptureViewModel.kt` — `clearLiveViewport`, ORBIT default,
+  GRAYSCALE default, keyframe gating, `replay = 1`, navigation logging
+* `app/ui/capture/CaptureSheets.kt`, `CaptureScreen.kt`,
+  `app/ui/review/ReviewScreen.kt`, `app/ui/processing/ProcessingScreen.kt`,
+  `app/ui/settings/SettingsScreen.kt` — the flagged UI
+* `app/debug/CaptureLog.kt` — `exportFileName`
+* tests: `CaptureRound10LifecycleTest` (JVM), `CaptureRound10LiveWindowTest`
+  (instrumented), `TrajectoryTrailTest` (rewritten chirality cases)
+
+### 6b. VERIFICATION
+
+* **Engine**: `ctest` **7/7 green**; `scanengine_tests` **558 cases / 2,335,227
+  assertions, 0 failures** (553 cases before this round — the five new ones are
+  `test_round10_time_offset.cpp`). Three assertions were updated for the ABI
+  8 → 9 bump and nothing else moved, which is the point of an additive ABI.
+* **Android JVM**: `:core:test` **434 tests**, `:app:testDebugUnitTest`
+  **70 tests**, 0 failures, run three times consecutively with `--rerun-tasks`.
+* **Android instrumented**: `:app:connectedDebugAndroidTest` on the `b4_test`
+  AVD — **17 tests, 0 failures** (16 before this round; the new one is
+  `CaptureRound10LiveWindowTest`).
+* **APK**: `versionCode 700`, `versionName 0.7.0`, derived from the repo-root
+  `VERSION` file as the owner's rule requires.
+
+Two test-harness notes, because both cost time and neither is a product bug:
+
+* **`mid360_sim_e2e` is load-sensitive and its failures are not regressions.**
+  It asserts real throughput (`pps > 0.97 × nominal`, `imu_hz > 0.97 ×
+  nominal`) over a loopback UDP link, so running it beside a booted emulator
+  and a parallel Gradle build makes it fail on timing. It also inherits the
+  round-4 item-6 problem: **killing `ctest` leaves the `scanengine_tests` child
+  alive holding the UDP ports**, and the next run then fails instantly with
+  `bind failed` rather than with a timing miss. Green 7/7 on a quiet machine;
+  the two failure modes are distinguishable by runtime (3 s = port conflict,
+  ~205 s = genuine timing).
+* **One pre-existing race in `CaptureRound7FieldBugsTest` was de-raced.** It
+  polled the log for `[seal] sealed` and then sampled `noDataAlert` in the same
+  breath — but the banner is set *after* the prune decision, which is a
+  `withContext(Dispatchers.IO)` hop. It now waits for the banner. The claim is
+  unchanged (the alert survives the stop); only the sampling stopped being a
+  coin flip.
+
+### 7. EXPLICITLY NOT VERIFIED / BACKLOG
+
+* **The turn-around shift itself is not closed.** The clock hypothesis is
+  falsified with numbers, and the live-view latency (2.8 s → 100 ms) is a real
+  and large fix that plausibly accounts for "seems slow and delay" and for
+  needing to walk slowly. Whether it accounts for the *positional* shift on a
+  turn is unproven. The remaining ranked suspects, from the data:
+  1. **Mount trim accuracy.** scan-020's trim was accepted at `spread=2.65°,
+     spreadP90=2.40°` — the gate's own ceiling. A 2.4° extrinsic error is
+     ~12 cm at 3 m, it is applied in the *phone* frame, and it therefore
+     **reverses in world terms when the operator turns around** — the same
+     wall painted twice, which is the reported symptom, and it is
+     rate-independent in a way a clock offset is not. Tightening the gate (or
+     averaging several re-zeros) is the cheapest next experiment.
+  2. **ARCore VIO lag under motion**, which is not a constant offset and would
+     not have shown up in the sweep.
+  3. **The 11.8 % `imu-gap` densification fallback rate**, if it clusters on
+     fast rotation.
+* The +4 ms lidar↔pose offset is measured on ONE capture on ONE phone. It is
+  recorded as a constant, not applied as a default.
+* The `imuCalibration` fix is verified by construction and by the engine suite,
+  **not** on hardware — no capture written by this build exists yet. The first
+  0.7.0 capture's manifest should be checked for a non-null `imuCalibration`.
+* The double-counted point total (584,315 shown vs 293,166 real) is **not
+  fixed**.
+* `--d6-timesweep`'s wall-probe metric found only 7 usable probes on scan-020
+  and was flat across the whole sweep; the occupancy/entropy metrics carried the
+  measurement. A capture with more straight wall would sharpen it.
+* Nothing was run on kc-m4; macOS/desktop untouched.
+
+## ROUND 11 — THE ACCURACY WAVE, AND THE ONE NUMBER THAT EXPLAINS THE TURN
+
+Ships with ROUND 10 as **0.7.0** (`versionCode 700`). Items 41–45 plus the
+double-counted point total ROUND 10 left on the backlog.
+
+The headline is item 45c: **ROUND 10's ranked suspect #1 was right, and it is
+now measured rather than estimated.** A 2.4° mount trim error — which is what
+scan-020 was captured with, at the gate's own 2.5° ceiling — paints the same
+overhead feature **13.1 cm apart** between the outbound and return legs of an
+out-and-back walk, and the split **reverses with the walk direction**. That is
+"when i turn around the scan position shifted", to the centimetre.
+
+### 1. ITEM 45c — WHAT 2.4° COSTS, AND WHICH PART OF IT REVERSES
+
+`engine/tests/test_round11_mount_trim.cpp`. An out-and-back past a ceiling beam
+1.66 m above the sensor, resolved through the production
+`D6PushbroomAssembler`, with the TRUE lidar orientation offset from the one the
+assembler is told. Measured, not derived:
+
+| trim error | beam painted outbound | on the return | **split** | 2·r·sin(d) predicts |
+| ---: | ---: | ---: | ---: | ---: |
+| 0.0° | −3.0156 m | −3.0056 m | **1.0 cm** | 0 (this is the fixture's own floor) |
+| 0.5° | −3.0156 m | −3.0056 m | **1.0 cm** | 2.9 cm |
+| 0.8° | −3.0156 m | −2.9789 m | **3.7 cm** | 4.6 cm |
+| 1.4° | −3.0326 m | −2.9426 m | **9.0 cm** | 8.1 cm |
+| **2.4°** | −3.0763 m | −2.9454 m | **13.1 cm** | 13.9 cm |
+
+Scale by range: the split is `2·r·sin(d)`, so a return at 3 m costs 3/1.66 =
+**1.8×** these numbers — **23.6 cm at 2.4°** against 6.6 cm at 0.8°. The
+fixture resolves to about 1 cm (a D6 puts 400 returns into one 10 Hz
+revolution, so the beam's 30 cm underside is sampled by ~11 fan angles), which
+is why 0.5° reads as the floor rather than as 2.9 cm.
+
+**Two things this measurement corrected in ROUND 10's write-up, and both
+matter.**
+
+**(a) It is a doubled FEATURE, not a thickened wall.** The displacement is
+perpendicular to the return's own ray, so on a wall the D6 looks at square-on
+the points slide ALONG the wall and the wall does not thicken by a millimetre.
+Every geometry metric this repository had before ROUND 11 — plane-fit RMS, band
+thickness, `--d6-timesweep`'s wall probes — is a wall-flatness metric, and not
+one of them can see this. The owner's own words are the better description:
+"the scan position shifted", not "the walls got thick".
+
+**(b) Only PART of a trim error reverses, and it is not the part you would
+guess.** Measured three ways in the same fixture:
+
+| trim error about | effect | reverses on turn-around? |
+| --- | --- | --- |
+| camera **+X** (the phone's right) | tilts the fan plane fore/aft; displaces overhead and underfoot returns ALONG the walk | **yes, in full** — the axis points world +X out and world −X back |
+| camera **+Y** (up) | yaws the fan; displaces sideways returns along the walk | **no** — for a vertically-held phone this axis IS world up either way. Measured: 6.5 cm of displacement at 2.4°, and a 1.0 cm split (i.e. none) |
+| camera **−Z** (forward) | a rotation inside the fan's own plane | **no effect at all** on a 360° fan |
+
+So a mount error has a component that doubles features and a component that
+silently displaces the whole room. The gate measures the magnitude and cannot
+tell them apart, which is the argument for driving the magnitude down rather
+than for characterising the axis.
+
+**(c) A one-way walk hides it completely.** Same 2.4°, outbound only: the beam
+is painted in exactly one place, 6.1 cm from the truth, with its depth spread
+unchanged (25.8 cm clean → 25.755 cm at 2.4°). One pass sees one beam, in the
+wrong place, and has no way to know it. That is why eight rounds of fixtures
+missed this — the same structural blind spot ROUND 9 found on handedness (every
+test measured a sign-blind quantity) and ROUND 10 found on the clock (every
+fixture walked in a straight line).
+
+### 2. ITEM 45a/b — THE GUIDED RE-ZERO, AND WHY "SPREAD FALLING TO 0.8°" WOULD
+### HAVE BEEN A LIE
+
+`core/calib/MountTrimRefiner.kt`. Same ROUND 8 gate underneath — same 1 s
+window, same p90 ≤ 2.5° and outlier ≤ 6°, `MountTrimSampler` untouched — with
+the gate asked **ten times a second** instead of once per tap.
+
+* **The ring.** Tap Re-zero, hold the rig still, watch the mount chip become a
+  progress bar. It fills while the gate passes and **empties the instant it
+  does not** (the hold anchor jumps to now), so an operator learns what "still"
+  means with their hands instead of by reading a verdict on a moment that has
+  already finished. The owner's 0.4.0 log has seven MOVING refusals in
+  forty-four seconds; ROUND 8's answer was to make each refusal explain itself,
+  which helped and was still the wrong shape.
+* **The refinement, and the thing item 45c's wording nearly got wrong.**
+  `spreadP90Deg` measures the JITTER of individual ARCore frames about their
+  mean. Holding for four seconds instead of one does **not** reduce it — it is a
+  property of the tracker and of the hand. A UI promising "improving… 1.4°"
+  against the spread would be promising something that does not happen, and the
+  test asserts it does not (`assertEquals(short.spreadP90Deg, long.spreadP90Deg,
+  0.5)`).
+  What DOES improve is the accuracy of the MEAN, which is what gets stored. And
+  rather than model it — a standard-error argument needs independent samples,
+  and ARCore's visibly wander together over a second or two — the refiner
+  **measures** it: split the hold in half, average each half separately, report
+  the angle between the two answers. That is an empirical answer to "if I took
+  this trim twice, how far apart would they be", it needs no noise model, it
+  catches correlated wander (asserted: a 2° wander over a 14 s period reads
+  worse than none), and it is conservative by about √2. It is what the ring
+  counts down and what "Improving… 1.4°" reports.
+* **The trim is averaged over the whole hold**, not the gate's last second: 6 s
+  at 30 Hz is ~180 samples against ~31, asserted, with the two answers agreeing
+  to well inside the jitter.
+* **Auto-refresh at Start (45b).** `maybeAutoRefreshMountTrim()` runs at the top
+  of `startCapture()`. If the trim is older than 10 minutes or came from a
+  previous app run, AND the ROUND 8 gate passes right now, it is silently
+  re-taken and logged. If the gate refuses, the OLD trim stays and an amber note
+  says how old it is — refusing to Start would be worse (the operator is holding
+  a rig, ready to walk), but a stale trim entering a scan with no mention
+  anywhere except a log line read afterwards is what this closes. Deliberately
+  NOT the guided hold: Start must be instant, and this reads the pose window
+  that is already streaming.
+* `CaptureArController.motion` is now a **320-sample** ring rather than 64.
+  64 is 2 s at ARCore's measured 30 Hz, so an 8 s refinement would have silently
+  stopped improving after two seconds while the ring showed it still filling.
+  `RigMotionTracker.estimateAt` filters by its own 100 ms window and is
+  unaffected.
+
+### 3. ITEM 41 — LOOP CLOSURE, AND FIVE GATES THAT ALL HAD TO EXIST
+
+`engine/include/scanengine/slam/post/trajectory_loop.h` +
+`src/slam/post/trajectory_loop.cpp`, wired into `D6ResolvePipeline` behind
+`close_loops` (default **off** — see below) and driven by a new
+`engine_cli --d6-loopclose`.
+
+**Why it is not `post/pose_graph.h`.** A7 already owns an SE(3) pose-graph
+optimizer and a Scan Context detector, and both are the wrong tool: they exist
+because a Mid-360's trajectory is ESTIMATED and every keyframe pose is a free
+variable. A D6's trajectory was MEASURED by ARCore, whose error is not the
+pose-graph error model — VIO drift is a slow, smooth walk of the world frame
+(excellent over one second, which is what makes ROUND 9's gyro densification
+work; large over 200). So the correct correction is not "re-balance 6,000
+poses", it is "the world frame has rotated and slid by THIS much, spread it back
+along the path".
+
+**The correction, and why no re-resolve is needed.** A D6 world point is exactly
+`T_world_phone(t) · T_phone_lidar · p_lidar`, so a world-frame correction
+`C(t)` applied to the pose is the same as `C(t)` applied to the point. The
+assembler therefore grew one optional output — `PushbroomConfig::out_point_times`,
+the pose-time of every point that actually reached the PageStore, in emit order
+— and the closure is applied to the resolved cloud in place. `C(s) =
+Exp(s·Log(T_fix))` with `s` the **arc-length** fraction between the two visits
+(drift accumulates with distance, not with seconds — a 30 s pause mid-walk must
+not be handed a third of the correction), clamped to 0 before the first visit
+and 1 after the second. `Exp(0)` is identity to the last bit and `Exp(1·Log(T))`
+is `T` to the last bit, both asserted.
+
+**The five gates, in the order they refuse.** Every one of them was added
+because something got past the ones before it:
+
+1. **Spatial revisit** — two poses ≥15 s and ≥8 m of path apart, ≤3 m of gap. A
+   one-way walk produces **no candidate at all**: the guard against the
+   catastrophic case is structural, not a threshold.
+2. **Excursion** — the path between them must reach ≥4 m from the first. Without
+   it a rig shuffling in one corner is a perfect loop candidate at every pair of
+   poses it recorded (the test walks 20 m of path inside a 1 m box and this is
+   what stops it).
+3. **3a. Observability** — *the gate this round exists because of, and it is a
+   property of the sensor.* A D6 sweeps a PLANE perpendicular to the walk, so
+   over a short window its returns land on the walls ahead and behind, the floor
+   and the ceiling, and on **no surface whose normal points along the walk**.
+   Point-to-plane ICP measures distance along normals, so translation along the
+   walk costs it exactly zero residual — the problem has a null space, and an
+   ICP with a null space does not fail, it **wanders**. Measured on this round's
+   own fixture: 4°/0.30 m of injected drift came back as 3.77° (right) and
+   **2.74 m** of translation, all of it along the walk. The target submap's
+   normals are now collected by local plane fit, `Σ n nᵀ` eigen-decomposed, and
+   a coverage below λ_min/λ_max = 0.05 refuses with the reason named. Widening
+   the submap window to ±6 s is the cure where a cure exists (walking a curve
+   turns the fan and fills the gap in); on a dead-straight out-and-back there is
+   none, and the honest answer is a refusal.
+4. **Geometric agreement** — A7's `icp_point_to_plane` and A7's
+   `loop_is_acceptable`, unmodified, at ≥45 % inliers and ≤0.20 m RMS. A7's 30
+   iterations and 1e-5 rad / 1e-4 m stopping thresholds were loosened to 60 and
+   1e-4 rad / 1e-3 m — 0.006° and 1 mm, two orders below anything that changes
+   the answer — because two sparse anisotropic D6 submaps floor out around 1e-4
+   and A7's rule reported "did not converge" on perfectly good closures. **A
+   stopping rule, not an acceptance rule**; every acceptance gate is untouched.
+5. **Magnitude** — ≤0.60 m and ≤6.0°, and these numbers are an empirical finding
+   rather than a guess. Run against the owner's scan-020 with a generous
+   1.5 m / 20° bound, ICP produced a **0.97 m / 17.0°** "closure" with 77.8 %
+   inliers whose same-place mismatch genuinely improved from 77 cm to 12 cm —
+   and which raised the whole map's occupied-voxel count by **8.6 %**. Locally
+   right, globally a fold. ARCore's real indoor drift over 200 s is tens of
+   centimetres and a couple of degrees; 17° is not drift.
+6. **Whole-map crispness** — the correction is applied to a copy and the cloud
+   is asked, with ROUND 10's own metric (occupied 3 cm voxels). **And it is only
+   asked where the question has an answer**: occupancy carries information about
+   a correction only where the walk painted the same place twice. Measured both
+   ways this round — on the synthetic single-lap fixture a closure that cut the
+   worst per-point error from 61 cm to 16 cm still RAISED the voxel count 1.8 %
+   (a re-warp of a singly-painted cloud moves the count by a percent or two from
+   resampling alone), while scan-020's false 17° closure raised it 8.6 %. So the
+   **overlap fraction** — the share of occupied voxels holding returns more than
+   `min_loop_seconds` apart — is computed first, and the crispness rule is
+   enforced only above 5 %. Below that the gate abstains and says so, rather
+   than voting on no evidence. Without this it would veto every good closure
+   there is.
+
+**Synthetic ground truth** (`test_round11_loop_closure.cpp`): one lap of a
+2.5 m-radius circle in an 8×8×3 m room with three posts, resolved twice from the
+same ranges — once against the true poses, once against poses corrupted by 4° of
+yaw growing as `s^1.5` plus 0.30 m of translation with a quadratic term
+(deliberately **not** the SE(3) geodesic the correction is built from, so
+"it closes" is a claim about recovery and not about a rigged fixture).
+
+| | mean per-point error vs truth | worst |
+| --- | ---: | ---: |
+| drifted | 17.17 cm | 61.12 cm |
+| **closed** | **8.94 cm** | **16.01 cm** |
+
+— **74 % of the worst-case error removed**, and ICP measured 3.99° against the
+4.0° injected. The residual is neither zero nor noise: the injected drift grows
+as `s^1.5` while the correction is linear in `s`, so they agree exactly at both
+ends and differ by up to 0.6° in the middle, ~3 cm at 3 m. That is the honest
+limit of a one-loop correction, and it is the reason a multi-loop capture would
+want a real graph.
+
+**On the owner's scan-020, it refuses — and the refusal is the finding.**
+
+```
+trajectory : 5966 poses over 202.1 s, 10.8 m walked,
+             extent 0.24 x 0.11 x 4.57 m, furthest from start 3.67 m, start->end 0.52 m
+DECISION   : no-excursion  (27,216 spatial candidates)
+```
+
+Two things fall out of that line that nobody had looked at before:
+
+* **The walk is 10.8 m in 202 seconds — 5.3 cm/s.** The owner said "i need to
+  move very slow to capture the stable quality" and that is what very slow
+  turned out to mean: about a twentieth of a walking pace.
+* **It is an out-and-back along a straight line**, 3.67 m out and back, with
+  24 cm of lateral extent over the whole capture. Not a loop, and 3.67 m is
+  under the 4 m excursion floor. Forced past it (`--min-excursion 3.0`) it
+  reaches ICP, which proposes a **176° flip** — the corridor-mistaken-for-itself
+  failure, textbook — and gate 4 refuses it. **Nothing was moved; the cloud is
+  byte-for-byte what the app produces.**
+
+`close_loops` therefore defaults **off** in `D6ResolveConfig`, and that is a
+decision rather than caution: this pipeline's contract is "replay == capture"
+(Tech Spec §3 key rule 2), and loop closure deliberately produces DIFFERENT
+points. It may never happen behind a caller's back.
+
+### 4. ITEM 42 — COVERAGE COLOURING
+
+`core/render/CoverageGrid.kt` + `PointCloudRenderer`. A fixed-lattice voxel
+count (25 cm, anchored at the world origin so the answer never depends on
+arrival order) turned into a per-point tint the renderer writes into **its own
+GPU copy** of the vertices.
+
+`ColorMode.COVERAGE` is the one value in that enum whose ordinal must never
+cross the C ABI. Every other mode is a shader branch — the engine's
+`scanengine::cloud::ColorMode` has the same values in the same order and
+`points.mat` switches on the integer — but coverage is not a shader branch at
+all, so `PointCloudRenderer.shaderColorMode()` asks for plain RGB pass-through
+(mode 0) and the shader never learns coverage exists. That is what keeps item
+42's promise that the tint is never written into the container: it lives in a
+Filament VertexBuffer for as long as the live view does, and the engine's
+PageStore — which is also the map cache that gets sealed — is read and never
+touched.
+
+* **The ramp.** A fully covered point keeps its own shade **exactly** (asserted
+  byte-for-byte), so a well-scanned room in coverage mode is indistinguishable
+  from the grayscale-intensity view the owner made the default in ROUND 10 item
+  39 — which is what "works with the intensity/grayscale default" has to mean,
+  and the only way this becomes a mode anyone leaves on. As coverage falls the
+  point is pulled toward amber (not red: red is already the app's failure colour
+  and "thin here" is not a failure) and brightened, because a thin region is by
+  definition made of few points and a dim tint on few points is invisible.
+* **25 cm is from the sensor, not from taste**: a D6 at 10 Hz × 400 returns puts
+  ~40 returns into a 25 cm patch of wall in one pass at walking speed, so "one
+  pass" and "several passes" land on opposite sides of the ramp.
+* **Honest at the point budget.** The counts come from the points the renderer
+  holds, which is the same set it draws — when the LOD budget stops admitting
+  pages the tint and the drawing decimate together, so a cell that reads thin IS
+  thin in the map on screen. It is not a claim about points the renderer never
+  saw, and the KDoc says so.
+* Already-uploaded pages are re-tinted round-robin, one page per 250 ms, without
+  touching `gpu.uploaded` or the renderable's geometry count (shrinking it to
+  force a re-upload would make the cloud blink). The grid is cleared with the
+  source, for the same reason ROUND 10 item 38 had to clear the page store.
+* Not offered in Review: coverage answers "where have I not been yet", which is
+  a question about a walk in progress, and the container carries no density.
+
+### 5. ITEM 43 — HAPTIC + AUDIO CUES
+
+`core/capture/OperatorCues.kt` (all the deciding) + `app/capture/OperatorCuePlayer.kt`
+(all the buzzing). Default **ON**, one switch in Settings.
+
+| cue | pattern | tone | repeat |
+| --- | --- | --- | --- |
+| tracking degraded | 2 firm buzzes | mid | every 4 s while it lasts |
+| section break | 3 short urgent buzzes | high | on the EVENT, never on the level, 1 s floor |
+| moving too fast | 1 long soft buzz | low | every 3 s while it lasts |
+
+They differ in **count** rather than in length or timbre, because through a
+pocket at walking pace that is the only dimension that survives and it is the
+one a person learns in a session.
+
+Six behaviours that are properties of the timing and are therefore unit-tested
+rather than eyeballed: the first tick is always silent (ARCore is degraded at
+Start; buzzing before the operator has taken a step is how a default-ON feature
+gets switched off); a section break fires on the delta and never on the level;
+one cue at a time, highest priority wins, and **the loser does not consume its
+debounce** so it fires on the next tick; disabled cues still advance the state,
+so switching them on mid-capture does not replay a backlog; `reset()` per
+session, or capture #2 opens with capture #1's section baseline; and no cue
+fires unless a recording is actually running.
+
+The decision is made in `updateMotionHint` — the same evaluation point as the
+on-screen hint, deliberately, so the hint and the cue can never disagree about
+whether the rig is moving too fast. `VIBRATE` is a normal permission (no runtime
+prompt mid-capture). Everything is posted to a single-threaded executor: the cue
+is decided on the main dispatcher, and `Vibrator.vibrate` and
+`ToneGenerator.startTone` both cross a binder.
+
+### 6. ITEM 44 — THE SCAN SUMMARY CARD, AND WHAT IT COMPOSES WITH
+
+`core/capture/ScanSummary.kt` + `ScanGradeBanner` in `CaptureScreen`. Points,
+duration, metres walked, `.lscan` size, sections, tracking drops, points per
+metre, average rate — and one word.
+
+**The grade's thresholds are consequences of measurements, not taste:**
+
+* **Sections** — a break is ARCore relocalizing, so everything after it is in a
+  different world frame (ROUND 7 §5). 1 is clean, ≤3 usable, >3 is a scan whose
+  pieces no longer agree and no post-process fixes it.
+* **Tracking drops** — points taken during tracking loss are *excluded* by the
+  assembler (`exclude_flagged`), so every drop is a hole in the room.
+* **Points per metre** — ROUND 10 measured the owner's rig at **1,453 resolved
+  points/s**, so points-per-metre is walking speed in disguise and does not
+  depend on the room's size. 800/m ≈ 1.8 m/s (GOOD floor), 400/m ≈ 3.6 m/s
+  (FAIR floor).
+* Zero points is POOR whatever else is true.
+
+The reason string names the WORST thing in the same order the grade decided, so
+the word and the sentence can never disagree. A tripod scan is not punished for
+having no path (the density denominator is floored at 0.5 m).
+
+**Composing with ROUND 10's seal→navigate flow, rather than fighting it.** The
+two features collide if left alone: ROUND 10 made the seal jump to Projects, and
+a card shown at that instant lives for one frame before `goTab` disposes the
+back-stack entry. So `sealedProjectId` is unchanged — still emitted at exactly
+the same point, still `replay = 1`, so an Activity recreation mid-seal still
+recovers the navigation — and `CaptureRoute` **holds** the id until the card is
+dismissed. A seal that produced no summary navigates immediately, exactly as
+ROUND 10 shipped it.
+
+### 7. THE DOUBLED POINT COUNT — ROUND 10's BACKLOG ITEM, CLOSED
+
+`core/capture/PointCountTally.kt`. The owner's log said `points=584315` for
+scan-020; re-resolving the same container yields **293,166**, with the
+pushbroom's own accounting at 293,524 in / 293,166 out / 0 dropped.
+
+`SCAN_EVENT_POINTS_AVAILABLE` fires once per page-append **per stream** and has
+carried the stream id in `payload.points.stream` since B2. `RealEngineBridge`
+summed the count field and ignored the id, so during a D6 capture every return
+was counted once as a raw sensor-frame preview point and again as a resolved map
+point. `StreamFilter` has drawn only one of them since B3 and `writeProjectPreview`
+has preferred the map since ROUND 8 — the counter was the last consumer that
+still believed there was one stream.
+
+Now the tally reports the **resolved map** (raw fan points that never found a
+pose are not in the room), falls back to raw before the first mapped point
+arrives (~100 ms, since ROUND 10 bounded the batch in point time), and the log
+line carries both halves — `points=293166 (map=293166 raw=293524 other=0)` —
+so the next field report can be read without anyone re-deriving which number was
+which. The roles rather than the stream ids cross into `:core`, per
+`EngineBridge`'s own rule that the `SCAN_STREAM_*` numeric space belongs to the
+C ABI.
+
+This number also reaches `pointCountEstimate` in the sealed manifest, the
+capture log, the HUD and the summary card, all of which were ~2× as well.
+
+### 8. FILES
+
+Engine:
+* `include/scanengine/slam/post/trajectory_loop.h`, `src/slam/post/trajectory_loop.cpp` (new)
+  — detection, the five gates, `se3_exp`/`se3_log`, `TrajectoryCorrection`
+* `include/scanengine/slam/pushbroom/pushbroom_assembler.h`,
+  `src/slam/pushbroom/pushbroom_assembler.cpp` — `out_point_times`
+* `include/scanengine/slam/post/d6_resolve.h`, `src/slam/post/d6_resolve.cpp` —
+  `close_loops`, `TrajectoryLoopConfig`, `out_trajectory`, `out_point_times`,
+  `D6ResolveStats::loop` / `loop_applied`, the in-place correction
+* `tools/engine_cli.cpp` — `--d6-loopclose`
+* `tests/test_round11_loop_closure.cpp` (7 cases), `tests/test_round11_mount_trim.cpp` (4 cases)
+
+Android `:core`:
+* `capture/PointCountTally.kt`, `capture/ScanSummary.kt`, `capture/OperatorCues.kt` (new)
+* `calib/MountTrimRefiner.kt` (new)
+* `render/CoverageGrid.kt` (new)
+* `render/Colormap.kt` — `ColorMode.COVERAGE`
+* `render/DisplayParams.kt` — `activeScalar`, `evaluatePointColor`, `colorModeAvailability`
+
+Android `:app`:
+* `capture/OperatorCuePlayer.kt` (new)
+* `capture/TrajectoryTrailRecorder.kt` — `totalPathM`
+* `engine/RealEngineBridge.kt` — the tally and `streamRole()`
+* `ar/CaptureArController.kt` — 320-sample pose ring
+* `ui/capture/CaptureViewModel.kt` — `scanSummary`, the cue tick, `beginMountHold` /
+  `cancelMountHold` / `applyMountTrimResult`, `maybeAutoRefreshMountTrim`
+* `ui/capture/CaptureScreen.kt` — the grade banner, the summary card's new rows,
+  the held navigation, the mount ring
+* `ui/capture/CaptureSheets.kt`, `ui/review/ReviewScreen.kt` — the Coverage chip
+* `ui/settings/SettingsScreen.kt`, `SettingsViewModel.kt`, `data/SettingsModels.kt`,
+  `data/SettingsRepository.kt` — the cues switch
+* `render/PointCloudRenderer.kt` — the coverage grid, the tint, the refresh
+* `di/AppContainer.kt`, `AndroidManifest.xml` — the player and `VIBRATE`
+* tests: `core/capture/Round11CuesAndSummaryTest.kt` (14),
+  `core/calib/MountTrimRefinerTest.kt` (8), `core/render/CoverageGridTest.kt` (7),
+  `app/ui/capture/CaptureRound11SummaryTest.kt` (4)
+
+### 9. VERIFICATION
+
+* **Engine**: `ctest` **7/7 green** (run serially — `mid360_sim_e2e` asserts real
+  throughput over loopback UDP and fails on timing beside a booted emulator).
+  `scanengine_tests` **570 cases / 2,457,970 assertions, 0 failures** (558
+  before this round; the 12 new ones are the two `test_round11_*` files).
+* **Android JVM**: `:core:test` **465 tests** (434 before), `:app:testDebugUnitTest`
+  **74 tests** (70 before), 0 failures, `--rerun-tasks`.
+* **APK**: `versionCode 700`, `versionName 0.7.0`, from the repo-root `VERSION`.
+
+### 10. EXPLICITLY NOT VERIFIED / BACKLOG
+
+* **The turn-around shift is explained but not yet confirmed on hardware.** The
+  13.1 cm figure is a synthetic measurement through the production assembler,
+  and the mount error it injects is a model of what a 2.4° trim does — not a
+  measurement of the owner's actual bracket error, which nothing on the phone
+  can observe. The next 0.7.0 capture taken with the refined re-zero, walked
+  out-and-back past a distinctive overhead feature, is the experiment that
+  settles it.
+* **Loop closure has never fired on a real capture.** It refuses scan-020
+  correctly and for a reason it can state, and its recovery is proved against
+  synthetic ground truth — but no `.lscan` in this repository contains a loop.
+  A capture that walks a room and returns to the start (≥4 m of excursion,
+  ideally around a corner so the fan turns) is what would exercise it.
+* **The observability gate is the interesting limitation, not a bug.** A
+  dead-straight out-and-back with a pushbroom cannot close its own loop: the
+  along-walk component of the drift is not measured by anything in the scan.
+  Walking a curve fixes it. This is worth saying to the owner as scanning
+  advice, not only as a code comment.
+* **Coverage colouring is not verified on a device.** `CoverageGrid` is unit
+  tested and the renderer integration compiles and follows the existing upload
+  budget, but no Filament frame has been drawn with it here.
+* The cue player itself (Vibrator/ToneGenerator) is untested by construction —
+  it is the deliberately thin shell under `CueScheduler`, which is where all the
+  behaviour is.
+* `--d6-loopclose` re-resolves the container twice (once as shipped, once with
+  closure) so its before/after comparison is honest; on scan-020 that is ~90 s.
+* Nothing was run on kc-m4; macOS/desktop untouched.

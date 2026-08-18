@@ -418,3 +418,439 @@ frequency, anchored on the packet's first byte. Going further: that anchor is it
 combined with the device's own sample rate through a min-delay estimator, which converges
 with no tuning because every read's tail gives one tight anchor that the chain carries
 forward. Derivation in `engine/docs/A2-d6-driver.md` §9.
+
+## Round 10 — owner field test of 0.6.0 (2026-08-18, scan-020 + log 3)
+
+Owner verdict: "the 0.6.0 mirror issue fixed, the scan quality much better and real now.
+The thing on the left show on the left." Handedness chain is CLOSED — visually confirmed
+against the real room. Remaining issues, owner's words distilled:
+
+36. **Speed/latency — the headline.** "The scanning speed seems a bit slow and delay...
+    currently i need to move very slow to capture the stable quality... I need to scan
+    with a normal walking speed. current scan right when i go forward but when i turn
+    around the scan position shifted." Diagnose from scan-020 (202 s, 584,315 pts,
+    sections=1, imu_phone.bin @ 399.1 Hz recorded): the turn-around shift is the classic
+    signature of a CONSTANT TIME OFFSET between the pose timeline and the lidar timeline
+    (yaw rate x Δt = tangential smear; invisible in straight walking, glaring in turns).
+    We now have the 400 Hz gyro recorded in the same clock domain — cross-correlate gyro
+    yaw rate against lidar-derived / pose-derived yaw to MEASURE the offset on the
+    owner's own capture, then correct it (per-capture estimate or fixed calibrated
+    offset, whichever the data supports). Also audit: ARCore pose timestamp domain vs
+    SystemClock vs D6 byte-arrival anchor; whether IMU densification is actually active
+    in the LIVE pushbroom path (session logs say liveSlam=false on OPTIMAL preset —
+    verify what that flag gates); live-view refresh/latency budget. Normal walking speed
+    is the acceptance bar.
+
+37. **IMU path display reversed.** "The display of my imu path also reversed." ROUND 9
+    fixed point resolution at the formula level; the trajectory/trail render evidently
+    still draws in the old frame (or its own projection). Find every consumer of poses
+    for display and unify on the corrected convention. Acceptance: walk an L-shaped path,
+    the on-screen trail turns the same way the operator turned.
+
+38. **Capture lifecycle broken — unacceptable, owner's word.** "When i finish the capture
+    and click stop, it will stay with the capture page but not heading to project. when
+    click capture after capture, it still show with the previous capture. i can't start a
+    new capture unless i close and reopen the app." Required flow: Stop → seal → navigate
+    to Projects (scan visible) → Capture tab fully reset (cleared live view, fresh
+    project name, ready to Start immediately). No residue, no restart.
+
+39. **De-clutter for the camera-less rig.** "disable the follow and rgb since we dont use
+    the camera now. default scan setting show be 3d orbit, intensity, grey scale...
+    pause, disable and hide the colorize function and features." Default view mode = 3D
+    Orbit; Follow hidden/disabled; RGB color mode hidden; colorize
+    pipeline+UI hidden everywhere (capture defaults, review, export, settings). Keep the
+    code paths (feature-flagged off), remove from UI. Intensity + grayscale already the
+    default — keep.
+
+40. **Capture log filename.** "the capture log please save with date and time in the file
+    name." Export as lidarscan-capture-log-YYYY-MM-DD-HHMM.txt (device local time), so
+    successive exports never overwrite and reports pair with scans.
+
+## Round 11 — owner-approved quality/UX wave (2026-08-18), ships WITH round 10 as 0.7.0
+
+Owner decision recorded: **0° stays facing UP** — coverage is identical either way (360°
+fan + mount re-zero absorbs orientation); the proven configuration stays proven. No work
+item, but the nominal bracket assumption must not change.
+
+41. **Loop closure — the accuracy pillar.** ARCore drift over a 200 s walk leaves
+    start/end disagreement. When the trajectory returns near its origin (or any
+    previously-visited place), detect the revisit, compute the closing correction, and
+    distribute it back along the path (deterministic, hand-rolled — no Eigen; same
+    doctrine as everything else). Applies in offline re-resolve first (safe, provable on
+    scan-020); live is stretch. Acceptance: walk a loop, the two ends of the wall meet;
+    quantify start/end mismatch before/after on a real capture.
+
+42. **Coverage coloring — the density pillar.** Live-view mode tinting the map by local
+    return density (thin = warning tint, dense = normal) so the operator sees gaps while
+    still in the room and revisits instead of walking slow everywhere. Cheap deterministic
+    binning, honest at the point budget; live-only display concern, never written into
+    the container.
+
+43. **Haptic + audio cues — the operator pillar.** Phone is held facing forward; the
+    operator cannot watch the screen. Vibrate + tone on: tracking degraded, section
+    break, moving too fast for target ring density. Distinct patterns, debounced,
+    toggleable in settings, default ON.
+
+44. **Scan summary card on seal.** After stop (before/with the jump to Projects from item
+    38): thumbnail, points, duration, path length, sections, tracking-drop count, and a
+    plain quality grade so the owner knows keep-or-rescan in five seconds.
+
+45. **Guided mount re-zero + auto-refresh.** Replace trial-and-error (log shows long
+    MOVING-refusal streaks) with a hold-still progress ring ("hold steady… set"), same
+    gate underneath. At capture start, if stationary and trim is stale, auto-recapture
+    the trim so a stale reference never enters a scan silently.
+
+### Resolution — 2026-08-18 (0.7.0)
+
+36. **MEASURED, and the answer is that the clocks are fine — so the round went
+    looking for what actually is slow, and found two things.**
+
+    (a) **The offset, twice, on your own scan-020.** Two clock crossings, two
+    independent measurements:
+    * **phone IMU ↔ ARCore pose: −1.5 ms** (correlation r = 0.982). Your 400 Hz
+      gyro's angular rate cross-correlated against the rate implied by the
+      ARCore poses, over all 5,961 pose intervals of the 202 s walk. Stable
+      across both halves of the walk and across the turns alone. So
+      `Frame.getTimestamp()` and `SensorEvent.timestamp` really are the same
+      clock — ROUND 7 §4 asserted that from documentation; this is the hardware
+      agreeing.
+    * **D6 lidar ↔ ARCore pose: +4 ms**, from a crispness sweep: the same
+      container re-resolved at every offset from −150 ms to +150 ms through the
+      production pipeline, scored by 3 cm voxel occupancy and by wall-probe
+      thickness. **The whole ±30 ms window varies by 0.1 %.** +4 ms is 4 mm at
+      1 m/s and 0.24° at a 60 °/s turn, against the **4.8 cm** wall thickness
+      scan-020 actually has. The default therefore stays 0 rather than
+      pretending a 4 mm correction is real; the knob and the tool
+      (`engine_cli --d6-timesweep`) exist so a rig with a genuinely slow
+      transport can be corrected from data instead of from reasoning.
+
+    **So the turn-around shift is not a clock offset.** That is a null result
+    and it is stated as one. What the round CAN show is what a real offset
+    would look like, so this never has to be re-argued:
+    `test_round10_time_offset.cpp` walks a wall with 40 ms of injected skew and
+    measures **no change at all walking straight (9.9e-06 cm both ways)** and
+    **8.81 cm at a 60 °/s turn** — a 260,000× difference from the same error,
+    which is exactly why eight rounds of straight-line fixtures could not see
+    this class of bug. The correction recovers it exactly, and a sweep's
+    minimum lands on the injected truth.
+
+    (b) **The delay that IS real: 2.8 seconds of it, in the live map.**
+    `PushbroomConfig::batch_points` held **4096 points** before publishing any
+    of them. That number was written for a Mid-360 (hundreds of thousands of
+    points/s). Your D6 resolves **1,453 points/s** — measured, 293,524 in-range
+    returns over 202.1 s — so the live map was showing you where you had been
+    **2.8 seconds ago**, then jumping. Nothing downstream could be faster: not
+    the 30 fps refresh, not the renderer, not a better phone. The batch is now
+    bounded in **point time** as well as count (100 ms, one D6 revolution), and
+    point time and not wall time on purpose — the assembler is documented as
+    never reading a clock, which is what makes replay bit-identical to capture.
+    Measured: **first point visible 2,825 ms → 100 ms**, and 2,560 of 2,560
+    points bit-identical across the two batchings.
+
+    (c) **The audit you asked for.**
+
+    | crossing | domain | correction | verdict |
+    | --- | --- | --- | --- |
+    | ARCore `Frame.getTimestamp()` | CLOCK_BOOTTIME | none | correct; now measured against the gyro at −1.5 ms |
+    | `SensorEvent.timestamp` (gyro/accel) | CLOCK_BOOTTIME | none | correct |
+    | engine `timesync/clock.h` | `clock_gettime(CLOCK_BOOTTIME)` on Android | none | correct (bionic's `steady_clock` is CLOCK_MONOTONIC, which stops on suspend) |
+    | D6 UART bytes | no device clock at all | ROUND 7 per-byte back-dating + ROUND 9 min-delay sample anchor + the app's 2 ms sensor-latency setting | correct to within the +4 ms measured above |
+    | lidar → pose join | — | **new** `pose_time_offset_ns`, default 0 | the knob this round added, with a tool to set it from data |
+
+    **`liveSlam=false` on OPTIMAL gates nothing on your rig.** Confirmed at the
+    source: `Engine::start_session`'s `if (cfg.live_slam)` block builds a
+    `LioOdometry` — the **Mid-360's** lidar-inertial odometry. A D6's live map
+    comes from the pushbroom assembler, which is enabled separately and was
+    enabled on every one of your captures (`pushbroomEnabled=true` in your own
+    log). ROUND 8 already documented this; it is re-confirmed rather than
+    re-litigated. **IMU densification IS active in the live path** — the
+    densifier is constructed in `Engine::create` and wired between the pose
+    source and the assembler unconditionally, live and offline alike.
+
+    (d) **Two things found while measuring, both real bugs.**
+    * **`imuCalibration` is `null` in scan-020's manifest** even though your
+      session log for that capture records `camera_from_imu = Rz(+90)`. This is
+      ROUND 8's `mountCalibration` bug one sensor down, with the same cause: the
+      manifest is written when the session opens, and the app applies the IMU
+      extrinsic ~24 ms later (your log: `[session] start` 11:06:25.799,
+      `phone IMU start` 11:06:25.823). So **every offline re-resolve of every
+      capture so far integrated the gyro in the wrong frame.** Fixed the way
+      ROUND 8 fixed the mount — pushed at an already-open recorder, so the
+      sealed manifest carries it.
+    * **The point count you are shown is roughly double the truth.** Your log
+      says `points=584315` for scan-020; re-resolving the same container yields
+      **293,166** world points, and the pushbroom's own accounting says 293,524
+      returns in, 293,166 out, **zero dropped**. The live counter is adding the
+      raw sensor-frame preview stream to the resolved map stream. Not fixed
+      this round (it is a reporting bug, not a data bug) — **backlog**.
+
+37. **Fixed, and it was one line and one wrong comment.**
+    The trail tile projected `screen_right = +X, screen_up = +Z`. In ARCore's
+    right-handed, +Y-up world the axis pointing out of that screen is
+    `X × Z = −Y` — **a view from underneath the floor looking up**. A bird's-eye
+    view needs `X × (−Z) = +Y`, i.e. world +Z goes **down** the tile and, since
+    canvas y already grows downward, there is **no flip at all**. What shipped
+    was `y = 1 − nz`; it is now `y = nz`.
+    Two sibling modules already had it right and disagreed with this one: the
+    floor-plan canvas, and the engine's own `plan/occupancy.cpp` (for a Y-up
+    cloud it uses `plan_x = world z, plan_y = world x` — the same chirality,
+    tile rotated 90°). The trail was the outlier.
+    **Every other pose consumer was audited and is clean**: the 3D orbit view
+    hands world XYZ straight to Filament with no negation, no axis swap and a
+    right-handed `lookAt`; the follow camera's `atan2(dz, dx)` is the exact
+    inverse of its own `headingVector`, so the angle round-trips and its sense
+    is unobservable; the review screen draws no path at all; the project
+    thumbnail's "trajectory" is a hard-coded decorative curve drawn at alpha 0.
+    There was exactly one 2-D projection of poses in the app and it was the
+    mirrored one.
+    **The old test asserted the bug.** `screen y is flipped so north is up`
+    checked that larger +Z sat higher — the mirror, in an assertion. It is
+    replaced by two: forward (−Z) must go **up** the tile, and your acceptance
+    test verbatim — an **L-shaped walk turning LEFT must render a trail turning
+    left**, with "left" derived as `up × forward = −X` rather than hard-coded.
+
+38. **Fixed. Root cause: the live point cloud does not belong to the capture —
+    it belongs to the app process.**
+    `RealEngineBridge` creates one `scan_engine*` on first connect and holds it
+    for the app's lifetime, and the engine's `PageStore` is created **with the
+    engine, not with the session**. A capture is a session. So capture #2 opened
+    on top of capture #1's pages — "it still show with the previous capture",
+    exactly. Every ViewModel-level state WAS being reset correctly, which is why
+    six rounds of tests stayed green: the one thing filling the screen was the
+    one thing not in the ViewModel.
+    The engine has shipped the fix since ABI 7 (`start_session()` calls
+    `recycle_all()`, with a comment about "a preview + N record cycles on ONE
+    connect all stacked into the same 64 pages") — but that reset is gated on
+    page eviction being enabled, eviction is opt-in, and **the Android app never
+    opted in**. There was no `nativeSetLivePageEviction` and no
+    `nativeRecycleLivePages` in the JNI at all: two C-ABI calls that existed and
+    were never bound. Both are bound now, eviction is on (which also means the
+    live map can no longer dead-end when its page budget fills — it recycles),
+    and the window is emptied on entering Capture and again on every seal.
+    **The navigation had a second, independent cause.** `sealedProjectId` was a
+    `replay = 0` `MutableSharedFlow`, justified by a comment claiming its buffer
+    covered "a collector that is momentarily absent". That is not what
+    `MutableSharedFlow` does: `extraBufferCapacity` is slack for a *slow*
+    subscriber; with **zero** subscribers a `replay = 0` flow discards the value
+    and `tryEmit` still returns true. The seal runs `NonCancellable` in
+    `viewModelScope`, so it outlives the composition — an Activity recreation
+    mid-seal loses the navigation while keeping the scan, which is precisely
+    "sealed fine, never navigated". Now `replay = 1`, and both outcomes are
+    logged (`navigate -> Projects id=…`, or the reason it stayed), so the next
+    field log answers this without anyone guessing.
+    Proven three ways: a JVM test that subscribes **after** the seal completes
+    and still receives the id; a JVM test that runs capture → stop → capture in
+    one ViewModel and asserts two sealed scans, a fresh auto-name, a cleared
+    typed name and zeroed stats; and an **instrumented test on the emulator**
+    that drives the real native engine — two sessions on one handle, real D6
+    UART bytes through the production driver, and the live window asserted
+    **empty** at the start of capture #2 while both projects seal listable.
+
+39. **Done, behind one flag file (`core/FeatureFlags.kt`) rather than by
+    deletion**, following the house style the AR overlay was retired with.
+    Follow camera: hidden in **both** places it lived (the Display sheet's View
+    row *and* a second Orbit/Follow pill on the viewport itself — two controls
+    for one state, which is why both had to be found); default camera mode is
+    now **3D orbit** for capture as well as replay. RGB: removed from the
+    capture sheet, the review chip strip and the review Display panel (which
+    enumerated the raw enum and so surfaced RGB and FIX_QUALITY whatever the
+    rest of the app did), and it now carries a reason string in
+    `colorModeAvailability` like every other unavailable mode. Colorize: the
+    keyframe switch and rate row, the viewport KF chip, the Processing tab's
+    Colorize action and the Settings "Processing" section are all gone, and the
+    keyframe state is gated at the **flow** as well as the UI so a preset switch
+    cannot turn the recorder back on behind a hidden control. `ColorMode.RGB`
+    itself is untouched — its ordinal crosses the C ABI into the shader, and it
+    is what every unsupported mode falls back to.
+    **Defaults verified against your list, and one was wrong in three places at
+    once.** 3D orbit — fixed (was Follow). Intensity — already correct. **Grey
+    scale — was not**: the QUICK_SCAN profile said GRAYSCALE, `captureDefaults()`
+    set no colormap and inherited SPECTRUM, and the ViewModel initialised its own
+    flow to SPECTRUM, so which one you got depended on which screen you came
+    through. There is now one constant (`DisplayParams.CAPTURE_COLORMAP`) and
+    all three read it. 1 px / gamma 1 / brightness 1 — already correct.
+    30 fps — correct on your Pixel (STANDARD tier); a MODEST-tier phone still
+    starts at 15 fps by design, which is the conservative-defaults rule from
+    ROUND 6 item 21 and is left alone.
+
+40. **Fixed.** `lidarscan-capture-log-YYYY-MM-DD-HHMM.txt`, device local time,
+    to the minute — the same format and the same clock `ScanAutoName` uses for
+    scan names, so `Scan-020-2026-08-18-1106` and
+    `lidarscan-capture-log-2026-08-18-1111.txt` are comparable by eye. The old
+    name was a bare constant, which is why MediaStore had been de-duplicating
+    exports into `lidarscan-capture-log (1).txt` — a real artifact of that is
+    quoted in this repository's own source (`MountTrim.kt` cites it from your
+    0.4.0 session). Seconds are deliberately absent for the same reason the scan
+    names omit them.
+
+### Resolution — 2026-08-18 (0.7.0, round 11)
+
+41. **Built, proved against synthetic ground truth, and it REFUSES your
+    scan-020 — which turned out to be the more useful result.**
+
+    New `post::TrajectoryLoopCloser` (`slam/post/trajectory_loop.*`), hand-rolled,
+    no Eigen, deterministic, wired into the offline `D6ResolvePipeline` behind
+    `close_loops` (default OFF: this pipeline's contract is "replay == capture",
+    and a closure deliberately produces different points, so it may never happen
+    behind a caller's back) and driven by a new `engine_cli --d6-loopclose`.
+
+    (a) **It is not A7's pose graph, on purpose.** A Mid-360's trajectory is
+    ESTIMATED, so every keyframe pose is a free variable and a graph is the right
+    answer. Yours was MEASURED by ARCore, whose error is a slow smooth walk of
+    the world frame — excellent over one second (which is what makes ROUND 9's
+    gyro densification work), large over 200. So the correction is one
+    measurement spread back along the path by ARC LENGTH (drift accumulates with
+    distance, not with seconds), `C(s) = Exp(s·Log(T_fix))`, exactly identity at
+    the first visit and exactly the measured transform at the second.
+
+    (b) **Synthetic loop with known truth**: one lap of a circle in an 8×8×3 m
+    room, resolved twice from the same ranges — once against true poses, once
+    against poses corrupted by 4° of yaw growing as `s^1.5` plus 0.30 m of
+    translation, deliberately NOT the shape the correction is built from.
+    Per-point error against truth: **mean 17.2 cm → 8.9 cm, worst 61.1 cm →
+    16.0 cm** — 74 % of the worst-case error removed, with ICP measuring 3.99°
+    against the 4.0° injected.
+
+    (c) **On scan-020 it refuses, and the refusal is the finding.** Your walk is
+    **10.8 m in 202 seconds — 5.3 cm/s** (that is what "i need to move very
+    slow" turned out to mean), along a straight line 3.67 m out and back with
+    24 cm of lateral extent over the whole capture. It is not a loop; the
+    excursion gate stops it. Forced past that gate, ICP proposes a **176° flip**
+    — the corridor-mistaken-for-itself failure — and the geometric gate refuses
+    it. **Nothing was moved. The cloud is byte-for-byte what the app produces.**
+
+    (d) **The guard is five gates and every one earned its place.** A one-way
+    walk produces no candidate at all (structural, not a threshold). A rig
+    shuffling in one corner is caught by an excursion floor. Then the gate this
+    round exists because of: a D6 sweeps a PLANE perpendicular to the walk, so
+    it sees no surface facing along the walk, so point-to-plane ICP has a **null
+    space** there and does not fail but WANDERS — 4°/0.30 m of injected drift
+    came back as 3.77° (right) and **2.74 m** of translation (fiction). Surface
+    normals are now collected and eigen-decomposed and an unobservable direction
+    is refused by name. Then A7's inlier/RMS gate unmodified. Then a magnitude
+    bound of 0.60 m / 6°, set where the physics is: run with a generous
+    1.5 m / 20°, ICP produced a 0.97 m / **17.0°** "closure" on scan-020 with
+    77.8 % inliers whose local mismatch genuinely improved 77 cm → 12 cm and
+    which blurred the whole map by 8.6 %. Locally right, globally a fold. Then a
+    whole-map crispness check, asked only where the walk actually painted a
+    place twice (on a single-lap loop, occupancy carries no signal and the gate
+    abstains rather than voting on no evidence — otherwise it would veto every
+    good closure there is).
+
+    Every decision, including every refusal and which gate did the refusing, is
+    logged as a stable string.
+
+42. **Shipped. `ColorMode.COVERAGE`, live view only, never written to the
+    container — and it is the one value in that enum whose ordinal must never
+    cross the C ABI.**
+    Every other colour mode is a shader branch. Coverage is not: the renderer
+    counts returns into a fixed 25 cm lattice anchored at the world origin
+    (deterministic — the answer cannot depend on arrival order) and writes the
+    tint into **its own GPU copy** of the vertices, asking the shader for plain
+    RGB pass-through. The engine's PageStore — which is also the map cache that
+    gets sealed into the `.lscan` — is read and never touched.
+    A fully covered point keeps its own shade **byte for byte**, so a
+    well-scanned room in coverage mode is indistinguishable from the
+    grayscale/intensity view you asked to be the default; thin regions are pulled
+    toward amber (not red — red is the failure colour and "thin here" is not a
+    failure) and brightened, because a thin region is by definition few points
+    and a dim tint on few points is invisible. 25 cm comes from the sensor: a D6
+    puts ~40 returns into that much wall in one pass at walking speed, so one
+    pass and several passes land on opposite sides of the ramp. Toggle in the
+    Capture settings sheet; not offered in Review, because "where have I not been
+    yet" is a question about a walk in progress.
+
+43. **Shipped, default ON, one switch in Settings.** Two firm buzzes for
+    tracking degraded (repeating every 4 s while it lasts — it is a state you
+    must act on), three short urgent ones for a section break (on the event,
+    never on the level), one long soft one for moving too fast (every 3 s). They
+    differ by COUNT rather than by length or timbre, because through a pocket at
+    walking pace that is the only dimension that survives.
+    All the deciding is in `:core` and unit-tested, because everything hard about
+    a cue is timing: the first tick is always silent (ARCore is degraded at
+    Start, and buzzing before you have taken a step is how a default-ON feature
+    gets switched off); one cue at a time with the loser keeping its debounce;
+    disabled cues still advance the state so switching them on does not replay a
+    backlog; reset per session; and nothing fires unless a recording is running.
+    The decision is made at the same evaluation point as the on-screen "moving
+    too fast" hint, so the two can never disagree. `VIBRATE` is a normal
+    permission (no prompt mid-capture) and every call is posted off the main
+    thread.
+
+44. **Shipped, and it composes with item 38's jump to Projects rather than
+    fighting it.** Points (the FIXED count — see below), duration, metres walked,
+    `.lscan` size, sections, tracking drops, points per metre, average rate, and
+    one word: **GOOD SCAN / USABLE / RESCAN**, with a sentence naming the worst
+    thing about the scan.
+    Every threshold is a consequence of something measured. Sections: a break is
+    ARCore relocalizing, so everything after it is in a different world frame —
+    1 clean, ≤3 usable, >3 unfixable. Tracking drops: those points are EXCLUDED
+    by the assembler, so every drop is a hole. Points per metre: your rig
+    resolves 1,453 points/s, so points-per-metre is walking speed in disguise and
+    does not depend on the room's size — 800/m is about 1.8 m/s, 400/m about
+    3.6 m/s. A tripod scan is not punished for having no path.
+    `sealedProjectId` is untouched (still `replay = 1`, so an Activity recreation
+    mid-seal still recovers the navigation); the screen HOLDS the id until you
+    dismiss the card. Sealing and jumping in the same instant would have shown
+    the card for one frame.
+
+45. **All three parts, and (c) is the number you asked for.**
+
+    (c) **A 2.4° trim error — which is exactly what scan-020 was captured with,
+    at the gate's own 2.5° ceiling — paints the same overhead feature 13.1 cm
+    apart between the outbound and return legs of an out-and-back walk, and the
+    split REVERSES with the walk direction.** Measured through the production
+    assembler, not derived:
+
+    | trim | split at 1.66 m | scaled to 3 m |
+    | ---: | ---: | ---: |
+    | **2.4°** | **13.1 cm** | **23.6 cm** |
+    | 1.4° | 9.0 cm | 16.3 cm |
+    | 0.8° | 3.7 cm | 6.6 cm |
+    | 0.5° | 1.0 cm (the fixture's floor) | 1.8 cm |
+
+    That is "current scan right when i go forward but when i turn around the
+    scan position shifted", to the centimetre. **Two corrections to the ROUND 10
+    guess, both of which matter:** it doubles a FEATURE and does not thicken a
+    wall (the displacement is perpendicular to each return's own ray, so on a
+    wall seen square-on the points slide along it and every wall-flatness metric
+    this project has is blind to it); and only the component about the phone's
+    RIGHT axis reverses — the component about the phone's UP axis displaces the
+    whole room by 6.5 cm at 2.4° and displaces it the same way both ways, which
+    is an error nobody ever reports. A one-way walk hides all of it: the same
+    2.4° paints one beam, 6.1 cm out of place, with its depth spread unchanged.
+
+    (a) **The hold-still ring.** Tap Re-zero and the mount chip becomes a
+    progress bar. Same gate underneath — the ROUND 8 sampler, unchanged — asked
+    ten times a second instead of once per tap, so it fills while the hold is
+    good and **empties the instant it is not**. Your 0.4.0 log has seven MOVING
+    refusals in forty-four seconds; a refusal is a verdict on a moment you have
+    already finished, and a ring is something your hands can learn from.
+    **One honest correction to the brief**: "keep refining toward ≤0.8° spread"
+    is not achievable, because the spread measures the JITTER of individual
+    ARCore frames and holding longer does not reduce it. What holding longer
+    improves is the accuracy of the MEAN, which is what actually gets stored —
+    and rather than model that, the app MEASURES it: it splits the hold in half,
+    averages each half separately and reports the angle between the two answers.
+    "Improving… 1.4°" is that number, it needs no assumptions, and it catches the
+    slow correlated wander a textbook standard-error argument would miss. The
+    trim is then averaged over the whole hold (~180 samples at 6 s) rather than
+    over the gate's one second (~31).
+
+    (b) **Auto-refresh at Start.** If the trim is older than 10 minutes or came
+    from a previous app run, AND the rig is genuinely still right now, it is
+    re-taken silently and logged. If it is not still, the old trim stays and an
+    amber note says how old it is — refusing to Start would be worse, but a
+    stale reference entering a scan mentioned nowhere but a log read afterwards
+    is what this closes.
+
+**Plus the ROUND 10 backlog item: the point count you were shown was ~2× the
+truth, and it is fixed.** `POINTS_AVAILABLE` fires once per page-append per
+stream and has carried the stream id since B2; the counter summed the count and
+ignored the id, so during a D6 capture every return was counted once as a raw
+sensor-frame preview point and again as a resolved map point. It now reports the
+resolved map (raw fan points that never found a pose are not in the room) and the
+log carries both halves — `points=293166 (map=293166 raw=293524 other=0)` — so
+the next field report needs no re-derivation. This number also feeds
+`pointCountEstimate` in the sealed manifest, the HUD and the summary card, all of
+which were ~2× as well.

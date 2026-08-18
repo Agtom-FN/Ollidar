@@ -323,6 +323,12 @@ class PointCloudRenderer(
             pageStreams.clear()
             mappedPageSeen = false
             haveBounds = false
+            // ROUND 11 (item 42): the density grid is one session's coverage of
+            // one room. Carrying it into the next capture would open the new
+            // scan claiming the operator had already covered a room they have
+            // not walked into — the same class of bug ROUND 10 item 38 spent a
+            // round on with the page store.
+            resetCoverage()
             // ROUND 8: the follow camera's whole state — trail, heading, framing
             // distance — belongs to ONE session's local metric frame. Carrying it
             // into the next capture would ease the camera from the old origin
@@ -711,9 +717,153 @@ class PointCloudRenderer(
         applyDynamicMaterialParams()
     }
 
+    // ── ROUND 11 (owner item 42): coverage colouring ────────────────────────
+    //
+    // Density is counted here, on the upload path, and turned into a per-point
+    // tint that is written into the GPU's copy of the vertices. Three
+    // consequences worth stating, because they are the item's own constraints:
+    //
+    //  * **Never written into the container.** The engine's PageStore — which
+    //    is also the map cache that gets sealed into the `.lscan` — is read and
+    //    never touched. The tint exists in a Filament VertexBuffer and dies
+    //    with the surface.
+    //  * **Deterministic.** `CoverageGrid` is a fixed lattice anchored at the
+    //    world origin, so a coordinate always lands in the same cell whatever
+    //    order the points arrived in.
+    //  * **Honest at the point budget.** The counts come from the points this
+    //    renderer actually holds, which is the same set it draws. When the LOD
+    //    budget stops admitting new pages, the tint and the drawing decimate
+    //    together — so a cell that reads thin IS thin in the map on screen,
+    //    which is the question the operator is asking. It is not a claim about
+    //    points the renderer never saw.
+    private val coverage = com.lidarscan.core.render.CoverageGrid()
+
+    /** Round-robin cursor for re-tinting already-uploaded pages. */
+    private var coverageRefreshCursor = 0
+    private var lastCoverageRefreshMs = 0L
+
+    /** Scratch for one tinted slice. Grown, never shrunk; reused every frame. */
+    private var tintScratch: java.nio.ByteBuffer? = null
+
+    /**
+     * What the shader is told. [com.lidarscan.core.render.ColorMode.COVERAGE]
+     * has no shader branch by design — see the KDoc on the enum — so it asks
+     * for RGB pass-through and supplies the colour itself.
+     */
+    private fun shaderColorMode(): Int =
+        if (colorMode == com.lidarscan.core.render.ColorMode.COVERAGE) {
+            com.lidarscan.core.render.ColorMode.RGB.ordinal
+        } else {
+            colorMode.ordinal
+        }
+
+    /** The share of occupied 25 cm cells still below the "thin" threshold. */
+    fun coverageThinFraction(): Float = coverage.thinFraction()
+
+    fun resetCoverage() {
+        coverage.clear()
+        coverageRefreshCursor = 0
+        lastCoverageRefreshMs = 0L
+    }
+
+    /**
+     * Count a freshly-uploaded slice into the density grid, then hand back the
+     * bytes to upload — tinted when coverage mode is on, and the caller's own
+     * slice untouched when it is not (so a capture that never opens coverage
+     * mode pays one branch per slice and nothing else).
+     *
+     * `src` is positioned/limited on the slice, exactly as the upload expects,
+     * and this leaves it that way: every read is absolute.
+     */
+    private fun countAndMaybeTint(src: java.nio.ByteBuffer): java.nio.ByteBuffer {
+        val base = src.position()
+        val bytes = src.limit() - base
+        val points = bytes / POINT_STRIDE_BYTES
+        if (points <= 0) return src.slice()
+        val le = src.duplicate().order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        for (i in 0 until points) {
+            val o = base + i * POINT_STRIDE_BYTES
+            coverage.add(le.getFloat(o), le.getFloat(o + 4), le.getFloat(o + 8))
+        }
+        if (colorMode != com.lidarscan.core.render.ColorMode.COVERAGE) return src.slice()
+        return tintInto(le, base, points)
+    }
+
+    /**
+     * Copy `points` vertices out of `le` at `base` and rewrite their RGBA from
+     * the density grid. The position stays byte-identical; only the colour
+     * changes, which is why this can be handed to the same `setBufferAt` the
+     * untinted path uses.
+     */
+    private fun tintInto(le: java.nio.ByteBuffer, base: Int, points: Int): java.nio.ByteBuffer {
+        val needed = points * POINT_STRIDE_BYTES
+        var scratch = tintScratch
+        if (scratch == null || scratch.capacity() < needed) {
+            scratch = java.nio.ByteBuffer.allocateDirect(needed)
+                .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            tintScratch = scratch
+        }
+        scratch.clear()
+        scratch.limit(needed)
+        for (i in 0 until points) {
+            val o = base + i * POINT_STRIDE_BYTES
+            val x = le.getFloat(o)
+            val y = le.getFloat(o + 4)
+            val z = le.getFloat(o + 8)
+            val d = o + 12
+            // The point's own shade, exactly as the grayscale/intensity default
+            // draws it (r == g == b for a D6 return; the green channel carries
+            // the high-reflectivity flag, so red is the honest one to read).
+            val shade = le.get(d).toInt() and 0xFF
+            val argb = coverage.tintAt(shade, x, y, z)
+            val w = i * POINT_STRIDE_BYTES
+            scratch.putFloat(w, x)
+            scratch.putFloat(w + 4, y)
+            scratch.putFloat(w + 8, z)
+            scratch.put(w + 12, ((argb shr 16) and 0xFF).toByte())
+            scratch.put(w + 13, ((argb shr 8) and 0xFF).toByte())
+            scratch.put(w + 14, (argb and 0xFF).toByte())
+            // Alpha is carried through: the pushbroom writes a reduced alpha on
+            // points taken during tracking loss (`flagged_alpha`), and coverage
+            // must not hide that.
+            scratch.put(w + 15, le.get(d + 3))
+        }
+        scratch.position(0)
+        return scratch
+    }
+
+    /**
+     * Re-tint pages that were uploaded before the grid knew as much as it does
+     * now. One page per pass, round-robin, at most every
+     * [COVERAGE_REFRESH_MS] — the tint has to converge as the operator revisits
+     * a thin area, and a full re-upload of every page on every frame would be
+     * exactly the unbounded work the round-5.3 upload budget exists to prevent.
+     *
+     * Deliberately does NOT touch `gpu.uploaded` or the renderable's geometry
+     * count: shrinking the count for a frame to force a re-upload would make the
+     * cloud blink.
+     */
+    private fun refreshCoverageTints(src: PointCloudSource, nowMs: Long) {
+        if (colorMode != com.lidarscan.core.render.ColorMode.COVERAGE) return
+        if (gpuPages.isEmpty()) return
+        if (nowMs - lastCoverageRefreshMs < COVERAGE_REFRESH_MS) return
+        lastCoverageRefreshMs = nowMs
+        val ids = gpuPages.keys.toList()
+        if (coverageRefreshCursor >= ids.size) coverageRefreshCursor = 0
+        val pageId = ids[coverageRefreshCursor]
+        coverageRefreshCursor++
+        val gpu = gpuPages[pageId] ?: return
+        if (gpu.uploaded <= 0) return
+        val page = src.getPage(pageId) ?: return
+        val buf = page.buffer
+        val le = buf.duplicate().order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        val tinted = tintInto(le, 0, gpu.uploaded)
+        gpu.vertexBuffer.setBufferAt(engine, 0, tinted, 0, gpu.uploaded * POINT_STRIDE_BYTES)
+    }
+
     private fun applyDynamicMaterialParams() {
         val mi = materialInstance ?: return
-        mi.setParameter("colorMode", colorMode.ordinal)
+        mi.setParameter("colorMode", shaderColorMode())
         mi.setParameter("colormap", colormap.ordinal)
 
         val dp = displayParams
@@ -931,8 +1081,12 @@ class PointCloudRenderer(
                 // reads only, so position/limit are left exactly as the upload
                 // below expects them.
                 accumulateRecentGeometry(newBytes, gpu.uploaded, uploadTo)
+                // ROUND 11 (item 42): counts the slice into the coverage grid
+                // and, in coverage mode, hands back a tinted copy. Outside
+                // coverage mode this is `newBytes.slice()` and one loop.
+                val payload = countAndMaybeTint(newBytes)
                 gpu.vertexBuffer.setBufferAt(
-                    engine, 0, newBytes.slice(),
+                    engine, 0, payload,
                     gpu.uploaded * POINT_STRIDE_BYTES, newPoints * POINT_STRIDE_BYTES,
                 )
                 gpu.uploaded = uploadTo
@@ -966,6 +1120,7 @@ class PointCloudRenderer(
         }
 
         publishRecentGeometry()
+        refreshCoverageTints(src, System.currentTimeMillis())
         lastStats = PointCloudRenderStats(resident, pagesDrawn, haveBounds, mappedPageSeen)
     }
 
@@ -1360,6 +1515,15 @@ class PointCloudRenderer(
          * instead of queued into one.
          */
         const val MAX_UPLOAD_BYTES_PER_FRAME = 4 * 1024 * 1024
+
+        /**
+         * ROUND 11 (item 42): how often one already-uploaded page is re-tinted
+         * from the density grid. 250 ms round-robin means a 30-page cloud fully
+         * converges in about 8 s of walking, which is the timescale on which an
+         * operator revisits a thin patch anyway — and it costs one page's worth
+         * of upload per quarter second instead of the whole cloud per frame.
+         */
+        const val COVERAGE_REFRESH_MS = 250L
 
         /** Companion bound for allocations, not bytes: new pages created in one frame. */
         const val MAX_NEW_PAGES_PER_FRAME = 24

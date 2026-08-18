@@ -114,10 +114,125 @@ struct PushbroomConfig {
   // the renderer at.
   std::uint32_t batch_points = 4096;
 
+  // --- ROUND 10 item 36: the batch is also bounded in TIME ----------------
+  //
+  // `batch_points` alone is a LATENCY BUG on a D6, and it is most of what the
+  // owner means by "the scanning speed seems a bit slow and delay".
+  //
+  // The rationale above is a THROUGHPUT rationale, and it was written for a
+  // Mid-360 (hundreds of thousands of points per second, where 4096 points is
+  // a few milliseconds). A COIN-D6 on the owner's rig resolves **1,453 points
+  // per second** — measured on scan-020: 293,524 in-range returns over 202.1 s
+  // — so a 4096-point batch is **2.8 SECONDS** of points held in a
+  // `std::vector` before a single one reaches the PageStore, the renderer or
+  // the recorder's map cache. Nothing downstream can be faster than that, at
+  // any refresh rate, on any phone: the live map was showing the operator
+  // where they had been ~3 seconds ago and then jumping.
+  //
+  // So the batch also closes when it has accumulated this much POINT TIME.
+  // Point time, not wall time, and that is the whole design: the assembler is
+  // documented as a pure function of (points, poses, extrinsic) that "never
+  // reads a clock, never samples wall time" — which is what makes
+  // `pushbroom/assembles_identically_live_and_offline` true. A wall-clock
+  // flush would make the page layout depend on how busy the phone was, and
+  // "replay == capture" (Tech Spec §3 key rule 2) would stop holding bit for
+  // bit. A point-time flush is a function of the data alone, so live and
+  // offline still land on exactly the same batch boundaries.
+  //
+  // 100 ms is one D6 revolution: the shortest interval that can contain a
+  // whole profile sweep, and 3 frames at the 30 fps live default, so the
+  // renderer never waits on the assembler. Zero disables the time bound and
+  // restores the pure count behaviour.
+  std::int64_t max_batch_span_ns = 100'000'000;
+
   // Resolve pending points on every push. Turning it off lets an offline job
   // push an entire capture and call drain() once.
   bool drain_on_push = true;
+
+  // --- ROUND 10 item 36: the lidar-clock -> pose-clock offset -------------
+  //
+  // Added to a return's own `t_mono_ns` BEFORE the pose is looked up:
+  //
+  //     pose = poses->sample_at(p.t_mono_ns + pose_time_offset_ns)
+  //
+  // i.e. a POSITIVE value says "this return was actually taken LATER than its
+  // stamp claims, so pair it with a LATER pose". That is the sign the D6's
+  // transport error takes: bytes are stamped when the reader thread sees
+  // them, which is after the sample was taken, so the naive pairing uses a
+  // pose from the FUTURE of the geometry and the cloud lags the trajectory.
+  //
+  // WHY IT MATTERS, and why nothing before ROUND 10 could see it. A constant
+  // offset dt costs `v * dt` along the walk (2 cm at 1 m/s and 20 ms —
+  // invisible, and it is the same shift for every point so walls stay
+  // straight) and `omega * dt` of YAW (20 ms at a 60 deg/s turn is 1.2 deg,
+  // which at 3 m is 6 cm of tangential smear, and it reverses sign with the
+  // turn direction). So it hides completely in straight-line walking and in
+  // every synthetic straight-line fixture, and appears as "the scan shifts
+  // when I turn around" the moment the operator rotates. Every geometry test
+  // in this repository before ROUND 10 walked in a straight line.
+  //
+  // It is a config value and not a constant because it is a property of the
+  // TRANSPORT (USB stack, CH340 buffering, reader-thread scheduling), not of
+  // the sensor: `tools/engine_cli.cpp --d6-timesweep` measures it from a real
+  // capture by resolving the same container at a sweep of offsets and taking
+  // the one that makes the map crispest. `kD6PoseTimeOffsetMeasuredNs` below
+  // records what that sweep produced on the owner's scan-020, and why the
+  // default is nevertheless 0.
+  //
+  // NOTE the assembler's pending-queue rule still applies to the SHIFTED
+  // time: a point is retryable until a pose exists at `t + offset`, so a
+  // positive offset makes the queue hold points marginally longer (one pose
+  // period at most) and a negative one resolves them marginally sooner.
+  // Neither changes what is emitted, only when.
+  std::int64_t pose_time_offset_ns = 0;
+
+  // --- ROUND 11 item 41: per-point pose time, for loop closure ------------
+  //
+  // When non-null, every point that actually REACHES the PageStore appends its
+  // own `t_mono_ns` here, in emit order. "Actually reaches" is the whole
+  // contract: points dropped for range, for want of a pose, to the pending
+  // bound or to PageStore backpressure contribute nothing, so
+  // `out_point_times->size()` equals `PushbroomStats::points_out` exactly and
+  // the k-th entry belongs to the k-th published point.
+  //
+  // WHY THE ASSEMBLER AND NOT THE CALLER. A world point is
+  // `T_world_phone(t) * T_phone_lidar * p_lidar`, so a correction applied in
+  // the world frame can be pushed straight through an already-resolved cloud
+  // — but only by something that knows each point's own `t`, and after the
+  // pending queue has reordered nothing (it is emit order, not arrival order).
+  // This is the only place that knows both. See slam/post/trajectory_loop.h.
+  //
+  // OFFLINE ONLY in practice: the live path leaves it null, so a capture pays
+  // nothing for it. It does not change what is emitted, so
+  // `pushbroom/assembles_identically_live_and_offline` still holds with it on.
+  std::vector<std::int64_t>* out_point_times = nullptr;
 };
+
+// THE MEASURED D6 TRANSPORT OFFSET, ROUND 10 item 36 — and it is small, which
+// is the finding.
+//
+// Measured on the owner's scan-020 (202 s, 293,524 in-range returns, 5,966
+// ARCore poses, 80,661 phone-IMU samples) by `tools/engine_cli.cpp
+// --d6-timesweep`: resolve the same container at every offset from -150 ms to
+// +150 ms and keep the one whose map is crispest. The 3 cm occupancy minimum
+// is at **+4 ms** (69,803 occupied voxels at +5 ms against 69,879 at 0), and
+// the whole +/-30 ms window varies by 0.1 %. Independently, cross-correlating
+// the recorded 400 Hz gyro's angular rate against the ARCore-pose-derived rate
+// puts the IMU/pose clock alignment at **-1.5 ms** with r = 0.982.
+//
+// So the two clock crossings on this path are aligned to a few milliseconds,
+// and +4 ms is 4 mm at 1 m/s and 0.24 degrees at a 60 deg/s turn — an order of
+// magnitude under the 4.8 cm wall thickness the same capture actually shows.
+// **The turn-around shift the owner reported is NOT a clock offset**, and this
+// number is recorded here so nobody spends another round assuming it is.
+//
+// The DEFAULT therefore stays 0, deliberately: applying a 4 mm correction that
+// the data cannot distinguish from zero would degrade every synthetic fixture
+// (whose streams are exactly synchronous by construction) to buy nothing real.
+// The knob exists so a rig whose transport IS slow can be corrected, and
+// --d6-timesweep is how that value gets found rather than guessed.
+inline constexpr std::int64_t kD6PoseTimeOffsetMeasuredNs = 4'000'000;
+inline constexpr std::int64_t kD6PoseTimeOffsetDefaultNs = 0;
 
 struct PushbroomStats {
   std::uint64_t points_in = 0;
@@ -206,7 +321,11 @@ class D6PushbroomAssembler final : public PushbroomAssembler {
 
   std::deque<ProfilePoint> pending_;
   std::vector<PointVertex> batch_;
+  // Parallel to `batch_`, and only populated when cfg_.out_point_times is set.
+  std::vector<std::int64_t> batch_times_;
   std::int64_t batch_t_ns_ = 0;
+  // Point time of the batch's FIRST point, for max_batch_span_ns.
+  std::int64_t batch_t_first_ns_ = 0;
   bool overflow_warned_ = false;
   PushbroomStats stats_{};
 };

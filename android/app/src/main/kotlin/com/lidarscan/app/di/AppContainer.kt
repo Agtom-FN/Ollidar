@@ -261,6 +261,14 @@ class AppContainer(context: Context) {
     val arController = CaptureArController(appContext)
 
     /**
+     * ROUND 11 (owner item 43): one cue player for the process, like the
+     * controller above and for the same reason — it owns a `ToneGenerator`
+     * (an AudioTrack allocation) and a vibrator handle, and building one per
+     * Capture screen would put a 200 ms lag on the first cue of every capture.
+     */
+    val cuePlayer = com.lidarscan.app.capture.OperatorCuePlayer(appContext)
+
+    /**
      * ROUND 9 (owner item 35): the phone's own gyro + accelerometer, feeding the
      * engine's IMU-densified pose interpolator. App-lifetime for the same reason
      * [arController] is — it holds a `SensorManager` and a `HandlerThread`, and

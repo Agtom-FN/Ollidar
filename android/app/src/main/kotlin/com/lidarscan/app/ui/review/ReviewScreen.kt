@@ -265,12 +265,18 @@ fun ReviewScreen(
                 .padding(horizontal = 14.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            listOf(
-                ColorMode.HEIGHT to "HEIGHT",
-                ColorMode.RGB to "RGB",
-                ColorMode.INTENSITY to "INTENSITY",
-                ColorMode.TIME to "TIME",
-            ).forEach { (mode, label) ->
+            // ROUND 10 (owner item 39): RGB is paused with the camera. TIME
+            // has always fallen back to the RGB pass (the hint below says so)
+            // and there is nothing behind either on this rig, so the review
+            // strip offers the two modes a D6 cloud actually has.
+            buildList {
+                add(ColorMode.HEIGHT to "HEIGHT")
+                if (com.lidarscan.core.FeatureFlags.RGB_COLOR_MODE_ENABLED) {
+                    add(ColorMode.RGB to "RGB")
+                    add(ColorMode.TIME to "TIME")
+                }
+                add(ColorMode.INTENSITY to "INTENSITY")
+            }.forEach { (mode, label) ->
                 val selected = state.display.colorMode == mode
                 ScanChip(
                     text = label,
@@ -400,7 +406,19 @@ private fun DisplayPanel(state: ReviewUiState, vm: ReviewViewModel) {
         HorizontalDivider()
         Text("Colour", style = MaterialTheme.typography.titleSmall)
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            ColorMode.entries.forEach { mode ->
+            // ROUND 10 (owner item 39): the Display panel enumerated every
+            // enum value, so it surfaced RGB and FIX_QUALITY whatever the rest
+            // of the app did. It now asks the same availability map the chips
+            // above do, which is where the pause is expressed once.
+            ColorMode.entries.filter {
+                // ROUND 11 (item 42): coverage is a LIVE-view mode. It answers
+                // "where have I not been yet", which is a question about a walk
+                // in progress; on a sealed scan the answer is "nowhere else,
+                // it is finished". Offering it in Review would also be a lie
+                // about the container, which carries no density.
+                it != ColorMode.COVERAGE &&
+                    (it != ColorMode.RGB || com.lidarscan.core.FeatureFlags.RGB_COLOR_MODE_ENABLED)
+            }.forEach { mode ->
                 val reason = state.colorModeReasons[mode]
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     FilterChip(

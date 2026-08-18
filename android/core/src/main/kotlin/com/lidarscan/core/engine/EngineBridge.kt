@@ -69,6 +69,29 @@ interface EngineBridge {
 
     /** Flushes and closes the active capture's streams. */
     suspend fun stopCapture(): Result<Unit>
+
+    /**
+     * ROUND 10 (owner item 38) — **empty the live point window, keeping the
+     * connection.**
+     *
+     * The owner's words: *"when click capture after capture, it still show with
+     * the previous capture."* On Android there is ONE `scan_engine*` per
+     * process (`RealEngineBridge` creates it on first connect and holds it),
+     * and the engine's `PageStore` is created with the engine, not with the
+     * session. A capture is a session. So without this, capture #2 draws on top
+     * of capture #1's pages: the operator opens the Capture tab, sees the
+     * previous scan's cloud, and reasonably concludes a new capture is not
+     * happening.
+     *
+     * It is separate from [stopCapture] on purpose — the pages must survive the
+     * seal, because the Projects thumbnail and the session summary are rendered
+     * from them — and it never touches the recording: the `.lscan` on disk has
+     * every point regardless (record-always, Tech Spec §3 key rule 2).
+     *
+     * A bridge with no live store (fake, replay) implements this as a no-op and
+     * returns success; nothing here is allowed to fail a capture.
+     */
+    suspend fun resetLiveView(): Result<Unit> = Result.success(Unit)
 }
 
 enum class ConnectionState {

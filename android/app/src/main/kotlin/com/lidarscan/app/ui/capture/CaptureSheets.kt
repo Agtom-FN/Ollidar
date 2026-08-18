@@ -203,12 +203,29 @@ fun CaptureSettingsSheet(
                 // is why deleting it was never the right move. The only thing
                 // that changed is that nothing on the Capture tab can select it.
                 // Revive by putting `CameraMode.AR` back in this list.
+                //
+                // ── ROUND 10 (owner item 39): FOLLOW IS PAUSED TOO ──────────
+                // Same treatment, same reasoning, one flag:
+                // `FeatureFlags.FOLLOW_CAMERA_ENABLED`. With it off the row is
+                // a single "3D orbit" segment rather than a hidden row, so the
+                // sheet still SAYS what the view is instead of leaving the
+                // operator to infer it. `FollowCamera` and its tests stay.
                 SegmentedPill(
-                    options = listOf(
-                        CameraMode.ORBIT to "3D orbit",
-                        CameraMode.FOLLOW to "Follow",
-                    ),
-                    selected = if (cameraMode == CameraMode.FOLLOW) CameraMode.FOLLOW else CameraMode.ORBIT,
+                    options = if (com.lidarscan.core.FeatureFlags.FOLLOW_CAMERA_ENABLED) {
+                        listOf(
+                            CameraMode.ORBIT to "3D orbit",
+                            CameraMode.FOLLOW to "Follow",
+                        )
+                    } else {
+                        listOf(CameraMode.ORBIT to "3D orbit")
+                    },
+                    selected = if (cameraMode == CameraMode.FOLLOW &&
+                        com.lidarscan.core.FeatureFlags.FOLLOW_CAMERA_ENABLED
+                    ) {
+                        CameraMode.FOLLOW
+                    } else {
+                        CameraMode.ORBIT
+                    },
                     onSelect = onCameraModeChange,
                     height = ScanDims.SegmentTall,
                     modifier = Modifier.testTag("captureViewRow"),
@@ -229,30 +246,40 @@ fun CaptureSettingsSheet(
                 // stay; the section is named for what it does.
                 SheetSection("Tracking & camera")
 
-                SheetSwitchRow(
-                    title = "Camera keyframes",
-                    subtitle = "for colorization · motion-gated",
-                    checked = keyframesEnabled,
-                    enabled = arAvailable,
-                    onCheckedChange = onKeyframesEnabledChange,
-                    modifier = Modifier.testTag("keyframesSwitch"),
-                )
+                // ROUND 10 (owner item 39): "pause, disable and hide the
+                // colorize function and features". Camera keyframes exist for
+                // exactly one consumer — colorization — so with that paused
+                // these two controls offer the operator a cost (storage,
+                // battery, thermal headroom during a walk) with no benefit.
+                // Hidden, not disabled: a dimmed switch invites the question
+                // "why can't I turn that on", and the answer is "there is
+                // nothing on the other side of it right now".
+                if (com.lidarscan.core.FeatureFlags.COLORIZE_ENABLED) {
+                    SheetSwitchRow(
+                        title = "Camera keyframes",
+                        subtitle = "for colorization · motion-gated",
+                        checked = keyframesEnabled,
+                        enabled = arAvailable,
+                        onCheckedChange = onKeyframesEnabledChange,
+                        modifier = Modifier.testTag("keyframesSwitch"),
+                    )
 
-                SheetRowLabel(
-                    label = "Keyframe rate",
-                    hint = "2 – 5 fps",
-                    readout = "$keyframeRateFps fps",
-                )
-                SegmentedPill(
-                    options = listOf(2 to "2 fps", 3 to "3 fps", 5 to "5 fps"),
-                    selected = keyframeRateFps,
-                    onSelect = onKeyframeRateChange,
-                    // Dimmed, not blank: the labels and the read-out stay
-                    // legible with keyframes off, they just stop taking taps.
-                    enabled = keyframesEnabled && arAvailable,
-                    modifier = Modifier.testTag("keyframeRateRow"),
-                )
-                Spacer(Modifier.height(12.dp))
+                    SheetRowLabel(
+                        label = "Keyframe rate",
+                        hint = "2 – 5 fps",
+                        readout = "$keyframeRateFps fps",
+                    )
+                    SegmentedPill(
+                        options = listOf(2 to "2 fps", 3 to "3 fps", 5 to "5 fps"),
+                        selected = keyframeRateFps,
+                        onSelect = onKeyframeRateChange,
+                        // Dimmed, not blank: the labels and the read-out stay
+                        // legible with keyframes off, they just stop taking taps.
+                        enabled = keyframesEnabled && arAvailable,
+                        modifier = Modifier.testTag("keyframeRateRow"),
+                    )
+                    Spacer(Modifier.height(12.dp))
+                }
 
                 SheetRowLabel(
                     label = "Scanner tracking",
@@ -268,16 +295,36 @@ fun CaptureSettingsSheet(
                 SheetSection("Display")
 
                 SheetRowLabel(label = "Colour mode", readout = colorModeLabel(colorMode))
+                // ROUND 10 (owner item 39): RGB is paused with the camera —
+                // see FeatureFlags.RGB_COLOR_MODE_ENABLED. The enum value is
+                // untouched (its ordinal is the shader's), it is simply not
+                // offered.
                 SegmentedPill(
-                    options = listOf(
-                        ColorMode.HEIGHT to "Height",
-                        ColorMode.RGB to "RGB",
-                        ColorMode.INTENSITY to "Intensity",
-                    ),
+                    options = buildList {
+                        add(ColorMode.HEIGHT to "Height")
+                        if (com.lidarscan.core.FeatureFlags.RGB_COLOR_MODE_ENABLED) {
+                            add(ColorMode.RGB to "RGB")
+                        }
+                        add(ColorMode.INTENSITY to "Intensity")
+                        // ROUND 11 (owner item 42): "where have I not been
+                        // yet". Display-only, and it degrades to exactly the
+                        // grayscale-intensity picture wherever the map is
+                        // already dense, so switching to it never hides the
+                        // room — it only warns about the parts that are thin.
+                        add(ColorMode.COVERAGE to "Coverage")
+                    },
                     selected = colorMode,
                     onSelect = onColorModeChange,
                     modifier = Modifier.testTag("colourModeRow"),
                 )
+                if (colorMode == ColorMode.COVERAGE) {
+                    Spacer(Modifier.height(6.dp))
+                    SheetRowLabel(
+                        label = "Amber = thin",
+                        hint = "25 cm cells · live view only, never saved",
+                        readout = "",
+                    )
+                }
                 Spacer(Modifier.height(12.dp))
 
                 // The colormap picker only exists for the two scalar modes —
@@ -709,6 +756,7 @@ private fun colorModeLabel(mode: ColorMode) = when (mode) {
     ColorMode.INTENSITY -> "Intensity"
     ColorMode.TIME -> "Time"
     ColorMode.FIX_QUALITY -> "Fix"
+    ColorMode.COVERAGE -> "Coverage"
 }
 
 private fun colormapLabel(cm: Colormap) = when (cm) {

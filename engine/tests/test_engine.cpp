@@ -213,7 +213,9 @@ TEST_CASE("engine/create_starts_idle_and_reports_a_version") {
   // 8: ROUND 9 item 35's phone IMU (scan_engine_push_imu,
   //    scan_engine_set_imu_extrinsics, scan_engine_imu_densify_stats +
   //    scan_imu_densify_stats, SCAN_STREAM_IMU_PHONE).
-  CHECK(kEngineAbiVersion == 8);
+  // 9: ROUND 10 item 36's lidar->pose time offset
+  //    (scan_engine_set_pose_time_offset_ns, scan_engine_pose_time_offset_ns).
+  CHECK(kEngineAbiVersion == 9);
 }
 
 TEST_CASE("engine/session_transitions_are_enforced_and_announced") {

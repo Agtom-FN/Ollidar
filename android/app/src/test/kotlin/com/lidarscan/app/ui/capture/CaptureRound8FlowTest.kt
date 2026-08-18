@@ -339,7 +339,7 @@ class CaptureRound8FlowTest {
      * where they are actually observable: the ViewModel's own initial state.
      */
     @Test
-    fun `the capture tab opens on the live map, Follow, intensity and one-pixel points`(): Unit = runBlocking {
+    fun `the capture tab opens on the live map, 3D orbit, intensity and one-pixel points`(): Unit = runBlocking {
         val store = FileProjectStore(tempRoot(), appVersion = "0.5.0")
         val vm = CaptureViewModel(
             engineBridge = FakeEngineBridge(),
@@ -354,12 +354,27 @@ class CaptureRound8FlowTest {
         assertTrue("the live 3D map must be on out of the box", vm.liveMapEnabled.value)
         assertEquals(com.lidarscan.core.capture.PerformancePreset.OPTIMAL, vm.preset.value)
 
-        // FOLLOW, not ORBIT: a D6 walkthrough is a cloud you are MAKING, and an
-        // orbit camera parked at the origin loses it within a few metres.
-        assertEquals(com.lidarscan.app.render.CameraMode.FOLLOW, vm.cameraMode.value)
+        // ROUND 10 (owner item 39): **3D ORBIT**, not FOLLOW. ROUND 8's
+        // argument for FOLLOW — "a D6 walkthrough is a cloud you are MAKING,
+        // and an orbit camera parked at the origin loses it within a few
+        // metres" — is still on the ViewModel field, and it is still a good
+        // argument; the owner asked for the orbit view they can turn by hand
+        // while the camera is unused. Asserted through the flag, so reviving
+        // FOLLOW does not leave a stale red test.
+        assertEquals(
+            if (com.lidarscan.core.FeatureFlags.FOLLOW_CAMERA_ENABLED) {
+                com.lidarscan.app.render.CameraMode.FOLLOW
+            } else {
+                com.lidarscan.app.render.CameraMode.ORBIT
+            },
+            vm.cameraMode.value,
+        )
 
         // Item 29's four numbers, at the ViewModel rather than only in core.
         assertEquals(com.lidarscan.core.render.ColorMode.INTENSITY, vm.colorMode.value)
+        // ROUND 10 (owner item 39): "…intensity, grey scale". This was three
+        // disagreeing sources before; now one.
+        assertEquals(com.lidarscan.core.render.Colormap.GRAYSCALE, vm.colormap.value)
         assertEquals(1.0f, vm.pointSizePx.value, 0f)
         assertEquals(1.0f, vm.gamma.value, 0f)
         assertEquals(1.0f, vm.brightness.value, 0f)

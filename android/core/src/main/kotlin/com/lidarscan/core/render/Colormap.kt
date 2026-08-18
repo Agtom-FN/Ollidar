@@ -27,7 +27,24 @@ import kotlin.math.roundToInt
  * `colorMode`/`colormap`/`pointSizeMode` material parameters) — keep the
  * declaration order in lock-step with `display_params.h` if it changes.
  */
-enum class ColorMode { RGB, HEIGHT, INTENSITY, TIME, FIX_QUALITY }
+/**
+ * ROUND 11 (owner item 42) added [COVERAGE], and it is the ONE value in this
+ * enum whose ordinal must never cross the C ABI.
+ *
+ * Every other mode is a shader branch: the engine's `scanengine::cloud::ColorMode`
+ * has the same five values in the same order and `points.mat` switches on the
+ * integer. Coverage is not a shader branch at all — it is a per-point colour the
+ * RENDERER computes from a density grid it owns and writes into its own GPU copy
+ * of the vertices, so the shader is asked for plain RGB pass-through (mode 0)
+ * and never learns that coverage exists.
+ *
+ * That is what keeps the promise in item 42 that coverage is "never written into
+ * the container": the tint lives in a Filament VertexBuffer for as long as the
+ * live view does, and the engine's PageStore — which is also the map cache that
+ * gets sealed — is never touched. `PointCloudRenderer.shaderColorMode()` is the
+ * single place the translation happens.
+ */
+enum class ColorMode { RGB, HEIGHT, INTENSITY, TIME, FIX_QUALITY, COVERAGE }
 
 enum class Colormap { GRAYSCALE, SPECTRUM, THERMAL }
 

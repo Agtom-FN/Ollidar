@@ -228,14 +228,20 @@ private fun LocalActions(state: ProcessingUiState, vm: ProcessingViewModel) {
             gate = state.postProcessGate,
             onRun = vm::postProcess,
         )
-        GatedAction(
-            icon = Icons.Filled.Palette,
-            title = "Colorize",
-            detail = "Samples camera keyframes onto the processed cloud. " +
-                "${state.keyframeCount} keyframe(s) recorded · clock sync: ${state.syncQuality.label}.",
-            gate = state.colorizeGate,
-            onRun = vm::colorize,
-        )
+        // ROUND 10 (owner item 39): "pause, disable and hide the colorize
+        // function and features". The job, its gate, its native binding and
+        // `ProcessingViewModel.colorize()` all stay — only the door is closed.
+        // `FeatureFlags.COLORIZE_ENABLED` reopens it.
+        if (com.lidarscan.core.FeatureFlags.COLORIZE_ENABLED) {
+            GatedAction(
+                icon = Icons.Filled.Palette,
+                title = "Colorize",
+                detail = "Samples camera keyframes onto the processed cloud. " +
+                    "${state.keyframeCount} keyframe(s) recorded · clock sync: ${state.syncQuality.label}.",
+                gate = state.colorizeGate,
+                onRun = vm::colorize,
+            )
+        }
         ScanCard {
             TileHead(Icons.Filled.Download, "Export")
             Spacer(Modifier.height(10.dp))

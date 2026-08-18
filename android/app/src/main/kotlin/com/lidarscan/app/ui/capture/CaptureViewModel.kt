@@ -207,6 +207,24 @@ class CaptureViewModel(
      * (`false` = prune), so a bare-JVM test sees shipped behaviour.
      */
     private val keepEmptyScans: suspend () -> Boolean = { false },
+    /**
+     * ROUND 11 (owner item 43): plays one operator cue — a vibration pattern
+     * and a tone. A lambda for the same reason [logEvent] is one: the ViewModel
+     * holds no `Context` (it is a plain `ViewModel`, not an `AndroidViewModel`),
+     * and every Android capability it has arrives injected from `CaptureRoute`.
+     * The default is a no-op so every JVM test builds cue-free.
+     *
+     * The implementation must not block: it is called from the 500 ms hint
+     * ticker on the main dispatcher, and `Vibrator.vibrate` + `ToneGenerator`
+     * are handed to a background executor by `OperatorCuePlayer`.
+     */
+    private val playCue: (com.lidarscan.core.capture.CueKind) -> Unit = {},
+    /**
+     * ROUND 11 (owner item 43): the Settings switch, default ON. A suspend
+     * supplier, read on the same tick as the cue decision, so flipping it
+     * applies to the capture already running.
+     */
+    private val cuesEnabled: suspend () -> Boolean = { true },
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<CaptureUiState>(CaptureUiState.Loading)
@@ -223,6 +241,22 @@ class CaptureViewModel(
     /** Set once a stop completes; the screen shows the session-summary sheet while non-null, clears it on dismiss. */
     private val _sessionSummary = MutableStateFlow<CaptureStats?>(null)
     val sessionSummary: StateFlow<CaptureStats?> = _sessionSummary.asStateFlow()
+
+    /**
+     * ROUND 11 (owner item 44) — the scan summary card.
+     *
+     * A sibling of [sessionSummary] rather than a replacement for it: that flow
+     * is the raw counters and is what three rounds of tests assert on, while
+     * this is the graded, human-readable answer to "keep or rescan". Both are
+     * snapshotted at the same instant inside the seal and both are cleared by
+     * [dismissSessionSummary], so they can never describe different scans.
+     *
+     * The navigation to Projects WAITS on this being dismissed — see
+     * `CaptureScreen`'s pending-navigation effect. Sealing and then jumping
+     * away would show the card for one frame.
+     */
+    private val _scanSummary = MutableStateFlow<com.lidarscan.core.capture.ScanSummary?>(null)
+    val scanSummary: StateFlow<com.lidarscan.core.capture.ScanSummary?> = _scanSummary.asStateFlow()
 
     private val _pointCloudSource = MutableStateFlow<PointCloudSource?>(null)
     val pointCloudSource: StateFlow<PointCloudSource?> = _pointCloudSource.asStateFlow()
@@ -243,7 +277,10 @@ class CaptureViewModel(
     // is a pass-through of nothing.
     private val _colorMode = MutableStateFlow(com.lidarscan.core.render.DisplayParams.CAPTURE_COLOR_MODE)
     val colorMode: StateFlow<ColorMode> = _colorMode.asStateFlow()
-    private val _colormap = MutableStateFlow(Colormap.SPECTRUM)
+    // ROUND 10 (owner item 39): the colormap default now comes from the ONE
+    // place it is stated (`DisplayParams.CAPTURE_COLORMAP` = GRAYSCALE) rather
+    // than being a second, disagreeing literal here.
+    private val _colormap = MutableStateFlow(com.lidarscan.core.render.DisplayParams.CAPTURE_COLORMAP)
     val colormap: StateFlow<Colormap> = _colormap.asStateFlow()
     private val _pointSizePx =
         MutableStateFlow(com.lidarscan.core.render.DisplayParams.CAPTURE_POINT_SIZE_PX)
@@ -265,8 +302,22 @@ class CaptureViewModel(
      * `PointCloudRenderer`'s (a concurrent task owns that package); this sets
      * the default and the View row's initial selection, which is the half that
      * lives here.
+     *
+     * ## ROUND 10 (owner item 39): FOLLOW is PAUSED, so this is ORBIT
+     *
+     * *"disable the follow and rgb since we dont use the camera now. default
+     * scan setting show be 3d orbit…"*. Everything above stays true and stays
+     * the argument for reviving it — `FeatureFlags.FOLLOW_CAMERA_ENABLED` is
+     * the one line that does. Until then the initial mode is ORBIT for capture
+     * as well as replay, and the two Orbit/Follow controls are not drawn.
      */
-    private val _cameraMode = MutableStateFlow(if (isReplay) CameraMode.ORBIT else CameraMode.FOLLOW)
+    private val _cameraMode = MutableStateFlow(
+        if (isReplay || !com.lidarscan.core.FeatureFlags.FOLLOW_CAMERA_ENABLED) {
+            CameraMode.ORBIT
+        } else {
+            CameraMode.FOLLOW
+        },
+    )
     val cameraMode: StateFlow<CameraMode> = _cameraMode.asStateFlow()
     private val _liveSlam = MutableStateFlow(false)
     val liveSlam: StateFlow<Boolean> = _liveSlam.asStateFlow()
@@ -410,7 +461,14 @@ class CaptureViewModel(
      * Gates [com.lidarscan.app.ar.KeyframeRecorder] mid-session; the written
      * count freezes rather than resetting when this goes off.
      */
-    private val _keyframesEnabled = MutableStateFlow(defaultTuning.keyframesEnabled)
+    // ROUND 10 (owner item 39): colorization is paused, and camera keyframes
+    // exist for nothing else. Gated at the STATE and not only at the UI, so a
+    // preset switch (which writes this flow from `CaptureTuning`) cannot turn
+    // the recorder back on behind a hidden control — see the `&& COLORIZE_ENABLED`
+    // in `applyTuning` and in `setKeyframesEnabled` for the other two doors.
+    private val _keyframesEnabled = MutableStateFlow(
+        defaultTuning.keyframesEnabled && com.lidarscan.core.FeatureFlags.COLORIZE_ENABLED,
+    )
     val keyframesEnabled: StateFlow<Boolean> = _keyframesEnabled.asStateFlow()
 
     /**
@@ -763,6 +821,17 @@ class CaptureViewModel(
     private var lastSkipGrowthMillis = 0L
 
     /**
+     * ROUND 11 (owner item 43). One scheduler for the ViewModel's life, reset
+     * per session — the lesson ROUND 10 item 38 spent a whole round on, applied
+     * to the one new piece of per-session state this round adds.
+     */
+    private val cues = com.lidarscan.core.capture.CueScheduler()
+
+    /** Mirrors what the scheduler last played, for the Diagnostics sheet and the log. */
+    private val _lastCue = MutableStateFlow<com.lidarscan.core.capture.CueKind?>(null)
+    val lastCue: StateFlow<com.lidarscan.core.capture.CueKind?> = _lastCue.asStateFlow()
+
+    /**
      * ROUND 5.3 (item 17): non-null while the live view has been auto-eased below
      * what was asked for. Set by the renderer's governor through the screen.
      */
@@ -834,12 +903,41 @@ class CaptureViewModel(
      *
      * A one-shot rather than a `StateFlow`: navigation is an event, and a
      * `StateFlow` holding the last sealed id would re-navigate on every
-     * recomposition and every configuration change. `replay = 0` with a buffer,
-     * so a collector that is momentarily absent (the screen mid-recomposition)
-     * does not make the emit block or drop silently.
+     * recomposition and every configuration change.
+     *
+     * ## ROUND 10 (owner item 38): `replay` was 0, and the comment that said
+     * why was wrong
+     *
+     * The owner's words: *"when i finish the capture and click stop, it will
+     * stay with the capture page but not heading to project."*
+     *
+     * This flow used to be `replay = 0`, justified in a comment which claimed
+     * that the buffer meant *"a collector that is momentarily absent … does not
+     * make the emit block or drop silently"*. **That is not what a
+     * `MutableSharedFlow` does.** `extraBufferCapacity` is slack for a
+     * subscriber that is SLOW; with **zero** subscribers, a `replay = 0` flow
+     * discards the value and `tryEmit` still returns true. The buffer protects
+     * against a collector that is behind, and against a collector that is not
+     * there it does nothing at all.
+     *
+     * And the collector genuinely can be absent at the moment of the emit.
+     * `stopCapture()` runs in `viewModelScope` under `NonCancellable`, so the
+     * seal SURVIVES the composition being disposed — an Activity recreation
+     * (configuration change, a system reclaim, the screen turning off and on
+     * mid-seal) tears down the `LaunchedEffect` that collects this while the
+     * seal carries on to completion. The scan is saved, the log says
+     * `sealed OK`, and the navigation event is emitted into an empty room.
+     * Which is precisely the report: sealed fine, never navigated.
+     *
+     * `replay = 1` is the fix and it is the right shape for this event: the id
+     * is delivered to whichever collector attaches, whenever it attaches, and
+     * because the buffer belongs to the ViewModel — which nav destroys on the
+     * way to Projects — it cannot survive to re-navigate later. It is
+     * re-delivered on a recomposition only if the whole ViewModel outlived one,
+     * and in that case re-delivering is exactly what should happen.
      */
     private val _sealedProjectId = MutableSharedFlow<String>(
-        replay = 0,
+        replay = 1,
         extraBufferCapacity = 4,
         onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
     )
@@ -1091,6 +1189,116 @@ class CaptureViewModel(
      * own note), so a re-zero during a walk takes effect from the next resolved
      * point rather than at the next Start.
      */
+    // ── ROUND 11 (owner item 45): the guided hold-still re-zero ──────────
+    //
+    // Same gate underneath — MountTrimSampler, unchanged, over the same 1 s
+    // window — with two things added around it: the operator can SEE the gate's
+    // verdict while they hold rather than after they tap, and the trim is
+    // averaged over the whole hold instead of over one second.
+    //
+    // Why that matters is item 45c, and this round measured it: scan-020's trim
+    // was accepted at spreadP90 = 2.40 deg, the gate's own 2.5 deg ceiling, and
+    // `engine/tests/test_round11_mount_trim.cpp` shows a 2.4 deg trim error
+    // painting an overhead feature 13.1 cm apart between the outbound and return
+    // legs of an out-and-back walk (23.6 cm at 3 m), against 3.7 cm at 0.8 deg.
+    // It reverses with the walk direction, which is exactly the owner's "when i
+    // turn around the scan position shifted".
+
+    private val refiner = com.lidarscan.core.calib.MountTrimRefiner()
+
+    /** Non-null while the operator is holding the ring; drives the ring's sweep and label. */
+    private val _mountHold = MutableStateFlow<com.lidarscan.core.calib.MountTrimRefiner.Progress?>(null)
+    val mountHold: StateFlow<com.lidarscan.core.calib.MountTrimRefiner.Progress?> = _mountHold.asStateFlow()
+
+    private var mountHoldJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * Start (or restart) a hold. Called on press; [cancelMountHold] on release.
+     *
+     * The hold ANCHOR moves forward whenever the live gate fails, which is the
+     * whole UX: wobble and the ring empties and starts again from now, so the
+     * operator learns what "still" means with their hands instead of by reading
+     * a refusal about a moment that has already passed.
+     */
+    fun beginMountHold(auto: Boolean = false) {
+        val controller = arController
+        if (controller == null) {
+            _mountTrimNote.value = "Mount reference needs phone tracking, which this session does not have."
+            _mountTrimNoteIsWarning.value = true
+            return
+        }
+        mountHoldJob?.cancel()
+        _mountTrimNote.value = null
+        _mountTrimNoteIsWarning.value = false
+        mountHoldJob = viewModelScope.launch {
+            var anchorNs = controller.poseWindow().lastOrNull()?.tMonoNs ?: 0L
+            // A hold the operator started and then walked away from must not
+            // poll for the life of the ViewModel. `done` requires the gate to
+            // pass, so a rig in motion never completes on its own; this gives
+            // up after 30 s and says so.
+            val giveUpAt = clock() + MOUNT_HOLD_GIVE_UP_MS
+            while (true) {
+                if (clock() > giveUpAt) {
+                    logEvent(LOG_TAG_AR, "mount hold abandoned after ${MOUNT_HOLD_GIVE_UP_MS} ms of movement")
+                    _mountHold.value = null
+                    mountHoldJob = null
+                    _mountTrimNote.value =
+                        "Could not get a still enough hold. Brace the phone against your body and try again."
+                    _mountTrimNoteIsWarning.value = true
+                    return@launch
+                }
+                val window = controller.poseWindow()
+                val newest = window.lastOrNull()?.tMonoNs
+                if (newest != null && anchorNs == 0L) anchorNs = newest
+                val progress = refiner.evaluate(window, anchorNs)
+                // A hold is only a hold while the gate agrees. The instant it
+                // does not, the anchor jumps to now and the ring empties.
+                if (!progress.gatePasses && progress.holdMillis > 250L && newest != null) {
+                    anchorNs = newest
+                }
+                _mountHold.value = progress
+                if (progress.done) {
+                    finishMountHold(anchorNs, auto)
+                    return@launch
+                }
+                kotlinx.coroutines.delay(MOUNT_HOLD_TICK_MS)
+            }
+        }
+    }
+
+    /** Released early, or navigated away. Nothing is stored. */
+    fun cancelMountHold() {
+        mountHoldJob?.cancel()
+        mountHoldJob = null
+        val progress = _mountHold.value
+        _mountHold.value = null
+        if (progress != null && !progress.done) {
+            logEvent(LOG_TAG_AR, "mount hold released early: ${progress.logSuffix}")
+        }
+    }
+
+    private fun finishMountHold(anchorNs: Long, auto: Boolean) {
+        val controller = arController ?: return
+        val progress = _mountHold.value
+        _mountHold.value = null
+        mountHoldJob = null
+        val result = refiner.capture(
+            samples = controller.poseWindow(),
+            holdStartedAtMonoNs = anchorNs,
+            nowMillis = clock(),
+            sensor = _sensor.value,
+        )
+        logEvent(
+            LOG_TAG_AR,
+            "mount hold ${if (auto) "(auto) " else ""}finished: ${progress?.logSuffix ?: "no progress"}",
+        )
+        applyMountTrimResult(result)
+    }
+
+    /**
+     * The one-tap path, kept exactly as ROUND 8 left it so the old behaviour and
+     * its tests survive: a single 1 s window, refused with its numbers.
+     */
     fun setMountReference() {
         val controller = arController
         if (controller == null) {
@@ -1098,11 +1306,17 @@ class CaptureViewModel(
             _mountTrimNoteIsWarning.value = true
             return
         }
-        val result = com.lidarscan.core.calib.MountTrimSampler.capture(
-            samples = controller.poseWindow(),
-            nowMillis = clock(),
-            sensor = _sensor.value,
+        applyMountTrimResult(
+            com.lidarscan.core.calib.MountTrimSampler.capture(
+                samples = controller.poseWindow(),
+                nowMillis = clock(),
+                sensor = _sensor.value,
+            ),
         )
+    }
+
+    /** The shared tail of the one-tap and hold-still paths. */
+    private fun applyMountTrimResult(result: com.lidarscan.core.calib.MountTrimResult) {
         when (result) {
             is com.lidarscan.core.calib.MountTrimResult.Rejected -> {
                 // ROUND 8 (owner item 30b): the refusal carries its MEASUREMENT,
@@ -1243,7 +1457,8 @@ class CaptureViewModel(
         _refreshHz.value = tuning.refreshHz
         _refreshRequestToken.value++
         _lodBudgetMPoints.value = tuning.lodBudgetMPoints
-        _keyframesEnabled.value = tuning.keyframesEnabled
+        _keyframesEnabled.value =
+            tuning.keyframesEnabled && com.lidarscan.core.FeatureFlags.COLORIZE_ENABLED
         keyframeRecorder?.setEnabled(tuning.keyframesEnabled)
         _keyframeRateFps.value = tuning.keyframeRateFps
         keyframeRecorder?.setTargetFps(tuning.keyframeRateFps.toDouble())
@@ -1386,12 +1601,58 @@ class CaptureViewModel(
                 "Turning too fast for colour frames — sweep more slowly to keep coverage."
             else -> null
         }
+
+        // ROUND 11 (owner item 43): the same two signals the hint is written
+        // from, plus the section counter, become something the operator can
+        // feel. Deliberately fed from HERE rather than from a fourth ticker:
+        // the hint and the cue must never disagree about whether the rig is
+        // moving too fast, and one evaluation point is the only way to
+        // guarantee that.
+        //
+        // Cues are only for a RECORDING session. Buzzing at someone who is
+        // lining up a preview, or who has put the phone down on a table with
+        // the app open, is how a default-ON feature gets turned off.
+        val recording = captureState.value == CaptureState.RECORDING
+        val conditions = com.lidarscan.core.capture.CueConditions(
+            trackingDegraded = status != null && !status.tracking,
+            movingTooFast = excessiveMotion || (recentlySkipping && _keyframesEnabled.value),
+            sectionBreaks = _sectionCount.value - 1,
+        )
+        val fired = cues.tick(conditions, nowMillis, enabled = recording && cuesArmed)
+        if (fired != null) {
+            _lastCue.value = fired
+            playCue(fired)
+            logEvent(LOG_TAG_AR, "cue: ${fired.name.lowercase()}")
+        }
     }
+
+    /**
+     * ROUND 11: the Settings switch, sampled on the hint ticker rather than
+     * collected, so there is exactly one place (the tick) where cue state is
+     * read and no chance of a stale collector deciding.
+     */
+    @Volatile
+    private var cuesArmed: Boolean = true
 
     private var lastStatsSampleMillis = 0L
     private var lastStatsSamplePoints = 0L
 
     init {
+        // ── ROUND 10 (owner item 38): a fresh Capture tab shows a fresh map ──
+        //
+        // "Entering Capture = a new-scan context" has been the contract since
+        // ROUND 9 item 33, and the ONE thing that never obeyed it was the live
+        // cloud — because it does not live in this ViewModel. It lives in the
+        // process-lifetime `scan_engine*`'s PageStore, which outlives every
+        // ViewModel, every session and every navigation. So the tab was reset
+        // in every respect except the one filling the screen.
+        //
+        // Not for a replay (its cloud IS the point of the screen) and not for
+        // a project-scoped entry.
+        if (!isReplay && projectId == null) {
+            viewModelScope.launch { clearLiveViewport() }
+        }
+
         // ROUND 7 (field bug 1): restore the mount re-zero FIRST, before any
         // project loads and long before a Start can reach applyMountExtrinsic.
         //
@@ -1471,6 +1732,10 @@ class CaptureViewModel(
         // with the ViewModel.
         viewModelScope.launch {
             while (true) {
+                // ROUND 11 (item 43): the Settings switch is read on the same
+                // tick that decides, so a toggle applies to the capture already
+                // running and there is no second source of truth.
+                cuesArmed = runCatching { cuesEnabled() }.getOrDefault(true)
                 updateMotionHint(clock())
                 kotlinx.coroutines.delay(MOTION_HINT_TICK_MS)
             }
@@ -1600,6 +1865,111 @@ class CaptureViewModel(
     }
 
     /**
+     * ROUND 10 (owner item 38) — **empty the live viewport, for real.**
+     *
+     * The owner's words: *"when click capture after capture, it still show
+     * with the previous capture."*
+     *
+     * Two things have to happen and neither is enough alone:
+     *
+     *  1. **The native pages** — `RealEngineBridge` holds ONE `scan_engine*`
+     *     for the whole process and the engine's `PageStore` belongs to the
+     *     engine, not to the session. `resetLiveView()` recycles it.
+     *  2. **The GPU pages** — `PointCloudRenderer` only clears its uploaded
+     *     pages when it is handed a NULL source (`setSource(null)`); handing
+     *     it a different non-null source clears nothing. So the flow is
+     *     null'd and then re-read, which is what makes the renderer let go of
+     *     buffers whose pages no longer exist.
+     *
+     * Ordering matters: recycle first, then swap the source, or the renderer
+     * can re-upload the pages between the two.
+     *
+     * This never touches the recording. Record-always (Tech Spec §3 key rule
+     * 2) writes every point to the `.lscan` as it arrives, and the Projects
+     * thumbnail is rendered from a snapshot taken before this runs.
+     */
+    private suspend fun clearLiveViewport() {
+        runCatching { engineBridge.resetLiveView() }
+            .onFailure { logEvent(LOG_TAG_SEAL, "live view reset failed: ${it.javaClass.simpleName}") }
+        _pointCloudSource.value = null
+        _pointCloudSource.value = (engineBridge as? NativePointCloudProvider)?.currentPointCloudSource()
+    }
+
+    /**
+     * ROUND 11 (owner item 45b) — auto-recapture a stale trim at Start.
+     *
+     * > "At capture start, if stationary and trim is stale, auto-recapture the
+     * >  trim so a stale reference never enters a scan silently."
+     *
+     * Three conditions, all of them cheap and none of them blocking:
+     *
+     *  * there is a trim and it is older than
+     *    [com.lidarscan.core.calib.MountTrimRefiner.AUTO_REFRESH_AFTER_MS], or
+     *    it came from a previous app run (`fromPreviousRun`, ROUND 7's own
+     *    provenance flag) — a bracket that has been picked up and put down
+     *    between two scans has moved, and the app cannot know it has not;
+     *  * ARCore is tracking and the pose window is long enough to judge;
+     *  * the ROUND 8 gate passes RIGHT NOW, i.e. the rig is genuinely still.
+     *
+     * If the gate refuses, the OLD trim stays and a note says so. Refusing to
+     * start would be worse: the operator is holding a rig, ready to walk, and
+     * an old trim is better than a missed capture. What must not happen — and
+     * what happened before this — is the old trim being used with no mention
+     * of its age anywhere except a log line nobody reads until afterwards.
+     *
+     * Deliberately NOT the guided hold: Start must be instant. This reads the
+     * pose window that is already streaming and decides in microseconds.
+     */
+    private fun maybeAutoRefreshMountTrim() {
+        val controller = arController ?: return
+        val provenance = _mountTrimProvenance.value
+        val trim = provenance?.trim
+        val stale = trim == null ||
+            provenance.fromPreviousRun ||
+            trim.ageMillis(clock()) > com.lidarscan.core.calib.MountTrimRefiner.AUTO_REFRESH_AFTER_MS
+        if (!stale) return
+        if (trim == null) {
+            // Nothing to refresh, and nothing to be quiet about either: with no
+            // trim at all the app is on the bare CAD nominal, which the chip
+            // already says in amber.
+            return
+        }
+        val result = com.lidarscan.core.calib.MountTrimSampler.capture(
+            samples = controller.poseWindow(),
+            nowMillis = clock(),
+            sensor = _sensor.value,
+        )
+        if (result is com.lidarscan.core.calib.MountTrimResult.Captured) {
+            logEvent(
+                LOG_TAG_AR,
+                "mount trim auto-refreshed at start: was %s, now magnitude=%.2fdeg spreadP90=%.2fdeg samples=%d"
+                    .format(
+                        provenance.logSuffix,
+                        result.trim.magnitudeDeg,
+                        result.trim.spreadP90Deg,
+                        result.trim.sampleCount,
+                    ),
+            )
+            applyMountTrimResult(result)
+            _mountTrimNote.value =
+                "Mount reference was stale (%s) and the rig was still, so it was re-taken automatically — %.1f deg, steady to %.2f deg."
+                    .format(provenance.ageLabel, result.trim.magnitudeDeg, result.trim.spreadP90Deg)
+            _mountTrimNoteIsWarning.value = false
+        } else {
+            val measurement = (result as? com.lidarscan.core.calib.MountTrimResult.Rejected)?.measurement
+            logEvent(
+                LOG_TAG_AR,
+                "mount trim auto-refresh declined (rig not still): ${provenance.logSuffix}" +
+                    (measurement?.let { " ${it.logSuffix}" } ?: ""),
+            )
+            _mountTrimNote.value =
+                "Scanning with a mount reference from ${provenance.ageLabel} — hold the rig still and " +
+                    "tap Re-zero if the bracket has moved since."
+            _mountTrimNoteIsWarning.value = true
+        }
+    }
+
+    /**
      * ROUND 5 (items 8 + 9): **Start creates the project.**
      *
      * On the Capture tab there is nothing loaded, so this claims a series
@@ -1614,10 +1984,14 @@ class CaptureViewModel(
      * series number must only ever be spent on a scan that was actually taken.
      */
     fun startCapture() {
+        // ROUND 11 (owner item 45b): a stale mount reference must never enter a
+        // scan silently.
+        maybeAutoRefreshMountTrim()
         lastStatsSampleMillis = 0L
         lastStatsSamplePoints = 0L
         _stats.value = CaptureStats()
         _sessionSummary.value = null
+        _scanSummary.value = null
         // ROUND 5.3: one walk, one trail — the preview's framing path is not part
         // of the recorded walkthrough.
         trailRecorder.clear()
@@ -2141,6 +2515,35 @@ class CaptureViewModel(
         engineBridge.stopCapture()
         _sessionSummary.value = finalStats
 
+        // ROUND 11 (owner item 44): the graded card, built from the SAME
+        // instant's numbers as the raw summary above.
+        //
+        // `trackingLossEpisodes` had to be reached for here: it has existed on
+        // `ArStatus` since ROUND 6 and fed only the Diagnostics sheet, so the
+        // one number that says "there are holes in this room" was never part of
+        // what a finished scan reported.
+        val trackingDrops = arController?.status?.value?.trackingLossEpisodes ?: 0
+        val summary = com.lidarscan.core.capture.ScanSummary(
+            pointsCaptured = finalStats.pointsCaptured,
+            elapsedMillis = finalStats.elapsedMillis,
+            pathLengthMeters = trailRecorder.totalPathM.value.toDouble(),
+            sections = sectionBreaks.size + 1,
+            trackingDrops = trackingDrops,
+            recordingSizeBytes = finalStats.recordingSizeBytes,
+        )
+        _scanSummary.value = summary
+        logEvent(
+            LOG_TAG_SEAL,
+            "summary: grade=${summary.grade} points=${summary.pointsCaptured} " +
+                "durationMs=${summary.elapsedMillis} pathM=%.1f sections=%d drops=%d ptsPerM=%.0f"
+                    .format(
+                        summary.pathLengthMeters,
+                        summary.sections,
+                        summary.trackingDrops,
+                        summary.pointsPerMeter,
+                    ),
+        )
+
         // B5/B9: write what the capture actually produced back into the
         // manifest.
         //
@@ -2369,6 +2772,25 @@ class CaptureViewModel(
             lastStatsSampleMillis = 0L
             lastStatsSamplePoints = 0L
             _sectionCount.value = 1
+            // ROUND 11 (item 43): per-session, like everything else here. A
+            // scheduler carried across captures would open the next one with
+            // the previous one's section count as its baseline and buzz on the
+            // first frame.
+            cues.reset()
+            // ── ROUND 10 (owner item 38) ────────────────────────────────
+            // ...and the live map, which ROUND 8's comment above explicitly
+            // listed as "deliberately NOT touched". That was wrong, and it is
+            // the whole of "it still show with the previous capture": the
+            // pages belong to the process-lifetime engine, not to the session
+            // that made them, so leaving them meant the NEXT capture opened on
+            // top of this one's cloud. The thumbnail was snapshotted from
+            // `previewSource` well above this line, so nothing is lost.
+            //
+            // The connection, the preset, the display parameters and the mount
+            // trim are still deliberately untouched — "still connected/armed,
+            // live preview running" is the contract, and an empty live map IS
+            // the running preview at the moment a scan ends.
+            clearLiveViewport()
         } else {
             projectStore.open(activeId)?.let { _uiState.value = CaptureUiState.Loaded(it) }
         }
@@ -2384,11 +2806,24 @@ class CaptureViewModel(
         // no-data banner on THIS screen is the thing they need to read.
         if (verified != null && !prunedEmptyScan) {
             _sealedProjectId.tryEmit(activeId)
+            // ROUND 10 (owner item 38): the navigation intent is LOGGED, so the
+            // next field log answers "did the app try to navigate and the shell
+            // ignore it, or did it never try?" without anyone guessing. The
+            // absence of this line beside a `sealed OK` line is now itself the
+            // diagnosis.
+            logEvent(LOG_TAG_SEAL, "navigate -> Projects id=$activeId")
+        } else {
+            logEvent(
+                LOG_TAG_SEAL,
+                "staying on Capture (no navigation): verified=${verified != null} " +
+                    "pruned=$prunedEmptyScan — the banner on this screen is the thing to read",
+            )
         }
     }
 
     fun dismissSessionSummary() {
         _sessionSummary.value = null
+        _scanSummary.value = null
     }
 
     fun setLiveSlam(enabled: Boolean) {
@@ -2471,7 +2906,7 @@ class CaptureViewModel(
 
     /** Sheet: camera keyframes on/off. Applies to a live recorder immediately. */
     fun setKeyframesEnabled(enabled: Boolean) {
-        _keyframesEnabled.value = enabled
+        _keyframesEnabled.value = enabled && com.lidarscan.core.FeatureFlags.COLORIZE_ENABLED
         keyframeRecorder?.setEnabled(enabled)
         markCustomIfDiverged()
     }
@@ -2539,6 +2974,17 @@ class CaptureViewModel(
 
         /** How often the motion hint is re-evaluated (ROUND 5.3 item 18). */
         const val MOTION_HINT_TICK_MS = 500L
+
+        /**
+         * ROUND 11 (item 45a): the hold-still ring's tick. 100 ms is fast
+         * enough that the ring visibly empties the instant the rig wobbles —
+         * which is the feedback — and slow enough that re-running the gate's
+         * percentile over ~30 samples costs nothing.
+         */
+        const val MOUNT_HOLD_TICK_MS = 100L
+
+        /** How long a hold that never gets still is allowed to keep polling. */
+        const val MOUNT_HOLD_GIVE_UP_MS = 30_000L
 
         /**
          * How long after the last motion-gated skip the hint stays up. Long enough

@@ -55,6 +55,24 @@ object ScanEngineNative {
     external fun nativeStopSession(handle: Long): Int
     external fun nativeEngineState(handle: Long): Int
 
+    // --- ROUND 10 item 38: the live page store between captures (ABI 7, never bound) ---
+    //
+    // The `scan_engine*` — and therefore its `PageStore` — lives for the whole
+    // process, while a capture is one session inside it. Both of these have
+    // existed in the C ABI since ABI 7 and neither was ever bound, which is why
+    // capture #2 opened showing capture #1's cloud.
+    /** Opt the live store into recycling its oldest page instead of dead-ending at the ceiling. */
+    external fun nativeSetLivePageEviction(handle: Long, enabled: Boolean): Int
+
+    /** Empty the live window (buffers kept, so a renderer mid-read is safe). */
+    external fun nativeRecycleLivePages(handle: Long): Int
+
+    /**
+     * ROUND 10 item 36 (ABI 9): nanoseconds added to a D6 return's own stamp
+     * before its pose is looked up. See [com.lidarscan.core.capture.D6TimeSync].
+     */
+    external fun nativeSetPoseTimeOffsetNs(handle: Long, offsetNs: Long): Int
+
     // --- devices ---------------------------------------------------------------
     /** Returns the device id (>= 0), or -1 on failure (see [nativeLastError]). */
     external fun nativeAddD6Device(

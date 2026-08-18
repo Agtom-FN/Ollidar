@@ -1162,6 +1162,27 @@ scan_error_t scan_engine_pushbroom_stats(scan_engine* engine, scan_pushbroom_sta
   SCAN_GUARD_END
 }
 
+// --- ROUND 10 item 36: the lidar -> pose time offset (ABI 9) ----------------
+
+scan_error_t scan_engine_set_pose_time_offset_ns(scan_engine* engine, int64_t offset_ns) {
+  SCAN_GUARD_BEGIN
+  if (engine == nullptr) return fail(ScanError::kInvalidArgument, "null engine");
+  const Status s = handle_of(engine)->engine->set_pose_time_offset_ns(
+      static_cast<std::int64_t>(offset_ns));
+  return to_c(s);
+  SCAN_GUARD_END
+}
+
+scan_error_t scan_engine_pose_time_offset_ns(scan_engine* engine, int64_t* out) {
+  SCAN_GUARD_BEGIN
+  if (engine == nullptr || out == nullptr) {
+    return fail(ScanError::kInvalidArgument, "null argument");
+  }
+  *out = static_cast<int64_t>(handle_of(engine)->engine->pose_time_offset_ns());
+  return SCAN_OK;
+  SCAN_GUARD_END
+}
+
 // --- mount calibration (A8) -------------------------------------------------
 
 scan_error_t scan_mount_calib_create(scan_mount_calib** out) {

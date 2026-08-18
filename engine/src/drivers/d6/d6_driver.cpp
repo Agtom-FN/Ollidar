@@ -45,7 +45,11 @@ const char* to_string(D6ChecksumVerdict v) noexcept {
 namespace {
 
 constexpr const char* kMod = "d6";
-constexpr double kDegToRad = 3.14159265358979323846 / 180.0;
+// (ROUND 9 moved the fan formula — and with it the only use of a
+// degrees-to-radians constant here — into drivers/d6/d6_fan.h, which is now
+// the ONE place the sensor frame is written down. The leftover constant is
+// gone rather than silenced: a stray angle constant in the driver is exactly
+// the shape of the bug ROUND 9 spent a round finding.)
 
 // Matches REPORT.md §2's confirmation bar (the S1 exit criterion).
 constexpr double kChecksumVerdictThreshold = 0.995;

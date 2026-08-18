@@ -1263,6 +1263,36 @@ Status Engine::set_imu_extrinsics(const double quat_xyzw[4]) {
                          TrajectorySource::kExternal;
   impl_->densified_poses = std::move(next);
   if (was_wired) impl_->pushbroom->set_pose_source(impl_->densified_poses.get());
+
+  // ROUND 10, found by reading the owner's scan-020 manifest: it says
+  // `"imuCalibration": null` even though the session log for that same capture
+  // says `camera_from_imu=derived (... Rz(+90) ...)`. This is ROUND 8's
+  // mountCalibration bug, one sensor further down, and it has the same shape:
+  // start_session() writes the manifest at open(), and the Android app applies
+  // the IMU extrinsic ~24 ms AFTER start (11:06:25.799 `[session] start` then
+  // 11:06:25.823 `phone IMU start`), because the sensor listener is brought up
+  // once the session exists. So the number was known 24 ms too late to be
+  // recorded, every time.
+  //
+  // The cost is not cosmetic. `D6ResolvePipeline` falls back to the IDENTITY
+  // camera_from_imu when the manifest has none, so an offline re-resolve
+  // integrates the gyro in the WRONG FRAME — the endpoints stay pinned to
+  // ARCore so it cannot run away, but the path between them is distorted, and
+  // "replay == capture" (Tech Spec §3 key rule 2) quietly stops being true for
+  // the one stream ROUND 9 added specifically to shape the geometry.
+  //
+  // Fixed the way ROUND 8 fixed the mount: push it at an ALREADY-OPEN recorder
+  // too. FileRecordWriter rewrites manifest.json at close() with
+  // `"sealed": true`, so this is what makes a SEALED container carry it.
+  //
+  // LOCK ORDER: pushbroom_m -> imu_m -> record_m, which is the order declared
+  // over Impl::imu_m and the order the capture path already runs in.
+  {
+    std::lock_guard<std::mutex> rlock(impl_->record_m);
+    if (auto* fw = dynamic_cast<lscan::FileRecordWriter*>(impl_->recorder.get())) {
+      if (fw->is_open()) fw->set_imu_calibration(quat_xyzw);
+    }
+  }
   SCAN_LOG_INFO(kMod, "[imu] camera_from_imu = (%.6f, %.6f, %.6f, %.6f)", quat_xyzw[0],
                 quat_xyzw[1], quat_xyzw[2], quat_xyzw[3]);
   return kOkStatus;
@@ -1335,6 +1365,22 @@ bool Engine::pushbroom_enabled() const {
 Status Engine::pushbroom_flush() {
   std::lock_guard<std::mutex> lock(impl_->pushbroom_m);
   return impl_->pushbroom->flush();
+}
+
+// ROUND 10 item 36. Read-modify-write of the assembler's own config under
+// pushbroom_m, so a concurrent push_profile() on the reader thread cannot see
+// a half-updated config.
+Status Engine::set_pose_time_offset_ns(std::int64_t offset_ns) {
+  std::lock_guard<std::mutex> lock(impl_->pushbroom_m);
+  PushbroomConfig c = impl_->pushbroom->config();
+  c.pose_time_offset_ns = offset_ns;
+  impl_->pushbroom->set_config(c);
+  return kOkStatus;
+}
+
+std::int64_t Engine::pose_time_offset_ns() const {
+  std::lock_guard<std::mutex> lock(impl_->pushbroom_m);
+  return impl_->pushbroom->config().pose_time_offset_ns;
 }
 
 PushbroomStats Engine::pushbroom_stats() const {
