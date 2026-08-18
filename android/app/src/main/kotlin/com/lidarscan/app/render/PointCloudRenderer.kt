@@ -162,6 +162,90 @@ class PointCloudRenderer(
     private var sharedIndexBuffer: IndexBuffer? = null
     private var sharedIndexBufferCapacity = 0
 
+    // ── ROUND 16 item 59: THE WALKED PATH, INSIDE THE CLOUD ─────────────────
+    //
+    // Owner, on 0.9.0: *"i want to see the path of mine showing in the
+    // pointcloud too for me to check if the scan is right"*, and the second
+    // half of that sentence is the requirement. A cloud alone cannot be checked
+    // by eye: a room that has folded at a re-anchor and a room that is simply
+    // an odd shape look identical. The walk is the reference — you know where
+    // you went — so drawing it in the same frame as the returns turns "does
+    // this look right" from a guess into a comparison.
+    //
+    // It has to be in the SAME frame, not an overlay: the ribbon is built from
+    // the same poses the returns were resolved against, so a stitch or a
+    // healing transform that moves the cloud moves the path with it. A path
+    // drawn from an uncorrected trajectory over a corrected cloud would be a
+    // lie that looked like a diagnosis.
+    //
+    // ROUND 5.3 refused to build this and stated the cost: *"drawing it in the
+    // 3D scene would mean a second material, a second geometry upload path and
+    // a per-frame rebuild of a line strip"*. Two of those three were right and
+    // are paid below; the third is not, because the trail only changes when the
+    // operator has walked 15 cm, which at walking pace is about five times a
+    // second against a 60 Hz frame. [trailDirty] is what makes it a rebuild on
+    // change rather than a rebuild per frame.
+    private var trailMaterial: Material? = null
+    private var trailMaterialInstance: MaterialInstance? = null
+    private var trailEntity = 0
+    private var trailVertexBuffer: VertexBuffer? = null
+    private var trailIndexBuffer: IndexBuffer? = null
+    private var trailCapacity = 0
+    private var trailCount = 0
+
+    /** Guards [pendingTrail] — written from the UI thread, read on the GL thread. */
+    private val trailLock = Any()
+    private var pendingTrailCount = 0
+    private var trailDirty = false
+
+    @Volatile
+    private var trailVisible = true
+
+    /**
+     * ROUND 16 item 59 — the path, in world metres, as `x, y, z` triples plus a
+     * packed RGBA per vertex.
+     *
+     * Takes the colours from the CALLER rather than deriving them here, because
+     * what a colour means differs between the two screens and only the caller
+     * knows which it is: live, the gradient is "how long ago" and the muted
+     * stretches are where ARCore was not tracking; in Review it is the same
+     * gradient over the whole sealed walk. One renderer, two meanings, no
+     * branch in the renderer.
+     *
+     * `xyz` must hold `3 * count` floats and `rgba` exactly `count`. Safe from
+     * any thread; the upload happens on the next frame.
+     */
+    fun setTrail(xyz: FloatArray, rgba: IntArray, count: Int) {
+        val n = count.coerceAtMost(minOf(xyz.size / 3, rgba.size)).coerceAtLeast(0)
+        // Interleaved to the same 16-byte stride the point pages use — three
+        // floats then a packed RGBA8 — so the vertex layout below is the one
+        // this renderer already knows how to describe, and `trail.mat`'s
+        // `requires : [ color ]` is satisfied by the same attribute pair.
+        val packed = ByteBuffer.allocateDirect(n * TRAIL_STRIDE_BYTES)
+            .order(ByteOrder.nativeOrder())
+        for (i in 0 until n) {
+            packed.putFloat(xyz[i * 3])
+            packed.putFloat(xyz[i * 3 + 1])
+            packed.putFloat(xyz[i * 3 + 2])
+            packed.putInt(rgba[i])
+        }
+        packed.flip()
+        synchronized(trailLock) {
+            pendingTrailBytes = packed
+            pendingTrailCount = n
+            trailDirty = true
+        }
+    }
+
+    private var pendingTrailBytes: ByteBuffer? = null
+
+    /** ROUND 16 item 59: the view control's toggle. Default on. */
+    fun setTrailVisible(visible: Boolean) {
+        if (trailVisible == visible) return
+        trailVisible = visible
+        synchronized(trailLock) { trailDirty = true }
+    }
+
     private var manipulator: Manipulator? = null
     private var viewportWidth = 1
     private var viewportHeight = 1
@@ -301,6 +385,12 @@ class PointCloudRenderer(
         gpuPages.clear()
         sharedIndexBuffer?.let { engine.destroyIndexBuffer(it) }
         sharedIndexBuffer = null
+
+        destroyTrail()
+        trailMaterialInstance?.let { engine.destroyMaterialInstance(it) }
+        trailMaterialInstance = null
+        trailMaterial?.let { engine.destroyMaterial(it) }
+        trailMaterial = null
 
         colormapTexture?.let { engine.destroyTexture(it) }
         materialInstance?.let { engine.destroyMaterialInstance(it) }
@@ -674,6 +764,21 @@ class PointCloudRenderer(
         buffer.put(bytes).flip()
         material = Material.Builder().payload(buffer, buffer.remaining()).build(engine)
         materialInstance = material!!.createInstance()
+
+        // ROUND 16 item 59. Loaded here rather than lazily on the first trail:
+        // a `Material.Builder().build()` on the GL thread mid-walk is a stall
+        // the operator would feel, and this file's whole posture is that setup
+        // costs are paid at attach.
+        val trailBytes = context.assets.open("materials/trail.filamat").use { it.readBytes() }
+        val trailBuffer = ByteBuffer.allocateDirect(trailBytes.size).order(ByteOrder.nativeOrder())
+        trailBuffer.put(trailBytes).flip()
+        trailMaterial = Material.Builder()
+            .payload(trailBuffer, trailBuffer.remaining())
+            .build(engine)
+        trailMaterialInstance = trailMaterial!!.createInstance().apply {
+            setParameter("opacity", 1.0f)
+            setParameter("intensity", 1.0f)
+        }
     }
 
     private fun buildColormapTexture() {
@@ -963,6 +1068,144 @@ class PointCloudRenderer(
         sharedIndexBuffer = ib
         sharedIndexBufferCapacity = minCapacity
         return ib
+    }
+
+    // --- ROUND 16 item 59: the trajectory ribbon --------------------------
+
+    private fun destroyTrail() {
+        if (trailEntity != 0) {
+            scene.removeEntity(trailEntity)
+            engine.renderableManager.destroy(trailEntity)
+            EntityManager.get().destroy(trailEntity)
+            trailEntity = 0
+        }
+        trailVertexBuffer?.let { engine.destroyVertexBuffer(it) }
+        trailVertexBuffer = null
+        trailIndexBuffer?.let { engine.destroyIndexBuffer(it) }
+        trailIndexBuffer = null
+        trailCapacity = 0
+        trailCount = 0
+    }
+
+    /**
+     * Uploads the pending trail, if there is one, and keeps the renderable in
+     * step with the toggle. Called once per frame from [FrameCallback], BEFORE
+     * `beginFrame`, exactly like [syncPointCloud].
+     *
+     * The buffers grow by doubling and are never shrunk while the view is
+     * alive: a walk only gets longer, the ring is capped at the preset's
+     * `trailPoints` (600 by default, i.e. 90 m at the 15 cm spacing), and a
+     * destroy/rebuild per growth step would be a stutter every few seconds.
+     *
+     * `LINE_STRIP`, not `LINES`: the trail is a polyline and a strip is n
+     * indices where a line list is 2n-2 of them, but more to the point a strip
+     * cannot be given an odd vertex count and silently drop the last segment.
+     */
+    private fun syncTrail() {
+        val bytes: ByteBuffer?
+        val count: Int
+        synchronized(trailLock) {
+            if (!trailDirty) return
+            trailDirty = false
+            bytes = pendingTrailBytes
+            count = pendingTrailCount
+        }
+        val mi = trailMaterialInstance ?: return
+
+        // Two points is the shortest thing that is a line. One point is a walk
+        // that has not started, and drawing a degenerate strip is how a driver
+        // gets handed a zero-length primitive.
+        if (bytes == null || count < 2 || !trailVisible) {
+            if (trailEntity != 0) scene.removeEntity(trailEntity)
+            trailCount = 0
+            return
+        }
+
+        if (trailCapacity < count) {
+            destroyTrail()
+            var cap = 64
+            while (cap < count) cap *= 2
+            trailVertexBuffer = VertexBuffer.Builder()
+                .bufferCount(1)
+                .vertexCount(cap)
+                .attribute(
+                    VertexBuffer.VertexAttribute.POSITION, 0,
+                    VertexBuffer.AttributeType.FLOAT3, 0, TRAIL_STRIDE_BYTES,
+                )
+                .attribute(
+                    VertexBuffer.VertexAttribute.COLOR, 0,
+                    VertexBuffer.AttributeType.UBYTE4, 12, TRAIL_STRIDE_BYTES,
+                )
+                .normalized(VertexBuffer.VertexAttribute.COLOR, true)
+                .build(engine)
+            val ib = IndexBuffer.Builder()
+                .indexCount(cap)
+                .bufferType(IndexBuffer.Builder.IndexType.UINT)
+                .build(engine)
+            val idx = ByteBuffer.allocateDirect(cap * 4).order(ByteOrder.nativeOrder())
+            val ints = idx.asIntBuffer()
+            for (i in 0 until cap) ints.put(i)
+            idx.rewind()
+            ib.setBuffer(engine, idx)
+            trailIndexBuffer = ib
+            trailCapacity = cap
+            trailEntity = EntityManager.get().create()
+        }
+
+        val vb = trailVertexBuffer ?: return
+        val ib = trailIndexBuffer ?: return
+        vb.setBufferAt(engine, 0, bytes, 0, count * TRAIL_STRIDE_BYTES)
+        trailCount = count
+
+        // Bounds from the payload rather than from a cached box: the path is
+        // small (a few hundred vertices) so this is free, and a stale bounding
+        // box on a growing strip is how the ribbon disappears at exactly the
+        // moment the operator walks somewhere new.
+        var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE; var minZ = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE; var maxZ = -Float.MAX_VALUE
+        for (i in 0 until count) {
+            val o = i * TRAIL_STRIDE_BYTES
+            val x = bytes.getFloat(o)
+            val y = bytes.getFloat(o + 4)
+            val z = bytes.getFloat(o + 8)
+            if (x < minX) minX = x
+            if (y < minY) minY = y
+            if (z < minZ) minZ = z
+            if (x > maxX) maxX = x
+            if (y > maxY) maxY = y
+            if (z > maxZ) maxZ = z
+        }
+
+        val rm = engine.renderableManager
+        val existing = rm.getInstance(trailEntity)
+        if (existing == 0) {
+            RenderableManager.Builder(1)
+                .culling(false)
+                .castShadows(false)
+                .receiveShadows(false)
+                .geometry(
+                    0, RenderableManager.PrimitiveType.LINE_STRIP, vb, ib, 0, count,
+                )
+                .material(0, mi)
+                .build(engine, trailEntity)
+        } else {
+            rm.setGeometryAt(
+                existing, 0, RenderableManager.PrimitiveType.LINE_STRIP, vb, ib, 0, count,
+            )
+        }
+        val instance = rm.getInstance(trailEntity)
+        if (instance != 0) {
+            rm.setAxisAlignedBoundingBox(
+                instance,
+                Box(
+                    (minX + maxX) / 2f, (minY + maxY) / 2f, (minZ + maxZ) / 2f,
+                    max((maxX - minX) / 2f, 0.05f),
+                    max((maxY - minY) / 2f, 0.05f),
+                    max((maxZ - minZ) / 2f, 0.05f),
+                ),
+            )
+        }
+        scene.addEntity(trailEntity)
     }
 
     // --- per-frame sync ------------------------------------------------------
@@ -1467,6 +1710,8 @@ class PointCloudRenderer(
                 }
             }
             syncPointCloud()
+            // ROUND 16 item 59: same beat, same thread, before beginFrame.
+            syncTrail()
             updateCamera(frameTimeNanos)
             materialInstance?.setParameter(
                 "cameraPos",
@@ -1505,6 +1750,14 @@ class PointCloudRenderer(
 
         /** `PointVertex`: float3 position + RGBA8 = 16 bytes. */
         const val POINT_STRIDE_BYTES = 16
+
+        /**
+         * ROUND 16 item 59: the trajectory ribbon uses the SAME 16-byte layout.
+         * Not a coincidence and not worth collapsing into one name: they are
+         * two vertex formats that happen to agree, and the day the path grows a
+         * per-vertex width they stop agreeing.
+         */
+        const val TRAIL_STRIDE_BYTES = 16
 
         /**
          * ROUND 5.3: the per-frame vertex-upload ceiling — 4 MB, i.e. 262 144

@@ -308,6 +308,9 @@ constexpr Rgb kDensityInk{0x33, 0x5C, 0x81};
 constexpr Rgb kRoomTint{0x7E, 0xA9, 0xD8};
 constexpr Rgb kOpeningDoor{0xC2, 0x62, 0x1F};
 constexpr Rgb kOpeningWindow{0x1F, 0x8A, 0x6D};
+constexpr Rgb kTrail{0x1E, 0x8C, 0x7F};       // ROUND 16 item 59: the walk
+constexpr Rgb kTrailStart{0x2E, 0xC4, 0xB6};  // ...where it began
+constexpr Rgb kTrailEnd{0xE8, 0x6A, 0x2B};    // ...and where it ended
 constexpr Rgb kFrame{0x99, 0x99, 0x93};
 
 // The drawing extent, with the tails trimmed.
@@ -411,6 +414,13 @@ Status build_plan_png(const PlanModel& model, const OccupancyGrid* density,
   if (density != nullptr && density->valid()) {
     b.expand(trimmed_extent(*density, opts.extent_keep_fraction));
   }
+  // ROUND 16 item 59: the walk is part of the drawing, so it is part of the
+  // extent. Without this a plan whose walls were trimmed by
+  // `extent_keep_fraction` would clip the path at the edge of the paper, and a
+  // path that stops at a margin reads as a scan that stopped there.
+  if (opts.draw_trajectory) {
+    for (const Vec2& p : opts.trajectory) b.expand(p);
+  }
   if (!b.valid || !(b.width() > 0.0) || !(b.height() > 0.0)) {
     return set_last_error(ScanError::kInvalidArgument, "%s", "build_plan_png: nothing to draw (empty bounds)");
   }
@@ -508,6 +518,36 @@ Status build_plan_png(const PlanModel& model, const OccupancyGrid* density,
       }
       cv.line(PX(o.a.x), PY(o.a.y), PX(o.b.x), PY(o.b.y), 2.5, c);
     }
+  }
+
+  // --- 5b. ROUND 16 item 59: the walked path -----------------------------
+  //
+  // Drawn AFTER the walls and the openings and BEFORE the frame: it has to
+  // read on top of the room (a path hidden under a wall stroke answers
+  // nothing) and under the sheet's own furniture (a path over the scale bar
+  // would make the scale unreadable, and the scale is what makes the drawing a
+  // measurement).
+  //
+  // Opaque, at full strength. A translucent path would have to be blended
+  // against a density backdrop whose own alpha already varies, and the result
+  // would be a line whose colour meant something other than what the legend
+  // says.
+  if (opts.draw_trajectory && opts.trajectory.size() >= 2) {
+    for (std::size_t i = 1; i < opts.trajectory.size(); ++i) {
+      const Vec2& a = opts.trajectory[i - 1];
+      const Vec2& c = opts.trajectory[i];
+      cv.line(PX(a.x), PY(a.y), PX(c.x), PY(c.y),
+              std::max(1.0, opts.trajectory_stroke_px), kTrail);
+    }
+    // The two ends, as discs, because the gap between them is the one number
+    // on this sheet the operator can check against the summary card — it IS
+    // the loop-end gap, drawn at true scale.
+    const Vec2& first = opts.trajectory.front();
+    const Vec2& last = opts.trajectory.back();
+    cv.disc(PX(first.x), PY(first.y), std::max(3.0, opts.trajectory_stroke_px * 2.0),
+            kTrailStart);
+    cv.disc(PX(last.x), PY(last.y), std::max(3.0, opts.trajectory_stroke_px * 2.0), kTrailEnd);
+    info.trajectory_points_drawn = static_cast<std::uint32_t>(opts.trajectory.size());
   }
 
   // --- 6. frame, scale bar, caption --------------------------------------

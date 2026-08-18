@@ -60,6 +60,15 @@ data class AutoProcessState(
     val willStitch: Boolean = false,
     val skipped: Boolean = false,
     val failed: Boolean = false,
+    /**
+     * ROUND 16 item 58(c) — why processing could not even be attempted.
+     *
+     * Distinct from [failed] with no reason: "it failed, try again" is an
+     * instruction, and on a capture with no poses it is an instruction that can
+     * only fail again. Non-null means the app knew beforehand and says what it
+     * knew.
+     */
+    val blocked: String? = null,
     val result: StitchResult? = null,
 ) {
     val active: Boolean get() = projectId != null
@@ -70,6 +79,9 @@ data class AutoProcessState(
             !active -> null
             running && willStitch -> "Putting the pieces back together…"
             running -> "Checking the scan…"
+            // Before `failed`, because a blocked run IS failed and the specific
+            // sentence is the useful one.
+            blocked != null -> blocked
             failed ->
                 "Processing failed — the scan is saved. Open it and tap Process to try again."
             // The RESULT outranks `skipped`: once processing has answered, its
@@ -894,6 +906,44 @@ class CaptureViewModel(
         trailRecorder.points
     val trailLengthM: StateFlow<Float> = trailRecorder.pathLengthM
 
+    /**
+     * ROUND 16 item 59 — the walk as a coloured line strip, ready for the 3D
+     * scene, recomputed only when the trail actually grows (the recorder
+     * refuses points closer than 15 cm, so at walking pace that is about five
+     * times a second against a 60 Hz frame).
+     *
+     * Kept beside [trailPoints] rather than replacing it: the 108 dp bird's-eye
+     * tile and the in-cloud ribbon are two views of one walk and both are
+     * useful — the tile answers "what shape did I cover" at a glance with the
+     * cloud in the way, the ribbon answers "does the room agree with where I
+     * was". They are built from the same snapshot in the same instant, so they
+     * cannot disagree.
+     */
+    val trailRibbon: StateFlow<com.lidarscan.core.capture.TrajectoryRibbon.Ribbon> =
+        trailRecorder.worldPoints
+            .map { com.lidarscan.core.capture.TrajectoryRibbon.fromTrail(it) }
+            .stateIn(
+                viewModelScope,
+                SharingStarted.Eagerly,
+                com.lidarscan.core.capture.TrajectoryRibbon.EMPTY,
+            )
+
+    /**
+     * ROUND 16 items 59 + 61 — the view control's toggle, default ON, and it is
+     * `DisplayParams.showTrajectory` rather than a new Boolean.
+     *
+     * ON by default in the live view because that is where it is a working
+     * instrument rather than a decoration: the operator is holding the phone
+     * and can act on what it shows. Read from the same [displayParams] the
+     * Capture sheet edits and the manifest persists, so the setting the
+     * operator changes in Review is the setting they get on the next walk —
+     * one switch, one meaning, which is what item 61 is about.
+     */
+    val showTrajectory: StateFlow<Boolean> =
+        displayParams
+            .map { it.showTrajectory }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
     /** Held so the exact same reference can be removed again (see [keyframeFrameListener]). */
     private var trailFrameListener: ((com.google.ar.core.Frame) -> Unit)? = null
 
@@ -1236,6 +1286,104 @@ class CaptureViewModel(
                 _noDataAlert.value = message
             }
         }
+    }
+
+    // ── ROUND 16 item 58(b): THE POSE WATCHDOG ───────────────────────────────
+    //
+    // The same shape as the ROUND 7 no-data watchdog above, applied to the
+    // other half of a D6 capture. That one answers "is the sensor sending?";
+    // this one answers "does the app know where the sensor IS?", and until this
+    // round nothing did.
+    //
+    // The owner's scan-039 is why. Fifty-one seconds of recording, 184,454
+    // points, a green Stop button and a live point counter ticking up the whole
+    // time — and not one ARCore pose. Every one of those returns was resolved
+    // against nothing. The operator walked a flat for a minute with no way to
+    // know, and found out when the exported bundle turned out to have no
+    // `poses_ar.bin` in it.
+    //
+    // Lidar bytes flowing WITH no poses is the exact and only signature worth
+    // interrupting a walk for, so the watchdog requires both: it never fires on
+    // a scan that is receiving nothing (that is the no-data banner's job and
+    // its instruction is different) and it never fires before there is anything
+    // to compare.
+    private val _noPoseAlert = MutableStateFlow<String?>(null)
+    val noPoseAlert: StateFlow<String?> = _noPoseAlert.asStateFlow()
+
+    private var noPoseWatchJob: kotlinx.coroutines.Job? = null
+    private var noPoseLogged = false
+
+    private fun startPoseWatchdog() {
+        noPoseWatchJob?.cancel()
+        noPoseLogged = false
+        _noPoseAlert.value = null
+        val controller = arController ?: return
+        val armedAt = clock()
+        noPoseWatchJob = viewModelScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(NO_POSE_TICK_MS)
+                if (engineBridge.captureState.value != CaptureState.RECORDING) {
+                    _noPoseAlert.value = null
+                    continue
+                }
+                // Nothing is arriving at all: that is the no-data banner's
+                // diagnosis, not this one's, and two red banners telling the
+                // operator to fix two different things is worse than one.
+                if (_stats.value.pointsCaptured <= 0L) {
+                    _noPoseAlert.value = null
+                    continue
+                }
+                val last = controller.lastAcceptedPoseAtMillis
+                val quietMs =
+                    if (last == 0L) clock() - armedAt
+                    else android.os.SystemClock.elapsedRealtime() - last
+                if (quietMs < NO_POSE_GRACE_MS) {
+                    _noPoseAlert.value = null
+                    continue
+                }
+                val total = controller.acceptedPoseCount
+                if (!noPoseLogged) {
+                    noPoseLogged = true
+                    logEvent(
+                        LOG_TAG_AR,
+                        "NO POSES after ${quietMs}ms of recording with points arriving " +
+                            "(posesAccepted=$total points=${_stats.value.pointsCaptured}) — " +
+                            "this scan is 2D so far",
+                    )
+                }
+                _noPoseAlert.value =
+                    if (total <= 0L) {
+                        "NO POSITION TRACKING — the sensor is recording but the camera has never " +
+                            "said where it is. This scan will be 2D: no room, no floor plan, " +
+                            "nothing to process. Stop, reopen the app, and start again."
+                    } else {
+                        "POSITION TRACKING LOST — ${quietMs / 1000}s with no camera position " +
+                            "while the sensor keeps recording. Everything from here is 2D until " +
+                            "it comes back: point the rear camera at something lit and detailed."
+                    }
+                // NO NEW BUZZ, and that is a decision rather than an
+                // omission. The haptic for this condition already exists and
+                // already fired: `TRACKING_DEGRADED` is scheduled from
+                // `status.tracking == false`, which is exactly true in this
+                // case, and the owner's scan-039 log carries thirteen of them
+                // over its 51 seconds. The buzz was never the missing half —
+                // the operator felt it and had no way to know it meant "this
+                // scan has no room in it" rather than "the corner is dim".
+                // Adding a second cue on the same condition would also spend
+                // the ROUND 13 cue budget twice, and ROUND 13 measured a cue
+                // buzz causing the very break the next cue reported.
+            }
+        }
+    }
+
+    private fun stopPoseWatchdog() {
+        noPoseWatchJob?.cancel()
+        noPoseWatchJob = null
+        _noPoseAlert.value = null
+    }
+
+    fun dismissNoPoseAlert() {
+        _noPoseAlert.value = null
     }
 
     private fun stopNoDataWatchdog() {
@@ -2237,12 +2385,33 @@ class CaptureViewModel(
         //
         // Never blocks Start: a rig with no ARCore at all returns false here
         // and carries on to the same code it always ran.
-        if (!startPending && arController?.resetWorldFrame() == true) {
-            logEvent(
-                LOG_TAG_AR,
-                "world frame reset: new ARCore session for this capture " +
-                    "(origin, feature map and anchors from the previous scan discarded)",
-            )
+        // ROUND 16 item 58: the reset now holds the session lock across the
+        // rebuild (see CaptureArController.driveLock — the race that produced
+        // scan-039), retries once, and REPORTS. `yielded` is how many render
+        // frames the lock actually turned away, which is the evidence that the
+        // mutual exclusion ran at all rather than being a claim in a comment.
+        if (!startPending) {
+            arController?.resetPoseCounters()
+            arController?.let { controller ->
+                val reset = controller.resetWorldFrame(
+                    attempts = com.lidarscan.app.ar.CaptureArController.RESET_ATTEMPTS,
+                )
+                if (reset.ok) {
+                    logEvent(
+                        LOG_TAG_AR,
+                        "world frame reset: new ARCore session for this capture " +
+                            "(origin, feature map and anchors from the previous scan discarded) " +
+                            "tries=${reset.attempts} framesYielded=${reset.yieldedFrames}",
+                    )
+                } else if (reset.attempts > 0) {
+                    logEvent(
+                        LOG_TAG_AR,
+                        "world frame reset FAILED after ${reset.attempts} attempts — carrying on " +
+                            "with no AR session; this scan will have no positions unless " +
+                            "tracking recovers",
+                    )
+                }
+            }
         }
 
         // ── ROUND 12: do not start on a tracker that has not settled. ───────
@@ -2280,12 +2449,68 @@ class CaptureViewModel(
                         "start gate: ${if (finalVerdict.ready) "cleared" else "timed out"} — " +
                             finalVerdict.logSuffix,
                     )
-                    if (!finalVerdict.ready) {
-                        _mountTrimNote.value =
+                    // ── ROUND 16 item 58: NO_POSES is not "not settled yet". ──
+                    //
+                    // The other three blockers mean ARCore is running and the
+                    // pose stream is not good enough yet, which is what waiting
+                    // is for. NO_POSES means ARCore delivered NOTHING in four
+                    // seconds — and that is the exact signature of the session
+                    // the world-frame reset race leaves behind: created,
+                    // resumed, reporting healthy, and never handed a camera
+                    // frame. The owner's log shows it twice in one session
+                    // (scan-037 and scan-039), and both times the app started
+                    // recording anyway and produced a scan with no trajectory.
+                    //
+                    // So this blocker gets ONE rebuild and ONE more wait before
+                    // the capture is allowed to begin. It still never refuses —
+                    // ROUND 12's rule stands, and an app that will not start is
+                    // worse than a warned one — but it no longer walks past its
+                    // own diagnosis without acting on it.
+                    var verdictNow = finalVerdict
+                    if (!verdictNow.ready &&
+                        verdictNow.blocker == com.lidarscan.core.capture.TrackingWarmup.Blocker.NO_POSES
+                    ) {
+                        val again = arController?.resetWorldFrame(
+                            attempts = com.lidarscan.app.ar.CaptureArController.RESET_ATTEMPTS,
+                        )
+                        logEvent(
+                            LOG_TAG_AR,
+                            "start gate: NO_POSES after " +
+                                "${com.lidarscan.core.capture.TrackingWarmup.MAX_WAIT_MILLIS}ms — " +
+                                "the tracking session delivered no frames at all; rebuilding it " +
+                                "once more (rebuilt=${again?.ok == true} tries=${again?.attempts ?: 0})",
+                        )
+                        arController?.resetPoseCounters()
+                        val secondDeadline =
+                            clock() + com.lidarscan.core.capture.TrackingWarmup.MAX_WAIT_MILLIS
+                        while (clock() < secondDeadline) {
+                            val v = trackingWarmup.evaluate(arController?.poseWindow().orEmpty())
+                            _startWarmup.value = v
+                            if (v.ready) break
+                            kotlinx.coroutines.delay(MOUNT_HOLD_TICK_MS)
+                        }
+                        verdictNow = trackingWarmup.evaluate(arController?.poseWindow().orEmpty())
+                        logEvent(
+                            LOG_TAG_AR,
+                            "start gate (after rebuild): " +
+                                "${if (verdictNow.ready) "cleared" else "still blocked"} — " +
+                                verdictNow.logSuffix,
+                        )
+                    }
+                    if (!verdictNow.ready) {
+                        _mountTrimNote.value = if (
+                            verdictNow.blocker == com.lidarscan.core.capture.TrackingWarmup.Blocker.NO_POSES
+                        ) {
+                            "NO POSITION TRACKING — the camera has sent nothing at all, twice. " +
+                                "Starting anyway, but this scan will be 2D: the returns will have " +
+                                "no positions and there will be no room in the file. Stop, close " +
+                                "the app and reopen it, then try again."
+                        } else {
                             "Tracking had not settled after " +
                                 "${com.lidarscan.core.capture.TrackingWarmup.MAX_WAIT_MILLIS / 1000}s — " +
                                 "starting anyway. The first seconds of this scan may be in a " +
                                 "different frame; more light and more texture help."
+                        }
                         _mountTrimNoteIsWarning.value = true
                     }
                     _startWarmup.value = null
@@ -2395,6 +2620,11 @@ class CaptureViewModel(
             // ROUND 7 (field bug 2): from here on, a scan that receives nothing
             // has two seconds before it has to say so.
             startNoDataWatchdog()
+            // ROUND 16 item 58(b): armed in the same breath as the no-data
+            // watchdog, because the two together are the complete answer to
+            // "is this scan real" — one watches the sensor, one watches the
+            // tracker, and scan-039 passed the first and failed the second.
+            startPoseWatchdog()
             // ROUND 7 (item 3): sections belong to a capture. A break detected
             // while framing the preview is not this scan's seam.
             arController?.let { controller ->
@@ -2854,6 +3084,7 @@ class CaptureViewModel(
         val finalStats = _stats.value
         val noDataVerdict = _noDataAlert.value
         stopNoDataWatchdog()
+        stopPoseWatchdog()
         val sectionBreaks = arController?.sections?.breaks().orEmpty()
         arController?.onSectionBreak = null
         // ROUND 5.2: the phone-GNSS fallback belongs to the session, so it stops
@@ -2906,6 +3137,23 @@ class CaptureViewModel(
             // ROUND 12: the two things the app can honestly say about geometry.
             mountTrimAccuracyDeg = _storedMountTrim.value?.trim?.accuracyDeg,
             loopEndGapMeters = trailRecorder.loopEndGapM?.toDouble(),
+            // ROUND 16 item 58(c): THE SEAL HAS TO BE HONEST.
+            //
+            // The owner's scan-039 was graded FAIR. It had no poses, so it had
+            // no path, so its density was computed as 368,908 points per metre
+            // and its section count as 1 — three numbers that all look
+            // excellent and all mean nothing. The one number that would have
+            // said so was never on the card, because nothing counted it.
+            //
+            // NULLABLE, and the `?:` that is NOT here is the point. A rig with
+            // no AR controller at all — a Mid-360 session, a replay, a unit
+            // test — has not measured this, and "not measured" is a different
+            // statement from "measured zero". Defaulting it to 0 made every
+            // such capture 2D-only, which is how this line first broke four
+            // round-15 tests: they run without an ARCore controller, and the
+            // app promptly refused to process their scans for a reason that
+            // was not true of them.
+            posesRecorded = arController?.acceptedPoseCount,
         )
         _scanSummary.value = summary
         // ROUND 13, bug (A)+(B), and they were ONE bug.
@@ -2927,13 +3175,25 @@ class CaptureViewModel(
         logEvent(
             LOG_TAG_SEAL,
             (
-                "summary: grade=%s points=%d durationMs=%d pathM=%.1f sections=%d drops=%d " +
+                "summary: grade=%s points=%d durationMs=%d pathM=%.1f poses=%d " +
+                    "sectionsLive=%d drops=%d " +
                     "ptsPerM=%.0f trimAccuracyDeg=%s loopEndGapM=%s"
             ).format(
-                summary.grade,
+                summary.headline,
                 summary.pointsCaptured,
                 summary.elapsedMillis,
                 summary.pathLengthMeters,
+                summary.posesRecorded ?: -1L,
+                // ROUND 16 item 62: LABELLED `sectionsLive`, because that is
+                // what it is — the count the live break detector arrived at
+                // while walking. The owner's scan-038 sealed with `sections=3`
+                // and auto-processed to `sections=2`, and the two lines used
+                // the same word for two different measurements taken by two
+                // different detectors over two different pose streams (live
+                // ARCore poses as they arrived, versus the recorded stream
+                // re-derived offline, where a 1.6 s TRACKING_REGAINED gap is
+                // bridged rather than split). Neither number was wrong. The
+                // word was.
                 summary.sections,
                 summary.trackingDrops,
                 summary.pointsPerMeter,
@@ -3052,7 +3312,7 @@ class CaptureViewModel(
                 LOG_TAG_SEAL,
                 "sealed OK id=$activeId name=\"${verified.manifest.name}\" " +
                     "points=${finalStats.pointsCaptured} elapsedMs=${finalStats.elapsedMillis} " +
-                    "listable=true sections=${sectionBreaks.size + 1} " +
+                    "listable=true sectionsLive=${sectionBreaks.size + 1} " +
                     "dir=${verified.directory.absolutePath}" +
                     // ROUND 7: a zero-point seal is never again just "OK". The
                     // owner's scan-009 line said `sealed OK … points=0
@@ -3212,7 +3472,34 @@ class CaptureViewModel(
             // does — a failed reprocess must not strand the operator on the
             // Capture tab with a scan they cannot reach.
             val mountWarned = _storedMountTrim.value?.trim?.accuracyDeg?.let { it > 1.0 } ?: false
-            if (autoProcessPlan(sectionBreaks.size + 1, mountWarned)) {
+            // ── ROUND 16 item 58(c): do not run a pipeline that cannot run. ──
+            //
+            // On scan-039 the app tried, failed inside the engine, and told the
+            // operator "the scan is saved and untouched; open it and tap
+            // Process" — an instruction that could only ever fail again, for a
+            // reason nothing on screen or in the log ever named. Every stage of
+            // `reprocess_d6_container` needs the pose stream: the resolve needs
+            // it to place a return, the section stitch is a function of it, the
+            // ruler measures a cloud that does not exist without it. With zero
+            // poses the honest answer is available before the attempt.
+            if (summary.isTwoDimensionalOnly) {
+                _autoProcess.value = AutoProcessState(
+                    projectId = activeId,
+                    running = false,
+                    progress = 1f,
+                    failed = true,
+                    blocked = "This scan has no camera positions, so there is nothing to " +
+                        "process: every stage — placing the returns, stitching the pieces, " +
+                        "measuring the map — needs the trajectory, and this capture recorded " +
+                        "none. The raw sensor data is saved and untouched.",
+                )
+                logEvent(
+                    LOG_TAG_SEAL,
+                    "auto-process SKIPPED for $activeId — zero poses recorded; the container " +
+                        "has lidar.bin and imu_phone.bin but no poses_ar.bin, so there is no " +
+                        "trajectory to resolve against (Process would fail for the same reason)",
+                )
+            } else if (autoProcessPlan(sectionBreaks.size + 1, mountWarned)) {
                 startAutoProcess(activeId, verified.directory, sectionBreaks.size + 1)
             } else {
                 // The fast path still runs the cheap ruler — that is the
@@ -3325,7 +3612,7 @@ class CaptureViewModel(
             )
             logEvent(
                 LOG_TAG_SEAL,
-                "auto-process done for $projectId: sections=${result.sections} " +
+                "auto-process done for $projectId: sectionsProcessed=${result.sections} " +
                     "refined=${result.seamsRefined} points=${result.points} " +
                     "selfCheckMeasurable=${result.selfCheck?.measurable} " +
                     ("selfCheckCm=%.2f".format((result.selfCheck?.offsetMeters ?: 0.0) * 100)),
@@ -3485,6 +3772,17 @@ class CaptureViewModel(
         /** ROUND 6 log tags — mirrors `com.lidarscan.app.debug.CaptureLog`'s, without depending on it. */
         const val LOG_TAG_SESSION = "session"
         const val LOG_TAG_SEAL = "seal"
+
+        /**
+         * ROUND 16 item 58(b). One second between checks, three before the
+         * banner. Three, and not the ROUND 7 watchdog's two: ARCore genuinely
+         * does go quiet for a second or so through a hard turn, and a banner
+         * that cries wolf on an ordinary corner is a banner the operator learns
+         * to look past. Three seconds of lidar arriving with no position at all
+         * is not a corner.
+         */
+        const val NO_POSE_TICK_MS = 1_000L
+        const val NO_POSE_GRACE_MS = 3_000L
         const val LOG_TAG_AR = "ar"
 
         /**

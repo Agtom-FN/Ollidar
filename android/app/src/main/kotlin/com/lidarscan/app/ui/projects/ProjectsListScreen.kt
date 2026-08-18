@@ -385,6 +385,8 @@ private fun ProjectCard(
 
     if (showDeleteConfirm) {
         AlertDialog(
+            // ROUND 16 item 61: dialogs inherited the theme's pill too.
+            shape = RoundedCornerShape(ScanDims.DialogRadius),
             onDismissRequest = { showDeleteConfirm = false },
             title = { Text("Delete \"${manifest.name}\"?") },
             text = {

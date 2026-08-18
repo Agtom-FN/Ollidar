@@ -41,8 +41,26 @@ class TrajectoryTrail(
             while (points.size > field) points.removeFirst()
         }
 
-    /** x/z metres in the pose frame, plus whether tracking was good when it was taken. */
-    data class Point(val x: Float, val z: Float, val tracking: Boolean)
+    /**
+     * x/y/z metres in the pose frame, plus whether tracking was good when it
+     * was taken.
+     *
+     * ROUND 16 item 59 — `y` is new, and its absence was a real omission
+     * rather than a saving. The trail existed only to be drawn on a 108 x 84 dp
+     * bird's-eye tile, so the recorder threw the height away at the door
+     * (`pose.tx()`, `pose.tz()`, and nothing else). The owner now wants the
+     * walk drawn INSIDE the 3D cloud — *"i want to see the path of mine showing
+     * in the pointcloud too for me to check if the scan is right"* — and a path
+     * pinned to y = 0 in a room whose floor is at y = 0 and whose returns run
+     * to the ceiling would be a line under the floor, which is precisely the
+     * ROUND 10 mirror bug wearing a different hat.
+     *
+     * Defaulted, so the 2D tile's own maths and its round-10 chirality test are
+     * untouched: [normalized] and [pathLengthM] still read x and z only, which
+     * is correct — a bird's-eye tile measures ground distance, and a walk up a
+     * staircase must not make the tile's scale bar longer.
+     */
+    data class Point(val x: Float, val z: Float, val tracking: Boolean, val y: Float = 0f)
 
     /** A point mapped into 0..1 canvas space, aspect preserved. */
     data class NormalizedPoint(val x: Float, val y: Float, val tracking: Boolean)
@@ -59,15 +77,19 @@ class TrajectoryTrail(
      * Returns true when the point was kept (the caller can use it to decide
      * whether a redraw is worth it).
      */
-    fun add(x: Float, z: Float, tracking: Boolean): Boolean {
+    fun add(x: Float, z: Float, tracking: Boolean, y: Float = 0f): Boolean {
         if (!x.isFinite() || !z.isFinite()) return false
+        // ROUND 16 item 59: height is carried, never gated on. The spacing rule
+        // is a GROUND-distance rule (it exists so a standing operator does not
+        // fill the ring), and letting a hand rising and falling by 15 cm push
+        // points into the trail would make a stationary sweep look like a walk.
         val last = points.lastOrNull()
         if (last != null) {
             val dx = x - last.x
             val dz = z - last.z
             if (dx * dx + dz * dz < minSpacingM * minSpacingM) return false
         }
-        points.addLast(Point(x, z, tracking))
+        points.addLast(Point(x, z, tracking, if (y.isFinite()) y else 0f))
         while (points.size > capacity) points.removeFirst()
         return true
     }

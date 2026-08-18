@@ -280,6 +280,10 @@ class ReviewViewModel(
     //     show an empty box or fall back to the raw fan and let it be mistaken
     //     for the result, the viewport explains it in one paragraph.
     private fun openProjectCloud(p: Project) {
+        // ROUND 16 item 59: independent of which of the three cloud paths below
+        // runs — the path belongs to the container, not to how its cloud was
+        // obtained.
+        loadTrajectory(p.directory)
         viewModelScope.launch {
             val probe = withContext(Dispatchers.IO) { processing.probeProject(p.directory) }
             _uiState.value = _uiState.value.copy(probe = probe)
@@ -372,11 +376,68 @@ class ReviewViewModel(
 
     fun onRendererReady(r: PointCloudRenderer) {
         renderer = r
+        pushTrajectory()
+    }
+
+    // ── ROUND 16 item 59: THE WALKED PATH, IN REVIEW ────────────────────────
+    //
+    // > *"i want to see the path of mine showing in the pointcloud too for me
+    // >  to check if the scan is right"* — owner, on 0.9.0.
+    //
+    // Read from `processed/trajectory.bin`, which `reprocess_d6_container`
+    // writes beside `processed/map_stitched.bin`. That pairing is the whole
+    // reason this is a file read and not an ABI call: the trajectory in that
+    // file is the CORRECTED one — section-stitched, and loop-end-closed when
+    // the closer fired — written by the same pass that wrote the cloud beside
+    // it. Drawing an uncorrected path over a corrected cloud would be a lie
+    // that looked exactly like a diagnosis, and it is the one failure mode this
+    // feature must not have, because the operator will use the disagreement
+    // between path and room to judge the scan.
+    //
+    // A scan that has never been processed has no file and shows no path, and
+    // says so rather than drawing a straight line between two points it
+    // invented. Since ROUND 15 every sealed scan auto-processes, so the normal
+    // case has one.
+    private val _trajectory =
+        MutableStateFlow(com.lidarscan.core.capture.TrajectoryRibbon.EMPTY)
+    val trajectory: StateFlow<com.lidarscan.core.capture.TrajectoryRibbon.Ribbon> =
+        _trajectory.asStateFlow()
+
+    // ROUND 16 items 59 + 61: the toggle is `DisplayParams.showTrajectory`,
+    // which has existed since the desktop viewer and has been persisted per
+    // project all along under a switch whose own subtitle admitted "the overlay
+    // itself is desktop-only so far". It is not desktop-only any more, and
+    // adding a second Boolean beside it would have been exactly the kind of
+    // duplicated surface item 61 is about. Default ON, from
+    // `DisplayParams`' own default.
+
+    private fun loadTrajectory(directory: java.io.File) {
+        viewModelScope.launch {
+            val ribbon = withContext(Dispatchers.IO) {
+                runCatching {
+                    com.lidarscan.app.processing.TrajectoryFile.read(
+                        java.io.File(directory, "processed/trajectory.bin"),
+                    )
+                }.getOrNull() ?: com.lidarscan.core.capture.TrajectoryRibbon.EMPTY
+            }
+            _trajectory.value = ribbon
+            pushTrajectory()
+        }
+    }
+
+    private fun pushTrajectory() {
+        val r = renderer ?: return
+        val ribbon = _trajectory.value
+        r.setTrailVisible(_uiState.value.display.showTrajectory)
+        r.setTrail(ribbon.xyz, ribbon.rgba, ribbon.count)
     }
 
     fun updateDisplay(transform: (DisplayParams) -> DisplayParams) {
         val next = transform(_uiState.value.display).clamped()
         _uiState.value = _uiState.value.copy(display = next)
+        // ROUND 16 item 59: the path toggle lives in DisplayParams, so this is
+        // where it reaches the scene.
+        renderer?.setTrailVisible(next.showTrajectory)
         saveJob?.cancel()
         saveJob = viewModelScope.launch {
             delay(400)

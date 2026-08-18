@@ -36,11 +36,26 @@ class TrajectoryTrailRecorder(
         trail.capacity = points
         _points.value = trail.normalized()
         _pathLengthM.value = trail.pathLengthM()
+        // ROUND 16 item 59: the metric polyline, for the 3D ribbon. Published
+        // from the same instant as the normalized one so the tile and the cloud
+        // can never show two different walks.
+        _worldPoints.value = trail.snapshot()
     }
 
     private val _points = MutableStateFlow<List<TrajectoryTrail.NormalizedPoint>>(emptyList())
 
     /** The fitted trail, 0..1, screen-oriented (y down). Republished only when a point is actually kept. */
+    /**
+     * ROUND 16 item 59 — the walk in METRES, in ARCore's world frame, for the
+     * ribbon drawn inside the 3D cloud.
+     *
+     * `TrajectoryTrail.snapshot()` has existed since ROUND 5 and had no callers
+     * at all; this is the accessor that was missing, and adding it is most of
+     * what the live half of item 59 needed.
+     */
+    private val _worldPoints = MutableStateFlow<List<TrajectoryTrail.Point>>(emptyList())
+    val worldPoints: StateFlow<List<TrajectoryTrail.Point>> = _worldPoints.asStateFlow()
+
     val points: StateFlow<List<TrajectoryTrail.NormalizedPoint>> = _points.asStateFlow()
 
     private val _pathLengthM = MutableStateFlow(0f)
@@ -95,7 +110,10 @@ class TrajectoryTrailRecorder(
         val pose = camera.pose
         val x = pose.tx()
         val z = pose.tz()
-        if (!trail.add(x, z, tracking)) return
+        // ROUND 16 item 59: and the height, which this recorder used to drop on
+        // the floor. See TrajectoryTrail.Point.
+        val y = pose.ty()
+        if (!trail.add(x, z, tracking, y)) return
         if (!lastKeptX.isNaN()) {
             val dx = x - lastKeptX
             val dz = z - lastKeptZ
@@ -111,6 +129,7 @@ class TrajectoryTrailRecorder(
     /** Clears the trail — used when a new session starts, so one walk is one trail. */
     fun clear() {
         trail.clear()
+        _worldPoints.value = emptyList()
         _points.value = emptyList()
         _pathLengthM.value = 0f
         _totalPathM.value = 0f

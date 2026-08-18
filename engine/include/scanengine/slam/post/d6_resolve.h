@@ -70,6 +70,7 @@
 #include "scanengine/slam/post/progress.h"
 #include "scanengine/slam/post/section_stitch.h"
 #include "scanengine/poses/imu_densified_pose.h"
+#include "scanengine/slam/post/loop_end.h"
 #include "scanengine/slam/post/trajectory_loop.h"
 #include "scanengine/slam/pushbroom/pushbroom_assembler.h"
 
@@ -176,6 +177,20 @@ struct D6ResolveConfig {
   bool stitch_sections = false;
   SectionStitchConfig sections{};
 
+  // --- ROUND 16 item 60: loop-end closure ----------------------------------
+  //
+  // OFF by default for exactly the reason the two above are: it moves points
+  // the live pass could not have moved. It runs LAST — after stitching (which
+  // makes the trajectory one walk, so "the end" means something) and after
+  // ROUND 11's closer (which, when it does fire, has already removed the
+  // drift this would otherwise measure a second time).
+  //
+  // See slam/post/loop_end.h: rotation frozen at the tracker's own, which the
+  // recorded 400 Hz gyro agrees with to under a degree, and the translation
+  // solved against the surfaces at the two ends.
+  bool close_loop_end = false;
+  LoopEndConfig loop_end{};
+
   // Optional outputs, for a caller that wants to look at what was used. Both
   // are appended to (never cleared) so a caller can accumulate across runs if
   // it really wants to; `out_point_times` is the pairing described over
@@ -223,6 +238,13 @@ struct D6ResolveStats {
   // capture and `sections_stitched` is false, which is the provable no-op.
   SectionStitchReport sections{};
   bool sections_stitched = false;
+
+  // --- ROUND 16 item 60 ----------------------------------------------------
+  // What loop-end closure decided, ALWAYS — including every refusal, each
+  // naming the gate. `loop_end_applied` is the one bit that says whether the
+  // points in the store were moved.
+  LoopEndReport loop_end{};
+  bool loop_end_applied = false;
 
   // ROUND 10 (additive): the densifier's OWN verdict, verbatim, including the
   // per-reason fallback breakdown and the closing-error statistics.

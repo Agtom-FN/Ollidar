@@ -735,6 +735,70 @@ Status D6ResolvePipeline::run(const std::string& lscan_dir) {
                   s.stats.loop.reason);
   }
 
+  // --- ROUND 16 item 60: loop-end closure ----------------------------------
+  //
+  // LAST, and the order is the argument. Stitching has already put a broken
+  // capture into one frame, so "the walk ended near where it started" is a
+  // statement about one trajectory rather than about two unrelated ones.
+  // ROUND 11's six-DoF closer, when it fires at all, has already removed this
+  // drift — so if it did, this finds nothing left to close and says so, which
+  // is the correct answer and not a conflict.
+  //
+  // Same flatten-apply-notify shape as the block above, deliberately: the
+  // correction type is the same `TrajectoryCorrection` (with its rotation
+  // half exactly zero), so there is one way points move in this file.
+  if (s.cfg.close_loop_end && s.traj != nullptr && s.times != nullptr) {
+    std::vector<PointVertex> cloud;
+    cloud.reserve(static_cast<std::size_t>(s.cfg.store->total_points()));
+    const std::vector<PageId> ids = s.cfg.store->page_ids();
+    for (const PageId id : ids) {
+      const PageView v = s.cfg.store->page_view(id);
+      if (!v.valid()) continue;
+      for (std::uint32_t k = 0; k < v.count; ++k) cloud.push_back(v.data[k]);
+    }
+    if (cloud.size() != s.times->size()) {
+      SCAN_LOG_WARN(kMod,
+                    "loop-end closure skipped: %zu points in the store but %zu point times — "
+                    "the pairing is not trustworthy",
+                    cloud.size(), s.times->size());
+      s.stats.loop_end.decision = LoopEndDecision::kNoTrajectory;
+      s.stats.loop_end.reason =
+          "loop end: the cloud and its per-point timestamps disagree in length";
+    } else {
+      TrajectoryCorrection corr;
+      s.stats.loop_end = close_loop_end(
+          *s.traj, Span<const PointVertex>(cloud.data(), cloud.size()),
+          Span<const std::int64_t>(s.times->data(), s.times->size()), s.cfg.loop_end, &corr);
+      if (corr.active()) {
+        std::size_t k = 0;
+        for (const PageId id : ids) {
+          const PageView v = s.cfg.store->page_view(id);
+          if (!v.valid()) continue;
+          PointVertex* w = s.cfg.store->page_data_mutable(id);
+          if (w == nullptr) {
+            k += v.count;
+            continue;
+          }
+          for (std::uint32_t i = 0; i < v.count; ++i, ++k) {
+            float xyz[3] = {w[i].x, w[i].y, w[i].z};
+            corr.apply_point((*s.times)[k], xyz);
+            w[i].x = xyz[0];
+            w[i].y = xyz[1];
+            w[i].z = xyz[2];
+          }
+          (void)s.cfg.store->notify_recoloured(id, 0, v.count);
+        }
+        // The TRAJECTORY too, and for the same reason section stitching
+        // corrects it: anything downstream — the ruler, the floor plan, the
+        // path the app is about to draw inside the cloud — must see one frame.
+        for (TrajPose& tp : *s.traj) corr.apply_pose(tp.t_ns, tp.q, tp.p);
+        s.stats.loop_end_applied = true;
+      }
+    }
+    SCAN_LOG_INFO(kMod, "loop-end closure: %s — %s", to_string(s.stats.loop_end.decision),
+                  s.stats.loop_end.reason);
+  }
+
   SCAN_LOG_INFO(kMod,
                 "resolved '%s': %llu D6 chunks / %llu bytes, %llu poses (%llu accepted), "
                 "%llu phone-IMU samples (%llu accepted; %llu returns densified, %llu fell "

@@ -89,6 +89,23 @@ struct PlanRasterOptions {
   // Extra caption line, e.g. the scan name. ASCII; anything the 5x7 font does
   // not carry is drawn as a blank.
   std::string title;
+
+  // --- ROUND 16 item 59: the walked path, on the plan ----------------------
+  //
+  // Owner: *"i want to see the path of mine showing in the pointcloud too for
+  // me to check if the scan is right"*. The same argument applies to the plan
+  // and applies harder, because a plan is the one product that leaves the app:
+  // a floor plan with no path on it is a drawing whose coverage nobody can
+  // judge. With the walk on it, the drawing explains itself — the rooms the
+  // operator entered, the doorways they went through, and the corners they
+  // never got a look into, which is exactly why the plan is thin there.
+  //
+  // Already in PLAN coordinates, not world: `plan/` deliberately knows nothing
+  // about world frames or up-axes (see lscan_plan.h), and the caller has
+  // `plan::project()` to hand.
+  bool draw_trajectory = true;
+  std::vector<Vec2> trajectory;
+  double trajectory_stroke_px = 2.0;
 };
 
 struct PlanRasterInfo {
@@ -98,6 +115,8 @@ struct PlanRasterInfo {
   double scale_bar_m = 0.0;
   PlanRenderMode mode = PlanRenderMode::kDensity;
   std::uint32_t density_cells_drawn = 0;
+  // ROUND 16 item 59.
+  std::uint32_t trajectory_points_drawn = 0;
 };
 
 // Renders into `out_png` (a complete PNG file). `density` may be null; when

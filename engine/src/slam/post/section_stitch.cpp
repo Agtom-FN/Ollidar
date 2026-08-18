@@ -10,6 +10,7 @@
 #include "scanengine/poses/se3.h"
 
 #include "point_grid.h"
+#include "post_geom.h"
 
 namespace scanengine {
 namespace post {
@@ -17,88 +18,15 @@ namespace {
 
 constexpr const char* kMod = "stitch";
 
-// --- 3x3 symmetric eigen, cyclic Jacobi -------------------------------------
-//
-// Same routine, same determinism argument, as trajectory_loop.cpp's: a fixed
-// sweep order, a fixed sweep count, no magnitude pivoting. Eigenvalues
-// ascending in `w`, eigenvectors as the COLUMNS of `v` (row-major 3x3).
-void sym_eigen3(const double a_in[9], double w[3], double v[9]) {
-  double a[9];
-  for (int i = 0; i < 9; ++i) a[i] = a_in[i];
-  for (int i = 0; i < 9; ++i) v[i] = 0.0;
-  v[0] = v[4] = v[8] = 1.0;
-  for (int sweep = 0; sweep < 12; ++sweep) {
-    const double off = a[1] * a[1] + a[2] * a[2] + a[5] * a[5];
-    if (off < 1e-30) break;
-    const int pq[3][2] = {{0, 1}, {0, 2}, {1, 2}};
-    for (int k = 0; k < 3; ++k) {
-      const int p = pq[k][0], q = pq[k][1];
-      const double apq = a[p * 3 + q];
-      if (std::fabs(apq) < 1e-300) continue;
-      const double theta = (a[q * 3 + q] - a[p * 3 + p]) / (2.0 * apq);
-      const double t =
-          (theta >= 0.0 ? 1.0 : -1.0) / (std::fabs(theta) + std::sqrt(theta * theta + 1.0));
-      const double c = 1.0 / std::sqrt(t * t + 1.0);
-      const double sn = t * c;
-      for (int i = 0; i < 3; ++i) {
-        const double aip = a[i * 3 + p], aiq = a[i * 3 + q];
-        a[i * 3 + p] = c * aip - sn * aiq;
-        a[i * 3 + q] = sn * aip + c * aiq;
-      }
-      for (int j = 0; j < 3; ++j) {
-        const double apj = a[p * 3 + j], aqj = a[q * 3 + j];
-        a[p * 3 + j] = c * apj - sn * aqj;
-        a[q * 3 + j] = sn * apj + c * aqj;
-      }
-      for (int i = 0; i < 3; ++i) {
-        const double vip = v[i * 3 + p], viq = v[i * 3 + q];
-        v[i * 3 + p] = c * vip - sn * viq;
-        v[i * 3 + q] = sn * vip + c * viq;
-      }
-    }
-  }
-  w[0] = a[0];
-  w[1] = a[4];
-  w[2] = a[8];
-  for (int i = 0; i < 2; ++i) {
-    for (int j = 0; j < 2 - i; ++j) {
-      if (w[j] > w[j + 1]) {
-        std::swap(w[j], w[j + 1]);
-        for (int r = 0; r < 3; ++r) std::swap(v[r * 3 + j], v[r * 3 + j + 1]);
-      }
-    }
-  }
-}
-
-// Solve a 3x3 SPD system by Cholesky. False when it is not positive definite,
-// which the observability gate should already have caught.
-bool solve3_spd(const double a[9], const double b[3], double x[3]) {
-  double l[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
-  for (int i = 0; i < 3; ++i) {
-    for (int j = 0; j <= i; ++j) {
-      double s = a[i * 3 + j];
-      for (int k = 0; k < j; ++k) s -= l[i * 3 + k] * l[j * 3 + k];
-      if (i == j) {
-        if (!(s > 1e-18)) return false;
-        l[i * 3 + j] = std::sqrt(s);
-      } else {
-        l[i * 3 + j] = s / l[j * 3 + j];
-      }
-    }
-  }
-  double y[3];
-  for (int i = 0; i < 3; ++i) {
-    double s = b[i];
-    for (int k = 0; k < i; ++k) s -= l[i * 3 + k] * y[k];
-    y[i] = s / l[i * 3 + i];
-  }
-  for (int i = 2; i >= 0; --i) {
-    double s = y[i];
-    for (int k = i + 1; k < 3; ++k) s -= l[k * 3 + i] * x[k];
-    x[i] = s / l[i * 3 + i];
-  }
-  return true;
-}
+// ROUND 16: sym_eigen3, solve3_spd and plane_at moved to post_geom.h, shared
+// with trajectory_loop.cpp and loop_end.cpp. Same code, one copy — see that
+// header. `window_points` and `mean_nn` stay here: their signatures are this
+// module's (a half-open [t0, t1) window rather than a centred one, and a pure
+// translation rather than a 4x4), and folding them into the shared header
+// would mean inventing a general shape neither caller wants.
+using detail::plane_at;
+using detail::solve3_spd;
+using detail::sym_eigen3;
 
 // Points of the cloud whose stamp falls in [t0, t1), decimated to at most
 // `max_points`. Traversal is in point order, so the answer does not depend on
@@ -121,43 +49,6 @@ std::vector<PointVertex> window_points(Span<const PointVertex> cloud,
     ++seen;
   }
   return out;
-}
-
-// Local plane normal at `q` from the target index. False when the
-// neighbourhood is a blob or a line rather than a surface.
-bool plane_at(const detail::PointIndex& index, const std::vector<PointVertex>& target,
-              const double q[3], double radius, double max_planarity, double n_out[3],
-              double c_out[3]) {
-  constexpr std::size_t kK = 12;
-  std::uint32_t idx[kK];
-  double d2[kK];
-  const std::size_t n = index.knn(q, kK, radius, idx, d2);
-  if (n < 6) return false;
-  double mean[3] = {0, 0, 0};
-  for (std::size_t k = 0; k < n; ++k) {
-    mean[0] += target[idx[k]].x;
-    mean[1] += target[idx[k]].y;
-    mean[2] += target[idx[k]].z;
-  }
-  for (int k = 0; k < 3; ++k) mean[k] /= static_cast<double>(n);
-  double cov[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
-  for (std::size_t k = 0; k < n; ++k) {
-    const PointVertex& p = target[idx[k]];
-    const double e[3] = {p.x - mean[0], p.y - mean[1], p.z - mean[2]};
-    for (int r = 0; r < 3; ++r) {
-      for (int c = 0; c < 3; ++c) cov[r * 3 + c] += e[r] * e[c];
-    }
-  }
-  double ev[3], vec[9];
-  sym_eigen3(cov, ev, vec);
-  if (!(ev[1] > 1e-12) || ev[0] > max_planarity * ev[1]) return false;
-  n_out[0] = vec[0];
-  n_out[1] = vec[3];
-  n_out[2] = vec[6];
-  c_out[0] = mean[0];
-  c_out[1] = mean[1];
-  c_out[2] = mean[2];
-  return true;
 }
 
 double mean_nn(const detail::PointIndex& index, const std::vector<PointVertex>& source,

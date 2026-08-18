@@ -55,6 +55,7 @@
 #include "scanengine/slam/post/mount_watch.h"
 #include "scanengine/slam/post/lscan_plan.h"
 #include "scanengine/slam/post/map_consistency.h"
+#include "scanengine/slam/post/reprocess.h"
 #include "scanengine/slam/post/trajectory_loop.h"
 
 using namespace scanengine;
@@ -134,6 +135,17 @@ int usage() {
       "      exactly 0.0%%, at the same median range.\n"
       "\n"
       "  engine_cli --d6-selfcheck <lscan-dir> [--window S] [--cell M]\n"
+      "  engine_cli --d6-reprocess <lscan-dir> [--no-refine] [--no-densify] [--no-loopend]\n"
+      "      The phone's own Process action, from a terminal: stitch, close the loop\n"
+      "      end, measure, and write processed/map_stitched.bin + stitch.json +\n"
+      "      trajectory.bin.\n"
+      "  engine_cli --d6-loopend <lscan-dir> [--min-excursion M] [--max-correction M]\n"
+      "      [--submap S] [--window S] [--cell M] [--up X|Y|Z]\n"
+      "      ROUND 16 item 60: close the gap at the END of a walk with the rotation\n"
+      "      frozen at the tracker's own (which the recorded 400 Hz gyro agrees with)\n"
+      "      and only the translation solved. Two resolves, both stitched, scored with\n"
+      "      the ROUND 12 self-check ruler and the ROUND 10 crispness metric at the same\n"
+      "      wall probes. Prints the gate that refused when it refuses.\n"
       "                               [--mount-from OTHER.lscan] [--offset-ms MS]\n"
       "      ROUND 12. How far the map disagrees with ITSELF: surfaces painted\n"
       "      twice, compared along their own normal, bucketed by how far apart\n"
@@ -1949,6 +1961,163 @@ int cmd_d6_loopclose(const std::string& lscan_dir, const post::TrajectoryLoopCon
   return kExitOk;
 }
 
+// --d6-loopend — ROUND 16 item 60. The same two-resolve A/B as --d6-loopclose,
+// scored with the SAME ROUND 10 crispness metric at the SAME wall probes
+// (chosen from the as-shipped pass), plus the ROUND 12 ruler on both sides —
+// because the claim this command exists to test is "the map agrees with itself
+// better afterwards", and that is what the ruler measures.
+//
+// Section stitching is ON for both legs. A capture that broke into sections has
+// no single "end of the walk" until it is stitched, so measuring the loop end
+// on an unstitched trajectory would be measuring the seams.
+int cmd_d6_loopend(const std::string& lscan_dir, const post::LoopEndConfig& lcfg, int up_axis,
+                   double window_s, double cell_m) {
+  bool is_d6 = false;
+  const Status probe = post::lscan_is_d6_project(lscan_dir, &is_d6);
+  if (!probe.ok()) {
+    std::fprintf(stderr, "d6-loopend: cannot read '%s': %s\n", lscan_dir.c_str(),
+                 error_str(probe.error()));
+    return kExitFailed;
+  }
+  if (!is_d6) {
+    std::fprintf(stderr, "d6-loopend: '%s' is not a COIN-D6 project\n", lscan_dir.c_str());
+    return kExitFailed;
+  }
+
+  std::printf("d6-loopend: %s\n", lscan_dir.c_str());
+  std::printf("  gates: revisit <= %.2f m, >= %.0f s apart, >= %.1f m of path, excursion "
+              ">= %.1f m AND >= %.1fx the gap, submap +/-%.1f s, |dt| <= %.2f m, "
+              "observability >= %.3f\n",
+              lcfg.max_revisit_m, lcfg.min_loop_seconds, lcfg.min_loop_path_m,
+              lcfg.min_excursion_m, lcfg.min_excursion_over_gap, lcfg.submap_half_window_s,
+              lcfg.max_close_translation_m, lcfg.min_translation_observability);
+
+  std::vector<post::TrajPose> traj;
+  std::vector<std::int64_t> ptimes;
+  auto run = [&](bool close, std::vector<PointVertex>* pts,
+                 post::D6ResolveStats* st) -> bool {
+    PageStoreConfig psc;
+    psc.page_capacity = 1u << 20;
+    psc.max_pages = 4096;
+    PageStore store(psc);
+    post::D6ResolveConfig cfg;
+    cfg.store = &store;
+    cfg.stitch_sections = true;
+    cfg.close_loop_end = close;
+    cfg.loop_end = lcfg;
+    traj.clear();
+    ptimes.clear();
+    cfg.out_trajectory = &traj;
+    cfg.out_point_times = &ptimes;
+    post::D6ResolvePipeline pipe(cfg);
+    const Status s2 = pipe.run(lscan_dir);
+    if (!s2.ok()) {
+      std::fprintf(stderr, "d6-loopend: resolve failed: %s\n", error_str(s2.error()));
+      return false;
+    }
+    *st = pipe.stats();
+    pts->clear();
+    pts->reserve(static_cast<std::size_t>(store.total_points()));
+    for (const PageId id : store.page_ids()) {
+      const PageView v = store.page_view(id);
+      if (!v.valid()) continue;
+      for (std::uint32_t k = 0; k < v.count; ++k) pts->push_back(v.data[k]);
+    }
+    return true;
+  };
+
+  std::vector<PointVertex> before, after;
+  post::D6ResolveStats sb{}, sa{};
+  if (!run(false, &before, &sb)) return kExitFailed;
+  std::vector<std::int64_t> times_before = ptimes;
+
+  post::MapConsistencyConfig mcfg;
+  mcfg.window_seconds = window_s;
+  mcfg.cell_m = cell_m;
+  const post::MapConsistencyReport cb = post::measure_map_consistency(before, times_before, mcfg);
+  const BandGrid ref_grid = build_band_grid(before, up_axis, 0.10);
+  const std::vector<WallProbe> probes = choose_wall_probes(ref_grid, 400);
+  const CrispnessMetrics mb = measure_crispness(before, up_axis, ref_grid, probes);
+  std::printf("  stitched   : %zu sections, %zu points, %llu occupied 3 cm voxels, "
+              "self-check %.2f cm (floor %.2f cm), end gap %.3f m\n",
+              sb.sections.sections, before.size(),
+              static_cast<unsigned long long>(mb.occupied_voxels), 100.0 * cb.nearest_offset_m,
+              100.0 * cb.self_floor_m, sb.sections.trajectory_end_gap_after_m);
+
+  if (!run(true, &after, &sa)) return kExitFailed;
+
+  const post::LoopEndReport& r = sa.loop_end;
+  std::printf("\n  DECISION: %s\n", post::to_string(r.decision));
+  std::printf("  %s\n", r.reason);
+  std::printf("  spatial candidates examined: %zu\n", r.candidates_seen);
+  if (r.decision != post::LoopEndDecision::kNoRevisit &&
+      r.decision != post::LoopEndDecision::kNoTrajectory) {
+    std::printf("  revisit: t=%.1f s -> t=%.1f s  (%.1f s apart, %.1f m of path, gap %.2f m, "
+                "excursion %.1f m)\n",
+                static_cast<double>(r.t_a_ns) * 1e-9, static_cast<double>(r.t_b_ns) * 1e-9,
+                r.loop_seconds, r.loop_path_m, r.revisit_gap_m, r.excursion_m);
+    std::printf("  submaps: %zu / %zu points, %zu plane pairs, observability %.4f, "
+                "%u iterations\n",
+                r.submap_a_points, r.submap_b_points, r.pairs, r.observability, r.iterations);
+    std::printf("  correction: %.4f m (%.4f, %.4f, %.4f), rotation %.4f deg\n",
+                r.correction_translation_m, r.correction[0], r.correction[1], r.correction[2],
+                r.correction_rotation_deg);
+    std::printf("  same place, mean nearest-neighbour distance: %.2f cm -> %.2f cm "
+                "(%zu pairs)\n",
+                100.0 * r.submap_mismatch_before_m, 100.0 * r.submap_mismatch_after_m,
+                r.mismatch_pairs);
+    if (r.decision == post::LoopEndDecision::kClosed) {
+      std::printf("  trajectory end gap: %.3f m -> %.3f m\n", r.end_gap_before_m,
+                  r.end_gap_after_m);
+    } else {
+      std::printf("  trajectory end gap: %.3f m (unchanged — nothing was applied)\n",
+                  r.end_gap_before_m);
+    }
+    if (r.self_check_checked) {
+      std::printf("  ruler (gate 7): %.2f cm -> %.2f cm\n", 100.0 * r.self_check_before_m,
+                  100.0 * r.self_check_after_m);
+    }
+    if (r.occupied_voxels_before > 0) {
+      std::printf("  whole-map crispness gate: %llu -> %llu occupied 3 cm voxels (%+.2f %%, "
+                  "overlap %.3f, %s)\n",
+                  static_cast<unsigned long long>(r.occupied_voxels_before),
+                  static_cast<unsigned long long>(r.occupied_voxels_after),
+                  100.0 * (static_cast<double>(r.occupied_voxels_after) -
+                           static_cast<double>(r.occupied_voxels_before)) /
+                      static_cast<double>(r.occupied_voxels_before),
+                  r.overlap_fraction, r.crispness_checked ? "voted" : "abstained");
+    }
+  }
+
+  if (!sa.loop_end_applied) {
+    std::printf("\n  NOTHING WAS MOVED. The cloud is byte-for-byte what stitching produces.\n");
+    return kExitOk;
+  }
+
+  const post::MapConsistencyReport ca = post::measure_map_consistency(after, ptimes, mcfg);
+  const CrispnessMetrics ma = measure_crispness(after, up_axis, ref_grid, probes);
+  std::printf("\n  closed     : %zu points, %llu occupied 3 cm voxels, self-check %.2f cm "
+              "(floor %.2f cm)\n",
+              after.size(), static_cast<unsigned long long>(ma.occupied_voxels),
+              100.0 * ca.nearest_offset_m, 100.0 * ca.self_floor_m);
+  std::printf("  SELF-CHECK : %.2f cm -> %.2f cm (%+.2f cm)\n", 100.0 * cb.nearest_offset_m,
+              100.0 * ca.nearest_offset_m,
+              100.0 * (ca.nearest_offset_m - cb.nearest_offset_m));
+  std::printf("  LOOP GAP   : %.3f m -> %.3f m\n", r.end_gap_before_m, r.end_gap_after_m);
+  if (mb.occupied_voxels > 0) {
+    std::printf("  occupancy  : %+.2f %% (fewer occupied voxels = the same surface painted in "
+                "fewer places = crisper)\n",
+                100.0 * (static_cast<double>(ma.occupied_voxels) -
+                         static_cast<double>(mb.occupied_voxels)) /
+                    static_cast<double>(mb.occupied_voxels));
+  }
+  if (mb.wall_cells > 0 && ma.wall_cells > 0 && mb.wall_rms_cm > 0.0) {
+    std::printf("  wall RMS   : %.4f -> %.4f cm (%+.2f %%)\n", mb.wall_rms_cm, ma.wall_rms_cm,
+                100.0 * (ma.wall_rms_cm - mb.wall_rms_cm) / mb.wall_rms_cm);
+  }
+  return kExitOk;
+}
+
 // Synthesize, post-process, export, verify, clean up. Registered as the
 // `engine_cli_post` ctest — the only way to smoke-test --post without
 // committing a binary .lscan fixture.
@@ -2335,6 +2504,73 @@ int main(int argc, char** argv) {
       else return usage();
     }
     return cmd_d6_loopclose(dir, lcfg, up_axis);
+  }
+  if (cmd == "--d6-reprocess") {
+    // ROUND 16: the "Process this scan" pipeline, from the desktop, exactly as
+    // the phone runs it. It existed only behind the C ABI and the JNI, so the
+    // one command that produces `processed/map_stitched.bin`,
+    // `processed/stitch.json` and (this round) `processed/trajectory.bin` could
+    // not be run over a real container from a terminal — which is how the
+    // floor-plan path overlay came to be written before anything had ever
+    // written a trajectory file for it to read.
+    if (argc < 3 || argv[2][0] == '-') return usage();
+    const std::string dir = argv[2];
+    post::ReprocessOptions ro;
+    for (int i = 3; i < argc; ++i) {
+      const std::string a = argv[i];
+      if (a == "--no-refine") ro.sections.refine = false;
+      else if (a == "--no-densify") ro.densify_with_phone_imu = false;
+      else if (a == "--no-loopend") ro.close_loop_end = false;
+      else if (a == "--quiet") continue;
+      else return usage();
+    }
+    post::ReprocessReport rep;
+    const Status st = post::reprocess_d6_container(dir, ro, &rep);
+    if (!st.ok()) {
+      std::fprintf(stderr, "d6-reprocess: %s (%s)\n", error_str(st.error()),
+                   last_error_message());
+      return kExitFailed;
+    }
+    std::printf("d6-reprocess: %s\n", dir.c_str());
+    std::printf("  %llu points, %llu poses, %zu sections, map=%s trajectory=%s\n",
+                static_cast<unsigned long long>(rep.points),
+                static_cast<unsigned long long>(rep.poses), rep.stitch.sections,
+                rep.map_written ? "written" : "none",
+                rep.trajectory_written ? "written" : "none");
+    std::printf("  self-check %.2f cm (measurable=%s), loop end %s\n",
+                100.0 * rep.consistency.nearest_offset_m,
+                rep.consistency.measurable ? "yes" : "no",
+                post::to_string(rep.loop_end.decision));
+    return kExitOk;
+  }
+  if (cmd == "--d6-loopend") {
+    if (argc < 3 || argv[2][0] == '-') return usage();
+    const std::string dir = argv[2];
+    post::LoopEndConfig lcfg;
+    int up_axis = kArCoreUpAxis;
+    double window_s = 8.0, cell_m = 0.25;
+    for (int i = 3; i < argc; ++i) {
+      const std::string a = argv[i];
+      if (a == "--radius" && i + 1 < argc) lcfg.max_revisit_m = std::atof(argv[++i]);
+      else if (a == "--min-seconds" && i + 1 < argc) lcfg.min_loop_seconds = std::atof(argv[++i]);
+      else if (a == "--min-path" && i + 1 < argc) lcfg.min_loop_path_m = std::atof(argv[++i]);
+      else if (a == "--min-excursion" && i + 1 < argc) lcfg.min_excursion_m = std::atof(argv[++i]);
+      else if (a == "--max-correction" && i + 1 < argc)
+        lcfg.max_close_translation_m = std::atof(argv[++i]);
+      else if (a == "--submap" && i + 1 < argc) lcfg.submap_half_window_s = std::atof(argv[++i]);
+      else if (a == "--window" && i + 1 < argc) window_s = std::atof(argv[++i]);
+      else if (a == "--cell" && i + 1 < argc) cell_m = std::atof(argv[++i]);
+      else if (a == "--up" && i + 1 < argc) {
+        const std::string ax = argv[++i];
+        if (ax == "X" || ax == "x") up_axis = 0;
+        else if (ax == "Y" || ax == "y") up_axis = 1;
+        else if (ax == "Z" || ax == "z") up_axis = 2;
+        else return usage();
+      }
+      else if (a == "--quiet") continue;
+      else return usage();
+    }
+    return cmd_d6_loopend(dir, lcfg, up_axis, window_s, cell_m);
   }
   if (cmd == "--d6-plan") {
     if (argc < 3) return usage();

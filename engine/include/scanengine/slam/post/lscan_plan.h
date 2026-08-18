@@ -113,6 +113,11 @@ struct LscanPlanReport {
   plan::PlanRenderMode mode = plan::PlanRenderMode::kDensity;
 
   std::uint64_t cloud_points = 0;
+  // ROUND 16 item 59: vertices of the walked path drawn on the sheet, 0 when
+  // the container carries no processed/trajectory.bin (i.e. was never
+  // processed) — which is a legitimate state and draws the plan exactly as
+  // every round before this one did.
+  std::uint64_t trajectory_points = 0;
   std::uint64_t band_points = 0;
   std::uint32_t occupied_cells = 0;
   // The backdrop, i.e. the floor map. Independent of the plan slice.

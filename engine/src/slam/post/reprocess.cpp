@@ -81,6 +81,54 @@ Status write_point_chunk_file(const std::string& path, const std::vector<PointVe
 
 namespace {
 
+// ROUND 16 item 59 — the corrected trajectory, as a derived product the phone
+// can read without a JNI call and without a second resolve.
+//
+// > *"i want to see the path of mine showing in the pointcloud too for me to
+// >  check if the scan is right"* — owner, on 0.9.0.
+//
+// The trajectory this pass produces is ALREADY the corrected one: `d6_resolve`
+// applies the section-stitch correction and the loop-end correction to
+// `*out_trajectory` as well as to the cloud, precisely so that "anything
+// downstream sees one frame". Until this round it was then thrown away at the
+// end of `reprocess_d6_container`, and the app had no way to obtain a
+// trajectory at all — `ProjectProbe.hasPoses` is one bit, and
+// `scan_reprocess_result` carries only counts.
+//
+// Writing it beside `map_stitched.bin` rather than adding a C ABI entry point
+// is the smaller change AND the more honest one: the corrected cloud is
+// already a file in `processed/`, this is the trajectory that goes with THAT
+// cloud, and the two are only ever consistent because they were written by the
+// same pass. A getter would have had to re-derive it and could disagree.
+//
+// The format is deliberately the dullest thing that works: an 8-byte magic, a
+// little-endian u32 count, a u32 of zero reserved, then `count` records of
+// three little-endian float32 metres. No CRC — this is a derived file whose
+// only reader checks the magic and the count against the file length, and
+// deleting it costs nothing but the line on screen.
+void write_trajectory(const std::string& path, const std::vector<TrajPose>& traj) {
+  std::FILE* f = std::fopen(path.c_str(), "wb");
+  if (f == nullptr) return;
+  const char magic[8] = {'L', 'S', 'T', 'R', 'A', 'J', '0', '1'};
+  std::fwrite(magic, 1, sizeof(magic), f);
+  const std::uint32_t n = static_cast<std::uint32_t>(traj.size());
+  std::uint8_t head[8];
+  head[0] = static_cast<std::uint8_t>(n & 0xFFu);
+  head[1] = static_cast<std::uint8_t>((n >> 8) & 0xFFu);
+  head[2] = static_cast<std::uint8_t>((n >> 16) & 0xFFu);
+  head[3] = static_cast<std::uint8_t>((n >> 24) & 0xFFu);
+  head[4] = head[5] = head[6] = head[7] = 0;
+  std::fwrite(head, 1, sizeof(head), f);
+  for (const TrajPose& p : traj) {
+    const float xyz[3] = {static_cast<float>(p.p[0]), static_cast<float>(p.p[1]),
+                          static_cast<float>(p.p[2])};
+    std::uint8_t buf[12];
+    std::memcpy(buf, xyz, sizeof(buf));
+    std::fwrite(buf, 1, sizeof(buf), f);
+  }
+  std::fclose(f);
+}
+
 void write_sidecar(const std::string& path, const ReprocessReport& r) {
   std::FILE* f = std::fopen(path.c_str(), "wb");
   if (f == nullptr) return;
@@ -111,6 +159,16 @@ void write_sidecar(const std::string& path, const ReprocessReport& r) {
                "  \"selfCheckWindows\": %llu,\n"
                "  \"selfCheckSeconds\": %.3f,\n"
                "  \"selfCheckBlocker\": \"%s\",\n"
+               "  \"loopEndDecision\": \"%s\",\n"
+               "  \"loopEndApplied\": %s,\n"
+               "  \"loopEndCorrectionM\": %.6f,\n"
+               "  \"loopEndCorrectionDeg\": %.6f,\n"
+               "  \"loopEndGapBeforeM\": %.6f,\n"
+               "  \"loopEndGapAfterM\": %.6f,\n"
+               "  \"loopEndSamePlaceBeforeM\": %.6f,\n"
+               "  \"loopEndSamePlaceAfterM\": %.6f,\n"
+               "  \"loopEndObservability\": %.6f,\n"
+               "  \"loopEndReason\": \"%s\",\n"
                "  \"seams\": [\n",
                static_cast<unsigned long long>(r.points), static_cast<unsigned long long>(r.poses),
                static_cast<unsigned long long>(s.poses_untracked),
@@ -131,7 +189,12 @@ void write_sidecar(const std::string& path, const ReprocessReport& r) {
                static_cast<unsigned long long>(r.consistency.windows),
                static_cast<double>(r.consistency.nearest_separation) *
                    r.consistency.window_seconds,
-               r.consistency.blocker);
+               r.consistency.blocker, to_string(r.loop_end.decision),
+               r.loop_end_applied ? "true" : "false", r.loop_end.correction_translation_m,
+               r.loop_end.correction_rotation_deg, r.loop_end.end_gap_before_m,
+               r.loop_end_applied ? r.loop_end.end_gap_after_m : r.loop_end.end_gap_before_m,
+               r.loop_end.submap_mismatch_before_m, r.loop_end.submap_mismatch_after_m,
+               r.loop_end.observability, r.loop_end.reason);
   for (std::size_t i = 0; i < s.seams.size(); ++i) {
     const SectionSeam& x = s.seams[i];
     std::fprintf(f,
@@ -185,6 +248,8 @@ Status reprocess_d6_container(const std::string& lscan_dir, const ReprocessOptio
   cfg.stitch_sections = opts.stitch_sections;
   cfg.sections = opts.sections;
   cfg.close_loops = opts.close_loops;
+  cfg.close_loop_end = opts.close_loop_end;
+  cfg.loop_end = opts.loop_end;
   cfg.out_trajectory = &traj;
   cfg.out_point_times = &ptimes;
 
@@ -198,6 +263,8 @@ Status reprocess_d6_container(const std::string& lscan_dir, const ReprocessOptio
   }
   rep.ran = true;
   rep.stitch = pipe.stats().sections;
+  rep.loop_end = pipe.stats().loop_end;
+  rep.loop_end_applied = pipe.stats().loop_end_applied;
   rep.poses = traj.size();
 
   std::vector<PointVertex> pts;
@@ -239,6 +306,16 @@ Status reprocess_d6_container(const std::string& lscan_dir, const ReprocessOptio
     rep.map_written = true;
   }
   if (opts.always_write_sidecar || rep.map_written) write_sidecar(rep.sidecar_path, rep);
+  // ROUND 16 item 59. Written whenever there is a trajectory at all, including
+  // when nothing was stitched — the path is worth drawing on a clean scan too,
+  // and a file that only appears on broken captures would be a file nobody
+  // trusts.
+  if (!traj.empty()) {
+    std::error_code tec;
+    std::filesystem::create_directories(std::filesystem::path(lscan_dir) / "processed", tec);
+    write_trajectory(join(lscan_dir, "processed/trajectory.bin"), traj);
+    rep.trajectory_written = true;
+  }
 
   SCAN_LOG_INFO(kMod,
                 "'%s': %zu sections, %llu points -> %s (vertical extent %.3f -> %.3f m, "

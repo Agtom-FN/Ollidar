@@ -77,7 +77,35 @@ data class ScanSummary(
      * meant to finish where they began.
      */
     val loopEndGapMeters: Double? = null,
+    /**
+     * ROUND 16 item 58 — how many ARCore poses this capture actually recorded.
+     *
+     * Defaulted to null so every existing construction of this type keeps its
+     * exact meaning; null is "this build did not measure it", which is a
+     * different statement from zero and must not be graded as one.
+     *
+     * ZERO IS THE CASE THIS FIELD EXISTS FOR, and it is a case that shipped.
+     * The owner's scan-039 recorded 184,454 points over 51 s with no pose
+     * stream at all — no `poses_ar.bin`, no `map.bin`, `pathM=0.0` — because a
+     * race in the ROUND 14 world-frame reset left the replacement ARCore
+     * session alive, resumed, and never delivering a camera frame. The app
+     * graded it **FAIR**. It is not a FAIR scan; it is not a scan of a room at
+     * all. Every return in it was resolved against nothing, so what is on disk
+     * is one sensor's worth of ranges with no trajectory to place them in —
+     * two-dimensional data, honestly described.
+     */
+    val posesRecorded: Long? = null,
 ) {
+    /**
+     * ROUND 16 item 58 — true when the capture recorded points but no poses.
+     *
+     * Deliberately not "posesRecorded == 0": a capture that recorded no points
+     * either is the ROUND 7 no-data case, which already has its own banner and
+     * its own sentence, and stacking a second diagnosis on it would tell the
+     * operator to fix the wrong thing.
+     */
+    val isTwoDimensionalOnly: Boolean
+        get() = posesRecorded != null && posesRecorded <= 0L && pointsCaptured > 0L
     /**
      * Resolved points per metre walked. The denominator is floored at 0.5 m so a
      * tripod scan (no path at all) reports a large density rather than an
@@ -149,6 +177,12 @@ data class ScanSummary(
     val grade: ScanGrade
         get() = when {
             pointsCaptured <= 0L -> ScanGrade.POOR
+            // ROUND 16 item 58, and it goes FIRST for the same reason zero
+            // points does: a scan with no trajectory cannot be improved by
+            // anything the rest of this `when` measures, and every one of those
+            // measurements is meaningless without one. scan-039's density was
+            // 368,908 "points per metre" over a path of 0.0 m.
+            isTwoDimensionalOnly -> ScanGrade.POOR
             sections > MAX_SECTIONS_FAIR -> ScanGrade.POOR
             trackingDrops > MAX_DROPS_FAIR -> ScanGrade.POOR
             densityValue < densityFairFloor -> ScanGrade.POOR
@@ -170,6 +204,12 @@ data class ScanSummary(
         get() = when {
             pointsCaptured <= 0L ->
                 "No points were recorded. Check the D6 cable and rescan."
+            isTwoDimensionalOnly ->
+                "2D ONLY — the camera never told this scan where it was, so the " +
+                    "${pointsCaptured} returns have no positions and there is no room in this " +
+                    "file. Nothing can recover it on the phone. Start a new scan: point the " +
+                    "rear camera at something with texture and detail for a couple of seconds " +
+                    "before you press Start, and wait for \"Tracking steady\"."
             sections > MAX_SECTIONS_FAIR ->
                 // ROUND 13. The old sentence said "tracking restarted", which is
                 // not what happens, and "Rescan", which does not tell the
@@ -236,6 +276,16 @@ data class ScanSummary(
     val breaks: Int get() = (sections - 1).coerceAtLeast(0)
 
     /**
+     * ROUND 16 item 58 — the word on the card, which is not always the grade.
+     *
+     * A 2D-only capture is POOR, but "POOR" invites "rescan and it will be
+     * better", and this one will not be better for anything the operator does
+     * differently about walking speed or coverage. The card says what it is.
+     */
+    val headline: String
+        get() = if (isTwoDimensionalOnly) "2D ONLY" else grade.name
+
+    /**
      * ROUND 13 — what to DO before the next walk, or null when the scan needs
      * nothing. Shown under the grade beside [loopReturnNote].
      *
@@ -247,6 +297,10 @@ data class ScanSummary(
     val nextWalkAdvice: String?
         get() = when {
             pointsCaptured <= 0L -> null
+            isTwoDimensionalOnly ->
+                "Before the next scan: give the rear camera a lit, textured surface to look at " +
+                    "and let the Start button say \"Tracking steady\" before you press it. If it " +
+                    "never does, close the app and reopen it."
             breaks >= 2 ->
                 "Before the next walk: uncover the rear camera (a case or the bracket edge is " +
                     "enough), turn the lights up, and walk the turns slowly — the camera re-anchors " +

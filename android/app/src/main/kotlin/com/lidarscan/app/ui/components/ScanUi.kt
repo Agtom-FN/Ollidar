@@ -91,6 +91,30 @@ object ScanDims {
 
     val CardRadius = 20.dp
     val TileRadius = 14.dp
+
+    /**
+     * ROUND 16 item 61 — **the bottom-sheet and dialog radius, as a token.**
+     *
+     * Owner, on 0.9.0: *"for the merge process button the pop up window the
+     * upper corner radius too larger and there are some tab and window show the
+     * same too."* He is describing a real inconsistency and its cause is one
+     * line in `Theme.kt`: `LidarScanShapes.extraLarge` is
+     * `RoundedCornerShape(percent = 50)`, deliberately a PILL so that
+     * un-restyled `Button`s, `FilterChip`s and `SegmentedButton`s round like
+     * the hand-built ones. Material 3 then hands that same `extraLarge` to
+     * `ModalBottomSheet` (`BottomSheetDefaults.ExpandedShape`) and to
+     * `AlertDialog` (`AlertDialogDefaults.shape`) — and 50 % of a full-width
+     * sheet's short side is an enormous curve.
+     *
+     * Three of the app's five sheets were already passing
+     * `RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)` by hand and two
+     * were not, which is exactly why some windows looked right and some did
+     * not. The fix is a token rather than three more literals: the pill stays
+     * where it belongs (on controls), and every sheet and dialog reads from
+     * here.
+     */
+    val SheetRadius = 20.dp
+    val DialogRadius = 20.dp
 }
 
 // ── headers ─────────────────────────────────────────────────────────────────

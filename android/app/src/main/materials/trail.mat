@@ -1,0 +1,68 @@
+// LidarScan Android — walked-trajectory material.
+//
+// ROUND 16 item 59. Owner: *"i want to see the path of mine showing in the
+// pointcloud too for me to check if the scan is right"*.
+//
+// WHY A SECOND MATERIAL AND NOT points.mat
+//   `points.mat` is a point material in everything but the primitive type: it
+//   writes `gl_PointSize`, it is `blending : masked` with a 0.5 threshold so a
+//   round sprite can cut its own corners, and every one of its colour branches
+//   reads a `DisplayParamsUniforms` field that describes how to colour a
+//   RETURN (height ramp, intensity ramp, coverage tint, LOD budget). None of
+//   that is true of a path. The path is one emissive ribbon whose only job is
+//   to be unmistakably not-a-point, and giving it its own eight-line material
+//   is cheaper in every sense than adding a "but not for the trail" branch to
+//   the ten in the other one.
+//
+// THE COLOUR IS PER-VERTEX AND THAT IS THE WHOLE FEATURE
+//   The renderer writes a time gradient into the vertex colours — the start of
+//   the walk cool, the end warm — plus two brighter marker colours at the ends
+//   and a muted colour on the stretches ARCore was not tracking. So the ribbon
+//   is not merely "where I went"; it is "where I went, in what order, and
+//   where the tracker was unsure", which is the question the owner is actually
+//   asking when he says *"to check if the scan is right"*.
+//
+// DEPTH
+//   Depth-tested and depth-writing, so the path is genuinely IN the cloud: it
+//   is occluded by the wall you walked behind. A path that floated over
+//   everything would read as an overlay rather than as a measurement, and it
+//   would be useless for the one thing it is for — seeing whether the room and
+//   the walk agree.
+//
+// PORTABILITY
+//   Compiled by the same `compileMaterials` Gradle task, which globs
+//   `app/src/main/materials/*.mat`, so this file needs no build change at all.
+//   Same `-a opengl -a vulkan -p mobile` invocation as points.mat.
+material {
+    name : lidarscan_trail,
+    shadingModel : unlit,
+    vertexDomain : object,
+    requires : [ color ],
+    blending : opaque,
+    culling : none,
+    depthWrite : true,
+    depthCulling : true,
+    parameters : [
+        // 0..1, faded out while the ribbon is being rebuilt so a half-uploaded
+        // strip never flashes. Also what the "Path" toggle animates.
+        { type : float, name : opacity },
+        // Multiplies the vertex colour. Lets one material serve the live view
+        // (where the cloud is bright and the path has to shout) and Review
+        // (where the cloud is dense and the path must not blind).
+        { type : float, name : intensity }
+    ]
+}
+
+fragment {
+    void material(inout MaterialInputs material) {
+        prepareMaterial(material);
+        vec4 c = getColor();
+        material.baseColor.rgb = c.rgb * materialParams.intensity;
+        material.baseColor.a = c.a * materialParams.opacity;
+    }
+}
+
+vertex {
+    void materialVertex(inout MaterialVertexInputs material) {
+    }
+}

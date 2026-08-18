@@ -1642,3 +1642,366 @@ rebuilt from this round's engine sources. **Replay is bit-identical** —
 (1.97 / 2.45 / 1.74 cm) and the same resolved point counts (220,445 / 135,820 /
 124,817) before and after, because every change in item 51 is session lifecycle
 and none of it touches offline resolve. VERSION **0.8.1**.
+
+## Round 16 — owner field test of 0.9.0 (2026-08-18, scan-036/037/038/039 + log 2251)
+
+> *"scan look ok but not much improved"*
+> *"i want to see the path of mine showing in the pointcloud too for me to check
+> if the scan is right"*
+> *"for the merge process button the pop up window the upper cornor radius too
+> larger and there are some tab and window show the same too."*
+
+The session's three exported captures split cleanly into a win and a
+regression. scan-036 (45 s) and scan-038 (108 s) both healed every break live —
+one of them a 1.39 m / 26.64° re-anchor — auto-processed on seal, and measured
+3.43 cm and 2.73 cm of self-consistency. DND held (`dnd=protected`) on all four.
+And **scan-039 recorded no poses at all**: 51 s, 184,454 points, `pathM=0.0`, no
+`poses_ar.bin` and no `map.bin` in the exported bundle, graded **FAIR**.
+
+58. **POSE-LOSS REGRESSION — the headline.** Find why scan-039 recorded zero
+    poses; the prime suspect is a race in the round-14 `resetWorldFrame`. Three
+    layers are required, not one: (a) the race itself; (b) a POSE WATCHDOG
+    during capture — recording on, lidar bytes flowing, no accepted pose for N
+    seconds → buzz and an on-screen warning, the round-7 no-data pattern applied
+    to poses; (c) the seal must be honest — a capture with zero poses is
+    labelled 2D-only on the card and never "FAIR", and auto-process says WHY it
+    cannot run. Reproduce the race if possible; if not, harden the ordering
+    deterministically and say so.
+
+59. **Trajectory in the point cloud.** Render the walked path inside the 3D
+    cloud — Review (from the corrected poses after Process) and the live view
+    (the healed trajectory). A polyline distinct from points, with start and end
+    markers and a time gradient, toggleable, default ON, and drawn in the same
+    frame as the cloud so healing and stitching move them together. On the
+    floor-plan PNG too.
+
+60. **Loop-end closure — claim the backlog lever.** Apply the gyro-locked,
+    translation-only solver at loop ends. Offline only. Prove on scan-033
+    (0.45 m gap), scan-036 (0.65) and scan-038 (0.52) with before/after
+    self-check and loop gap; the round-11 false-positive gates stay in force and
+    scan-034/035/039 must still refuse.
+
+61. **UI polish.** (a) The process/merge popup's top corner radius is too large;
+    match the app's design system and make the sheets consistent. (b) Audit for
+    duplicated surfaces — one surface per function — and list what was merged.
+
+62. **Sections count mismatch.** scan-038's seal said `sections=3` and
+    auto-process said `sections=2`. Unify: the card shows one truth
+    (post-process), the log carries both under distinct labels.
+
+### Resolution — 2026-08-19 (0.9.1, round 16)
+
+**58 — THE RACE WAS REAL, IT IS IN THE ROUND-14 FIX, AND THE APP DIAGNOSED IT
+AND STARTED ANYWAY.**
+
+Root cause, from the owner's own log rather than from a hypothesis. The five
+world-frame resets in that session split two ways:
+
+```
+22:41:30.600 world frame reset        22:41:33.840 start gate: cleared  -> scan-036 OK
+22:43:20.686 world frame reset        22:43:24.701 start gate: TIMED OUT blocker=NO_POSES
+                                      -> scan-037, 4 x "cue: tracking_degraded", abandoned
+22:44:23.495 world frame reset        22:44:26.526 start gate: cleared  -> scan-038 OK
+22:47:10.106 world frame reset        22:47:14.129 start gate: TIMED OUT blocker=NO_POSES
+                                      -> scan-039, 13 x "cue: tracking_degraded", 51 s, 0 poses
+```
+
+`resetWorldFrame()` returned **true** both times it failed — the session was
+rebuilt and `resume()` succeeded — and then the camera never delivered a frame
+to it. `publishPose` returns at its first line on a frame whose timestamp is
+zero, which is what ARCore hands out before the first camera image, so not one
+pose reached `motion`, the section tracker or `nativePushPose`. The container is
+exactly what that predicts: `lidar.bin` and 899 KB of 400 Hz `imu_phone.bin`
+present, `poses_ar.bin` and `map.bin` absent, `sectionBreaks` empty.
+
+**The mechanism: `ArSessionGate.mayDrive` is a CHECK, and a check is not a
+lock.** `onFrame` reads it at the top and then proceeds into `Session.update()`;
+nothing stopped the main thread from calling `Session.close()` in the
+microseconds after that check passed. `Session.close()` concurrent with
+`Session.update()` is undefined by ARCore's contract, and on this Pixel it
+leaves a camera that never binds to the replacement session.
+
+Round 6 did not need a lock, and said so: the only lifecycle call on the hot
+path was `pause()`, and shutting the gate first is enough to keep a LATER
+`update()` off a paused session. `close()` existed with, in round 6's own words,
+*"zero callers anywhere in `src/main`"*. **Round 14 gave it a caller on the
+hottest path there is** — every Start — while the pose pump drives the session
+at 60 Hz. The fix for the origin-leak bug created this one, and it is
+intermittent because it is a race: two of five resets lost it.
+
+Three layers, all shipped:
+
+* **(a) The race.** `CaptureArController` grows a `ReentrantLock`. `onFrame`
+  takes it with **`tryLock`** and yields the frame if it cannot have it — a
+  render thread must never block on the main thread, and a few dropped frames
+  during a rebuild is the right price. `resetWorldFrame` takes it and HOLDS it
+  across close / create / re-bind / resume, so no half-built session is ever
+  reachable from a GL thread; `pause()` and `close()` take it too, reentrantly.
+  Deadlock-free by construction: only the main thread ever blocks, for at most
+  one in-flight frame. Frames yielded are counted and logged
+  (`framesYielded=`), so the mechanism is visible in a field log instead of
+  being a claim in a comment.
+  Plus **hardening by construction**, because the lock cannot be proved on an
+  emulator with no ARCore: the rebuild retries once (`RESET_ATTEMPTS = 2`), and
+  the start gate no longer walks past its own diagnosis — a timeout whose
+  blocker is `NO_POSES` (as distinct from `NOT_TRACKING` / `IMPOSSIBLE_STEP`,
+  which mean the tracker is alive and unsettled) now triggers ONE more rebuild
+  and ONE more wait before recording is armed. It still never refuses to start;
+  round 12's rule stands.
+  **Stated honestly: the race is not reproduced.** ARCore is stubbed on the
+  emulator, so there is no way to make `Session.update()` and `Session.close()`
+  overlap in this environment. What is shipped is the mutual exclusion the
+  concurrency requires, an explicit retry, and a gate that acts on the signal it
+  was already printing.
+
+* **(b) The pose watchdog.** `startPoseWatchdog()`, armed in the same breath as
+  the round-7 no-data watchdog and built to the same shape. It fires only when
+  **points are arriving AND no pose has been accepted for 3 s** — the exact
+  scan-039 signature, and never when nothing is arriving at all, because that is
+  the no-data banner's diagnosis and its instruction is different. Three seconds
+  and not two: ARCore does go quiet through a hard turn, and a banner that cries
+  wolf on a corner is a banner the operator learns to ignore. The counter is new
+  — `CaptureArController.acceptedPoseCount` / `lastAcceptedPoseAtMillis`,
+  incremented in `publishPose` after the ordering filter — because nothing
+  measured "is the tracker alive right now": `posesPushed` counts only poses
+  that reached an engine handle, and is zero before a recording starts.
+  **No new buzz, and that is a decision.** The haptic for this condition already
+  exists and already fired — `TRACKING_DEGRADED` is scheduled from
+  `status.tracking == false`, and scan-039's log carries thirteen of them. The
+  buzz was never the missing half; the operator felt it and had no way to know
+  it meant *"this scan has no room in it"* rather than *"this corner is dim"*.
+  A second cue on the same condition would also spend the round-13 cue budget
+  twice, and round 13 measured a cue buzz causing the very break the next cue
+  reported.
+
+* **(c) The honest seal.** `ScanSummary.posesRecorded` (nullable) and
+  `isTwoDimensionalOnly`. scan-039's numbers, run through the shipped grader,
+  came out **FAIR**: 51 s with a 0 m path made it "from the spot", 3,578
+  points/second beat every density floor, one section, no drops, and the only
+  thing keeping it off GOOD was a 1.68° mount trim. It is now **POOR**, the card
+  says **2D ONLY — NO ROOM**, and the sentence says the returns have no
+  positions and that nothing on the phone can recover it. The verdict is FIRST
+  in the grade's `when`, above sections and drops, because every other
+  measurement is meaningless without a trajectory. Auto-process no longer
+  attempts a run it knows will fail: it reports *why* — every stage needs the
+  trajectory — instead of the round-15 "open it and tap Process", an instruction
+  that could only ever fail again.
+  The field is **nullable on purpose**, and the `?:` that is not there is the
+  point: a rig with no AR controller (a Mid-360 session, a replay, a unit test)
+  has not measured this, and "not measured" is not "measured zero". Defaulting
+  it to 0 made every such capture 2D-only, which is how this line first broke
+  four round-15 tests within a minute of being written.
+
+**59 — THE PATH IS IN THE CLOUD, IN THREE PLACES.**
+
+* **Live.** `TrajectoryTrail.Point` gains `y`, which the recorder had been
+  throwing away at the door (`pose.tx()`, `pose.tz()`, and nothing else) because
+  the trail only ever fed a 108 dp bird's-eye tile. `snapshot()` has existed
+  since round 5 with **no callers at all**; the accessor was the missing piece.
+  A new `trail.mat` (compiled by the existing `compileMaterials` glob — no build
+  change) draws a `LINE_STRIP` renderable in the same Filament scene, depth
+  tested and depth writing, so the path is genuinely IN the cloud and is
+  occluded by the wall you walked behind. Rebuilt on change, not per frame: the
+  trail only grows when the operator has walked 15 cm, about five times a second
+  against 60 Hz. Round 5.3 refused to build this and priced it at *"a second
+  material, a second geometry upload path and a per-frame rebuild"*; two of the
+  three were right.
+* **Review.** From `processed/trajectory.bin`, a new derived product
+  `reprocess_d6_container` writes beside `processed/map_stitched.bin`. That
+  pairing is the whole argument for a file over an ABI call: the trajectory in
+  it is the CORRECTED one — section-stitched, and loop-end-closed when item 60's
+  closer fires — written by the same pass that wrote the cloud beside it. A path
+  drawn from an uncorrected trajectory over a corrected cloud would be a lie
+  shaped exactly like a diagnosis, and the operator is going to use the
+  agreement between path and room to judge the scan. Deleting the file returns
+  the container to what the phone sealed, like every other derived product.
+  The phone-side decoder is independent of the writer, and every malformed case
+  — bad magic, truncated body, count/length mismatch, absurd count — returns "no
+  path" rather than throwing, because a derived file must never be a reason the
+  viewer fails to open a scan.
+* **The floor plan.** `Canvas::line` and `Canvas::disc` already existed;
+  `PlanRasterOptions` gains the polyline (in PLAN coordinates, so `plan/` keeps
+  knowing nothing about world frames), the extent expands to include it, and it
+  is drawn after the walls and before the frame. It makes the sheet
+  self-explanatory: on scan-033 the walk reads as a loop through the flat with
+  the start and end discs a visible gap apart — the loop-end gap, at true scale,
+  on the drawing.
+
+The colouring is `:core`'s (`TrajectoryRibbon`) so live and Review draw by one
+rule: teal at the start, ember at the end, brighter markers at both ends, and
+**red where tracking was lost** — which outranks the markers, because a walk
+that lost tracking in its first half-metre must not have the one warning colour
+hidden under a start marker. The toggle is `DisplayParams.showTrajectory`, which
+has been persisted per project since the desktop viewer under a switch whose own
+subtitle said *"the overlay itself is desktop-only so far"*. It is not any more,
+and adding a second Boolean beside it would have been exactly the duplication
+item 61 is about.
+
+**60 — THE LEVER IS CLAIMED, AND IT FIRES ON ONE CAPTURE IN SIX.**
+
+Round 11's closer is in the tree, works, and refuses all of these — for two
+reasons, neither of them a disagreement about geometry:
+
+```
+scan-033  geometry-rejected  ICP rms 0.285 m > 0.25, and it proposed 5.72 deg
+scan-036  no-excursion       furthest-from-start 3.58 m < min_excursion_m 4.0
+scan-038  no-excursion       furthest-from-start 3.68 m < 4.0
+```
+
+`min_excursion_m = 4.0` is a corridor's number and **the owner scans a flat**.
+The gate exists so a rig shuffling on the spot cannot count as a loop, and that
+purpose is served by how far the walk went *compared to how far it missed by*.
+So it is now scale-aware: `>= 3.0 m` **and** `>= 4x the closing gap`. scan-035
+(10.1 m of path inside a 1.55 m neighbourhood — the sweep) still refuses on the
+absolute floor, which is the exact case round 11 wrote it for.
+
+And six-DoF ICP is the wrong estimator on a pushbroom, which round 12 proved and
+round 13 acted on for seams. `post/loop_end.h` draws the same conclusion for
+loop ends: the closing transform is **constrained** to a pure translation — the
+rotation half of the se(3) vector is structurally zero, so `Exp(s·xi)` cannot
+produce a rotation at any `s`. "Gyro-locked" is a property of the type, not a
+tolerance, and the test asserts `correction_rotation_deg == 0.0` exactly.
+
+**One number in the config is not round 13's, and finding out why was the round's
+second real bug.** `plane_radius_m` was 0.25 m, inherited from the seam refiner.
+At a seam the analytic transform has already removed the jump and what remains
+is centimetres; at a loop end there is no analytic transform and what remains is
+the whole accumulated drift. With a 25 cm radius every surface whose normal
+points ALONG the drift is displaced clean out of correspondence range and
+contributes nothing, while the surfaces perpendicular to it — which carry no
+information about it — match perfectly. The solver is then handed a system
+matrix that is singular in exactly the direction the answer lies. Measured on
+this round's fixture: the weakest direction came back as (1.000, −0.001, −0.002)
+— the axis carrying 0.30 m of the 0.36 m injected drift — at an observability of
+0.022. At 0.60 m it is 0.265, and the real captures went 0.12 → 0.27 and 0.39 →
+0.36 with the correction changing accordingly. The radius has to be able to
+reach across the error being measured; that is geometry, not tuning.
+
+**A seventh gate had to be added, and it changed one answer.** Every gate round
+11 wrote asks the SOLVER, or the two submaps the solver chose, whether the
+closure is plausible — and on scan-036 all six said yes: the two ends came 4.8 cm
+together (35.6 → 30.8 cm), observability was a healthy 0.358, the correction was
+a plausible 0.336 m, and the trajectory's end gap fell 0.30 m. Then round 12's
+ruler — same-surface disagreement measured over the WHOLE map, over every pair
+of windows — went **3.43 → 4.52 cm**. The map got worse. A translation that
+slides a cloud until it lands on SOME nearby surface always reduces the mean
+nearest-neighbour distance between the two clouds it was fitted to; that number
+is the solver's own residual wearing a different hat and it cannot referee
+itself. So the ruler votes last, on the metric the summary card already prints,
+and a closure can only ship if the number the operator is shown improves.
+
+Measured, through the production path (`engine_cli --d6-loopend`, both legs
+stitched, scored with the round-12 ruler and the round-10 crispness metric at
+the same wall probes):
+
+| scan | decision | correction | self-check | loop gap | occupancy |
+|---|---|---|---|---|---|
+| 033 | **closed** | 0.118 m, 0.000° | **1.97 → 1.66 cm** (−15 %) | 0.581 → 0.566 m | −1.01 % |
+| 036 | ruler-says-worse | 0.336 m proposed | would be 3.43 → 4.52 cm | refused | — |
+| 038 | correction-too-big | 1.389 m proposed, bound 1.00 m | refused | — | — |
+| 034 | no-revisit | 5.4 m of path, floor 8 m | — | — | — |
+| 035 | no-excursion | 10.1 m inside 1.55 m | — | — | — |
+| 039 | no-trajectory | no poses were recorded (item 58) | — | — | — |
+
+**One closure in six, and that is the honest state of it: this claims the lever,
+it does not yet claim the room.** Two things must be said plainly rather than
+sold. First, the five refusals are the product working — each names a gate and a
+number, and scan-036 is the case where the last gate overruled the first six.
+Second, **the loop GAP is not the target and must not be reported as one**: on
+scan-033 the geometry says the walk genuinely ended 0.57 m from where it
+started, so most of that gap is where the operator stopped walking, not drift.
+What the closure removes is the part the map disagrees with itself about, and
+that is the 15 % the ruler measures. Run inside `Process`, ON by default there
+and nowhere else, because it moves points the live pass could not have moved.
+
+`post_geom.h` was extracted on the way: round 11 wrote the Jacobi eigensolver,
+the submap cutter, the plane fitter, the normal-coverage metric and the occupied
+voxel count; round 13 copied four of the five; round 16 needed all of them and a
+third copy is where a shared routine stops being shared. It is a pure move, and
+the round-11 and round-13 fixtures assert the same numbers to the same decimals
+afterwards — which is what makes the move safe to have made.
+
+**61 — THE RADIUS, AND WHAT WAS ACTUALLY DUPLICATED.**
+
+(a) The cause is one line. `LidarScanShapes.extraLarge` is
+`RoundedCornerShape(percent = 50)`, deliberately a PILL so un-restyled `Button`s
+and `FilterChip`s round like the hand-built ones — and Material 3 hands that same
+token to `ModalBottomSheet` (`BottomSheetDefaults.ExpandedShape`) and to
+`AlertDialog` (`AlertDialogDefaults.shape`). Fifty per cent of a full-width
+sheet's short side is an enormous curve. Three of the app's five sheets were
+already passing `RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)` by hand
+and two were not, which is exactly why *some* windows looked right — "there are
+some tab and window show the same too". Fixed with a token
+(`ScanDims.SheetRadius` / `DialogRadius`, both 20 dp) rather than two more
+literals, applied to the four surfaces that were inheriting the pill: the
+**session-summary sheet** (the one the merge/auto-process progress lives in —
+the one the owner pointed at), Review's **display panel** sheet, the **delete
+confirmation** dialog and the **DND explainer** dialog. The pill stays on
+controls, where it belongs.
+
+(b) Duplicated surfaces, merged:
+
+* **The process result, laid out twice.** `CaptureScreen.AutoProcessPanel` and
+  `ReviewScreen.ProcessSectionsCard` each rendered the same three `StitchResult`
+  sentences — `detail`, `selfCheckLine`, `mountWarning` — in two files, at two
+  type scales, with two spacings. Review's own comment said the sentences
+  *"can never drift apart"*, and it was right about the sentences and wrong
+  about everything around them. Now one `ProcessResultLines` composable, with
+  the per-surface test tags passed in so the instrumented tests keep asserting
+  what they assert. Item 60's loop-end result is exactly the fourth line that
+  would have been added to one of the two.
+* **The trajectory toggle.** Not added. `DisplayParams.showTrajectory` already
+  existed, was already persisted per project, and its switch already sat in
+  Review's panel with the subtitle *"Persisted; the overlay itself is
+  desktop-only so far."* Both the live view and Review now read that one flag,
+  so the setting the operator changes in Review is the setting they get on the
+  next walk. The subtitle now describes what it does.
+
+Found, deliberately NOT merged, and named so the next round does not rediscover
+them:
+
+* **Three "process" surfaces over two different pipelines.** Review's inline
+  card and Capture's auto panel both drive `ProcessingRepository.reprocessD6`;
+  the Jobs tab's `GatedAction("Post-process")` queues `JobKind.POST_PROCESS`,
+  which is a different pipeline with a different queue and a Cancel button. Same
+  word, two engines, three chromes. Consolidating them is a round of its own
+  because it is a decision about what "Process" means, not a layout change.
+* **Review reachable twice** — Projects' "Open in viewer" and ProjectDetail's
+  "Review" card — with different chrome (`UnderTabBar` on one route and not the
+  other). Removing a navigation route mid-round risks the deep-link and
+  back-stack behaviour round 10 spent a session fixing.
+* **Two display panels** (`CaptureSettingsSheet` and Review's `DisplayPanel`)
+  with genuinely divergent ranges — point size 0.1–3.0 px against 0.5–12 px, LOD
+  2–20 M against 0.5–50 M — and different widget kits. The divergence is a bug;
+  merging the panels is a bigger change than this round can carry honestly.
+
+**62 — ONE TRUTH ON THE CARD, BOTH NUMBERS IN THE LOG.**
+
+Neither count was wrong. The live detector splits on every discontinuity as it
+arrives; the offline one re-derives the seams from the recorded stream, where
+scan-038's 1.6 s `TRACKING_REGAINED` gap is bridged rather than split. The
+operator does not have two detectors, they have one card. The rule is
+**whichever detector last spoke**: before processing the live count is all there
+is, after it the processed count describes the file that now exists on disk and
+replaces it. The log keeps both, as `sectionsLive=` and `sectionsProcessed=`,
+which is the only place the distinction is useful.
+
+**IS scan-039 RESCUABLE?** Not today, and it is not unrescuable either — the
+distinction matters and the answer should not be rounded off in either
+direction. What is on disk is `lidar.bin` (854 KB of ranges with their
+timestamps) and `imu_phone.bin` (899 KB, 20,401 samples at 399.1 Hz, `rejected=0
+dropped=2`), plus `gnss.bin`. What is missing is the only thing that turns a
+range into a point: a world pose per instant. A rescue would need a trajectory
+built from the IMU alone, which is the item-46 bridge — gyro integration gives
+orientation to about a degree over tens of seconds (round 14 measured 0.221° p90
+against ARCore), and that is enough to de-rotate each fan; **the translation is
+the problem**, because double-integrated accelerometer bias diverges as t² and
+over 51 s that is metres, not centimetres. A pushbroom with correct rotation and
+unknown translation resolves to a cloud that is locally right and globally
+smeared along the walk — the same null space item 60 spends its round refusing
+to invent. So a rescue is possible in exactly one shape: bootstrap the
+translation from the LIDAR itself (scan-to-scan registration between successive
+fans, which needs overlap the D6's single sweeping plane barely provides), and
+constrain it with the gyro. That is a real project, not a flag. The container is
+kept and the raw streams are untouched, so nothing about that project is
+foreclosed.

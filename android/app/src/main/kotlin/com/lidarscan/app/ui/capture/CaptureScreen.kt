@@ -356,6 +356,8 @@ fun CaptureRoute(
     }
     if (showDndExplainer) {
         AlertDialog(
+            // ROUND 16 item 61: dialogs inherited the theme's pill too.
+            shape = RoundedCornerShape(ScanDims.DialogRadius),
             onDismissRequest = {
                 showDndExplainer = false
                 dndScope.launch { container.settingsRepository.setDndAccessAsked() }
@@ -425,6 +427,17 @@ fun CaptureRoute(
     val mountIsNominal by viewModel.mountIsNominal.collectAsStateWithLifecycle()
     val trailPoints by viewModel.trailPoints.collectAsStateWithLifecycle()
     val trailLengthM by viewModel.trailLengthM.collectAsStateWithLifecycle()
+    // ROUND 16 item 59: the walked path, drawn inside the live cloud.
+    val trailRibbon by viewModel.trailRibbon.collectAsStateWithLifecycle()
+    val showTrajectory by viewModel.showTrajectory.collectAsStateWithLifecycle()
+    var liveRibbonSink by remember {
+        mutableStateOf<com.lidarscan.app.render.PointCloudRenderer?>(null)
+    }
+    LaunchedEffect(liveRibbonSink, trailRibbon, showTrajectory) {
+        val r = liveRibbonSink ?: return@LaunchedEffect
+        r.setTrailVisible(showTrajectory)
+        r.setTrail(trailRibbon.xyz, trailRibbon.rgba, trailRibbon.count)
+    }
     val motionHint by viewModel.motionHint.collectAsStateWithLifecycle()
     val refreshDownshiftNote by viewModel.refreshDownshiftNote.collectAsStateWithLifecycle()
     val georefSource by viewModel.georefSource.collectAsStateWithLifecycle()
@@ -448,6 +461,7 @@ fun CaptureRoute(
     // ── ROUND 7 ─────────────────────────────────────────────────────────────
     val mountTrimProvenance by viewModel.mountTrimProvenance.collectAsStateWithLifecycle()
     val noDataAlert by viewModel.noDataAlert.collectAsStateWithLifecycle()
+    val noPoseAlert by viewModel.noPoseAlert.collectAsStateWithLifecycle()
     val sectionHint by viewModel.sectionHint.collectAsStateWithLifecycle()
     // ── ROUND 8 ─────────────────────────────────────────────────────────────
     val mountTrimNoteIsWarning by viewModel.mountTrimNoteIsWarning.collectAsStateWithLifecycle()
@@ -674,6 +688,12 @@ fun CaptureRoute(
             viewModel.setRigPoseSink(
                 renderer?.let { r -> { x, y, z, t -> r.setRigPose(x, y, z, t) } },
             )
+            // ROUND 16 item 59: the ribbon meets the renderer at the same seam
+            // the rig pose does, and for the same reason — the ViewModel must
+            // never hold a GL-thread object across its own lifetime, so the
+            // Compose side owns the subscription and tears it down with the
+            // view.
+            liveRibbonSink = renderer
         },
         onOpenMountCalibration = (uiState as? CaptureUiState.Loaded)?.project?.id?.let { pid ->
             onOpenMountCalibration?.let { open -> { open(pid) } }
@@ -699,6 +719,8 @@ fun CaptureRoute(
         mountTrimProvenance = mountTrimProvenance,
         noDataAlert = noDataAlert,
         onDismissNoDataAlert = viewModel::dismissNoDataAlert,
+        noPoseAlert = noPoseAlert,
+        onDismissNoPoseAlert = viewModel::dismissNoPoseAlert,
         sectionHint = sectionHint,
         onSetMountReference = viewModel::setMountReference,
         onBeginMountHold = { viewModel.beginMountHold() },
@@ -858,6 +880,8 @@ fun CaptureScreen(
     /** ROUND 7 (field bug 2): non-null while a running capture is receiving nothing. */
     noDataAlert: String? = null,
     onDismissNoDataAlert: () -> Unit = {},
+    noPoseAlert: String? = null,
+    onDismissNoPoseAlert: () -> Unit = {},
     /** ROUND 7 (item 3): non-null once ARCore's frame has jumped and the scan is in sections. */
     sectionHint: String? = null,
     onSetMountReference: () -> Unit = {},
@@ -1049,6 +1073,19 @@ fun CaptureScreen(
                                 message = noDataAlert,
                                 onDismiss = onDismissNoDataAlert,
                                 testTag = "noDataBanner",
+                            )
+                        }
+                        // ROUND 16 item 58(b): the other half of "is this scan
+                        // real". Below the no-data banner and never shown with
+                        // it — the watchdog refuses to fire while no points are
+                        // arriving, because that is the other banner's
+                        // diagnosis and it has a different instruction.
+                        if (noPoseAlert != null) {
+                            LoudBanner(
+                                title = "NO POSITION TRACKING",
+                                message = noPoseAlert,
+                                onDismiss = onDismissNoPoseAlert,
+                                testTag = "noPoseBanner",
                             )
                         }
                         // ROUND 8 (item 30b): a refused re-zero is now as loud as
@@ -1444,6 +1481,13 @@ fun CaptureScreen(
         ModalBottomSheet(
             onDismissRequest = onDismissSummary,
             containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            // ROUND 16 item 61: the sheet the owner was pointing at — it is the
+            // one the auto-process ("merge") progress lives in, and it was
+            // inheriting the theme's pill.
+            shape = RoundedCornerShape(
+                topStart = ScanDims.SheetRadius,
+                topEnd = ScanDims.SheetRadius,
+            ),
         ) {
             // ROUND 6 (item 20): the summary now answers "is it saved?" rather
             // than only "how many points?" — the previous sheet was perfectly
@@ -2733,7 +2777,11 @@ private fun SessionSummaryContent(
         // below it are the evidence for the word above them.
         if (scanSummary != null && saveError == null) {
             Spacer(Modifier.height(12.dp))
-            ScanGradeBanner(scanSummary)
+            // ROUND 16 item 62: one truth on the card. See ScanGradeBanner.
+            ScanGradeBanner(
+                scanSummary,
+                processedSections = autoProcess.result?.takeIf { it.ran }?.sections,
+            )
         }
         // ROUND 15 (item 55): auto-process, right under the grade, because
         // what it produces REPLACES numbers above it — a scan that recorded in
@@ -2858,48 +2906,54 @@ private fun AutoProcessPanel(state: AutoProcessState) {
                     .testTag("autoProcessProgress"),
             )
         }
-        state.result?.detail?.let { detail ->
-            Spacer(Modifier.height(6.dp))
-            Text(
-                detail,
-                fontSize = 13.sp,
-                lineHeight = 18.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.testTag("autoProcessDetail"),
-            )
-        }
-        // ROUND 15 item 57. The honest accuracy figure, and it is deliberately
-        // shown for a skipped fast-path run too — a one-piece scan is exactly
-        // the one whose owner will believe the number.
-        state.result?.selfCheckLine?.let { line ->
-            Spacer(Modifier.height(6.dp))
-            Text(
-                line,
-                fontSize = 13.sp,
-                lineHeight = 18.sp,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.testTag("autoProcessSelfCheck"),
-            )
-        }
-        state.result?.mountWarning?.let { warning ->
-            Spacer(Modifier.height(6.dp))
-            Text(
-                warning,
-                fontSize = 13.sp,
-                lineHeight = 18.sp,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.testTag("autoProcessMountWarning"),
-            )
-        }
+        // ROUND 16 item 61: ONE implementation of these three sentences —
+        // see ui/components/ProcessResultLines.kt for why there were two.
+        com.lidarscan.app.ui.components.ProcessResultLines(
+            stitch = state.result,
+            detailTag = "autoProcessDetail",
+            selfCheckTag = "autoProcessSelfCheck",
+            mountWarningTag = "autoProcessMountWarning",
+        )
     }
 }
 
 @Composable
-private fun ScanGradeBanner(summary: com.lidarscan.core.capture.ScanSummary) {
-    val (accent, word) = when (summary.grade) {
-        com.lidarscan.core.capture.ScanGrade.GOOD -> SemGood to "GOOD SCAN"
-        com.lidarscan.core.capture.ScanGrade.FAIR -> SemWarn to "USABLE"
-        com.lidarscan.core.capture.ScanGrade.POOR -> SemBad to "RESCAN"
+private fun ScanGradeBanner(
+    summary: com.lidarscan.core.capture.ScanSummary,
+    /**
+     * ROUND 16 item 62 — the POST-process section count, once there is one.
+     *
+     * The owner's scan-038 sealed with `sections=3` and auto-processed to
+     * `sections=2`, and the card showed the first while the log went on to
+     * print the second. Neither number was wrong: the live detector splits on
+     * every discontinuity as it arrives, and the offline one re-derives the
+     * seams from the recorded stream, where scan-038's 1.6 s TRACKING_REGAINED
+     * gap is bridged rather than split. But the operator does not have two
+     * detectors, they have one card, and the card must show one truth.
+     *
+     * The rule is: **whichever detector last spoke.** Before processing, the
+     * live count is all there is and it is shown. After, the processed count is
+     * the one describing the file that now exists on disk, and it replaces it.
+     * The log keeps BOTH, under `sectionsLive=` and `sectionsProcessed=`, so a
+     * field report can still tell the two apart — which is the only place the
+     * distinction is useful.
+     */
+    processedSections: Int? = null,
+) {
+    val summary = if (processedSections != null && processedSections != summary.sections) {
+        summary.copy(sections = processedSections)
+    } else {
+        summary
+    }
+    // ROUND 16 item 58(c): "RESCAN" is right for a thin or broken scan and
+    // wrong for this one — it invites "walk it again more carefully", and a
+    // capture with no trajectory will not be better for anything the operator
+    // does differently about walking. The card says what it is.
+    val (accent, word) = when {
+        summary.isTwoDimensionalOnly -> SemBad to "2D ONLY — NO ROOM"
+        summary.grade == com.lidarscan.core.capture.ScanGrade.GOOD -> SemGood to "GOOD SCAN"
+        summary.grade == com.lidarscan.core.capture.ScanGrade.FAIR -> SemWarn to "USABLE"
+        else -> SemBad to "RESCAN"
     }
     Column(
         Modifier

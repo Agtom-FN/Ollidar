@@ -660,3 +660,94 @@ TEST_CASE("round15/the_reprocess_report_carries_the_self_consistency_ruler") {
     CHECK(rep.consistency.windows == 0);
   }
 }
+
+// ===========================================================================
+// ROUND 16 item 59 — THE CORRECTED TRAJECTORY IS A FILE THE APP CAN READ
+// ===========================================================================
+//
+// Owner, on 0.9.0: *"i want to see the path of mine showing in the pointcloud
+// too for me to check if the scan is right"*.
+//
+// The trajectory has always existed inside `reprocess_d6_container` — corrected
+// by the stitch and, since this round, by the loop-end closer — and has always
+// been dropped on the floor at the end of it. `processed/trajectory.bin` is
+// that vector, written beside the cloud it belongs to. Lives in this file
+// rather than a new one because `record_walk()` is here and a second synthetic
+// container would be a second thing to keep true.
+TEST_CASE("round16/reprocess_writes_the_corrected_trajectory_beside_the_cloud") {
+  const CaptureResult cap = record_walk("traj", false, true);
+
+  post::ReprocessOptions ro;
+  post::ReprocessReport rep;
+  REQUIRE(post::reprocess_d6_container(cap.dir, ro, &rep).ok());
+  REQUIRE(rep.ran);
+  REQUIRE(rep.poses > 0);
+  CHECK(rep.trajectory_written);
+
+  const std::string path = cap.dir + "/processed/trajectory.bin";
+  std::FILE* f = std::fopen(path.c_str(), "rb");
+  REQUIRE(f != nullptr);
+  std::fseek(f, 0, SEEK_END);
+  const long size = std::ftell(f);
+  std::fseek(f, 0, SEEK_SET);
+  std::vector<unsigned char> bytes(static_cast<std::size_t>(size));
+  REQUIRE(std::fread(bytes.data(), 1, bytes.size(), f) == bytes.size());
+  std::fclose(f);
+
+  // An INDEPENDENT decoder, written from the format's description rather than
+  // from the writer — the same rule ROUND 15's PNG test lives by, and the only
+  // way a format test tests the format instead of testing itself.
+  REQUIRE(bytes.size() >= 16u);
+  CHECK(bytes[0] == 'L');
+  CHECK(bytes[1] == 'S');
+  CHECK(bytes[2] == 'T');
+  CHECK(bytes[3] == 'R');
+  CHECK(bytes[4] == 'A');
+  CHECK(bytes[5] == 'J');
+  CHECK(bytes[6] == '0');
+  CHECK(bytes[7] == '1');
+  const std::uint32_t n = static_cast<std::uint32_t>(bytes[8]) |
+                          (static_cast<std::uint32_t>(bytes[9]) << 8) |
+                          (static_cast<std::uint32_t>(bytes[10]) << 16) |
+                          (static_cast<std::uint32_t>(bytes[11]) << 24);
+  CHECK(n == rep.poses);
+  // The length is exactly the header plus three float32 per pose — nothing
+  // padded, nothing truncated, which is what the phone-side reader will check
+  // before it trusts a byte of it.
+  CHECK(bytes.size() == 16u + static_cast<std::size_t>(n) * 12u);
+
+  // ...and the points are finite, in metres, and inside the fixture's room
+  // rather than at the origin. A file full of zeroes would pass every check
+  // above.
+  double span = 0.0;
+  float first[3] = {0.f, 0.f, 0.f};
+  for (std::uint32_t i = 0; i < n; ++i) {
+    float xyz[3];
+    std::memcpy(xyz, bytes.data() + 16u + static_cast<std::size_t>(i) * 12u, 12u);
+    for (int k = 0; k < 3; ++k) {
+      REQUIRE(std::isfinite(xyz[k]));
+      CHECK(std::fabs(xyz[k]) < 1000.0f);
+    }
+    if (i == 0) {
+      first[0] = xyz[0];
+      first[1] = xyz[1];
+      first[2] = xyz[2];
+    }
+    double d = 0.0;
+    for (int k = 0; k < 3; ++k) d += (xyz[k] - first[k]) * (xyz[k] - first[k]);
+    span = std::max(span, std::sqrt(d));
+  }
+  CHECK(span > 0.10);
+
+  // Idempotent, like everything else in `processed/`: the same container
+  // reprocessed twice writes the same bytes.
+  post::ReprocessReport again;
+  REQUIRE(post::reprocess_d6_container(cap.dir, ro, &again).ok());
+  std::FILE* g = std::fopen(path.c_str(), "rb");
+  REQUIRE(g != nullptr);
+  std::vector<unsigned char> bytes2(bytes.size());
+  const std::size_t got = std::fread(bytes2.data(), 1, bytes2.size(), g);
+  std::fclose(g);
+  CHECK(got == bytes.size());
+  CHECK(bytes2 == bytes);
+}

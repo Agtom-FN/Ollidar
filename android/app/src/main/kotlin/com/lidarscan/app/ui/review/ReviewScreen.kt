@@ -342,6 +342,12 @@ fun ReviewScreen(
             onDismissRequest = { showPanel = false },
             sheetState = sheetState,
             containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            // ROUND 16 item 61: "...and there are some tab and window show the
+            // same too". This was the other one.
+            shape = RoundedCornerShape(
+                topStart = ScanDims.SheetRadius,
+                topEnd = ScanDims.SheetRadius,
+            ),
         ) {
             DisplayPanel(state, vm)
         }
@@ -606,7 +612,11 @@ private fun DisplayPanel(state: ReviewUiState, vm: ReviewViewModel) {
             "Persisted, but NOT rendered in this build: points.mat has no post-process pass and S3 never measured " +
                 "EDL's cost on a phone GPU. The setting travels with the project so a desktop that can draw it will.",
         ) { on -> vm.updateDisplay { it.copy(edlEnabled = on) } }
-        SwitchRow("Trajectory overlay", d.showTrajectory, "Persisted; the overlay itself is desktop-only so far.") { on ->
+        SwitchRow(
+            "Walked path",
+            d.showTrajectory,
+            "Draws your walk through the cloud — start teal, end amber, red where tracking was lost.",
+        ) { on ->
             vm.updateDisplay { it.copy(showTrajectory = on) }
         }
 
@@ -692,39 +702,14 @@ private fun ProcessSectionsCard(
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurface,
         )
-        val detail = stitch?.detail
-        if (detail != null) {
-            Spacer(Modifier.height(6.dp))
-            Text(
-                detail,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.testTag("reviewProcessDetail"),
-            )
-        }
-        // ROUND 15 item 57: the ruler, wherever a StitchResult is shown. Same
-        // sentence on the capture card and here, from the same `:core`
-        // property, so the two can never drift apart.
-        val selfCheck = stitch?.selfCheckLine
-        if (selfCheck != null) {
-            Spacer(Modifier.height(6.dp))
-            Text(
-                selfCheck,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.testTag("reviewSelfCheck"),
-            )
-        }
-        val mount = stitch?.mountWarning
-        if (mount != null) {
-            Spacer(Modifier.height(6.dp))
-            Text(
-                mount,
-                style = MaterialTheme.typography.bodySmall,
-                color = SemBad,
-                modifier = Modifier.testTag("reviewMountWarning"),
-            )
-        }
+        // ROUND 16 item 61: shared with the capture card. See
+        // ui/components/ProcessResultLines.kt.
+        com.lidarscan.app.ui.components.ProcessResultLines(
+            stitch = stitch,
+            detailTag = "reviewProcessDetail",
+            selfCheckTag = "reviewSelfCheck",
+            mountWarningTag = "reviewMountWarning",
+        )
         if (state.processError != null) {
             Spacer(Modifier.height(6.dp))
             Text(

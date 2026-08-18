@@ -117,6 +117,75 @@ class CaptureArController(
     private val gate = ArSessionGate()
 
     /**
+     * ROUND 16 item 58 — **the gate is a check, and a check is not a lock.**
+     *
+     * This is the whole of the scan-039 regression, and it is a bug ROUND 14
+     * created by fixing a different one.
+     *
+     * [ArSessionGate.mayDrive] is read at the TOP of [onFrame] and then the GL
+     * thread proceeds into `Session.update()`. Nothing stopped the main thread
+     * from calling `Session.close()` in the microseconds AFTER that check
+     * passed and BEFORE (or during) the `update()` it authorised. ROUND 6 did
+     * not need to stop it: the only lifecycle call on the hot path was
+     * `pause()`, and `mayDrive` shutting first is enough to keep a LATER
+     * `update()` off a paused session — which was the crash it was written for.
+     * [close] existed and, in ROUND 6's own words, "had zero callers anywhere
+     * in src/main".
+     *
+     * ROUND 14 gave it a caller on the hottest path there is: every Start now
+     * runs [resetWorldFrame], which closes the session while the pose pump's
+     * `RENDERMODE_CONTINUOUSLY` thread is driving it at 60 Hz. A
+     * `Session.close()` concurrent with a `Session.update()` is undefined by
+     * ARCore's contract, and what it does in practice on the owner's Pixel is
+     * worse than a crash: `createSession()` and `resume()` both SUCCEED on the
+     * replacement, the gate reports the session running, and the camera never
+     * delivers a single frame to it. The evidence is in the owner's own log —
+     * the reset is logged, the start gate then times out with `blocker=NO_POSES`,
+     * and 51 seconds of `cue: tracking_degraded` follow with not one pose
+     * pushed. scan-039 has `lidar.bin` and 899 KB of 400 Hz `imu_phone.bin` and
+     * NO `poses_ar.bin` and NO `map.bin` at all.
+     *
+     * It is intermittent because it is a race: of the five resets in that
+     * session, scan-036 and scan-038 won it and scan-037 and scan-039 lost it.
+     *
+     * So ownership of the session becomes a real mutual exclusion:
+     *
+     *  * [onFrame] takes it with `tryLock` and gives up the frame if it cannot
+     *    have it. The GL thread must NEVER block on the main thread — a few
+     *    dropped frames during a rebuild is exactly the right price, and a
+     *    render thread waiting on a lock is how an ANR is written.
+     *  * [resetWorldFrame] takes it and HOLDS it across close / create / bind /
+     *    resume, so there is no instant at which a half-built session is
+     *    reachable from a render thread.
+     *
+     * Deadlock-free by construction: the only thing that blocks is the main
+     * thread waiting for at most one in-flight frame, and nothing inside
+     * [onFrame] ever waits on the main thread.
+     */
+    private val driveLock = java.util.concurrent.locks.ReentrantLock()
+
+    private inline fun <T> java.util.concurrent.locks.ReentrantLock.withLockReentrant(
+        body: () -> T,
+    ): T {
+        lock()
+        try {
+            return body()
+        } finally {
+            unlock()
+        }
+    }
+
+    /**
+     * ROUND 16 item 58 — frames dropped because a rebuild held [driveLock].
+     * Exposed so the Diagnostics sheet can show that the mechanism ran rather
+     * than leaving it as an invisible claim; a healthy reset costs single
+     * digits.
+     */
+    private val framesYielded = java.util.concurrent.atomic.AtomicLong(0)
+
+    val framesYieldedToReset: Long get() = framesYielded.get()
+
+    /**
      * ROUND 14: the last camera texture a renderer bound, and who bound it.
      * Exists only so [resetWorldFrame] can re-bind it to a new session; see
      * [setCameraTextureName].
@@ -459,10 +528,17 @@ class CaptureArController(
         }
     }
 
-    fun pause() {
+    fun pause() = driveLock.withLockReentrant {
         // ROUND 6 (owner item 19, crash cause 3): the gate is shut FIRST, so a
         // GL thread that is mid-frame cannot get past `mayDrive` into a
         // `Session.update()` on a session this line is about to pause.
+        //
+        // ROUND 16 item 58: ...and the lock is what makes "cannot" true rather
+        // than likely. `pause()` on a session another thread is inside is the
+        // same undefined call `close()` is, and both reach here from the same
+        // main-thread lifecycle (`DisposableEffect(needsArSession)`) while the
+        // pose pump is running. Reentrant, so `resetWorldFrame` — which already
+        // holds it — passes straight through.
         gate.onPaused()
         runCatching { session?.pause() }
             .onFailure { Log.w(TAG, "ARCore pause threw; treating the session as paused", it) }
@@ -488,7 +564,7 @@ class CaptureArController(
         )
     }
 
-    fun close() {
+    fun close() = driveLock.withLockReentrant {
         pause()
         gate.onSessionClosed()
         runCatching { session?.close() }
@@ -532,23 +608,92 @@ class CaptureArController(
      * frame for it. Returns false when there is nothing to reset or the rebuild
      * failed — the caller must never let this block a capture.
      */
-    fun resetWorldFrame(): Boolean {
-        if (session == null) return false
-        val texture = boundTextureId
-        val textureOwner = boundTextureOwner
-        close()
-        val created = createSession()
-        if (created.isFailure) {
-            Log.w(TAG, "world-frame reset could not rebuild the ARCore session")
-            return false
+    fun resetWorldFrame(): Boolean = resetWorldFrame(attempts = RESET_ATTEMPTS).ok
+
+    /**
+     * ROUND 16 item 58 — what a reset actually did, for the log and for the
+     * caller that has to decide whether to arm a recorder on it.
+     *
+     * [ok] means the session was rebuilt and resumed. It does NOT mean the
+     * camera is delivering — that is what [CaptureViewModel]'s start gate is
+     * for, and this type exists so the two can be reported separately instead
+     * of both hiding behind one Boolean.
+     */
+    data class ResetResult(val ok: Boolean, val attempts: Int, val yieldedFrames: Long)
+
+    /**
+     * ROUND 16 item 58: [resetWorldFrame], holding [driveLock] across the whole
+     * rebuild, and retried.
+     *
+     * The lock is the fix for the race. The RETRY is the belt to its braces and
+     * it costs nothing when nothing is wrong: `close()` releases a camera
+     * device, `Session(context)` acquires one, and on some OEM builds the
+     * release is not complete by the time the acquire runs — which surfaces as
+     * a `CameraNotAvailableException` out of `resume()`, or as a session that
+     * resumes and then never produces a frame. One rebuild is cheap (the owner's
+     * successful resets cleared the start gate in ~2.0 s); paying for a second
+     * one on the rare bad draw is much cheaper than a 2D scan.
+     */
+    fun resetWorldFrame(attempts: Int): ResetResult {
+        if (session == null) return ResetResult(ok = false, attempts = 0, yieldedFrames = 0L)
+        val before = framesYielded.get()
+        driveLock.lock()
+        try {
+            val texture = boundTextureId
+            val textureOwner = boundTextureOwner
+            var tries = 0
+            while (tries < attempts.coerceAtLeast(1)) {
+                ++tries
+                close()
+                val created = createSession()
+                if (created.isFailure) {
+                    Log.w(TAG, "world-frame reset could not rebuild the ARCore session (try $tries)")
+                    continue
+                }
+                // The renderer never learned that its session was replaced — it
+                // is still holding the same GL texture and the same claim — so
+                // hand the texture straight back rather than waiting for a
+                // surface event that is not coming.
+                if (texture >= 0 && textureOwner != null) {
+                    setCameraTextureName(texture, textureOwner)
+                }
+                geometryDirty = true
+                if (resume().isSuccess) {
+                    return ResetResult(true, tries, framesYielded.get() - before)
+                }
+                Log.w(TAG, "world-frame reset rebuilt the session but could not resume it (try $tries)")
+            }
+            return ResetResult(false, tries, framesYielded.get() - before)
+        } finally {
+            driveLock.unlock()
         }
-        // The renderer never learned that its session was replaced — it is
-        // still holding the same GL texture and the same claim — so hand the
-        // texture straight back rather than waiting for a surface event that
-        // is not coming.
-        if (texture >= 0 && textureOwner != null) setCameraTextureName(texture, textureOwner)
-        geometryDirty = true
-        return resume().isSuccess
+    }
+
+    /**
+     * ROUND 16 item 58 — how many poses this controller has ACCEPTED since the
+     * counter was last armed, and when the most recent one landed.
+     *
+     * The pose watchdog and the start gate both need "is the tracker alive
+     * RIGHT NOW", and neither could ask it before: [ArStatus.posesPushed] only
+     * counts poses that reached an engine handle (zero before a recording
+     * starts, by design), and [motion]'s ring answers a question about a
+     * window rather than about the last instant. This counts every pose that
+     * got past [publishPose]'s timestamp filter, engine or no engine.
+     */
+    private val posesAccepted = java.util.concurrent.atomic.AtomicLong(0)
+
+    @Volatile
+    private var lastPoseElapsedMillis: Long = 0L
+
+    val acceptedPoseCount: Long get() = posesAccepted.get()
+
+    /** `android.os.SystemClock.elapsedRealtime()` of the last accepted pose; 0 when none. */
+    val lastAcceptedPoseAtMillis: Long get() = lastPoseElapsedMillis
+
+    /** Arms the two counters above for a new capture (or a new reset). */
+    fun resetPoseCounters() {
+        posesAccepted.set(0)
+        lastPoseElapsedMillis = 0L
     }
 
     /**
@@ -608,11 +753,32 @@ class CaptureArController(
      * at once, which ARCore's own contract leaves undefined.
      */
     fun onFrame(owner: RendererOwner): Frame? {
+        // ROUND 16 item 58: the lock FIRST, and never blocking. If a
+        // [resetWorldFrame] is in flight this frame is simply skipped — the
+        // session it would have driven is being replaced, so there is nothing
+        // useful it could have done, and blocking a render thread on the main
+        // thread is how an ANR is written.
+        if (!driveLock.tryLock()) {
+            framesYielded.incrementAndGet()
+            return null
+        }
+        try {
+            return onFrameLocked(owner)
+        } finally {
+            driveLock.unlock()
+        }
+    }
+
+    private fun onFrameLocked(owner: RendererOwner): Frame? {
         // ROUND 6 (owner item 19): ONE gate, checked before anything touches
         // the session. `NOT_RESUMED` is the case that used to be a crash —
         // `Session.update()` on a paused session throws `SessionPausedException`
         // (unchecked), and on a GL thread that is a dead process, not a caught
         // error. See ArSessionGate's header for all three routes into it.
+        //
+        // ROUND 16: still checked, and now checked INSIDE the lock, which is
+        // what makes it a decision rather than a guess about the next
+        // microsecond.
         if (!gate.mayDrive(owner.gated()).mayProceed) return null
         val s = session ?: return null
         val frame = try {
@@ -672,6 +838,12 @@ class CaptureArController(
             pose.qx().toDouble(), pose.qy().toDouble(), pose.qz().toDouble(), pose.qw().toDouble(),
         )
         val sample = PoseSample(timestamp, position, orientation, tracking)
+        // ROUND 16 item 58: counted HERE — after the ordering filter and before
+        // anything that can be switched off — so "the tracker is alive" is one
+        // fact with one definition, shared by the start gate, the pose watchdog
+        // and the seal.
+        posesAccepted.incrementAndGet()
+        lastPoseElapsedMillis = android.os.SystemClock.elapsedRealtime()
         motion.add(sample)
         // ROUND 7: a relocalization moves ARCore's world frame under the
         // pushbroom. Record it here, where every pose passes exactly once.
@@ -724,8 +896,22 @@ class CaptureArController(
         )
     }
 
-    private companion object {
-        const val TAG = "CaptureArController"
+    companion object {
+        private const val TAG = "CaptureArController"
+
+        /**
+         * ROUND 16 item 58. Two, not one and not five: one retry covers the
+         * camera-handoff draw that loses the race, and a loop that keeps
+         * rebuilding would turn a broken camera into a Start button that never
+         * returns — which is ROUND 10 item 38's complaint arriving by a third
+         * road.
+         *
+         * Public because [com.lidarscan.app.ui.capture.CaptureViewModel] asks
+         * for it at two call sites — Start, and the start gate's NO_POSES
+         * rebuild — and two call sites picking their own retry count is how
+         * they end up disagreeing.
+         */
+        const val RESET_ATTEMPTS = 2
 
         /**
          * ARCore reports no per-pose covariance, so these are **stated
@@ -735,13 +921,13 @@ class CaptureArController(
          * budget attributes 11.4 px at 3 m to ARCore relative pose error
          * (WIZARD.md §4), which is the scale these are chosen around.
          */
-        fun positionSigmaFor(state: TrackingState): Float = when (state) {
+        private fun positionSigmaFor(state: TrackingState): Float = when (state) {
             TrackingState.TRACKING -> 0.02f
             TrackingState.PAUSED -> 0.20f
             TrackingState.STOPPED -> 1.0f
         }
 
-        fun orientationSigmaFor(state: TrackingState): Float = when (state) {
+        private fun orientationSigmaFor(state: TrackingState): Float = when (state) {
             TrackingState.TRACKING -> 0.5f
             TrackingState.PAUSED -> 5.0f
             TrackingState.STOPPED -> 30.0f
@@ -757,7 +943,7 @@ class CaptureArController(
          * keep those points. STOPPED means the session is over; there is no
          * pose to trust at all.
          */
-        fun poseQualityOf(state: TrackingState, reason: TrackingFailureReason): Int = when (state) {
+        private fun poseQualityOf(state: TrackingState, reason: TrackingFailureReason): Int = when (state) {
             TrackingState.TRACKING -> ScanEngineNative.PoseQuality.GOOD
             TrackingState.PAUSED -> when (reason) {
                 TrackingFailureReason.EXCESSIVE_MOTION,

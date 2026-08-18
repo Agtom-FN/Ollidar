@@ -34,6 +34,7 @@
 #include "scanengine/cloud/point_page.h"
 #include "scanengine/core/error.h"
 #include "scanengine/slam/post/map_consistency.h"
+#include "scanengine/slam/post/loop_end.h"
 #include "scanengine/slam/post/mount_watch.h"
 #include "scanengine/slam/post/progress.h"
 #include "scanengine/slam/post/section_stitch.h"
@@ -47,6 +48,16 @@ struct ReprocessOptions {
   // walk. Off by default: ROUND 12 showed the closer refuses these captures
   // for reasons it can state, and this round did not change that.
   bool close_loops = false;
+  // ROUND 16 item 60. ON by default, and the default is the decision: this is
+  // the "Process this scan" pipeline, the one place in the product that is
+  // ALLOWED to move points the live pass could not have moved, and the loop
+  // gap is the largest error in every capture the owner has taken. It refuses
+  // itself on six independent gates — including ROUND 12's ruler, which vetoes
+  // any correction that would make the number on the summary card worse — so
+  // "on by default" costs a refusal and a log line when there is no loop, and
+  // that is what it should cost. See slam/post/loop_end.h.
+  bool close_loop_end = true;
+  LoopEndConfig loop_end{};
   bool densify_with_phone_imu = true;
   SectionStitchConfig sections{};
   // Written even when nothing was stitched, so the sidecar always says what
@@ -75,6 +86,15 @@ struct ReprocessReport {
   // that never painted the same surface twice. That is a legitimate answer
   // for a single pass down a corridor and the card says so in those words.
   MapConsistencyReport consistency{};
+  // ROUND 16 item 60. Always filled — including every refusal, each naming its
+  // gate — so a field log can say why a scan's loop was or was not closed.
+  LoopEndReport loop_end{};
+  bool loop_end_applied = false;
+  // ROUND 16 item 59: `processed/trajectory.bin` was written — the corrected
+  // walk, as float32 metre triples, for the path the app draws inside the
+  // cloud. See write_trajectory() in the .cpp for the format and for why it is
+  // a file rather than an ABI call.
+  bool trajectory_written = false;
   std::string map_path;
   std::string sidecar_path;
 };

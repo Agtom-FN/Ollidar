@@ -2,7 +2,9 @@
 #include "scanengine/slam/post/lscan_plan.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <vector>
 
@@ -168,6 +170,57 @@ Status floor_plan_from_lscan(const std::string& lscan_dir, const LscanPlanOption
     for (std::uint32_t k = 0; k < v.count; ++k) pts.push_back(v.data[k]);
   }
   rep.cloud_points = pts.size();
+
+  // --- ROUND 16 item 59: the walked path, for the sheet ---------------------
+  //
+  // Read from `processed/trajectory.bin` — the corrected walk that
+  // `reprocess_d6_container` writes beside the corrected cloud. Deliberately
+  // NOT re-derived: the cloud loaded above prefers `processed/map_stitched.bin`
+  // when it exists, so the path has to be the one that belongs to THAT cloud,
+  // and the only way to be sure of that is to read the file the same pass
+  // wrote. A container that has never been processed simply has no path, and
+  // the plan is drawn exactly as it was before this round.
+  //
+  // Projected into plan coordinates here rather than in `plan/`, because that
+  // directory deliberately knows nothing about world frames or up-axes.
+  std::vector<plan::Vec2> walk;
+  {
+    std::FILE* tf = std::fopen(join(lscan_dir, "processed/trajectory.bin").c_str(), "rb");
+    if (tf != nullptr) {
+      std::uint8_t head[16];
+      if (std::fread(head, 1, sizeof(head), tf) == sizeof(head) && head[0] == 'L' &&
+          head[1] == 'S' && head[2] == 'T' && head[3] == 'R' && head[4] == 'A' &&
+          head[5] == 'J' && head[6] == '0' && head[7] == '1') {
+        const std::uint32_t count = static_cast<std::uint32_t>(head[8]) |
+                                    (static_cast<std::uint32_t>(head[9]) << 8) |
+                                    (static_cast<std::uint32_t>(head[10]) << 16) |
+                                    (static_cast<std::uint32_t>(head[11]) << 24);
+        // Thinned to about 12 cm, the same rule the phone draws by, so the
+        // sheet and the screen show one walk.
+        constexpr double kStrideM = 0.12;
+        double lx = 0.0, ly = 0.0, lz = 0.0;
+        bool have = false;
+        for (std::uint32_t i = 0; i < count && i < 4000000u; ++i) {
+          std::uint8_t rec[12];
+          if (std::fread(rec, 1, sizeof(rec), tf) != sizeof(rec)) break;
+          float xyz[3];
+          std::memcpy(xyz, rec, sizeof(rec));
+          if (!std::isfinite(xyz[0]) || !std::isfinite(xyz[1]) || !std::isfinite(xyz[2])) {
+            continue;
+          }
+          const double dx = xyz[0] - lx, dy = xyz[1] - ly, dz = xyz[2] - lz;
+          if (have && dx * dx + dy * dy + dz * dz < kStrideM * kStrideM) continue;
+          lx = xyz[0];
+          ly = xyz[1];
+          lz = xyz[2];
+          have = true;
+          walk.push_back(plan::project(xyz[0], xyz[1], xyz[2], opts.up));
+        }
+      }
+      std::fclose(tf);
+    }
+  }
+  rep.trajectory_points = walk.size();
 
   plan::PlanInput in;
   in.points = Span<const PointVertex>(pts.data(), pts.size());
@@ -360,6 +413,8 @@ Status floor_plan_from_lscan(const std::string& lscan_dir, const LscanPlanOption
     plan::PlanRasterOptions ro;
     ro.max_dimension_px = opts.png_max_px;
     ro.title = opts.title;
+    // ROUND 16 item 59.
+    ro.trajectory = walk;
     plan::PlanRasterInfo pi;
     const std::string path = join(dir, base + ".png");
     const plan::OccupancyGrid* backdrop = map_grid.valid() ? &map_grid : &grid;
