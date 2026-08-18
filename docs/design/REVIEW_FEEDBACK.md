@@ -1253,3 +1253,232 @@ Engine **584 cases / 2,503,041 assertions**, ctest 7/7 serial, werror clean;
 `:core` **498**, `:app` **74**; emulator **19/19** with the native library
 rebuilt from this round's sources, so `JNI_OnLoad` validated ABI 10 on device.
 VERSION stays **0.8.0**.
+
+## Round 15 — owner-approved (2026-08-18): make breaks invisible, make output shareable
+
+54. **Live re-anchor healing.** ARCore announces every re-anchor and the stitch correction
+    is analytic (T_k = pose_after · pose_before⁻¹, round 13). Apply it the instant a
+    break is detected DURING capture: live map stays continuous, no shattering, section
+    bookkeeping still recorded for the offline refine. The deferred/softened cue then only
+    fires for what the operator must actually act on. Determinism: live healing must not
+    change what is RECORDED (raw streams untouched; healing is a live-view/live-map
+    transform with provenance, replay still bit-identical).
+
+55. **Auto-Process on seal.** Stop → seal → reprocess (stitch + refine + mount check)
+    runs automatically with progress on the summary card; card shows POST-process
+    numbers. Integrates with round 10's Stop→Projects flow (card first, then Projects).
+    Skip gracefully when there is nothing to do (1 section, no warnings, fast path).
+
+56. **Floor-plan export on the phone.** Engine A12 (walls w/ thickness, doors/windows,
+    room areas, DXF R12 + PDF) has never been wired to Android. Project files already
+    carry planSliceMinM/MaxM. Add "Floor plan" action in Review/Export: renders plan →
+    share as PNG/PDF/DXF. The single most shareable artifact an indoor scanner produces.
+
+57. **Self-check on the card.** Expose the round-12 ruler (measure_map_consistency)
+    through the existing reprocess path (ABI additive) and put the number on the summary
+    card in plain words: "surfaces repeat within X cm" (or "not measurable — single
+    pass"). The honest accuracy figure, replacing vibes with measurement.
+
+## Round 14 — owner field test of 0.8.0 (2026-08-18, scan-033/034/035 + log 1909)
+
+> *"The new scan is much better when i go around … but its not good with tilting
+> and moving around the phone."*
+> *"Does the origin and imu data offset zero every time when the capture start?"*
+
+50. **Tilt/sweep robustness.** Quality collapses when the owner stands and
+    sweeps the phone instead of walking it. Diagnose against scan-033 (the
+    26.6 m walk, the best capture yet) and say what specifically degrades. Fix
+    what software can fix; if part of the answer is technique, quantify it and
+    surface it live — the too-fast cue keys on LINEAR speed. And `ptsPerM` is
+    misleading for a standing capture (scan-034 graded on 50,124 points/metre
+    because the path was 2.7 m).
+
+51. **Origin / IMU zero at start.** The owner's direct question. Verify in code
+    whether the ARCore session is recreated per capture or reused, whether the
+    first pose is re-zeroed, whether densifier state is reset — and fix any
+    state that leaks between captures.
+
+52. **DND broken as shipped.** Every 0.8.0 session logs
+    `dnd=unprotected-no-permission`; the round-13 "ask-once flow" never reached
+    the owner. Root-cause and build the ask, a Settings status row, and a
+    visible unprotected note. Never block capture.
+
+53. **Mid-360 on Android.** scan-032 recorded `bytesIn=0`. Wire discovery over
+    the Ethernet interface, deal with the phone's interface IP, and preflight
+    the capture instead of sealing zero bytes.
+
+### Resolution — 2026-08-18 (0.8.1, round 14)
+
+**The headline: sweeping does not degrade the geometry. It starves the camera
+of parallax — and 0.8.0 had been handing every new capture the previous
+capture's map to fall back on.**
+
+Every metric this project owns says the sweeps are as good as the walk:
+
+| | scan-033 walk | scan-034 sweep | scan-035 sweep |
+| --- | ---: | ---: | ---: |
+| map self-consistency @ 8 s | 1.97 cm | 2.45 cm | 1.74 cm |
+| (that measurement's own floor) | 0.99 cm | 1.03 cm | 1.40 cm |
+| impossible-elevation fraction | 0.00 % | 0.00 % | 0.00 % |
+| IMU densifier fallback rate | 31.3 % | 31.9 % | 31.8 % |
+| resolved points per second | 1,985 | 2,001 | 2,006 |
+
+**Four candidate mechanisms tested and killed.** *Pose lag under rotation* —
+cross-correlating ARCore's per-frame rotation against the recorded 400 Hz gyro
+puts the best-fit lag at **−5 ms**, i.e. none, on all three captures.
+*Orientation fidelity at speed* — pooled per-frame ARCore-vs-gyro disagreement
+is 0.031° p90 below 10 °/s and still only **0.221° p90 at 90–150 °/s**, which
+is 1.16 cm at 3 m; there is no rate below 150 °/s at which the tracker stops
+being faithful. *Densification fallback* — flat across all three, so it is not
+rate-driven. *Intra-revolution smear* — at the D6's 10 Hz revolution the
+owner's median sweep advances the fan **0.92–1.03° between revolutions against
+a 0.90° within-fan pitch**, which is as close to isotropic sampling as this
+sensor gets. **His sweep rate is fine. "Sweep slower" is not the advice.**
+
+**What is different is parallax.** Over 1 s windows:
+
+| | translation per degree turned | median linear speed |
+| --- | ---: | ---: |
+| scan-033 (walk) | **2.43 cm/°** | 25.9 cm/s |
+| scan-034 (sweep) | **0.53 cm/°** | 4.6 cm/s |
+| scan-035 (sweep) | **0.56 cm/°** | 3.9 cm/s |
+
+A monocular visual-inertial tracker gets depth from translation. Rotating on
+the spot changes every bearing and creates no baseline, so nothing new can be
+triangulated and the tracker has to lean on the map it already has. **scan-035's
+section break is that failure at full size: 1.631 m / 162.57° of pose change in
+33 ms while the phone's own gyro integrated 1.56° over the same 33 ms.** A 104×
+disagreement — round 13's worst was 13.53° against 0.23°.
+
+51. **Answered, and it was a real defect. NO — the origin did not zero.**
+
+    The ARCore `Session` was created once per PROCESS and only ever *paused*
+    between captures. `CaptureArController.close()` existed and had **no caller
+    anywhere in `src/main`**. So capture N+1 opened in capture N's origin,
+    holding capture N's feature map and relocalisation database. The owner's own
+    containers prove it: **scan-035's first tracked pose sits 7 cm from
+    scan-034's last, 49 s and a Stop/Start apart**, and scan-034's sits 0.42 m
+    from scan-033's. Three scans of one small flat, one accumulating map — which
+    is precisely what a 162° relocalisation hypothesis needs to exist.
+
+    Two more leaks are visible in artifacts the owner already has.
+    **scan-033's manifest lists one sensor, scan-034's lists three and
+    scan-035's lists six** — two bugs with one symptom: the record writer never
+    cleared its sensor list between containers, and the phone-GNSS fallback
+    registered a fresh RTK-rover device on every capture without ever removing
+    the last one (scan-035 lists the rover as both id 2 and id 3). Both fixed. And the seal summaries read `drops=1`, `drops=2`, `drops=3`
+    across those same three captures, while the pose streams show each of the
+    three had exactly one tracking-loss episode of its own — the counter was
+    accumulating, because `ArStatus.trackingLossEpisodes` was reset only in the
+    `close()` nobody called.
+
+    **Fixed.** Every Start now calls `CaptureArController.resetWorldFrame()`:
+    close the session, build a fresh one, hand it back the renderer's existing
+    GL texture, resume. `ArSessionGate` is what makes that safe from the render
+    thread — `sessionCreated`/`resumed` both go false for the duration, so an
+    in-flight `onFrame()` returns null instead of calling `update()` on a
+    closing session, which is exactly the state machine round 6 built. It runs
+    **before** the round-12 warmup gate, so the gate judges the session that
+    will actually record. The cost is one the app was already paying: a
+    pause/resume was re-acquiring tracking in ~0.5 s anyway — scan-034 and
+    scan-035 each open with 14–15 recorded poses at exactly (0,0,0) with
+    `tracking_lost = 1`. Engine-side, `start_session()` now clears the sensor
+    registry, the `ExternalPoseSource` ring, the IMU densifier (bias, sample
+    ring, stats) and the georef ENU origin.
+
+50. **Fixed in four places, and one of them is a metric that was lying.**
+
+    * **`ParallaxWatch`** (`:core`, unit-tested) — a rolling 2 s window that
+      fires when rotation ≥ 20° carries less than 0.8 cm of travel per degree.
+      Swept against the owner's own captures that threshold fires on 5.5 % of
+      the good walk and 46.7 % / 39.7 % of the two sweeps, an ~8× separation; it
+      is the only row in the sweep that catches BOTH bad captures at a
+      comparable rate, so it is fitted to the technique rather than to the snap.
+      It drives an inline hint and a new **lowest-priority** `PARALLAX_STARVED`
+      cue at the gentlest amplitude with a 12 s repeat — every buzz is itself a
+      shake of the tracker this cue exists to protect.
+    * **The advice is "keep walking while you sweep", not "sweep slower"**, and
+      the summary card now says so for a standing capture.
+    * **`ScanSummary.isFromTheSpot`** — a capture over 20 s with under 5 m of
+      path is judged on **points per second**, not points per metre. scan-034's
+      card said 50,124 points/metre and the grader used it; it now reads 2,001
+      points per second. The floors (1,000/400 per second) exist only to catch a
+      puck that has stopped delivering — a fixed viewpoint cannot be told to
+      sweep faster for more returns.
+    * **The densifier's fallback accounting**, on the backlog since round 12:
+      82 % of scan-034's 63,805 fallbacks had no reason recorded.
+
+52. **Root cause: the ask flow was never built.** `DoNotDisturbGuard`'s API is
+    complete and correct — `hasPolicyAccess`, `policyAccessIntent()`, the whole
+    engage/restore machine — and **`policyAccessIntent()` had zero call sites in
+    the repository**. Its own doc comment says "the caller shows this once";
+    there was no caller. The manifest permission was declared, `engage()` ran on
+    every Start and correctly returned `NO_PERMISSION`, and the log token was
+    right. Compounding it, `CaptureFocus.note()` computed the explanatory
+    sentence on every Start and **no composable ever collected `dndNote`** — it
+    was a write-only flow, and it was wiped at seal as well. The Settings switch
+    meanwhile read *"Needs Do Not Disturb access"*, stating a prerequisite it
+    gave the owner no way to satisfy and no way to check.
+
+    **Now:** a first-entry explainer (never at Start — a modal mid-walk is the
+    worst possible interruption) that leads with the physics rather than the
+    permission, with **Open settings** / **Not now**; asked exactly once and
+    remembered, because declining is an answer. A Settings row that states which
+    side of the grant you are on and re-reads it on every resume (the system
+    screen returns `RESULT_CANCELED` whatever happens, so the grant must be
+    re-read, never inferred). And a persistent amber note on the capture screen
+    that **survives the seal** and clears only when the grant actually arrives.
+    Capture is never blocked.
+
+    **The one manual step, for the owner:** *when the dialog appears, tap **Open
+    settings**, find **LidarScan** in the Do Not Disturb access list, and turn it
+    on. Android does not let any app grant this for you.*
+
+53. **Preflighted and diagnosed, not yet fixed — and the 0.8.0 advice was
+    wrong.** scan-031 and scan-032 are two sealed scans of nothing, each
+    followed 2 s later by `bytesIn=0` and a seal message telling the owner to
+    re-seat a cable that was almost certainly fine. `connect()` returning
+    success proved nothing: a Mid-360 connect is `Engine::add_device`, which
+    constructs a driver and performs **no I/O at all**, and `start_session()`
+    logs a driver that fails to start and carries on.
+
+    The addressing is the likely fault. A Mid-360 **unicasts to a host IP it has
+    persisted** — on the owner's unit `192.168.1.5`, which it also advertises in
+    the heartbeat it broadcasts on UDP 56201. Android USB-Ethernet DHCPs, so the
+    phone holds something like `192.168.1.100` and the packets are addressed to
+    a machine that is not on the cable. **This cannot be fixed in software:**
+    `EthernetManager`/`StaticIpConfiguration` are `@SystemApi` behind
+    signature-level `MANAGE_ETHERNET_NETWORKS`. So `Mid360Preflight` (`:core`,
+    unit-tested against the owner's real addresses) refuses the session before a
+    byte is recorded and hands over the value to type:
+
+    > **The Mid-360 sends its data to 192.168.1.5, and this phone's Ethernet is
+    > 192.168.1.100. Nothing would be recorded.**
+    > Settings > Network & internet > Ethernet > IP settings > Static.
+    > IP address 192.168.1.5, netmask 255.255.255.0. Then come back and press Start.
+
+    It checks addressing **before** heartbeat, deliberately: being told "no
+    heartbeat, check the power" when the real fault is the IP is the
+    wrong-diagnosis failure it exists to end. A new `[net]` log tag records the
+    verdict, so a field report now carries the diagnosis — the owner's whole
+    0.8.0 log contains no network line at all. The NO-DATA watchdog stays as the
+    backstop.
+
+    **Named and NOT fixed:** even with the addressing right, the SDK2 backend
+    creates its own sockets inside the vendored Livox SDK and nothing binds them
+    to the Ethernet `Network`, so with Wi-Fi up the kernel may still choose the
+    wrong interface (`android/NOTES.md` §8 finding 3). The engine's C ABI has
+    carried `mid360_prebound_fd` / `mid360_prebound_imu_fd` since ABI 5 and the
+    Android capture path fills 3 of ~30 fields of `scan_device_config`; three
+    Android-side comments claiming the ABI lacks these fields are stale. That
+    rewire is the next round's work and it needs the owner's hardware to
+    validate. **This is why the version is 0.8.1 and not 0.9.0: Mid-360 on
+    Android is diagnosed, not delivered.**
+
+Engine **589 cases / 2,503,884 assertions**, ctest 7/7 serial, werror clean;
+`:core` **527**, `:app` **80**; emulator **19/19** with the native library
+rebuilt from this round's engine sources. **Replay is bit-identical** —
+`--d6-selfcheck` on all three captures returns the same self-consistency
+(1.97 / 2.45 / 1.74 cm) and the same resolved point counts (220,445 / 135,820 /
+124,817) before and after, because every change in item 51 is session lifecycle
+and none of it touches offline resolve. VERSION **0.8.1**.

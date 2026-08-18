@@ -1148,7 +1148,16 @@ SCAN_API scan_error_t scan_engine_set_imu_extrinsics(scan_engine* engine,
  * `no_imu` = nothing is pushing samples, `gap` = the sensor is stuttering,
  * `bracket` = ARCore dropped poses, `closing` = the gyro and ARCore disagree
  * by more than any real rig should, which almost always means the extrinsic
- * above is wrong. */
+ * above is wrong.
+ *
+ * ROUND 14: these four do NOT sum to `fallbacks`, and on a real capture they
+ * account for well under half of it — the rest is the wrapped pose source
+ * having nothing usable at that instant, which is a trajectory problem rather
+ * than an IMU one. The C++ ImuDensifyStats splits that out as
+ * `fallback_no_pose` / `fallback_gate`; they are deliberately NOT mirrored
+ * here, because this struct's size is part of a frozen ABI. A C consumer that
+ * needs the whole accounting should read `fallbacks` as the total and treat
+ * the difference as "no usable pose". */
 typedef struct scan_imu_densify_stats {
   uint64_t samples_in;
   uint64_t samples_rejected; /* non-finite, or out of order */

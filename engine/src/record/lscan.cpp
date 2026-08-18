@@ -728,6 +728,15 @@ const std::string& FileRecordWriter::path() const { return impl_->path_; }
 
 void FileRecordWriter::set_profile(const std::string& profile) { impl_->profile_ = profile; }
 
+// ROUND 14 — see lscan.h. Everything here is a property of ONE container.
+void FileRecordWriter::reset_metadata() {
+  impl_->profile_ = "quickscan";
+  impl_->sensors_.clear();
+  impl_->clock_offsets_.clear();
+  impl_->have_mount_ = false;
+  impl_->have_imu_calib_ = false;
+}
+
 void FileRecordWriter::add_sensor(const std::string& id, const std::string& kind,
                                   const std::string& model) {
   impl_->sensors_.push_back(Impl::SensorInfo{id, kind, model});

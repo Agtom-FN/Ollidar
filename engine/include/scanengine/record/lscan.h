@@ -364,6 +364,23 @@ class FileRecordWriter final : public RecordWriter {
   void set_profile(const std::string& profile);
   void add_sensor(const std::string& id, const std::string& kind, const std::string& model);
 
+  // ROUND 14: drop everything the OPTIONAL setters above accumulated, so the
+  // next open() describes the next container and nothing else.
+  //
+  // This writer outlives the containers it writes — the Engine owns one for
+  // its whole life and opens a new .lscan per capture — and `add_sensor()`
+  // appends. Nothing ever emptied it, so capture 2 of an app run listed
+  // capture 1's sensors as well as its own, capture 3 listed all three sets,
+  // and the owner's scan-035 shipped with SIX entries for a two-sensor rig.
+  // It is not cosmetic: `"sensors"` is how a reader decides what a container
+  // HOLDS without decoding it.
+  //
+  // Not done inside open(): the Engine sets the profile, the sensors and both
+  // extrinsics BEFORE open() (they must be in the manifest open() writes), so
+  // clearing there would erase the session that is starting. The caller
+  // resets, then describes, then opens.
+  void reset_metadata();
+
   // ===== INT-34 ADDITION — the ONE thing outside A5 that touches this file ==
   //
   // A5 owns record/. INT-34 added exactly this setter and the matching

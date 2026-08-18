@@ -157,6 +157,15 @@ PoseSample ImuDensifiedPoseSource::sample_at(std::int64_t t_mono_ns) const {
   // unresolved one has bigger problems than its rotation path.
   if (!s.has_pose || s.gate != PoseGate::kOk) {
     ++stats_.fallbacks;
+    // ROUND 14: this bucket had no counter, which is why the reasons never
+    // summed to the total. Nothing here is the densifier's doing — it is the
+    // trajectory underneath it — but that is exactly what the operator needs
+    // told apart from a gyro problem. See ImuDensifyStats.
+    if (!s.has_pose) {
+      ++stats_.fallback_no_pose;
+    } else {
+      ++stats_.fallback_gate;
+    }
     return s;
   }
   if (size_ == 0) {

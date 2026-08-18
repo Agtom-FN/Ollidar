@@ -294,6 +294,19 @@ class GeorefFusion {
   // Force a re-solve now (otherwise it happens at resolve_interval_ns).
   bool solve();
 
+  // ROUND 14 — start of a new capture. Forgets the ENU frame, the estimator's
+  // whole observation window and the solution built from them, keeping the
+  // config, the estimator object and the local source wiring.
+  //
+  // has_frame() is a LATCH: it goes true on the first fix good enough to
+  // anchor an origin and nothing ever lowered it, so a second capture in one
+  // app run georeferenced itself against the FIRST capture's origin and, worse,
+  // against a window of local↔global pairs whose local half came from a
+  // trajectory that no longer exists (every capture restarts local coordinates
+  // at zero). The similarity fit over that mixture is not merely noisy, it is
+  // a fit to two different rooms.
+  void reset();
+
   GeorefSolution solution() const;
   bool converged() const;
 

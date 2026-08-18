@@ -113,6 +113,56 @@ object CaptureFocus {
         DndState.DISABLED -> "unprotected-disabled"
     }
 
+    /**
+     * ROUND 14 — the ask-once flow ROUND 13's brief called for and ROUND 13
+     * did not build.
+     *
+     * 0.8.0 shipped the whole engage/restore machine and no way whatsoever to
+     * obtain the permission it needs: `DoNotDisturbGuard.policyAccessIntent()`
+     * had zero call sites, and every session in the owner's field log recorded
+     * `dnd=unprotected-no-permission` — correctly, and with nothing the owner
+     * could do about it. The Settings switch even described the prerequisite
+     * ("Needs Do Not Disturb access") while offering no route to satisfy it.
+     *
+     * The decision is here rather than in the composable so it is testable,
+     * and it has exactly three inputs. Ask when the feature is on, the grant
+     * is missing, and we have not already asked — once, ever, because a
+     * permission the operator declined is an answer and re-asking a person
+     * mid-fieldwork is how a tool gets uninstalled. After a decline the
+     * capture screen keeps a quiet [note] instead, and Settings keeps a row
+     * they can come back to.
+     */
+    fun shouldAsk(enabled: Boolean, granted: Boolean, alreadyAsked: Boolean): Boolean =
+        enabled && !granted && !alreadyAsked
+
+    /**
+     * The explainer's title and body. Deliberately leads with the physics
+     * rather than the permission: "allow Do Not Disturb access" means nothing
+     * to someone holding a lidar, and "a buzz shakes the sensors" means
+     * everything.
+     */
+    const val ASK_TITLE: String = "Silence notifications while scanning?"
+
+    const val ASK_BODY: String =
+        "A notification does not just interrupt you — the buzz physically shakes the phone, " +
+            "and the phone is the tracker. A single vibration mid-walk can move the map.\n\n" +
+            "Android only lets an app set Do Not Disturb after you allow it on a system " +
+            "screen. LidarScan turns it on for the length of each scan and puts your setting " +
+            "back when the scan ends.\n\n" +
+            "Scans still run without this — the log just records that the walk was unprotected."
+
+    const val ASK_CONFIRM: String = "Open settings"
+
+    const val ASK_DISMISS: String = "Not now"
+
+    /** The Settings row's status line, so the operator can always see where they stand. */
+    fun accessStatus(granted: Boolean): String =
+        if (granted) {
+            "Access granted — scans are silenced and your setting is restored afterwards."
+        } else {
+            "Access not granted — scans will run unprotected. Tap to open the system screen."
+        }
+
     /** One sentence for the capture screen. Null when there is nothing to say. */
     fun note(state: DndState): String? = when (state) {
         DndState.PROTECTED, DndState.ALREADY_QUIET, DndState.DISABLED -> null

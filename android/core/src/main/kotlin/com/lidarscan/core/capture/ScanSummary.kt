@@ -36,6 +36,13 @@ import kotlin.math.roundToInt
  *    GOOD and 400/m for FAIR — about 1.8 m/s and 3.6 m/s on this rig.
  *  * **Zero points** is POOR whatever else is true, and it is the one case the
  *    app already refuses to seal quietly (ROUND 7 item 26).
+ *  * **ROUND 14: density along the path is the wrong axis when there is no
+ *    path.** The bullet above assumes the operator walks. The owner also scans
+ *    by standing still and sweeping the phone around the room, which is a
+ *    perfectly sensible way to use a spinning fan lidar — and dividing by a
+ *    2.7 m path gave his scan-034 a grade computed from **50,124 points per
+ *    metre**. See [isFromTheSpot]: such a scan is judged on points per SECOND,
+ *    which is the quantity a fixed viewpoint actually controls.
  *
  * Pure `:core`, no Android, so the grade can be asserted rather than eyeballed.
  */
@@ -74,11 +81,56 @@ data class ScanSummary(
     /**
      * Resolved points per metre walked. The denominator is floored at 0.5 m so a
      * tripod scan (no path at all) reports a large density rather than an
-     * infinity — standing still and sweeping IS dense, and the grade should not
-     * punish the stationary case the walkthrough default was never about.
+     * infinity.
+     *
+     * ROUND 14: that floor was the whole of the stationary-case handling, and
+     * it was not enough — it made the number finite without making it mean
+     * anything. Reported still, because a walking scan's density is a real and
+     * useful figure; but the GRADE now reads [densityValue], which switches
+     * unit when [isFromTheSpot].
      */
     val pointsPerMeter: Double
         get() = pointsCaptured.toDouble() / max(pathLengthMeters, MIN_PATH_FOR_DENSITY_M)
+
+    /**
+     * ROUND 14 — the operator stood in one place and painted the room by
+     * turning the phone, instead of walking it.
+     *
+     * This is a real and reasonable way to use a spinning fan lidar, and the
+     * app had no idea it was happening. The owner's scan-034 is 67.9 s of it:
+     * 2.7 m of path, 135,702 points, and therefore **50,124 "points per
+     * metre"** — a number the summary card printed with a straight face and
+     * the grader then used. Dividing by a path that is essentially zero does
+     * not measure density; it measures how little the operator moved. The
+     * floor at [MIN_PATH_FOR_DENSITY_M] stopped it being infinite and stopped
+     * nothing else.
+     *
+     * The gate is path AND duration together: a 3 m path over 4 s is a scan
+     * that was stopped early, which is a different fault and must keep the old
+     * treatment. A 3 m path over a minute is somebody sweeping.
+     */
+    val isFromTheSpot: Boolean
+        get() = elapsedMillis >= FROM_THE_SPOT_MIN_MILLIS &&
+            pathLengthMeters < FROM_THE_SPOT_MAX_PATH_M
+
+    /**
+     * ROUND 14 — the density figure that is actually meaningful for THIS scan,
+     * with the unit it is measured in. Walking scans are unchanged; a
+     * from-the-spot scan is judged on returns per second, because that is what
+     * a fixed viewpoint controls. A D6 delivers ~4,000 returns/s and the
+     * owner's sweeps land near 2,000 resolved points/s.
+     */
+    val densityValue: Double
+        get() = if (isFromTheSpot) pointsPerSecond else pointsPerMeter
+
+    val densityUnit: String
+        get() = if (isFromTheSpot) "points per second" else "points per metre"
+
+    private val densityFairFloor: Double
+        get() = if (isFromTheSpot) MIN_RATE_FAIR else MIN_DENSITY_FAIR
+
+    private val densityGoodFloor: Double
+        get() = if (isFromTheSpot) MIN_RATE_GOOD else MIN_DENSITY_GOOD
 
     val pointsPerSecond: Double
         get() = if (elapsedMillis <= 0L) 0.0 else pointsCaptured.toDouble() * 1000.0 / elapsedMillis
@@ -99,10 +151,10 @@ data class ScanSummary(
             pointsCaptured <= 0L -> ScanGrade.POOR
             sections > MAX_SECTIONS_FAIR -> ScanGrade.POOR
             trackingDrops > MAX_DROPS_FAIR -> ScanGrade.POOR
-            pointsPerMeter < MIN_DENSITY_FAIR -> ScanGrade.POOR
+            densityValue < densityFairFloor -> ScanGrade.POOR
             sections > MAX_SECTIONS_GOOD -> ScanGrade.FAIR
             trackingDrops > MAX_DROPS_GOOD -> ScanGrade.FAIR
-            pointsPerMeter < MIN_DENSITY_GOOD -> ScanGrade.FAIR
+            densityValue < densityGoodFloor -> ScanGrade.FAIR
             // ROUND 12: a scan taken through a trim that never converged is not
             // a GOOD scan, whatever the counting says about it.
             mountTrimIsPoor -> ScanGrade.FAIR
@@ -135,8 +187,13 @@ data class ScanSummary(
                 "$trackingDrops tracking drops — the camera stopped knowing where it was, and " +
                     "those seconds are holes in the room. More light, and keep the rear camera " +
                     "clear and pointed at something with detail."
-            pointsPerMeter < MIN_DENSITY_FAIR ->
-                "${pointsPerMeter.roundToInt()} points per metre — you walked too fast to fill in the walls. Rescan."
+            densityValue < densityFairFloor ->
+                if (isFromTheSpot) {
+                    "${densityValue.roundToInt()} points per second — the sensor was barely " +
+                        "returning. Check the D6 cable and rescan."
+                } else {
+                    "${densityValue.roundToInt()} points per metre — you walked too fast to fill in the walls. Rescan."
+                }
             sections > MAX_SECTIONS_GOOD ->
                 // ROUND 13: "may not line up" was true and useless. It is now
                 // known exactly how far apart they are — the pose jump itself —
@@ -147,8 +204,13 @@ data class ScanSummary(
                     "which stitches them back into one frame."
             trackingDrops > MAX_DROPS_GOOD ->
                 "$trackingDrops tracking drops — some gaps. Walk those parts again if they matter."
-            pointsPerMeter < MIN_DENSITY_GOOD ->
-                "${pointsPerMeter.roundToInt()} points per metre — a little thin. Slow down for finer detail."
+            densityValue < densityGoodFloor ->
+                if (isFromTheSpot) {
+                    "${densityValue.roundToInt()} points per second — thinner than this sensor " +
+                        "should manage. Check nothing is blocking the puck."
+                } else {
+                    "${densityValue.roundToInt()} points per metre — a little thin. Slow down for finer detail."
+                }
             mountTrimIsPoor ->
                 ("Mount reference is only accurate to %.1f deg, which doubles features by " +
                     "several centimetres. Re-zero with a longer, steadier hold and rescan.")
@@ -166,7 +228,7 @@ data class ScanSummary(
                 //
                 // It now names what was checked, which is counting, and what
                 // was not, which is whether the room lines up.
-                ("One section, no tracking drops, ${pointsPerMeter.roundToInt()} points per metre. " +
+                ("One section, no tracking drops, ${densityValue.roundToInt()} $densityUnit. " +
                     "Coverage checks passed; alignment is not measured on the phone.")
         }
 
@@ -195,7 +257,23 @@ data class ScanSummary(
             trackingDrops > 0 ->
                 "Before the next walk: more light. The camera lost tracking $trackingDrops time" +
                     (if (trackingDrops == 1) "" else "s") + "."
-            pointsPerMeter < MIN_DENSITY_GOOD ->
+            // ROUND 14 — the advice that fits what the operator actually did.
+            //
+            // "Slow down a little" is the wrong instruction for someone who
+            // never moved, and the owner's scan-034 and scan-035 were both
+            // taken standing still. What a from-the-spot scan is short of is
+            // not speed, it is PARALLAX: measured over 1 s windows, the owner's
+            // walking scan gave ARCore 2.43 cm of travel per degree turned and
+            // his two sweeps gave 0.53 and 0.56 — a fifth as much. A camera
+            // that rotates without translating gets bearing changes with no
+            // depth, which is the degenerate case for visual tracking, and it
+            // is why scan-035's world frame snapped 162.57 deg while the gyro
+            // read 1.56 deg. So the advice for a sweep is to keep moving.
+            isFromTheSpot ->
+                "Before the next scan: keep walking while you sweep. Turning the phone on the " +
+                    "spot gives the camera nothing to judge distance by — a few slow steps " +
+                    "sideways as you turn is what keeps the room from jumping."
+            densityValue < densityGoodFloor ->
                 "Before the next walk: slow down a little — the returns are thinner than the walls " +
                     "want."
             else -> null
@@ -236,5 +314,28 @@ data class ScanSummary(
          * can be moved independently if the measured cost table ever changes.
          */
         const val POOR_TRIM_DEG = 1.0
+
+        /**
+         * ROUND 14 — the from-the-spot gate. Path AND duration, so a scan that
+         * was stopped after four seconds keeps the old (correct) treatment.
+         * The owner's two sweeps are 67.8 s / 2.7 m and 62.1 s / 4.5 m; his
+         * walk is 110.9 s / 26.6 m.
+         */
+        const val FROM_THE_SPOT_MIN_MILLIS = 20_000L
+        const val FROM_THE_SPOT_MAX_PATH_M = 5.0
+
+        /**
+         * ROUND 14 — density floors for a from-the-spot scan, in resolved
+         * points per second. These are deliberately NOT a technique judgement:
+         * a fixed viewpoint cannot be told to sweep faster to get more points,
+         * because the D6's return rate is fixed by the sensor, not by the
+         * operator. They exist only to catch a puck that has stopped
+         * delivering. ROUND 10 measured this rig at ~1,453 resolved points/s
+         * and all three of the owner's 0.8.0 captures land near 2,000/s
+         * (1,985 / 2,001 / 2,006), walking and sweeping alike — which is itself
+         * the evidence that sweeping costs no density at all.
+         */
+        const val MIN_RATE_GOOD = 1_000.0
+        const val MIN_RATE_FAIR = 400.0
     }
 }

@@ -240,6 +240,15 @@ class CaptureViewModel(
         com.lidarscan.core.capture.DndState.DISABLED
     },
     private val releaseDnd: () -> Unit = {},
+    /**
+     * ROUND 14 (owner item 53) — the phone's Ethernet interface, as
+     * `EthernetMonitor` sees it: (an adapter is present, the IPv4 addresses it
+     * holds). A lambda rather than the monitor itself so the decision stays
+     * testable without a ConnectivityManager. Defaults to "cannot tell", which
+     * the preflight treats as no adapter — correct for a D6 rig, which never
+     * consults it.
+     */
+    private val ethernetSnapshot: () -> Pair<Boolean, List<String>> = { false to emptyList() },
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<CaptureUiState>(CaptureUiState.Loading)
@@ -668,6 +677,14 @@ class CaptureViewModel(
                         _sensor.value = detection.sensor
                         _mid360Endpoint.value = detection.transportHint
                             ?.takeIf { detection.sensor == com.lidarscan.core.model.SensorType.MID360 }
+                        // ROUND 14 (item 53): a Mid-360 detection IS a parsed
+                        // heartbeat — `Mid360HeartbeatAutoDetector` cannot
+                        // report one without having decoded a real beacon — so
+                        // this is the honest timestamp for "the lidar was
+                        // talking on the cable", and the preflight needs it.
+                        if (detection.sensor == com.lidarscan.core.model.SensorType.MID360) {
+                            lastMid360HeartbeatMillis = clock()
+                        }
                     }
                 },
                 scope = viewModelScope,
@@ -841,6 +858,35 @@ class CaptureViewModel(
      * to the one new piece of per-session state this round adds.
      */
     private val cues = com.lidarscan.core.capture.CueScheduler()
+
+    /**
+     * ROUND 14 (owner item 50) — stateless, so it needs no per-session reset;
+     * it reads the pose window the ROUND 12 start gate already keeps.
+     */
+    private val parallaxWatch = com.lidarscan.core.capture.ParallaxWatch()
+
+    /** ROUND 14 (item 53) — when a Mid-360 heartbeat was last parsed, or null. */
+    private var lastMid360HeartbeatMillis: Long? = null
+
+    /**
+     * ROUND 14 (item 53) — the Mid-360 addressing check, or null when this is
+     * not a Mid-360 rig. Exposed so the capture screen can show the same
+     * verdict before Start rather than only refusing at it.
+     */
+    fun mid360Preflight(): com.lidarscan.core.net.Mid360Preflight.Verdict? {
+        if (_sensor.value != com.lidarscan.core.model.SensorType.MID360) return null
+        val (adapter, addresses) = ethernetSnapshot()
+        // The endpoint is "lidarIp|hostIp"; the host half is the address the
+        // lidar has persisted and will unicast to.
+        val host = _mid360Endpoint.value?.substringAfter('|', "")?.takeIf { it.isNotBlank() }
+            ?: _manualHostIp.value.takeIf { it.isNotBlank() }
+        return com.lidarscan.core.net.Mid360Preflight.evaluate(
+            adapterPresent = adapter,
+            interfaceAddresses = addresses,
+            expectedHostIp = host,
+            heartbeatAgeMillis = lastMid360HeartbeatMillis?.let { clock() - it },
+        )
+    }
 
     /** Mirrors what the scheduler last played, for the Diagnostics sheet and the log. */
     private val _lastCue = MutableStateFlow<com.lidarscan.core.capture.CueKind?>(null)
@@ -1235,6 +1281,23 @@ class CaptureViewModel(
 
     private val _dndNote = MutableStateFlow<String?>(null)
     val dndNote: StateFlow<String?> = _dndNote.asStateFlow()
+
+    /**
+     * ROUND 14 (owner item 52) — called by the Capture screen when it learns
+     * the grant state, including after the operator comes back from the system
+     * settings screen. Before this, the only thing that could ever write the
+     * note was a Start, so the screen was silent until the first capture and
+     * the note never went away when the permission was finally granted.
+     */
+    fun refreshDndNote(enabled: Boolean, granted: Boolean) {
+        _dndNote.value = when {
+            !enabled -> null
+            granted -> null
+            else -> com.lidarscan.core.capture.CaptureFocus.note(
+                com.lidarscan.core.capture.DndState.NO_PERMISSION,
+            )
+        }
+    }
 
     val startWarmup: StateFlow<com.lidarscan.core.capture.TrackingWarmup.Verdict?> =
         _startWarmup.asStateFlow()
@@ -1632,8 +1695,27 @@ class CaptureViewModel(
         val excessiveMotion = status != null && !status.tracking &&
             status.failureReason == com.google.ar.core.TrackingFailureReason.EXCESSIVE_MOTION
 
+        // ROUND 14 (owner item 50). The owner's complaint was that scans go
+        // wrong when he stands and sweeps the phone instead of walking it, and
+        // NEITHER of the two hints above can fire during one: `excessiveMotion`
+        // is ARCore's own flag and `recentlySkipping` is about keyframe
+        // coverage, while the measured fault is rotation WITHOUT translation.
+        // In scan-034 the median linear speed was 4 cm/s, so the existing
+        // "moving too fast" path is structurally incapable of noticing.
+        // See ParallaxWatch for the measurement and the threshold.
+        val parallax = if (captureState.value == CaptureState.RECORDING) {
+            parallaxWatch.measure(arController?.poseWindow().orEmpty())
+        } else {
+            null
+        }
+        val starved = parallax?.starved == true
+
         _motionHint.value = when {
             excessiveMotion -> "Moving too fast — slow the walk so tracking can keep up."
+            // Above the keyframe hint: a tracker about to lose the room is a
+            // bigger problem than thin colour coverage, and the two would
+            // otherwise both be true through the same sweep.
+            starved -> com.lidarscan.core.capture.ParallaxWatch.HINT
             recentlySkipping && _keyframesEnabled.value ->
                 "Turning too fast for colour frames — sweep more slowly to keep coverage."
             else -> null
@@ -1654,6 +1736,7 @@ class CaptureViewModel(
             trackingDegraded = status != null && !status.tracking,
             movingTooFast = excessiveMotion || (recentlySkipping && _keyframesEnabled.value),
             sectionBreaks = _sectionCount.value - 1,
+            turningWithoutMoving = starved,
         )
         val fired = cues.tick(conditions, nowMillis, enabled = recording && cuesArmed)
         if (fired != null) {
@@ -2057,6 +2140,37 @@ class CaptureViewModel(
      * series number must only ever be spent on a scan that was actually taken.
      */
     fun startCapture() {
+        // ── ROUND 14: every capture gets its own world. ─────────────────────
+        //
+        // The owner asked whether the origin zeroes at the start of each
+        // capture. It did not. One ARCore Session was created per PROCESS and
+        // only paused between scans, so scan N+1 opened in scan N's origin,
+        // holding scan N's feature map. In the owner's 0.8.0 session that is
+        // measurable: scan-035's first tracked pose is 7 cm from scan-034's
+        // last, 49 s and a Stop/Start apart — and 22.5 s later the pose stream
+        // jumped 1.631 m / 162.57° in 33 ms while the recorded gyro integrated
+        // 1.56°. A 162° snap is a relocalisation onto a previously-mapped place,
+        // and it needs a previous map to relocalise onto.
+        //
+        // This runs BEFORE the ROUND 12 warmup gate on purpose: the gate's job
+        // is to refuse to start on a tracker that has not settled, and after
+        // this line the tracker it should be judging is the new one. Resetting
+        // after the gate would hand its guarantee to a session that no longer
+        // exists. It also clears `motion` and the ArStatus counters, which is
+        // why `trackingLossEpisodes` stops accumulating across captures (the
+        // owner's log shows drops=1, 2, 3 on three consecutive scans — one
+        // real drop, counted three times).
+        //
+        // Never blocks Start: a rig with no ARCore at all returns false here
+        // and carries on to the same code it always ran.
+        if (!startPending && arController?.resetWorldFrame() == true) {
+            logEvent(
+                LOG_TAG_AR,
+                "world frame reset: new ARCore session for this capture " +
+                    "(origin, feature map and anchors from the previous scan discarded)",
+            )
+        }
+
         // ── ROUND 12: do not start on a tracker that has not settled. ───────
         //
         // The owner's scan-025 took a 2.015 m step 33 ms wide, 6.9 seconds
@@ -2108,6 +2222,32 @@ class CaptureViewModel(
             _startWarmup.value = null
         }
         startPending = false
+
+        // ── ROUND 14 (owner item 53): do not record zero bytes. ─────────────
+        //
+        // The owner's scan-031 and scan-032 are two sealed Mid-360 scans of
+        // nothing, each followed 2 s later by `NO DATA … bytesIn=0` and a seal
+        // message telling him to re-seat a cable that was fine. A Mid-360
+        // `connect()` is `Engine::add_device`, which does no I/O at all, so
+        // CONNECTED was never evidence of a link and the first honest moment
+        // came after the recording had started.
+        //
+        // This is the check that CAN be made beforehand, and it is the one that
+        // most likely explains those two scans: the lidar unicasts to a host IP
+        // it has persisted, and if the phone's Ethernet interface does not hold
+        // that address the packets go to a machine that is not on the cable.
+        // See `Mid360Preflight` for why this cannot be fixed in software and
+        // has to be handed to the operator as a value to type.
+        mid360Preflight()?.let { verdict ->
+            logEvent(
+                LOG_TAG_NET,
+                "mid360 preflight: ${verdict.logToken} — ${verdict.summary}",
+            )
+            if (verdict.blocking) {
+                _saveError.value = verdict.summary + (verdict.fix?.let { "\n\n$it" } ?: "")
+                return
+            }
+        }
 
         // ROUND 11 (owner item 45b): a stale mount reference must never enter a
         // scan silently.
@@ -2619,7 +2759,14 @@ class CaptureViewModel(
         // calling it again costs nothing.
         runCatching { releaseDnd() }
         _dndState.value = com.lidarscan.core.capture.DndState.DISABLED
-        _dndNote.value = null
+        // ROUND 14: the NOTE deliberately survives the seal. The filter has
+        // been put back — that is what `_dndState` records — but the fact that
+        // the walk just taken was unprotected is exactly the thing the operator
+        // should still be reading afterwards, and it is equally true of the
+        // next walk until they act on it. Clearing it here is half of why 0.8.0
+        // showed the owner nothing; the other half was that nothing collected
+        // it. It is cleared when the grant is actually obtained (see
+        // `refreshDndNote`).
         val finalStats = _stats.value
         val noDataVerdict = _noDataAlert.value
         stopNoDataWatchdog()
@@ -3137,6 +3284,13 @@ class CaptureViewModel(
         const val LOG_TAG_SESSION = "session"
         const val LOG_TAG_SEAL = "seal"
         const val LOG_TAG_AR = "ar"
+
+        /**
+         * ROUND 14 (item 53). The owner's whole 0.8.0 log contains no network
+         * tag at all — two dead Mid-360 sessions and not one line saying which
+         * addresses were in play. A field report has to carry the diagnosis.
+         */
+        const val LOG_TAG_NET = "net"
         const val LOG_TAG_PUSHBROOM = "pushbroom"
         const val LOG_TAG_STORE = "store"
 

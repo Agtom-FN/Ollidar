@@ -126,6 +126,21 @@ class PhoneGeorefRecorder {
     }
 
     fun stop() {
+        // ROUND 14: this used to forget the device id and leave the device
+        // itself in the engine. `start()` adds one on every capture, so a
+        // second scan in one app run left TWO rovers registered, a third left
+        // three — and `start_session()` snapshots the device list into the
+        // manifest, which is half of why the owner's scan-035 shipped with six
+        // `sensors` entries for a two-sensor rig (the other half was the
+        // record writer never clearing its own list, fixed engine-side).
+        // Removing it is what `scan_engine_remove_device` is for, and the JNI
+        // binding also frees the per-device context it allocated.
+        val handle = engineHandle
+        val id = deviceId
+        if (handle != 0L && id >= 0 && ScanEngineNative.isAvailable) {
+            runCatching { ScanEngineNative.nativeRemoveDevice(handle, id) }
+                .onFailure { Log.w(TAG, "could not remove the phone-GNSS rover device", it) }
+        }
         engineHandle = 0L
         deviceId = -1
         sidecarFile = null

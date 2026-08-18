@@ -419,6 +419,22 @@ Status GeorefFusion::set_enu_frame(const crs::EnuFrame& frame) {
   return kOkStatus;
 }
 
+// ROUND 14 — see the header. `epsg_` returns to whatever the CONFIG said,
+// exactly as the constructor computes it: an auto-UTM zone is a property of
+// the origin that was just dropped, an explicitly configured EPSG is not.
+void GeorefFusion::reset() {
+  std::lock_guard<std::mutex> lock(m_);
+  if (est_) est_->clear();
+  frame_ = crs::EnuFrame{};
+  has_frame_ = false;
+  epsg_ = cfg_.crs.epsg.empty() ? 0 : crs::parse_epsg_string(cfg_.crs.epsg);
+  sol_ = GeorefSolution{};
+  stats_ = Stats{};
+  last_accept_ns_ = 0;
+  last_solve_ns_ = 0;
+  dirty_ = false;
+}
+
 bool GeorefFusion::has_frame() const {
   std::lock_guard<std::mutex> lock(m_);
   return has_frame_;

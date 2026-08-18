@@ -27,6 +27,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -57,6 +58,7 @@ import com.lidarscan.app.ui.theme.Ember
 import com.lidarscan.app.ui.theme.Ink
 import com.lidarscan.app.ui.theme.InkFaint
 import com.lidarscan.app.ui.theme.MonoLabel
+import com.lidarscan.app.ui.theme.SemWarn
 import com.lidarscan.app.ui.theme.MonoMeta
 import com.lidarscan.core.model.CaptureDefaults
 import com.lidarscan.core.model.WorkflowProfile
@@ -69,6 +71,19 @@ fun SettingsRoute(
     onReplaySyntheticCapture: (projectId: String) -> Unit = {},
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    // ROUND 14: the grant is made on a system screen with no result callback,
+    // so the only honest moment to re-read it is when this screen comes back.
+    var dndAccessGranted by remember { mutableStateOf(container.dndGuard.hasPolicyAccess) }
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                dndAccessGranted = container.dndGuard.hasPolicyAccess
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     val viewModel: SettingsViewModel = viewModel(
         factory = viewModelFactory {
             initializer {
@@ -128,6 +143,10 @@ fun SettingsRoute(
         onKeepEmptyScansChange = viewModel::setKeepEmptyScans,
         onOperatorCuesChange = viewModel::setOperatorCuesEnabled,
         onDndDuringCaptureChange = viewModel::setDndDuringCapture,
+        dndAccessGranted = dndAccessGranted,
+        onGrantDndAccess = {
+            runCatching { context.startActivity(container.dndGuard.policyAccessIntent()) }
+        },
         onCleanUpEmptyScans = viewModel::cleanUpEmptyScans,
         onDismissEmptyScanNote = viewModel::dismissEmptyScanNote,
         onReplaySyntheticCapture = { viewModel.replaySyntheticCapture(onReplaySyntheticCapture) },
@@ -177,6 +196,13 @@ fun SettingsScreen(
     onKeepEmptyScansChange: (Boolean) -> Unit = {},
     onOperatorCuesChange: (Boolean) -> Unit = {},
     onDndDuringCaptureChange: (Boolean) -> Unit = {},
+    /**
+     * ROUND 14 (owner item 52) — whether the system has actually granted
+     * notification-policy access. Re-read on every ON_RESUME, because the grant
+     * happens in another Activity and there is no result to observe.
+     */
+    dndAccessGranted: Boolean = false,
+    onGrantDndAccess: () -> Unit = {},
     onCleanUpEmptyScans: () -> Unit = {},
     onDismissEmptyScanNote: () -> Unit = {},
     onReplaySyntheticCapture: () -> Unit = {},
@@ -280,6 +306,31 @@ fun SettingsScreen(
                         onCheckedChange = onDndDuringCaptureChange,
                         modifier = Modifier.testTag("dndDuringCaptureRow"),
                     )
+                    // ── ROUND 14 (owner item 52) ────────────────────────────
+                    //
+                    // The switch above shipped in 0.8.0 stating a prerequisite
+                    // ("Needs Do Not Disturb access") that nothing in the app
+                    // could satisfy and nothing in the app could report. Every
+                    // session in the owner's field log recorded
+                    // `dnd=unprotected-no-permission` and he never saw a prompt.
+                    // This row is both halves: where you stand, and the way in.
+                    if (settings.dndDuringCapture) {
+                        Spacer(Modifier.height(10.dp))
+                        Hint(
+                            com.lidarscan.core.capture.CaptureFocus.accessStatus(dndAccessGranted),
+                            color = if (dndAccessGranted) InkFaint else SemWarn,
+                            modifier = Modifier.testTag("dndAccessStatus"),
+                        )
+                        if (!dndAccessGranted) {
+                            Spacer(Modifier.height(10.dp))
+                            SecondaryPill(
+                                text = "Grant Do Not Disturb access",
+                                height = 46.dp,
+                                onClick = onGrantDndAccess,
+                                modifier = Modifier.fillMaxWidth().testTag("dndGrantButton"),
+                            )
+                        }
+                    }
                 }
             }
 

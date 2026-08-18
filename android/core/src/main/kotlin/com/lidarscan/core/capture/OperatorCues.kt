@@ -55,6 +55,36 @@ enum class CueKind {
 
     /** Moving faster than the target ring density can keep up with. */
     TOO_FAST,
+
+    /**
+     * ROUND 14 — turning the phone without walking it.
+     *
+     * The owner's headline complaint about 0.8.0 was that scans are good when
+     * he walks a loop and bad when he stands and sweeps the phone around the
+     * room. Measured on his own three captures, sweeping costs nothing that
+     * this project can normally see: the resolved map's self-consistency at
+     * 8 s separation is 1.97 cm walking against 2.45 and 1.74 cm sweeping, the
+     * mount watchdog reads 0.00% impossible elevations on all three, ARCore's
+     * orientation tracks the 400 Hz gyro to 0.22 deg p90 even at 90-150 deg/s,
+     * and the IMU densifier falls back at 31.3% / 31.9% / 31.8% regardless.
+     * Sweeping does not degrade the geometry.
+     *
+     * What it degrades is the CAMERA's ability to hold a frame. Over 1 s
+     * windows the walking capture gave ARCore **2.43 cm of translation per
+     * degree of rotation**; the two sweeps gave **0.53 and 0.56** — a fifth as
+     * much. Rotation without translation is the degenerate case for monocular
+     * visual tracking: bearings change, nothing about depth does, no new
+     * feature can be triangulated, and the tracker has to lean on the map it
+     * already has. Leaning on the map is what produces a relocalisation snap,
+     * and scan-035's was 162.57 deg of pose change in 33 ms against 1.56 deg
+     * of measured gyro.
+     *
+     * So this is not "sweep slower". The owner's sweep RATE is fine — his
+     * median is 9-10 deg/s, which at the D6's 10 Hz revolution puts adjacent
+     * fan planes 0.92-1.03 deg apart against a 0.90 deg within-fan pitch, i.e.
+     * almost exactly isotropic sampling. It is "keep walking while you sweep".
+     */
+    PARALLAX_STARVED,
 }
 
 /**
@@ -153,10 +183,26 @@ object CuePatterns {
         toneRepeats = 1,
     )
 
+    /**
+     * ROUND 14. Two soft buzzes at the SECTION_BREAK amplitude — deliberately
+     * the gentlest thing that is still countable through a pocket, because
+     * this cue fires while the tracker is in the state it is least able to
+     * absorb a shake, which is the whole reason it is firing.
+     */
+    val PARALLAX_STARVED = CuePattern(
+        kind = CueKind.PARALLAX_STARVED,
+        pattern = longArrayOf(0, 120, 140, 120),
+        amplitudes = intArrayOf(0, 130, 0, 130),
+        toneHz = 620,
+        toneMillis = 130,
+        toneRepeats = 2,
+    )
+
     fun of(kind: CueKind): CuePattern = when (kind) {
         CueKind.TRACKING_DEGRADED -> TRACKING_DEGRADED
         CueKind.SECTION_BREAK -> SECTION_BREAK
         CueKind.TOO_FAST -> TOO_FAST
+        CueKind.PARALLAX_STARVED -> PARALLAX_STARVED
     }
 }
 
@@ -170,11 +216,24 @@ data class CueConditions(
     val trackingDegraded: Boolean = false,
     val movingTooFast: Boolean = false,
     val sectionBreaks: Int = 0,
+    /**
+     * ROUND 14 — the operator is turning the phone and not walking it. See
+     * [CueKind.PARALLAX_STARVED] and [ParallaxWatch], which is where the
+     * decision is actually made.
+     */
+    val turningWithoutMoving: Boolean = false,
 )
 
 class CueScheduler(
     private val trackingRepeatMillis: Long = 4_000L,
     private val tooFastRepeatMillis: Long = 3_000L,
+    /**
+     * ROUND 14. Much longer than the others on purpose. "Keep walking" is a
+     * change of technique, not a reaction to an event, and a person needs
+     * seconds to act on it; repeating every three would be nagging, and every
+     * repeat is another shake of the tracker this cue exists to protect.
+     */
+    private val parallaxRepeatMillis: Long = 12_000L,
     private val sectionFloorMillis: Long = 1_000L,
     /**
      * ROUND 13. For this long after a section-break cue, NOTHING buzzes.
@@ -227,6 +286,12 @@ class CueScheduler(
                 CueKind.TRACKING_DEGRADED
             conditions.movingTooFast && ready(CueKind.TOO_FAST, nowMillis, tooFastRepeatMillis) ->
                 CueKind.TOO_FAST
+            // ROUND 14, and LAST on purpose. Everything above it is an event
+            // that has already cost the operator something; this is a warning
+            // that one is being made likely.
+            conditions.turningWithoutMoving &&
+                ready(CueKind.PARALLAX_STARVED, nowMillis, parallaxRepeatMillis) ->
+                CueKind.PARALLAX_STARVED
             else -> null
         } ?: return null
 

@@ -707,6 +707,52 @@ Status Engine::start_session(const SessionConfig& cfg) {
             ? static_cast<const PoseInterpolator*>(impl_->gnss.get())
             : static_cast<const PoseInterpolator*>(impl_->densified_poses.get()));
   }
+  // ROUND 14 — "does the origin and the IMU data zero every time the capture
+  // starts?" It did not, and the answer was visible in the owner's own sealed
+  // containers. Everything from here to the recorder block below is state that
+  // belongs to ONE capture and was surviving into the next one, because these
+  // objects are all Engine-lifetime (they must be: the app pushes poses, waits
+  // for RTK Fixed and applies extrinsics while it is still lining the scan up,
+  // i.e. before there is a session at all). Engine-lifetime is the right
+  // OWNERSHIP; it was being read as though it also meant Engine-lifetime
+  // CONTENT, and those are different claims.
+  //
+  // 1. The ARCore pose ring is emptied at the END of stop_session() rather
+  //    than here, and that placement is deliberate — see the comment there.
+  //
+  // 2. The gyro densifier: bias estimate, sample ring, last stamp and stats.
+  //    It was only ever cleared as a SIDE EFFECT — set_imu_extrinsics()
+  //    rebuilds the object, and the Android app happens to call it on every
+  //    Start (ROUND 10's finding, ~24 ms after start_session). A capture that
+  //    did not re-apply the extrinsic — a desktop session, a second Start from
+  //    an app that only calibrates once, anything after this is fixed on the
+  //    Android side — carried the previous capture's bias into the new one's
+  //    first brackets. The bias is only an observation of THIS rig over THIS
+  //    minute; re-estimating it costs a few brackets and is free of assumption.
+  {
+    std::lock_guard<std::mutex> ilock(impl_->imu_m);
+    impl_->densified_poses->reset();
+  }
+
+  // 3. The local ENU origin, on both halves of the georef stack. Both latch on
+  //    the first good fix and neither ever un-latched, so capture N+1 measured
+  //    itself against capture N's zero — see GnssSource::reset_frame() and
+  //    GeorefFusion::reset() for what each drops and what each deliberately
+  //    keeps (an explicitly-set site origin, the rover's live fix state).
+  //
+  // 4. The recorded sensor list, in the record block below — the one of these
+  //    four that reached the owner's shipped artifacts.
+  impl_->gnss->reset_frame();
+  impl_->georef->reset();
+  {
+    // The cached edge-detector for kGeorefConverged goes with it: after the
+    // reset the fusion is not converged, and an app that was told "converged"
+    // during the previous capture must be told again — or, if it never
+    // re-converges, must not be left believing it was.
+    std::lock_guard<std::mutex> glock(impl_->gnss_m);
+    impl_->georef_converged = false;
+  }
+
   impl_->trajectory.store(cfg.trajectory, std::memory_order_release);
   impl_->pushbroom_on.store(cfg.pushbroom, std::memory_order_release);
   if (cfg.pushbroom && !impl_->pushbroom->has_mount_extrinsics()) {
@@ -819,6 +865,13 @@ Status Engine::start_session(const SessionConfig& cfg) {
 
       std::lock_guard<std::mutex> rlock(impl_->record_m);
       if (auto* fw = dynamic_cast<lscan::FileRecordWriter*>(impl_->recorder.get())) {
+        // ROUND 14, and this one shipped: the writer is Engine-lifetime and
+        // add_sensor() APPENDS, so every capture after the first described
+        // itself with its own sensors AND every earlier capture's. The owner's
+        // scan-033/034/035 are one app run and their manifests say 1, 3 and 6
+        // sensors for a rig that never had more than two. Describe the
+        // container from scratch, every time.
+        fw->reset_metadata();
         fw->set_profile(cfg.profile);
         for (const auto& s : sensors) fw->add_sensor(s[0], s[1], s[2]);
         if (have_mount) fw->set_mount_calibration(mount);
@@ -902,6 +955,32 @@ Status Engine::stop_session() {
     (void)impl_->recorder->flush();
     (void)impl_->recorder->close();
   }
+
+  // ROUND 14: the capture is over, so the trajectory that described it goes.
+  //
+  // The bug this closes is capture N+1 resolving a return against capture N's
+  // poses: the app's ARCore session is torn down and re-anchored between
+  // captures, so those two frames have nothing to do with each other, yet a
+  // pose ring that still held N's tail would hand the assembler a bracket that
+  // looks perfectly healthy — monotonic stamps, kGood quality — and place real
+  // geometry in a room that no longer exists.
+  //
+  // WHY HERE AND NOT IN start_session(), which is where the rest of ROUND 14's
+  // session resets live. Because "push the whole trajectory up front, then the
+  // points" is a SUPPORTED way to drive the assembler (docs/A8-pushbroom.md
+  // §3.6's replay == capture property; tests/test_engine.cpp and
+  // tests/test_capi.cpp both drive it that way), and an app that is lining a
+  // scan up pushes poses before Start on purpose — those are the lead-in that
+  // brackets the very first return. Clearing at Start would throw them away.
+  // Clearing at Stop takes exactly the poses that belong to the capture that
+  // just ended and nothing else; in the field the two placements are identical,
+  // because nothing pushes poses while no session is running.
+  //
+  // AFTER the pushbroom flush above, never before it: flush() is the moment
+  // pending returns get their last chance at a pose, and clearing the ring
+  // first would turn that into a silent dropped_no_pose for the tail of every
+  // capture.
+  impl_->poses->clear();
 
   SessionStatePayload p{};
   p.recording = 0;

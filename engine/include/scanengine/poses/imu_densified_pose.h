@@ -133,6 +133,17 @@ struct ImuDensifyStats {
   std::uint64_t queries = 0;
   std::uint64_t densified = 0;
   std::uint64_t fallbacks = 0;          // fell through to plain interpolation
+  // ROUND 14: the reasons must ADD UP to `fallbacks`. They did not: the
+  // commonest bucket by far — the wrapped source had nothing usable to
+  // densify — was counted in the total and nowhere else, so on the owner's
+  // scan-034 only 11,522 of 63,805 fallbacks had a reason and a reader was
+  // left to conclude the densifier was failing for some unnamed cause. It was
+  // not failing at all; ARCore simply had no pose there. The two are split
+  // because they ask for different fixes: `no_pose` is a trajectory hole (the
+  // point is unresolvable by ANY method and the pushbroom drops it too),
+  // `gate` is a pose that exists but is stale/tracking-lost/low-confidence.
+  std::uint64_t fallback_no_pose = 0;   // the wrapped source returned no sample
+  std::uint64_t fallback_gate = 0;      // a sample, but PoseGate != kOk
   std::uint64_t fallback_no_imu = 0;
   std::uint64_t fallback_gap = 0;
   std::uint64_t fallback_bracket = 0;

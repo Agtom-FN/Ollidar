@@ -70,11 +70,17 @@ std::size_t ExternalPoseSource::size() const {
   return count_;
 }
 
+// ROUND 14 gave this its first caller (Engine::start_session). The counters go
+// with the ring: they describe the trajectory that was just thrown away, and an
+// app that reads pose_stats() to decide whether THIS capture had a usable
+// bracket must not be shown the previous one's totals. t_first/t_last are
+// zeroed for the same reason — they are the span of the ring, and the ring is
+// empty.
 void ExternalPoseSource::clear() {
   std::lock_guard<std::mutex> lock(m_);
   head_ = 0;
   count_ = 0;
-  stats_.held = 0;
+  stats_ = ExternalPoseStats{};
 }
 
 const ExternalPoseSource::Entry& ExternalPoseSource::at_locked_(std::size_t i) const {

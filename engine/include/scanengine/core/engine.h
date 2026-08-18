@@ -312,11 +312,15 @@ class Engine {
   // Set it once, before start_session(), like the mount extrinsic.
   Status set_imu_extrinsics(const double quat_xyzw[4]);
 
-  // Was the gyro path actually used, or did it fall back — and why? The four
+  // Was the gyro path actually used, or did it fall back — and why? The
   // `fallback_*` counters are the diagnosis a field session needs: `no_imu`
   // means nothing is pushing, `gap` means the sensor is stuttering, `bracket`
   // means ARCore dropped poses, `closing` means the gyro and ARCore disagree
-  // by more than any real rig should (usually a wrong camera_from_imu).
+  // by more than any real rig should (usually a wrong camera_from_imu), and
+  // ROUND 14's `no_pose`/`gate` mean the trajectory itself had nothing usable
+  // there — not an IMU problem at all, and on a real capture the majority of
+  // the total. They SUM to `fallbacks`; if they ever stop summing, a path was
+  // added without a counter (tests/test_round14_session_reset.cpp asserts it).
   ImuDensifyStats imu_densify_stats() const;
 
   // The DENSIFIED interpolation, i.e. what the pushbroom actually resolves

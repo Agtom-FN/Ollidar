@@ -145,4 +145,6 @@ data class AppSettings(
      * rather than refusing.
      */
     val dndDuringCapture: Boolean = true,
+    /** ROUND 14 — the DND explainer has been offered once. See `CaptureFocus.shouldAsk`. */
+    val dndAccessAsked: Boolean = false,
 )

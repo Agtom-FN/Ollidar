@@ -163,6 +163,16 @@ std::vector<GnssFix> GnssSource::fixes() const {
   return out;
 }
 
+// ROUND 14 — see the header for why the ring goes with the origin.
+void GnssSource::reset_frame() {
+  std::lock_guard<std::mutex> lock(m_);
+  head_ = count_ = 0;
+  if (!origin_explicit_) {
+    origin_set_ = false;
+    enu_ = crs::EnuFrame{};
+  }
+}
+
 void GnssSource::clear() {
   std::lock_guard<std::mutex> lock(m_);
   head_ = count_ = 0;

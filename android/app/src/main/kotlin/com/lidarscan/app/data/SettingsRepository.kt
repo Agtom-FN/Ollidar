@@ -64,6 +64,14 @@ class SettingsRepository(private val context: Context) {
         /** ROUND 11 (item 43): haptic + audio operator cues. Unset means ON. */
         val OPERATOR_CUES = booleanPreferencesKey("operator_cues_enabled")
         val DND_DURING_CAPTURE = booleanPreferencesKey("dnd_during_capture")
+
+        /**
+         * ROUND 14 — whether the Do Not Disturb explainer has been shown once.
+         * ROUND 13 shipped the whole DND machine with no way to obtain the
+         * grant it needs; this is the flag that makes the ask happen exactly
+         * once. See [com.lidarscan.core.capture.CaptureFocus.shouldAsk].
+         */
+        val DND_ACCESS_ASKED = booleanPreferencesKey("dnd_access_asked")
     }
 
     val settings: Flow<AppSettings> = context.settingsDataStore.data.map { prefs ->
@@ -100,6 +108,7 @@ class SettingsRepository(private val context: Context) {
             // ROUND 11 (item 43): default ON, so an unset preference buzzes.
             operatorCuesEnabled = prefs[Keys.OPERATOR_CUES] ?: true,
             dndDuringCapture = prefs[Keys.DND_DURING_CAPTURE] ?: true,
+            dndAccessAsked = prefs[Keys.DND_ACCESS_ASKED] ?: false,
         )
     }
 
@@ -223,6 +232,11 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setDndDuringCapture(enabled: Boolean) {
         context.settingsDataStore.edit { it[Keys.DND_DURING_CAPTURE] = enabled }
+    }
+
+    /** ROUND 14 — one-way. Once asked, never asked again; Settings is the road back. */
+    suspend fun setDndAccessAsked() {
+        context.settingsDataStore.edit { it[Keys.DND_ACCESS_ASKED] = true }
     }
 
     suspend fun setAllowPoorSyncColorize(allow: Boolean) {

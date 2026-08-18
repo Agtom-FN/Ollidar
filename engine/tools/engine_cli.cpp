@@ -1310,14 +1310,24 @@ int cmd_d6_dump(const std::string& lscan_dir, const std::string& out_prefix,
               static_cast<unsigned long long>(st.poses_accepted), traj.size());
   std::printf("  mount from manifest: %s; imu extrinsics from manifest: %s\n",
               st.mount_from_manifest ? "yes" : "NO", st.imu_extrinsics_from_manifest ? "yes" : "NO");
+  // ROUND 14: every bucket, and the sum, because the reasons are only worth
+  // printing if they account for the whole of `fell back` — see
+  // ImuDensifyStats. A `sum` that does not equal `fell back` is a missing
+  // counter, not a rounding detail.
   std::printf("  densify: %llu on gyro path, %llu fell back "
-              "(no-imu %llu, gap %llu, wide-bracket %llu, closing %llu)\n",
+              "(no-pose %llu, gated %llu, no-imu %llu, gap %llu, wide-bracket %llu, "
+              "closing %llu; sum %llu)\n",
               static_cast<unsigned long long>(st.imu_densified),
               static_cast<unsigned long long>(st.imu_fallbacks),
+              static_cast<unsigned long long>(st.imu.fallback_no_pose),
+              static_cast<unsigned long long>(st.imu.fallback_gate),
               static_cast<unsigned long long>(st.imu.fallback_no_imu),
               static_cast<unsigned long long>(st.imu.fallback_gap),
               static_cast<unsigned long long>(st.imu.fallback_bracket),
-              static_cast<unsigned long long>(st.imu.fallback_closing));
+              static_cast<unsigned long long>(st.imu.fallback_closing),
+              static_cast<unsigned long long>(
+                  st.imu.fallback_no_pose + st.imu.fallback_gate + st.imu.fallback_no_imu +
+                  st.imu.fallback_gap + st.imu.fallback_bracket + st.imu.fallback_closing));
   std::printf("  imu closing error: mean %.4f deg, worst %.4f deg; bias (%.5f, %.5f, %.5f) rad/s\n",
               st.imu.mean_closing_deg, st.imu.worst_closing_deg, st.imu.bias_rad_s[0],
               st.imu.bias_rad_s[1], st.imu.bias_rad_s[2]);
@@ -1659,12 +1669,18 @@ int cmd_d6_timesweep(const std::string& lscan_dir, double from_ms, double to_ms,
   std::printf("  densify  : %llu returns on the gyro path, %llu fell back\n",
               static_cast<unsigned long long>(rstats.imu_densified),
               static_cast<unsigned long long>(rstats.imu_fallbacks));
-  std::printf("             fallbacks by reason: no-imu %llu, imu-gap %llu, wide-bracket %llu, "
-              "closing %llu\n",
+  std::printf("             fallbacks by reason: no-pose %llu, gated %llu, no-imu %llu, "
+              "imu-gap %llu, wide-bracket %llu, closing %llu (sum %llu)\n",
+              static_cast<unsigned long long>(rstats.imu.fallback_no_pose),
+              static_cast<unsigned long long>(rstats.imu.fallback_gate),
               static_cast<unsigned long long>(rstats.imu.fallback_no_imu),
               static_cast<unsigned long long>(rstats.imu.fallback_gap),
               static_cast<unsigned long long>(rstats.imu.fallback_bracket),
-              static_cast<unsigned long long>(rstats.imu.fallback_closing));
+              static_cast<unsigned long long>(rstats.imu.fallback_closing),
+              static_cast<unsigned long long>(
+                  rstats.imu.fallback_no_pose + rstats.imu.fallback_gate +
+                  rstats.imu.fallback_no_imu + rstats.imu.fallback_gap +
+                  rstats.imu.fallback_bracket + rstats.imu.fallback_closing));
   std::printf("             closing error: mean %.3f deg, worst %.3f deg; "
               "gyro bias (%.5f, %.5f, %.5f) rad/s from %llu updates\n",
               rstats.imu.mean_closing_deg, rstats.imu.worst_closing_deg, rstats.imu.bias_rad_s[0],

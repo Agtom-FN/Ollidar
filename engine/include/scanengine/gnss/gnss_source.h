@@ -223,6 +223,24 @@ class GnssSource final : public GnssReceiver, public PoseInterpolator {
   std::vector<GnssFix> fixes() const;
 
   void clear();
+
+  // ROUND 14 — start of a new capture.
+  //
+  // Drops the ENU origin this source anchored on its first good fix, and with
+  // it every pose in the ring, because those poses are COORDINATES IN THAT
+  // FRAME: keeping them across a re-anchor would mix two origins in one ring
+  // and interpolate between them. The next fix anchors a new origin, so each
+  // capture is expressed about its own local zero — which is what an operator
+  // means by "the origin resets when the capture starts".
+  //
+  // An origin set EXPLICITLY by the app (set_origin(), e.g. a site datum
+  // shared by every capture of a job) is kept: it is a decision, not an
+  // accident of which fix arrived first, and the ring is then cleared without
+  // changing frame. Deliberately does NOT touch the last fix, the NMEA framer
+  // or the counters — the rover keeps streaming across Start, and the capture
+  // gate in the UI reads exactly those.
+  void reset_frame();
+
   const GnssSourceConfig& config() const { return cfg_; }
 
   // Exposed for tests and for a diagnostic UI: the quality/confidence mapping

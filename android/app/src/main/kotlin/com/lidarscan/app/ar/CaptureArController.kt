@@ -115,6 +115,17 @@ class CaptureArController(
 
     private val gate = ArSessionGate()
 
+    /**
+     * ROUND 14: the last camera texture a renderer bound, and who bound it.
+     * Exists only so [resetWorldFrame] can re-bind it to a new session; see
+     * [setCameraTextureName].
+     */
+    @Volatile
+    private var boundTextureId: Int = -1
+
+    @Volatile
+    private var boundTextureOwner: RendererOwner? = null
+
     private fun ArSessionGate.Owner.legacy(): RendererOwner =
         if (this == ArSessionGate.Owner.OVERLAY) RendererOwner.OVERLAY else RendererOwner.POSE_PUMP
 
@@ -429,6 +440,57 @@ class CaptureArController(
     }
 
     /**
+     * ROUND 14 (owner question: *"does the origin and IMU data offset zero
+     * every time when the capture starts?"*). Until this round the answer was
+     * **no**, and it was the single largest defect in the round-13 build.
+     *
+     * One `Session` was created per PROCESS and only ever paused between
+     * captures ([close] existed but had no caller anywhere in `src/main`), so
+     * capture N+1 inherited capture N's world origin, capture N's feature map
+     * and capture N's relocalisation database. The owner's own containers prove
+     * it: scan-035's first tracked pose sits **7 cm** from scan-034's last one,
+     * 49 s and a Stop/Start apart, and scan-034's sits 0.42 m from scan-033's
+     * last. Three scans of one small flat, one accumulating map — and 22.5 s
+     * into scan-035 the pose stream jumped **1.631 m / 162.57° in 33 ms** while
+     * the recorded 400 Hz gyro integrated **1.56°** over the same 33 ms. The
+     * phone did not move. ARCore relocalised onto a place it had mapped during
+     * an EARLIER capture, with the wrong orientation hypothesis. That is only
+     * possible while the earlier capture's map is still loaded.
+     *
+     * So every capture now begins by throwing the world away: close the
+     * session, build a new one, hand it back the renderer's existing camera
+     * texture, resume. The [gate] is what makes this safe from the GL thread —
+     * `sessionCreated`/`resumed` both go false for the duration, so an
+     * in-flight [onFrame] returns null instead of calling `update()` on a
+     * closing session. That is exactly the state machine ROUND 6 built.
+     *
+     * The cost is honest and it is the cost the app ALREADY paid: a
+     * pause/resume was re-acquiring tracking in ~0.5 s anyway (scan-034 and
+     * scan-035 both open with 14-15 recorded poses at exactly the origin,
+     * `tracking_lost = 1`). A fresh session pays the same beat and gets a clean
+     * frame for it. Returns false when there is nothing to reset or the rebuild
+     * failed — the caller must never let this block a capture.
+     */
+    fun resetWorldFrame(): Boolean {
+        if (session == null) return false
+        val texture = boundTextureId
+        val textureOwner = boundTextureOwner
+        close()
+        val created = createSession()
+        if (created.isFailure) {
+            Log.w(TAG, "world-frame reset could not rebuild the ARCore session")
+            return false
+        }
+        // The renderer never learned that its session was replaced — it is
+        // still holding the same GL texture and the same claim — so hand the
+        // texture straight back rather than waiting for a surface event that
+        // is not coming.
+        if (texture >= 0 && textureOwner != null) setCameraTextureName(texture, textureOwner)
+        geometryDirty = true
+        return resume().isSuccess
+    }
+
+    /**
      * ROUND 6 (owner item 23): the last window of pose samples, for the one-tap
      * mount re-zero. Snapshotted from [motion] (the same tracker B8's gate uses)
      * so the re-zero costs no extra ARCore work at all.
@@ -460,6 +522,15 @@ class CaptureArController(
         if (gate.currentOwner !== owner.gated()) return
         val s = session ?: return
         runCatching { s.setCameraTextureName(textureId) }
+            .onSuccess {
+                // ROUND 14: remembered so [resetWorldFrame] can hand the SAME
+                // texture to a freshly created session. The GL context and the
+                // texture outlive the ARCore session — it is only the session's
+                // binding to them that dies with it — so re-binding is a
+                // one-line hand-off rather than a renderer teardown.
+                boundTextureId = textureId
+                boundTextureOwner = owner
+            }
             .onFailure { reportArFailure("could not bind the tracking camera texture", it) }
     }
 

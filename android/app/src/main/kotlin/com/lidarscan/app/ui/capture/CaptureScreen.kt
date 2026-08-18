@@ -31,6 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -48,6 +49,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -111,6 +113,7 @@ import com.lidarscan.core.model.WorkflowProfile
 import com.lidarscan.core.render.ColorMode
 import com.lidarscan.core.render.Colormap
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 /**
  * ROUND 5's Capture tab.
@@ -286,10 +289,92 @@ fun CaptureRoute(
                         )
                     },
                     releaseDnd = container.dndGuard::release,
+                    // ROUND 14 (owner item 53): the Mid-360 preflight's view of
+                    // the cable. `EthernetMonitor` is already started by this
+                    // screen (see the DisposableEffect above), so this is a
+                    // read of state that exists rather than new machinery.
+                    ethernetSnapshot = {
+                        val eth = container.ethernetMonitor.state.value
+                        eth.adapterPresent to eth.addresses.map { it.ip }
+                    },
                 )
             }
         },
     )
+    // ── ROUND 14 (owner item 52): the ask-once flow ROUND 13 never built. ──
+    //
+    // 0.8.0 shipped `DoNotDisturbGuard.policyAccessIntent()` with a doc comment
+    // reading "the caller shows this once" and NO CALLER anywhere in the app.
+    // Every one of the owner's field sessions logged
+    // `dnd=unprotected-no-permission`, correctly, and there was no screen
+    // anywhere that could have got him the grant. The Settings switch even
+    // said "Needs Do Not Disturb access" while offering no way to satisfy it.
+    //
+    // It fires on screen ENTRY and never at Start: `CaptureScreen`'s own rule
+    // (and `DoNotDisturbGuard`'s) is that a modal mid-walk is the worst
+    // possible interruption, and a permission dialog thrown up as the operator
+    // presses Record would be exactly that.
+    val dndScope = rememberCoroutineScope()
+    var showDndExplainer by remember { mutableStateOf(false) }
+    val dndSettingsLauncher = rememberLauncherForActivityResult(
+        // A special-access screen, not a runtime permission: the result code is
+        // always RESULT_CANCELED, so the grant has to be RE-READ rather than
+        // inferred from it.
+        ActivityResultContracts.StartActivityForResult(),
+    ) {
+        dndScope.launch {
+            viewModel.refreshDndNote(
+                enabled = container.settingsRepository.settings.first().dndDuringCapture,
+                granted = container.dndGuard.hasPolicyAccess,
+            )
+        }
+    }
+    LaunchedEffect(Unit) {
+        val settings = container.settingsRepository.settings.first()
+        val granted = container.dndGuard.hasPolicyAccess
+        viewModel.refreshDndNote(enabled = settings.dndDuringCapture, granted = granted)
+        if (com.lidarscan.core.capture.CaptureFocus.shouldAsk(
+                enabled = settings.dndDuringCapture,
+                granted = granted,
+                alreadyAsked = settings.dndAccessAsked,
+            )
+        ) {
+            showDndExplainer = true
+        }
+    }
+    if (showDndExplainer) {
+        AlertDialog(
+            onDismissRequest = {
+                showDndExplainer = false
+                dndScope.launch { container.settingsRepository.setDndAccessAsked() }
+            },
+            title = { Text(com.lidarscan.core.capture.CaptureFocus.ASK_TITLE) },
+            text = { Text(com.lidarscan.core.capture.CaptureFocus.ASK_BODY) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDndExplainer = false
+                        dndScope.launch { container.settingsRepository.setDndAccessAsked() }
+                        runCatching {
+                            dndSettingsLauncher.launch(container.dndGuard.policyAccessIntent())
+                        }
+                    },
+                    modifier = Modifier.testTag("dndAskConfirm"),
+                ) { Text(com.lidarscan.core.capture.CaptureFocus.ASK_CONFIRM) }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showDndExplainer = false
+                        dndScope.launch { container.settingsRepository.setDndAccessAsked() }
+                    },
+                    modifier = Modifier.testTag("dndAskDismiss"),
+                ) { Text(com.lidarscan.core.capture.CaptureFocus.ASK_DISMISS) }
+            },
+            modifier = Modifier.testTag("dndAskDialog"),
+        )
+    }
+
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val connectionState by viewModel.connectionState.collectAsStateWithLifecycle()
     val captureState by viewModel.captureState.collectAsStateWithLifecycle()
@@ -330,6 +415,10 @@ fun CaptureRoute(
     val refreshDownshiftNote by viewModel.refreshDownshiftNote.collectAsStateWithLifecycle()
     val georefSource by viewModel.georefSource.collectAsStateWithLifecycle()
     val georefNote by viewModel.georefNote.collectAsStateWithLifecycle()
+    // ROUND 14 (owner item 52). 0.8.0 COMPUTED this sentence on every Start and
+    // no composable ever collected it, so the owner's three field sessions all
+    // recorded `dnd=unprotected-no-permission` with nothing on screen to say so.
+    val dndNote by viewModel.dndNote.collectAsStateWithLifecycle()
     val arStatus = viewModel.arStatus?.collectAsStateWithLifecycle()?.value
     // ── ROUND 6 ─────────────────────────────────────────────────────────────
     val preset by viewModel.preset.collectAsStateWithLifecycle()
@@ -479,6 +568,7 @@ fun CaptureRoute(
         ntrip = ntrip,
         georefSource = georefSource,
         georefNote = georefNote,
+        dndNote = dndNote,
         sessionSummary = sessionSummary,
         scanSummary = scanSummary,
         mountHold = mountHold,
@@ -634,6 +724,7 @@ fun CaptureScreen(
     ntrip: NtripStatsSnapshot,
     georefSource: GeorefSourceState,
     georefNote: String?,
+    dndNote: String?,
     sessionSummary: CaptureStats?,
     scanSummary: com.lidarscan.core.capture.ScanSummary? = null,
     mountHold: com.lidarscan.core.calib.MountTrimRefiner.Progress? = null,
@@ -976,6 +1067,7 @@ fun CaptureScreen(
                     // flick away, and the viewport keeps its height.
                     val anyHint = georefNote != null || refreshDownshiftNote != null || motionHint != null ||
                         arErrorMessage != null || sectionHint != null || liveMapFullNote != null ||
+                        dndNote != null ||
                         (mountTrimNote != null && !mountTrimNoteIsWarning)
                     val hints: @Composable () -> Unit = {
                         if (anyHint) {
@@ -985,6 +1077,16 @@ fun CaptureScreen(
                                     .heightIn(max = CaptureLayout.HINT_BAND_MAX_DP.dp)
                                     .verticalScroll(rememberScrollState()),
                             ) {
+                                if (dndNote != null) {
+                                    // SemWarn, not InkFaint: this one is about
+                                    // the measurement, not about a convenience.
+                                    Hint(
+                                        dndNote,
+                                        color = SemWarn,
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
+                                            .testTag("dndUnprotectedNote"),
+                                    )
+                                }
                                 if (georefNote != null) {
                                     Hint(
                                         georefNote,
@@ -2635,7 +2737,17 @@ private fun SessionSummaryContent(
                 listOf(
                     Stat("${scanSummary.sections}", "sections"),
                     Stat("${scanSummary.trackingDrops}", "tracking drops"),
-                    Stat("%.0f".format(scanSummary.pointsPerMeter), "pts / metre"),
+                    // ROUND 14: a from-the-spot scan showed "50124 pts / metre"
+                    // here, which is not a density — it is how little the
+                    // operator walked. The card now prints the figure the grade
+                    // was actually computed from, in its own unit, so the two
+                    // can never tell different stories. For a walking scan
+                    // nothing changes.
+                    if (scanSummary.isFromTheSpot) {
+                        Stat("from the spot", "no walk to measure")
+                    } else {
+                        Stat("%.0f".format(scanSummary.pointsPerMeter), "pts / metre")
+                    },
                     Stat(formatRate(scanSummary.pointsPerSecond), "avg pts/s"),
                 ),
             )

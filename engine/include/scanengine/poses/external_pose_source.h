@@ -147,6 +147,11 @@ class ExternalPoseSource final : public PoseSource, public PoseInterpolator {
   // --- diagnostics / lifecycle ------------------------------------------
   ExternalPoseStats stats() const;
   std::size_t size() const;
+  // Empties the ring AND the counters. Called at the top of every capture
+  // (Engine::start_session): a pose from the previous capture must never be
+  // allowed to bracket a return from this one — the two are minutes apart in
+  // an ARCore frame that was re-anchored in between, so the interpolation
+  // between them is not merely stale, it is meaningless.
   void clear();
   const ExternalPoseConfig& config() const { return cfg_; }
 
