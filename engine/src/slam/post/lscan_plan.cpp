@@ -184,13 +184,19 @@ Status floor_plan_from_lscan(const std::string& lscan_dir, const LscanPlanOption
   // Projected into plan coordinates here rather than in `plan/`, because that
   // directory deliberately knows nothing about world frames or up-axes.
   std::vector<plan::Vec2> walk;
+  std::vector<std::uint32_t> walk_breaks;
   {
     std::FILE* tf = std::fopen(join(lscan_dir, "processed/trajectory.bin").c_str(), "rb");
     if (tf != nullptr) {
       std::uint8_t head[16];
+      bool v1 = false, v2 = false;
       if (std::fread(head, 1, sizeof(head), tf) == sizeof(head) && head[0] == 'L' &&
           head[1] == 'S' && head[2] == 'T' && head[3] == 'R' && head[4] == 'A' &&
-          head[5] == 'J' && head[6] == '0' && head[7] == '1') {
+          head[5] == 'J' && head[6] == '0') {
+        v1 = head[7] == '1';
+        v2 = head[7] == '2';
+      }
+      if (v1 || v2) {
         const std::uint32_t count = static_cast<std::uint32_t>(head[8]) |
                                     (static_cast<std::uint32_t>(head[9]) << 8) |
                                     (static_cast<std::uint32_t>(head[10]) << 16) |
@@ -198,22 +204,42 @@ Status floor_plan_from_lscan(const std::string& lscan_dir, const LscanPlanOption
         // Thinned to about 12 cm, the same rule the phone draws by, so the
         // sheet and the screen show one walk.
         constexpr double kStrideM = 0.12;
+        const std::size_t rec_bytes = v2 ? 16 : 12;
         double lx = 0.0, ly = 0.0, lz = 0.0;
         bool have = false;
+        // ROUND 18 item 70: a jump flag anywhere between two KEPT points
+        // breaks the polyline at the next kept point — a segment the tracker
+        // was blind across must not be inked as a walked line on the sheet.
+        bool pending_break = false;
         for (std::uint32_t i = 0; i < count && i < 4000000u; ++i) {
-          std::uint8_t rec[12];
-          if (std::fread(rec, 1, sizeof(rec), tf) != sizeof(rec)) break;
+          std::uint8_t rec[16];
+          if (std::fread(rec, 1, rec_bytes, tf) != rec_bytes) break;
           float xyz[3];
-          std::memcpy(xyz, rec, sizeof(rec));
+          std::memcpy(xyz, rec, 12);
+          std::uint32_t flags = 0;
+          if (v2) {
+            flags = static_cast<std::uint32_t>(rec[12]) |
+                    (static_cast<std::uint32_t>(rec[13]) << 8) |
+                    (static_cast<std::uint32_t>(rec[14]) << 16) |
+                    (static_cast<std::uint32_t>(rec[15]) << 24);
+          }
           if (!std::isfinite(xyz[0]) || !std::isfinite(xyz[1]) || !std::isfinite(xyz[2])) {
             continue;
           }
+          if ((flags & 2u) != 0) pending_break = true;
+          // An UNTRACKED pose's position is the tracker's held guess, not a
+          // measurement — it draws nothing.
+          if ((flags & 1u) != 0) continue;
           const double dx = xyz[0] - lx, dy = xyz[1] - ly, dz = xyz[2] - lz;
           if (have && dx * dx + dy * dy + dz * dz < kStrideM * kStrideM) continue;
           lx = xyz[0];
           ly = xyz[1];
           lz = xyz[2];
           have = true;
+          if (pending_break && !walk.empty()) {
+            walk_breaks.push_back(static_cast<std::uint32_t>(walk.size()));
+          }
+          pending_break = false;
           walk.push_back(plan::project(xyz[0], xyz[1], xyz[2], opts.up));
         }
       }
@@ -415,6 +441,7 @@ Status floor_plan_from_lscan(const std::string& lscan_dir, const LscanPlanOption
     ro.title = opts.title;
     // ROUND 16 item 59.
     ro.trajectory = walk;
+    ro.trajectory_breaks = walk_breaks;  // ROUND 18 item 70
     plan::PlanRasterInfo pi;
     const std::string path = join(dir, base + ".png");
     const plan::OccupancyGrid* backdrop = map_grid.valid() ? &map_grid : &grid;

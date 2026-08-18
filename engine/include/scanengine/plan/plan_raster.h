@@ -106,6 +106,14 @@ struct PlanRasterOptions {
   bool draw_trajectory = true;
   std::vector<Vec2> trajectory;
   double trajectory_stroke_px = 2.0;
+
+  // ROUND 18 item 70 — indices `i` in `trajectory` whose incoming segment
+  // (i-1 -> i) must NOT be drawn as a walked line: the tracker was blind
+  // across it, so inking it would draw a walk that never happened (the
+  // owner's "the path record seems not so accurate", on paper). The segment
+  // is drawn instead as a faint dashed bridge, so the sheet still shows THAT
+  // the walk continued, without vouching for WHERE.
+  std::vector<std::uint32_t> trajectory_breaks;
 };
 
 struct PlanRasterInfo {

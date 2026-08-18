@@ -257,6 +257,10 @@ fun CaptureRoute(
                     beginDebugLog = container.captureLog::beginCaptureDebug,
                     logDebug = container.captureLog::debug,
                     endDebugLog = container.captureLog::endCaptureDebug,
+                    // ROUND 18 item 71: the project-guarded variants, for the
+                    // auto-process verdicts written after the seal.
+                    logDebugFor = container.captureLog::debugFor,
+                    endDebugLogFor = container.captureLog::endCaptureDebugFor,
                     // ROUND 6 (items 21 + 22): this phone's class, its real
                     // display ceiling and the live page-store sizing its engine
                     // was created with — the three inputs the preset table and
@@ -2545,13 +2549,29 @@ private fun TrajectoryTrailOverlay(
             points.forEach { p ->
                 val here = androidx.compose.ui.geometry.Offset(p.x * w, p.y * h)
                 previous?.let { from ->
-                    drawLine(
-                        color = if (previousTracking && p.tracking) ScanTeal else SemBad.copy(alpha = 0.5f),
-                        start = from,
-                        end = here,
-                        strokeWidth = 3f,
-                        cap = androidx.compose.ui.graphics.StrokeCap.Round,
-                    )
+                    if (p.jump) {
+                        // ROUND 18 item 70: the tracker was blind or teleported
+                        // across this segment — a dashed red bridge, so the
+                        // tile stops drawing a walk that never happened. Same
+                        // verdict the 3D ribbon and the floor-plan sheet draw.
+                        drawLine(
+                            color = SemBad.copy(alpha = 0.7f),
+                            start = from,
+                            end = here,
+                            strokeWidth = 2.5f,
+                            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                            pathEffect = androidx.compose.ui.graphics.PathEffect
+                                .dashPathEffect(floatArrayOf(6f, 6f)),
+                        )
+                    } else {
+                        drawLine(
+                            color = if (previousTracking && p.tracking) ScanTeal else SemBad.copy(alpha = 0.5f),
+                            start = from,
+                            end = here,
+                            strokeWidth = 3f,
+                            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                        )
+                    }
                 }
                 previous = here
                 previousTracking = p.tracking

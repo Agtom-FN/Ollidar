@@ -119,6 +119,17 @@ struct GapPolicy {
   // At or under this, the ROUND-13 assumption holds and the analytic transform
   // IS the frame change: one ARCore frame is 33 ms, and 100 ms is three of
   // them — enough slack for a dropped frame or two, far short of a step.
+  //
+  // ROUND 18 item 69: ...provided the reported ROTATION is at or under
+  // `max_residual_rotation_deg`. The statue assumption cuts both ways — over
+  // 33 ms the operator's gyro reads ~zero, so a one-frame jump past anything
+  // a re-anchor can be (the owner's scan-047: 56.85 deg at an implied
+  // 1,720 deg/s, gyro 0.67 deg, self-check 6.92 -> 3.42 cm once refused) is a
+  // relocalisation or a frame restart, and it takes the gyro-checked bridge
+  // route below instead of being applied on faith. Snaps at round-13's
+  // measured sizes (8-13.5 deg) are bit-identical. Translation is not part of
+  // the gate: the gyro cannot witness it, and round 13 verified the large
+  // translation-only snaps against gravity.
   std::int64_t snap_gap_ns = 100'000'000;
 
   // The longest gap the gyro is asked to bridge. `ImuDensifyConfig::capacity`

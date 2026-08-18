@@ -1531,6 +1531,18 @@ Status Engine::set_imu_extrinsics(const double quat_xyzw[4]) {
   for (int i = 0; i < 4; ++i) impl_->imu_cfg.camera_from_imu[i] = quat_xyzw[i];
   impl_->have_imu_extrinsics = true;
   auto next = std::make_unique<ImuDensifiedPoseSource>(impl_->poses.get(), impl_->imu_cfg);
+  // ROUND 18 item 68: the old ring's samples survive the rebuild. They are
+  // raw IMU-frame measurements (the extrinsic is applied at integration time),
+  // so they are valid under the NEW extrinsic, and discarding them shortened
+  // the gap bridge's reach by exactly the samples pushed before the Android
+  // layer got around to applying the extrinsic. The bias estimate is NOT
+  // carried — it was learned under whatever extrinsic came before, and
+  // re-learning it costs a few brackets (the round-17 argument, unchanged).
+  {
+    std::vector<PhoneImuSample> carried;
+    impl_->densified_poses->snapshot_ring(&carried);
+    for (const PhoneImuSample& s : carried) (void)next->push_imu(s);
+  }
   const bool was_wired = impl_->trajectory.load(std::memory_order_acquire) ==
                          TrajectorySource::kExternal;
   impl_->densified_poses = std::move(next);

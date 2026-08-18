@@ -60,10 +60,33 @@ class TrajectoryTrail(
      * is correct — a bird's-eye tile measures ground distance, and a walk up a
      * staircase must not make the tile's scale bar longer.
      */
-    data class Point(val x: Float, val z: Float, val tracking: Boolean, val y: Float = 0f)
+    data class Point(
+        val x: Float,
+        val z: Float,
+        val tracking: Boolean,
+        val y: Float = 0f,
+        /**
+         * ROUND 18 item 70 — the segment from the PREVIOUS kept point INTO this
+         * one is not a walked path: the tracker was blind or frozen across it,
+         * or the step implies a speed no walk could produce (a refused
+         * re-anchor's teleport). The owner's "the path record seems not so
+         * accurate" is, in large part, these segments drawn as ordinary lines
+         * — the trail held still through a 6-7 s freeze while he walked, then
+         * teleported. The caller (the recorder, which has the timestamps and
+         * saw the lost poses) decides; the trail only carries the verdict, the
+         * same division of labour `tracking` already follows.
+         */
+        val jump: Boolean = false,
+    )
 
     /** A point mapped into 0..1 canvas space, aspect preserved. */
-    data class NormalizedPoint(val x: Float, val y: Float, val tracking: Boolean)
+    data class NormalizedPoint(
+        val x: Float,
+        val y: Float,
+        val tracking: Boolean,
+        /** ROUND 18 item 70: see [Point.jump] — drawn as a gap, not a line. */
+        val jump: Boolean = false,
+    )
 
     private val points = ArrayDeque<Point>()
 
@@ -77,7 +100,7 @@ class TrajectoryTrail(
      * Returns true when the point was kept (the caller can use it to decide
      * whether a redraw is worth it).
      */
-    fun add(x: Float, z: Float, tracking: Boolean, y: Float = 0f): Boolean {
+    fun add(x: Float, z: Float, tracking: Boolean, y: Float = 0f, jump: Boolean = false): Boolean {
         if (!x.isFinite() || !z.isFinite()) return false
         // ROUND 16 item 59: height is carried, never gated on. The spacing rule
         // is a GROUND-distance rule (it exists so a standing operator does not
@@ -89,7 +112,7 @@ class TrajectoryTrail(
             val dz = z - last.z
             if (dx * dx + dz * dz < minSpacingM * minSpacingM) return false
         }
-        points.addLast(Point(x, z, tracking, if (y.isFinite()) y else 0f))
+        points.addLast(Point(x, z, tracking, if (y.isFinite()) y else 0f, jump))
         while (points.size > capacity) points.removeFirst()
         return true
     }
@@ -166,16 +189,27 @@ class TrajectoryTrail(
             val nz = pad + usable * ((p.z - minZ + offsetZ) / span)
             // NO flip: see the KDoc. World +Z goes DOWN the tile, which is what
             // makes the tile a view from above rather than from below.
-            NormalizedPoint(x = nx, y = nz, tracking = p.tracking)
+            NormalizedPoint(x = nx, y = nz, tracking = p.tracking, jump = p.jump)
         }
     }
 
-    /** Straight-line path length in metres — the "you have walked this far" number. */
+    /**
+     * Straight-line path length in metres — the "you have walked this far"
+     * number.
+     *
+     * ROUND 18 item 70: [Point.jump] segments are excluded. A 0.6 m teleport
+     * at re-acquisition is not 0.6 m the operator walked, and counting it was
+     * one of the ways pathM disagreed with the walk that produced it.
+     */
     fun pathLengthM(): Float {
         var total = 0f
         var previous: Point? = null
         for (p in points) {
-            previous?.let { total += kotlin.math.hypot((p.x - it.x).toDouble(), (p.z - it.z).toDouble()).toFloat() }
+            previous?.let {
+                if (!p.jump) {
+                    total += kotlin.math.hypot((p.x - it.x).toDouble(), (p.z - it.z).toDouble()).toFloat()
+                }
+            }
             previous = p
         }
         return total

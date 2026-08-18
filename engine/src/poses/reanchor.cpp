@@ -95,7 +95,26 @@ GapResult resolve_reanchor(const double q_before[4], const double p_before[3],
   }
 
   // --- the short gap: ROUND 13's assumption holds, so ROUND 13's answer ------
-  if (t_after_ns - t_before_ns <= policy.snap_gap_ns) {
+  //
+  // ROUND 18 item 69: holds AND the jump is the size of a re-anchor. The snap
+  // branch used to apply T wholesale for ANY rotation, on the argument that
+  // over 33 ms the operator is a statue so the jump is all frame. That
+  // argument cuts the other way too: a statue's gyro reads ~zero, so the
+  // residual against a gyro prediction IS the reported jump — and a reported
+  // 56.85 deg (the owner's scan-047 break #3, healed live at an implied
+  // 1720 deg/s) fails the same 25 deg bound every bridged gap is held to.
+  // Round 13 measured real ARCore re-anchors at 8-13.5 deg; a one-frame jump
+  // past `max_residual_rotation_deg` is a relocalisation or a frame restart,
+  // not a re-anchor, and it takes the gyro-checked route below instead of
+  // being taken on faith. Snaps at or under the bound — every snap round 13
+  // and 15 measured and every existing fixture — are bit-identical.
+  //
+  // Translation is deliberately NOT part of this gate: the gyro is a witness
+  // to rotation only, round 13 verified large translation-only snaps against
+  // gravity (scan-030's 1.118 m), and charging a 33 ms jump against a walk
+  // bound would under-correct a genuine frame shift by up to the bound.
+  if (t_after_ns - t_before_ns <= policy.snap_gap_ns &&
+      r.reported_rotation_deg <= policy.max_residual_rotation_deg) {
     frame_change(qb, p_before, qa, p_after, r.correction);
     if (!se3::mat4_is_rigid(r.correction, 1e-4)) {
       return degenerate("the pose pair does not define a rigid transform");
@@ -114,7 +133,14 @@ GapResult resolve_reanchor(const double q_before[4], const double p_before[3],
   }
   if (q_gyro_rel == nullptr || gyro_had_hole || !finite4(q_gyro_rel)) {
     r.verdict = GapVerdict::kRefusedNoGyro;
-    r.reason = "no continuous gyro across the gap — the operator's own motion is unknown";
+    // ROUND 18 item 69: an over-bounds SNAP lands here when the gyro cannot
+    // check it. Its own reason, because "the operator's own motion is unknown"
+    // is false for a one-frame gap — the motion is known (a statue), which is
+    // exactly why the jump cannot be believed.
+    r.reason = (t_after_ns - t_before_ns <= policy.snap_gap_ns)
+                   ? "a one-frame jump larger than any re-anchor round 13 measured, and no gyro "
+                     "to check it against — not applied"
+                   : "no continuous gyro across the gap — the operator's own motion is unknown";
     return r;
   }
 

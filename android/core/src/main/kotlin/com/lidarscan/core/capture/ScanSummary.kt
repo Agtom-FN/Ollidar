@@ -78,6 +78,16 @@ data class ScanSummary(
      */
     val loopEndGapMeters: Double? = null,
     /**
+     * ROUND 18 item 70 — the metres the path JUMPED rather than walked: the
+     * re-acquisition teleports after tracking losses, and the steps of refused
+     * re-anchors. [pathLengthMeters] no longer contains them (a teleport is
+     * not distance the operator covered), so this is where they went — the
+     * two numbers together are the whole polyline, and the seal logs both.
+     * Reported, deliberately not graded: the drops that produced it are
+     * already graded via [trackingDrops].
+     */
+    val jumpLengthMeters: Double = 0.0,
+    /**
      * ROUND 16 item 58 — how many ARCore poses this capture actually recorded.
      *
      * Defaulted to null so every existing construction of this type keeps its

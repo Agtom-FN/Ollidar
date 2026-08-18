@@ -8910,3 +8910,179 @@ cm) and the round-11/12/13/15/16 fixtures are unmoved. VERSION **0.9.2**.
   `planSlice` only in the Options fold, the Mid-360 ABI rewire (needs hardware),
   `restoreOrphaned()`.
 * Nothing was run on kc-m4; macOS/desktop untouched. No commit, no push.
+
+## ROUND 18 — THE GYRO RAN THE WHOLE TIME AND THE BRIDGE NEVER ASKED IT; THE SNAP TOOK 57° ON FAITH; AND THE PATH DREW WALKS THAT NEVER HAPPENED
+
+Owner field session of 0.9.2 (2026-08-19, 03:11–03:25, scans 046–053; 051 and
+053 carry the round-17 debug log — he found developer mode himself). His one
+sentence: *"the path record seems not so accurate."* He is right, three
+different ways. Items 68–72 in `docs/design/REVIEW_FEEDBACK.md`; this section
+is the Android-side account plus what only the bytes could tell.
+
+**Mid-round owner correction, folded in:** the room had GOOD lighting. The
+dim-light theory for the 6–7 s losses is refuted and nothing shipped assumes
+it — see "why he loses tracking", below, for what the streams actually say.
+
+### 68 — "no continuous gyro across the gap", while phone-imu reports 399.1 Hz
+
+scan-053's debug log carries both lines 55 seconds apart: a bridge refusal for
+want of gyro, and an IMU shutdown line counting 22,401 samples at 399.1 Hz
+with 3 drops. Both are true. The refusal was over a **46 ms sliver**:
+SensorManager delivers its first event 44–70 ms after `registerListener`
+(measured across all seven captures against the first ARCore pose, which the
+already-running preview session delivers immediately), his captures lose
+tracking AT START (the world-frame reset re-acquiring; every first break sits
+at t≈+0.6 s), so the bracket's `t_before` is the first pose — and
+`integrate_()` demanded ring coverage to within 25 ms of both interval ends.
+97 % coverage of a 1554 ms window, refused whole.
+
+Engine fix (poses/ only, ABI still 12): `bridge_edge_slack_ns` = 100 ms —
+deliberately `snap_gap_ns`, because it is the same physical claim (a ≤100 ms
+slice of a walking human is a statue to round 13's budget); edge slack applies
+to `relative_rotation()` only, interior holes are still fatal, and
+`sample_at()` densification passes 0 and is bit-identical. Plus:
+`set_imu_extrinsics` carries the ring across its rebuild (samples are raw
+sensor-frame; the extrinsic applies at integration time) — capi smoke step 198
+now asserts the carry-over instead of the drop.
+
+Android fix: the seal log's unhealed arm printed **"NOT healed (no usable
+bracket)"** for every refusal — a fabricated reason that hid the engine's real
+verdicts for a whole round. It now prints `lastReanchorSummary()`, or "no
+verdict recorded" when the bracket genuinely never reached the engine.
+
+On his bytes (engine_cli on copies; `streams/` untouched): 053's 1.554 s /
+0.28° gap → gyro 0.99°, residual 0.88°, bridges live (offline the ruler says
+thin-submap — it is the capture-start gap, there is nothing on the far side to
+move, and moving nothing is correct). 046's 6.897 s gap → gyro **178.63°** vs
+reported 72.28°, residual 106.54° → refused-gyro-disagrees WITH THE NUMBERS —
+the round-17 policy working, previously mislabelled as a bracket failure. 050:
+gyro 115.63° vs 29.94°, residual 85.70°, same. `stitch.json` now records every
+examined gap (`gapsExamined[]`), because a refusal that leaves no trace in the
+bundle is how this took two rounds to see.
+
+### 69 — the ≤100 ms snap applied 56.85° at an implied 1,720°/s
+
+scan-047 break #3: one frame, 0.371 m / 56.85°, healed live through the snap
+path — which never consulted anything. The capture's own gyro over those 33 ms:
+**0.67°**. Round 13's real re-anchors were 8–13.5°; a 57° one-frame jump is a
+relocalisation or a frame restart. The snap fast-path now applies only at or
+under `max_residual_rotation_deg` (25°); past that the pair takes the bridge's
+gyro-checked route (residual ≈ reported → refused-disagree; a genuine violent
+turn the gyro confirms → negligible, the operator; no gyro → refused in plain
+words). Translation stays ungated — the gyro cannot witness it and round 13
+verified the big translation-only snaps against gravity. All round-13-sized
+snaps bit-identical (pinned in `test_round18_snap_gate.cpp` against the exact
+analytic transform, with scan-047's real pose pair and integrated gyro as the
+fixture).
+
+**Measured: that heal HURT.** 0.9.2 (snap applied): 2 sections, first section
+rotated 56.85°, self-check 6.92 cm — his session's worst. 0.9.3 (refused):
+1 section, self-check **3.42 cm**. The ruler had said `map-got-worse` all
+along and was overruled by its own pipeline.
+
+### 70 — the path: frozen segments, teleports, and pathM counting them
+
+During a loss ARCore freezes (round 17: 181 poses of 0.000 m/0.00°); the trail
+held still while he walked, then teleported — drawn in confident teal, and the
+teleport metres COUNTED in pathM. Now the verdict rides the whole way:
+
+* `TrajectoryTrail.Point.jump` / `NormalizedPoint.jump`: the recorder flags a
+  kept point when any pose since the last kept one was disowned, either
+  endpoint is untracked, or the step implies >6 m/s (the silent refused-heal
+  teleport, tracking green throughout). `totalPathM` excludes those segments;
+  `totalJumpM` holds them; the seal logs `pathM=… jumpM=…` and
+  `ScanSummary.jumpLengthMeters` carries it.
+* 2D tile: jump segments dashed red. 3D ribbon: `TrajectoryRibbon.BRIDGE`, a
+  DARKENED red — not alpha, because `trail.mat` is `blending: opaque` and a
+  translucent vertex would silently render opaque (checked before shipping,
+  not after).
+* `trajectory.bin` → **"LSTRAJ02"**: 16-byte records, xyz + u32 flags (bit 0
+  untracked, bit 1 jump-in: >150 ms between poses, >6 m/s, or the step out of
+  a disowned run). Both readers (`TrajectoryFile.kt`, `lscan_plan.cpp`) accept
+  v1 and v2; unknown versions draw no path rather than guessing a record size.
+  Verified on scan-046's actual reprocessed bytes: 206 untracked poses
+  flagged, 3 jump-ins, index 1352 = the 72.28° re-acquisition; the floor-plan
+  sheet draws those three as red dashed bridges
+  (`PlanRasterOptions::trajectory_breaks`), regenerated and eyeballed.
+* Review drops untracked vertices (their positions are held guesses) and
+  colours the bridge; the live ribbon, Review, the file and the sheet now
+  tell one story.
+
+**Why he loses tracking — measured, not guessed.** The 5 s before each long
+loss: median lidar range 1.00–1.23 m with 63–70 % of returns under 1.5 m
+(round 13's ARCore re-anchor diet: close, feature-poor surfaces), parallax
+healthy at 1.7–2.2 cm/°. 047's short loss: 127° of turning in 5 s at the
+0.8 cm/° parallax edge. The +0.6 s first breaks are the app's own
+world-frame-reset re-acquisition (now healed trivially by item 68). **No
+low-light warning ships** — the correction killed it and the data never
+supported it. What ships is the missing signal: ARCore's own
+`TrackingFailureReason` is written to the capture debug log at every loss
+transition (`CaptureArController.onTrackingLost`), so the next session reads
+the tracker's verdict instead of reconstructing one.
+
+### 71 — scan-053 exported as a silent half-bundle
+
+His export contains `processed/preview.f32` and nothing else — the export
+raced auto-process. Now: `ProcessingRepository.reprocessD6` holds a
+per-container lock (an export WAITS for a running auto-process — idempotent
+job, waiting IS the fix); `transferBundle` ensures processing before zipping
+("Processing before export…"), and on failure or an unprocessable container
+writes `processed/UNPROCESSED.txt` into the bundle naming what is missing and
+why. No third outcome. The capture debug log stays OPEN through auto-process
+and closes with the verdicts inside (round 17 closed it at the seal — one line
+before the answer the owner's question needed); `endCaptureDebugFor()` guards
+by project so a late completion can never write into a newer capture's bundle;
+pruned-empty scans still close at the seal because their directory is about to
+be deleted. Still 5 MB-capped, still not a stream, replay untouched.
+
+### 72 — rank=100.55 was `UNMEASURED_RANK_BASE + spreadP90` in a trench coat
+
+The auto-refresh comparison was RIGHT (a measured 0.78° split-half accuracy
+beats a 1 s sample that cannot be split-half checked); the log line printing
+raw ranks and calling the candidate "worse" was wrong twice. Now plain words:
+which won, why (unverifiable vs measured-worse vs jitter tie-break), numbers
+labelled. And the 03:15:59 re-zero acceptance at spreadP90 2.24° was CORRECT
+(the movement gate asks "still enough to average", limit 2.50°) while the
+round-10 0.8° goal is about the mean's split-half accuracy — scan-050's 1.35°
+missed it and nothing said so at the time. A captured trim past
+`WARN_STABILITY_DEG` now warns at acceptance and the captured log line carries
+`accuracyDeg=`.
+
+### TESTS AND VERSION
+
+Engine **621 cases / 2,517,351 assertions**, ctest **7/7 serial**, capi smoke
+updated (ring carry-over). ABI stays **12** — every engine change is inside
+poses/ + slam/post/ + plan/. `:core` **560**, `:app` **108** (+9:
+`Round18PathHonestyTest`, `Round18TrajectoryFlagsTest`), emulator **22/22** on
+`b4_test` with the native library rebuilt from this round's sources (the
+on-device round-17 trajectory test now pins the v2 record size through the
+real C entry point). Owner-capture regression on untouched originals:
+046/048/050/051 maps and self-checks **byte-identical**; 047 changes by
+design (6.92 → 3.42 cm); 053 gains processed results it never had. VERSION
+**0.9.3**.
+
+### BACKLOG
+
+* **The long losses have a measured trigger nobody warns about live**: ~1 m
+  from feature-poor surfaces, 2/3 of returns under 1.5 m. The engine has the
+  range distribution live; a "too close to the wall for the tracker" cue is
+  buildable and round 13's cue-budget rules apply. Deliberately not shipped
+  this round — the cue system already fires tracking_degraded in those
+  stretches, and a second overlapping cue needs the round-13 accelerometer
+  audit repeated first.
+* **Offline thin-submap refusals at capture-start gaps are correct but
+  unreported to the operator** — the seam list explains it in stitch.json;
+  the Review card does not surface `gapsExamined` yet.
+* **`fromPoses` v1 path treats every vertex as tracked** (round-16 statement,
+  still true for pre-0.9.3 containers); reprocessing any old container
+  upgrades it to v2.
+* **Capture-start tracking loss is app-caused** (world-frame reset
+  re-acquisition, 0.9–1.6 s at every Start in this session). Item 68 heals
+  it; not making it happen — e.g. delaying record-arm until first TRACKED
+  pose — would change the round-12/16 start-gate semantics and wants its own
+  round.
+* Unchanged from rounds 16–17: pose race wants a Pixel `framesYielded=`
+  session, scan-039/040 rescue via gyro-constrained lidar registration, room
+  polygons, floor-map thickness, `planSlice` fold, Mid-360 rewire,
+  `restoreOrphaned()`, `displayParams` synthesis, `syncTrail` flag order.
+* Nothing was run on kc-m4; macOS/desktop untouched. No commit, no push.

@@ -256,6 +256,19 @@ class ProcessingViewModel(
     fun transferBundle(context: Context, share: Boolean) {
         val p = _uiState.value.project ?: return
         viewModelScope.launch {
+            // ── ROUND 18 item 71: no silent half-bundle. ────────────────────
+            //
+            // The owner's scan-053 was exported before its auto-process
+            // finished: the bundle carried processed/preview.f32 and nothing
+            // else — no trajectory.bin, no map_stitched.bin — and nothing in
+            // it said so. An export must hand over either the processed
+            // results or a written statement of why they are absent. Three
+            // arms: already processed -> proceed; processable -> process now
+            // (the repository's per-container lock makes this WAIT for a
+            // still-running auto-process rather than racing it); neither ->
+            // write processed/UNPROCESSED.txt naming what is missing, so the
+            // recipient of the bundle reads the reason instead of guessing.
+            withContext(Dispatchers.IO) { ensureProcessedForExport(p.directory) }
             // ROUND 7: staged in the CACHE, not in `<project>/exports/`.
             // `zip_export()` walks the project directory recursively and takes
             // every regular file it finds — so a bundle written inside that
@@ -335,6 +348,52 @@ class ProcessingViewModel(
                 },
             )
             return
+        }
+    }
+
+    /**
+     * ROUND 18 item 71 — see [transferBundle]. Blocking (tens of seconds when
+     * it has to process); call from Dispatchers.IO.
+     */
+    private fun ensureProcessedForExport(dir: File) {
+        val marker = File(dir, "processed/UNPROCESSED.txt")
+        if (repo.hasStitchedCloud(dir)) {
+            // A marker from an earlier failed attempt is stale the moment the
+            // results exist — a bundle carrying both would contradict itself.
+            runCatching { marker.delete() }
+            return
+        }
+        val hasPoses = File(dir, "streams/poses_ar.bin").isFile
+        val hasMap = File(dir, "streams/map.bin").isFile
+        if (hasPoses && hasMap) {
+            _uiState.value = _uiState.value.copy(message = "Processing before export…")
+            val r = runCatching { repo.reprocessD6(dir, refineSeams = true) }.getOrNull()
+            if (r?.ran == true && repo.hasStitchedCloud(dir)) {
+                runCatching { marker.delete() }
+                return
+            }
+        }
+        runCatching {
+            marker.parentFile?.mkdirs()
+            marker.writeText(
+                "This bundle was exported WITHOUT processed results.\n\n" +
+                    when {
+                        !hasPoses ->
+                            "Reason: the capture recorded no camera trajectory " +
+                                "(streams/poses_ar.bin is absent), so there is nothing to " +
+                                "resolve the returns against.\n"
+                        !hasMap ->
+                            "Reason: the capture resolved no world points " +
+                                "(streams/map.bin is absent).\n"
+                        else ->
+                            "Reason: processing was attempted at export time and failed; " +
+                                "the raw streams are intact — open the scan in LidarScan " +
+                                "and tap Process to retry.\n"
+                    } +
+                    "The raw sensor streams under streams/ are complete and untouched; " +
+                    "processed/map_stitched.bin, trajectory.bin and stitch.json are what " +
+                    "a successful Process would add.\n",
+            )
         }
     }
 

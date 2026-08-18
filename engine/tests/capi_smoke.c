@@ -754,12 +754,17 @@ int scan_capi_smoke_run(const uint8_t* d6_bytes, size_t d6_len) {
     if (scan_engine_imu_densify_stats(e8, NULL) != SCAN_ERR_INVALID_ARGUMENT) return 194;
     if (scan_engine_imu_densify_stats(NULL, &istats) != SCAN_ERR_INVALID_ARGUMENT) return 195;
 
-    /* Re-applying the extrinsic rebuilds the densifier, which is documented to
-     * drop the ring and the bias. Asserting it here keeps the header honest. */
+    /* Re-applying the extrinsic rebuilds the densifier. ROUND 18 item 68: the
+     * ring's samples are CARRIED ACROSS the rebuild (they are raw sensor-frame
+     * measurements; the extrinsic is applied at integration time), because
+     * dropping them shortened the gap bridge's reach by exactly the samples
+     * pushed before the app applied the extrinsic. The 40 good samples
+     * survive; the 2 refused ones were never in the ring. Asserting it here
+     * keeps the header honest, in its new wording. */
     if (scan_engine_set_imu_extrinsics(e8, cam_from_imu) != SCAN_OK) return 196;
     memset(&istats, 0xAB, sizeof istats);
     if (scan_engine_imu_densify_stats(e8, &istats) != SCAN_OK) return 197;
-    if (istats.samples_in != 0) return 198;
+    if (istats.samples_in != 40) return 198;
 
     scan_engine_destroy(e8);
   }

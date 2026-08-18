@@ -79,8 +79,25 @@ class TrajectoryTrailRecorder(
     private val _totalPathM = MutableStateFlow(0f)
     val totalPathM: StateFlow<Float> = _totalPathM.asStateFlow()
 
+    /**
+     * ROUND 18 item 70 — the metres the path JUMPED rather than walked: the
+     * teleports at re-acquisition after a tracking loss and the steps of any
+     * refused re-anchor. Kept separately from [totalPathM] instead of inside
+     * it, because the owner's "the path record seems not so accurate" was in
+     * part exactly this: a 6-7 s freeze contributes nothing while he walks,
+     * then a 0.6 m teleport lands in pathM as if he had walked it. The seal
+     * logs both numbers; grading uses the walked one.
+     */
+    private val _totalJumpM = MutableStateFlow(0f)
+    val totalJumpM: StateFlow<Float> = _totalJumpM.asStateFlow()
+
     private var lastKeptX = Float.NaN
     private var lastKeptZ = Float.NaN
+    private var lastKeptTNs = 0L
+    private var lastKeptTracking = true
+
+    /** True when any pose since the last KEPT point was not tracking. */
+    private var sawLostSinceKept = false
 
     /**
      * ROUND 12: the walk's return to its own start, in constant space. The
@@ -108,7 +125,7 @@ class TrajectoryTrailRecorder(
         // rotated for rendering and would make the trail turn when the phone is
         // rotated in the hand.
         val pose = camera.pose
-        onPose(pose.tx(), pose.ty(), pose.tz(), tracking)
+        onPose(pose.tx(), pose.ty(), pose.tz(), tracking, frame.timestamp)
     }
 
     /**
@@ -124,15 +141,39 @@ class TrajectoryTrailRecorder(
      * `x`/`z` are the ground plane and `y` is height, all in ARCore's world
      * frame, exactly as `Pose.tx()/ty()/tz()` report them.
      */
-    fun onPose(x: Float, y: Float, z: Float, tracking: Boolean) {
-        if (!trail.add(x, z, tracking, y)) return
-        if (!lastKeptX.isNaN()) {
-            val dx = x - lastKeptX
-            val dz = z - lastKeptZ
-            _totalPathM.value += kotlin.math.sqrt(dx * dx + dz * dz)
+    fun onPose(x: Float, y: Float, z: Float, tracking: Boolean, tMonoNs: Long = 0L) {
+        // ROUND 18 item 70 — is the segment INTO this point a walked path?
+        // Three ways for it not to be, all measured, none guessed:
+        //  * any pose since the last kept point was disowned by the tracker
+        //    (the frozen poses of a loss do not move, so they are rarely kept
+        //    themselves — the flag is what carries the loss to the next kept
+        //    point, where the teleport lands);
+        //  * either endpoint is itself untracked;
+        //  * the step implies more than PoseSectionTracker's 6 m/s — the
+        //    silent case, a refused re-anchor teleporting the frame with
+        //    tracking green the whole way.
+        if (!tracking) sawLostSinceKept = true
+        val hasPrev = !lastKeptX.isNaN()
+        val dxAll = if (hasPrev) x - lastKeptX else 0f
+        val dzAll = if (hasPrev) z - lastKeptZ else 0f
+        val stepM = kotlin.math.sqrt(dxAll * dxAll + dzAll * dzAll)
+        val dtS = if (hasPrev && tMonoNs > 0L && lastKeptTNs > 0L) {
+            (tMonoNs - lastKeptTNs) / 1e9
+        } else {
+            0.0
+        }
+        val impossible = dtS > 1e-3 &&
+            stepM / dtS > com.lidarscan.core.capture.PoseSectionTracker.MAX_SPEED_MPS
+        val jump = hasPrev && (sawLostSinceKept || !tracking || !lastKeptTracking || impossible)
+        if (!trail.add(x, z, tracking, y, jump)) return
+        if (hasPrev) {
+            if (jump) _totalJumpM.value += stepM else _totalPathM.value += stepM
         }
         lastKeptX = x
         lastKeptZ = z
+        lastKeptTNs = tMonoNs
+        lastKeptTracking = tracking
+        sawLostSinceKept = false
         loopReturn.add(x, z, _totalPathM.value)
         _points.value = trail.normalized()
         _pathLengthM.value = trail.pathLengthM()
@@ -163,8 +204,12 @@ class TrajectoryTrailRecorder(
         _points.value = emptyList()
         _pathLengthM.value = 0f
         _totalPathM.value = 0f
+        _totalJumpM.value = 0f
         lastKeptX = Float.NaN
         lastKeptZ = Float.NaN
+        lastKeptTNs = 0L
+        lastKeptTracking = true
+        sawLostSinceKept = false
         loopReturn.reset()
     }
 }

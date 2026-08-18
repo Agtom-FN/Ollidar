@@ -39,10 +39,13 @@ import java.nio.ByteOrder
  *
  * ```
  * offset  size  meaning
- *      0     8  magic "LSTRAJ01"
+ *      0     8  magic "LSTRAJ01" or "LSTRAJ02"
  *      8     4  u32 pose count
  *     12     4  reserved, zero
- *     16  12*n  n records of three float32 metres (x, y, z)
+ *     16   r*n  n records; r = 12 for v1 (three float32 metres x, y, z),
+ *               r = 16 for v2 (the same three float32 plus a u32 of flags:
+ *               bit 0 = the tracker disowned this pose, bit 1 = the segment
+ *               from the previous record is a blind jump — ROUND 18 item 70)
  * ```
  *
  * Every failure returns [TrajectoryRibbon.EMPTY] rather than throwing: a
@@ -53,10 +56,11 @@ import java.nio.ByteOrder
 object TrajectoryFile {
 
     private const val HEADER_BYTES = 16
-    private const val RECORD_BYTES = 12
-    private val MAGIC = byteArrayOf(
+    private const val RECORD_BYTES_V1 = 12
+    private const val RECORD_BYTES_V2 = 16
+    private val MAGIC_PREFIX = byteArrayOf(
         'L'.code.toByte(), 'S'.code.toByte(), 'T'.code.toByte(), 'R'.code.toByte(),
-        'A'.code.toByte(), 'J'.code.toByte(), '0'.code.toByte(), '1'.code.toByte(),
+        'A'.code.toByte(), 'J'.code.toByte(), '0'.code.toByte(),
     )
 
     /** The largest file this will read: 4 M poses is 37 hours at 30 Hz. */
@@ -73,27 +77,39 @@ object TrajectoryFile {
     /** Exposed so a JVM test can feed it bytes without touching a filesystem. */
     fun decode(bytes: ByteArray): TrajectoryRibbon.Ribbon {
         if (bytes.size < HEADER_BYTES) return TrajectoryRibbon.EMPTY
-        for (i in MAGIC.indices) {
-            if (bytes[i] != MAGIC[i]) return TrajectoryRibbon.EMPTY
+        for (i in MAGIC_PREFIX.indices) {
+            if (bytes[i] != MAGIC_PREFIX[i]) return TrajectoryRibbon.EMPTY
+        }
+        // ROUND 18 item 70: v2 records carry flags; v1 records carry none and
+        // draw exactly as before. Any OTHER version byte is a format this
+        // reader does not know, and the honest render of an unknown format is
+        // "no path", not a guess at its record size.
+        val version = bytes[7].toInt().toChar()
+        val recordBytes = when (version) {
+            '1' -> RECORD_BYTES_V1
+            '2' -> RECORD_BYTES_V2
+            else -> return TrajectoryRibbon.EMPTY
         }
         val buf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
         val count = buf.getInt(8)
         if (count <= 1 || count > MAX_POSES) return TrajectoryRibbon.EMPTY
         // The length check is what makes a truncated file "no path" instead of
         // a path that runs into whatever was after it on disk.
-        val expected = HEADER_BYTES.toLong() + count.toLong() * RECORD_BYTES
+        val expected = HEADER_BYTES.toLong() + count.toLong() * recordBytes
         if (bytes.size.toLong() != expected) return TrajectoryRibbon.EMPTY
 
         val xyz = FloatArray(count * 3)
+        val flags = if (version == '2') IntArray(count) else null
         var o = HEADER_BYTES
         for (i in 0 until count) {
             xyz[i * 3] = buf.getFloat(o)
             xyz[i * 3 + 1] = buf.getFloat(o + 4)
             xyz[i * 3 + 2] = buf.getFloat(o + 8)
-            o += RECORD_BYTES
+            if (flags != null) flags[i] = buf.getInt(o + 12)
+            o += recordBytes
         }
         // Thinning and colouring live in `:core` with the live trail's, so a
         // sealed walk and the one the operator watched are drawn by one rule.
-        return TrajectoryRibbon.fromPoses(xyz, count)
+        return TrajectoryRibbon.fromPoses(xyz, flags, count)
     }
 }

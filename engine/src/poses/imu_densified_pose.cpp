@@ -42,6 +42,15 @@ std::size_t ImuDensifiedPoseSource::buffered() const {
   return size_;
 }
 
+void ImuDensifiedPoseSource::snapshot_ring(std::vector<PhoneImuSample>* out) const {
+  if (out == nullptr) return;
+  std::lock_guard<std::mutex> lk(m_);
+  out->clear();
+  out->reserve(size_);
+  const std::size_t first = (head_ + ring_.size() - size_) % ring_.size();
+  for (std::size_t k = 0; k < size_; ++k) out->push_back(ring_[(first + k) % ring_.size()]);
+}
+
 void ImuDensifiedPoseSource::reset() {
   std::lock_guard<std::mutex> lk(m_);
   head_ = 0;
@@ -66,7 +75,8 @@ bool ImuDensifiedPoseSource::time_span(std::int64_t* first_ns, std::int64_t* las
 }
 
 // Caller holds m_.
-bool ImuDensifiedPoseSource::integrate_(std::int64_t t0, std::int64_t t1, double q_rel[4],
+bool ImuDensifiedPoseSource::integrate_(std::int64_t t0, std::int64_t t1,
+                                        std::int64_t edge_slack_ns, double q_rel[4],
                                         double* peak_rate, bool* saw_gap) const {
   se3::quat_identity(q_rel);
   *peak_rate = 0.0;
@@ -78,12 +88,33 @@ bool ImuDensifiedPoseSource::integrate_(std::int64_t t0, std::int64_t t1, double
 
   // The stream must actually straddle the interval; extrapolating a gyro past
   // the samples it has is how a stationary rig becomes a gyroscope.
+  //
+  // ROUND 18 item 68: "straddle" is judged to within `edge_slack_ns` at each
+  // END of the interval, not `max_imu_gap_ns`. The two tolerances answer
+  // different questions — a hole INSIDE the window means the gyro stuttered
+  // while the phone may have been turning (fatal for a bridge), while a short
+  // uncovered slice at an EDGE is the snap assumption in miniature: over
+  // <=100 ms the operator is a statue to within the same budget round 13
+  // measured for a snap. The uncovered slice contributes zero rotation, which
+  // is exactly what a statue contributes. Callers that need full coverage
+  // (bracket densification) pass 0 and get the old rule verbatim.
+  const std::int64_t edge_ns = edge_slack_ns > cfg_.max_imu_gap_ns ? edge_slack_ns
+                                                                   : cfg_.max_imu_gap_ns;
   const PhoneImuSample& oldest = ring_[first];
   const PhoneImuSample& newest = ring_[(first + size_ - 1) % ring_.size()];
-  if (oldest.t_mono_ns > t0 + cfg_.max_imu_gap_ns) return false;
-  if (newest.t_mono_ns < t1 - cfg_.max_imu_gap_ns) return false;
+  if (oldest.t_mono_ns > t0 + edge_ns) return false;
+  if (newest.t_mono_ns < t1 - edge_ns) return false;
 
   std::int64_t t_cur = t0;
+  // ROUND 18 item 68: an uncovered LEADING edge (the stream starts after t0,
+  // within the slack the straddle check just allowed). The slice is treated as
+  // zero rotation — the statue assumption — rather than extrapolating the
+  // first sample's rate backwards over up to 100 ms. Inside `max_imu_gap_ns`
+  // the old behaviour (integrate from t0 with the first sample's rate) is kept
+  // verbatim, so densification brackets are bit-identical.
+  if (oldest.t_mono_ns > t0 + cfg_.max_imu_gap_ns) {
+    t_cur = std::min(oldest.t_mono_ns, t1);
+  }
   double prev_w[3] = {0.0, 0.0, 0.0};
   bool have_prev = false;
 
@@ -131,8 +162,12 @@ bool ImuDensifiedPoseSource::integrate_(std::int64_t t0, std::int64_t t1, double
 
   if (t_cur < t1) {
     // Ran out of samples before the end of the interval.
-    if (t1 - t_cur > cfg_.max_imu_gap_ns) return false;
-    *saw_gap = true;
+    if (t1 - t_cur > edge_ns) return false;
+    // ROUND 18 item 68: a trailing shortfall inside the bridge's edge slack is
+    // the statue assumption again (zero rotation over the slice), not a hole —
+    // a hole would make reanchor refuse the whole bridge. With no slack (a
+    // densification bracket) the old rule stands: any shortfall is flagged.
+    if (edge_slack_ns <= 0) *saw_gap = true;
   }
   se3::quat_normalize(q_rel);
 
@@ -155,7 +190,7 @@ bool ImuDensifiedPoseSource::relative_rotation(std::int64_t t0, std::int64_t t1,
   double peak = 0.0;
   bool hole = false;
   std::lock_guard<std::mutex> lk(m_);
-  const bool ok = integrate_(t0, t1, q_rel, &peak, &hole);
+  const bool ok = integrate_(t0, t1, cfg_.bridge_edge_slack_ns, q_rel, &peak, &hole);
   if (peak_rate_rad_s != nullptr) *peak_rate_rad_s = peak;
   if (saw_hole != nullptr) *saw_hole = hole;
   return ok;
@@ -216,8 +251,8 @@ PoseSample ImuDensifiedPoseSource::sample_at(std::int64_t t_mono_ns) const {
   double q_to_t[4], q_to_b[4];
   double peak_t = 0.0, peak_b = 0.0;
   bool gap_t = false, gap_b = false;
-  if (!integrate_(ta, t_mono_ns, q_to_t, &peak_t, &gap_t) ||
-      !integrate_(ta, tb, q_to_b, &peak_b, &gap_b)) {
+  if (!integrate_(ta, t_mono_ns, 0, q_to_t, &peak_t, &gap_t) ||
+      !integrate_(ta, tb, 0, q_to_b, &peak_b, &gap_b)) {
     ++stats_.fallbacks;
     ++stats_.fallback_no_imu;
     return s;

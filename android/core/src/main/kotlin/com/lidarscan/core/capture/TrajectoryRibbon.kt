@@ -67,6 +67,21 @@ object TrajectoryRibbon {
     val UNTRACKED = pack(0xC0, 0x3A, 0x3A, 0xFF)
 
     /**
+     * ROUND 18 item 70 — the segment into this vertex is a BLIND BRIDGE, not a
+     * walked line: the tracker was frozen or the frame teleported across it (a
+     * tracking-loss re-acquisition, or a refused re-anchor's step). Same
+     * family as [UNTRACKED] — it is the same warning — but DARKENED rather
+     * than translucent, deliberately: `trail.mat` is `blending: opaque` (a
+     * transparent line strip would need depth-sorted rendering the trail has
+     * no other reason to pay for), so an alpha here would silently render
+     * fully opaque and the two reds would be indistinguishable. A darker red
+     * reads as "the walk continued, somewhere, in the dark", which is the
+     * true sentence. In a line strip the colour interpolates from the
+     * previous vertex, fading the real path into the bridge.
+     */
+    val BRIDGE = pack(0x7A, 0x24, 0x24)
+
+    /**
      * How many vertices at each end are painted with the marker colour rather
      * than the gradient. Two, because one vertex of a line strip is invisible
      * (a strip draws segments, not points) and three starts to read as a
@@ -107,7 +122,16 @@ object TrajectoryRibbon {
             xyz[i * 3] = p.x
             xyz[i * 3 + 1] = p.y
             xyz[i * 3 + 2] = p.z
-            rgba[i] = colorAt(i, n, p.tracking)
+            // ROUND 18 item 70: an untracked vertex keeps its round-17 opaque
+            // red (the vertex itself is a guess); a TRACKED vertex whose
+            // incoming segment crossed blindness gets the translucent BRIDGE
+            // (the vertex is real, the line into it is not). Two reds, one
+            // warning, two precise claims.
+            rgba[i] = when {
+                !p.tracking -> UNTRACKED
+                p.jump -> BRIDGE
+                else -> colorAt(i, n, tracking = true)
+            }
         }
         return Ribbon(xyz, rgba, n)
     }
@@ -123,40 +147,75 @@ object TrajectoryRibbon {
      * keeps the corners — where the interesting information is — and drops only
      * the straights.
      */
-    fun fromPoses(xyzIn: FloatArray, count: Int, strideM: Float = DEFAULT_STRIDE_M): Ribbon {
+    fun fromPoses(xyzIn: FloatArray, count: Int, strideM: Float = DEFAULT_STRIDE_M): Ribbon =
+        fromPoses(xyzIn, null, count, strideM)
+
+    /**
+     * ROUND 18 item 70 — the flags-aware overload, fed from "LSTRAJ02"'s
+     * per-record flags (bit 0 = untracked, bit 1 = the incoming segment is a
+     * blind jump). An UNTRACKED pose's position is the tracker's held guess —
+     * it is dropped, and the drop is carried forward as a bridge into the next
+     * kept vertex, so a 6-7 s freeze renders as one translucent red bridge
+     * instead of a knot of frozen points and a confident teleport line.
+     * `flags == null` (an "LSTRAJ01" file, or a caller with no verdicts) keeps
+     * the round-16 behaviour: every vertex tracked, stated rather than guessed.
+     */
+    fun fromPoses(
+        xyzIn: FloatArray,
+        flags: IntArray?,
+        count: Int,
+        strideM: Float = DEFAULT_STRIDE_M,
+    ): Ribbon {
         val n = count.coerceAtMost(xyzIn.size / 3)
         if (n < 2) return EMPTY
+        fun untracked(i: Int) = flags != null && i < flags.size && (flags[i] and 1) != 0
+        fun jumpIn(i: Int) = flags != null && i < flags.size && (flags[i] and 2) != 0
         val keptX = ArrayList<Float>(n)
         val keptY = ArrayList<Float>(n)
         val keptZ = ArrayList<Float>(n)
-        var lastX = xyzIn[0]
-        var lastY = xyzIn[1]
-        var lastZ = xyzIn[2]
-        keptX.add(lastX); keptY.add(lastY); keptZ.add(lastZ)
-        for (i in 1 until n) {
+        val keptJump = ArrayList<Boolean>(n)
+        var lastX = Float.NaN
+        var lastY = 0f
+        var lastZ = 0f
+        var pendingJump = false
+        for (i in 0 until n) {
             val x = xyzIn[i * 3]
             val y = xyzIn[i * 3 + 1]
             val z = xyzIn[i * 3 + 2]
+            if (jumpIn(i)) pendingJump = true
             if (!x.isFinite() || !y.isFinite() || !z.isFinite()) continue
+            if (untracked(i)) continue
             val dx = x - lastX
             val dy = y - lastY
             val dz = z - lastZ
             // The LAST pose is always kept, below, so the end marker really is
             // the end of the walk and not the last point that happened to clear
             // the stride.
-            if (dx * dx + dy * dy + dz * dz < strideM * strideM) continue
+            if (!lastX.isNaN() && dx * dx + dy * dy + dz * dz < strideM * strideM &&
+                !pendingJump
+            ) {
+                continue
+            }
             keptX.add(x); keptY.add(y); keptZ.add(z)
+            keptJump.add(pendingJump && keptX.size > 1)
+            pendingJump = false
             lastX = x; lastY = y; lastZ = z
         }
-        val lastIdx = (n - 1) * 3
-        if (keptX.size < 2 ||
-            keptX.last() != xyzIn[lastIdx] ||
-            keptY.last() != xyzIn[lastIdx + 1] ||
-            keptZ.last() != xyzIn[lastIdx + 2]
-        ) {
-            keptX.add(xyzIn[lastIdx])
-            keptY.add(xyzIn[lastIdx + 1])
-            keptZ.add(xyzIn[lastIdx + 2])
+        // Keep the true end of the walk (the last TRACKED pose when flags are
+        // present), so the end marker is the walk's end, not the last point
+        // that happened to clear the stride.
+        var endIdx = -1
+        for (i in n - 1 downTo 0) {
+            if (!untracked(i)) { endIdx = i; break }
+        }
+        if (endIdx >= 0) {
+            val ex = xyzIn[endIdx * 3]
+            val ey = xyzIn[endIdx * 3 + 1]
+            val ez = xyzIn[endIdx * 3 + 2]
+            if (keptX.isEmpty() || keptX.last() != ex || keptY.last() != ey || keptZ.last() != ez) {
+                keptX.add(ex); keptY.add(ey); keptZ.add(ez)
+                keptJump.add(pendingJump && keptX.size > 1)
+            }
         }
         val m = keptX.size
         if (m < 2) return EMPTY
@@ -166,12 +225,7 @@ object TrajectoryRibbon {
             xyz[i * 3] = keptX[i]
             xyz[i * 3 + 1] = keptY[i]
             xyz[i * 3 + 2] = keptZ[i]
-            // A sealed container's pose stream carries `tracking_lost` too, but
-            // the engine's trajectory export does not surface it yet, so every
-            // vertex here is treated as tracked. Stated rather than guessed:
-            // colouring a stretch red on no evidence would be worse than not
-            // colouring it.
-            rgba[i] = colorAt(i, m, tracking = true)
+            rgba[i] = if (keptJump[i]) BRIDGE else colorAt(i, m, tracking = true)
         }
         return Ribbon(xyz, rgba, m)
     }

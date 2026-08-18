@@ -329,6 +329,17 @@ class CaptureArController(
     @Volatile
     var onSectionBreak: ((com.lidarscan.core.capture.PoseSectionBreak, Boolean) -> Unit)? = null
 
+    /**
+     * ROUND 18 item 70 — fired once per tracking-loss transition with ARCore's
+     * own [com.google.ar.core.TrackingFailureReason] name. The failure reason
+     * has been read on every frame since round 6 and shown transiently as a
+     * hint; it was never RECORDED, so the owner's 6-7 s losses left no record
+     * of what the tracker itself blamed. The capture debug log is where it
+     * goes — measured verdicts only, no guessing (the round-18 owner
+     * correction: the losses were not the low light this round first assumed).
+     */
+    var onTrackingLost: ((String) -> Unit)? = null
+
     /** ROUND 15 item 54. Reset by [resetSections]; read for the seal summary. */
     private val healedBreaks = java.util.concurrent.atomic.AtomicInteger(0)
     private val unhealedBreaks = java.util.concurrent.atomic.AtomicInteger(0)
@@ -880,6 +891,11 @@ class CaptureArController(
 
         val previousTracking = wasTracking
         wasTracking = tracking
+        if (previousTracking && !tracking) {
+            // ROUND 18 item 70: record what ARCore blames, at the moment it
+            // says so — the reason is only meaningful while tracking is lost.
+            runCatching { onTrackingLost?.invoke(camera.trackingFailureReason.name) }
+        }
 
         val handle = engineHandle
         var pushed = _status.value.posesPushed

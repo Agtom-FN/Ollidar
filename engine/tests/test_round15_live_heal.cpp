@@ -705,7 +705,12 @@ TEST_CASE("round16/reprocess_writes_the_corrected_trajectory_beside_the_cloud") 
   CHECK(bytes[4] == 'A');
   CHECK(bytes[5] == 'J');
   CHECK(bytes[6] == '0');
-  CHECK(bytes[7] == '1');
+  // ROUND 18 item 70: "LSTRAJ02" — each record grew a u32 of flags (bit 0
+  // untracked, bit 1 the incoming segment is a blind jump), because a
+  // trajectory file that cannot say "the tracker was blind here" drew the
+  // owner's 6-7 s freezes as walked lines. The count and the xyz layout are
+  // unchanged; the record is 16 bytes now.
+  CHECK(bytes[7] == '2');
   const std::uint32_t n = static_cast<std::uint32_t>(bytes[8]) |
                           (static_cast<std::uint32_t>(bytes[9]) << 8) |
                           (static_cast<std::uint32_t>(bytes[10]) << 16) |
@@ -714,7 +719,7 @@ TEST_CASE("round16/reprocess_writes_the_corrected_trajectory_beside_the_cloud") 
   // The length is exactly the header plus three float32 per pose — nothing
   // padded, nothing truncated, which is what the phone-side reader will check
   // before it trusts a byte of it.
-  CHECK(bytes.size() == 16u + static_cast<std::size_t>(n) * 12u);
+  CHECK(bytes.size() == 16u + static_cast<std::size_t>(n) * 16u);
 
   // ...and the points are finite, in metres, and inside the fixture's room
   // rather than at the origin. A file full of zeroes would pass every check
@@ -723,7 +728,7 @@ TEST_CASE("round16/reprocess_writes_the_corrected_trajectory_beside_the_cloud") 
   float first[3] = {0.f, 0.f, 0.f};
   for (std::uint32_t i = 0; i < n; ++i) {
     float xyz[3];
-    std::memcpy(xyz, bytes.data() + 16u + static_cast<std::size_t>(i) * 12u, 12u);
+    std::memcpy(xyz, bytes.data() + 16u + static_cast<std::size_t>(i) * 16u, 12u);
     for (int k = 0; k < 3; ++k) {
       REQUIRE(std::isfinite(xyz[k]));
       CHECK(std::fabs(xyz[k]) < 1000.0f);
@@ -738,6 +743,17 @@ TEST_CASE("round16/reprocess_writes_the_corrected_trajectory_beside_the_cloud") 
     span = std::max(span, std::sqrt(d));
   }
   CHECK(span > 0.10);
+
+  // ROUND 18 item 70: the fixture walk never loses tracking and never jumps,
+  // so every record's flags must be zero — a clean walk stays a clean line.
+  for (std::uint32_t i = 0; i < n; ++i) {
+    const unsigned char* rec = bytes.data() + 16u + static_cast<std::size_t>(i) * 16u;
+    const std::uint32_t flags = static_cast<std::uint32_t>(rec[12]) |
+                                (static_cast<std::uint32_t>(rec[13]) << 8) |
+                                (static_cast<std::uint32_t>(rec[14]) << 16) |
+                                (static_cast<std::uint32_t>(rec[15]) << 24);
+    CHECK(flags == 0u);
+  }
 
   // Idempotent, like everything else in `processed/`: the same container
   // reprocessed twice writes the same bytes.

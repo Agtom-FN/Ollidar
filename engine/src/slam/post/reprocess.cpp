@@ -102,14 +102,60 @@ namespace {
 // same pass. A getter would have had to re-derive it and could disagree.
 //
 // The format is deliberately the dullest thing that works: an 8-byte magic, a
-// little-endian u32 count, a u32 of zero reserved, then `count` records of
-// three little-endian float32 metres. No CRC — this is a derived file whose
-// only reader checks the magic and the count against the file length, and
-// deleting it costs nothing but the line on screen.
+// little-endian u32 count, a u32 of zero reserved, then `count` records. No
+// CRC — this is a derived file whose only reader checks the magic and the
+// count against the file length, and deleting it costs nothing but the line
+// on screen.
+//
+// ROUND 18 item 70 — "LSTRAJ02": each record is now 16 bytes, three
+// little-endian float32 metres plus a u32 of flags. The owner's headline
+// ("the path record seems not so accurate") is in large part poses this file
+// carried WITHOUT their own verdicts: during his 6-7 s tracking losses ARCore
+// freezes (round 17 measured 181 consecutive poses of 0.000 m / 0.00 deg in
+// scan-040) and those frozen poses, plus the teleport at re-acquisition, drew
+// as an ordinary walked line in Review and on the floor plan. The pose stream
+// knows which poses the tracker disowned; this file just never said.
+//
+//   bit 0  UNTRACKED — the tracker disowned this pose (tracking_lost, or
+//          quality 0). Its position is a held guess, not a measurement.
+//   bit 1  JUMP_IN — the SEGMENT from the previous record to this one is not
+//          a walked path: the stream was blind across it (> 150 ms between
+//          poses, i.e. more than four dropped ARCore frames), or it implies
+//          more than PoseSectionTracker's 6 m/s, or it is the re-acquisition
+//          step out of an untracked run. Renderers draw it as a gap or a
+//          flagged bridge, never as a line the operator supposedly walked.
+//
+// Readers that only knew "LSTRAJ01" refuse the new magic and show no path
+// (the round-16 behaviour for a missing file) rather than misreading 16-byte
+// records as 12-byte ones; both in-tree readers (`TrajectoryFile.kt`,
+// `lscan_plan.cpp`) accept both versions.
+inline constexpr std::int64_t kTrajBlindGapNs = 150'000'000;
+inline constexpr double kTrajMaxWalkSpeedMps = 6.0;  // PoseSectionTracker.MAX_SPEED_MPS
+
+bool traj_pose_untracked(const TrajPose& p) { return p.tracking_lost != 0 || p.quality == 0; }
+
+std::uint32_t traj_flags(const std::vector<TrajPose>& traj, std::size_t i) {
+  std::uint32_t flags = 0;
+  if (traj_pose_untracked(traj[i])) flags |= 1u;
+  if (i > 0) {
+    const TrajPose& a = traj[i - 1];
+    const TrajPose& b = traj[i];
+    const std::int64_t dt_ns = b.t_ns - a.t_ns;
+    const double dx = b.p[0] - a.p[0], dy = b.p[1] - a.p[1], dz = b.p[2] - a.p[2];
+    const double d = std::sqrt(dx * dx + dy * dy + dz * dz);
+    const bool blind = dt_ns > kTrajBlindGapNs;
+    const bool impossible =
+        dt_ns > 0 && d / (static_cast<double>(dt_ns) * 1e-9) > kTrajMaxWalkSpeedMps;
+    const bool regain = traj_pose_untracked(a) && !traj_pose_untracked(b);
+    if (blind || impossible || regain) flags |= 2u;
+  }
+  return flags;
+}
+
 void write_trajectory(const std::string& path, const std::vector<TrajPose>& traj) {
   std::FILE* f = std::fopen(path.c_str(), "wb");
   if (f == nullptr) return;
-  const char magic[8] = {'L', 'S', 'T', 'R', 'A', 'J', '0', '1'};
+  const char magic[8] = {'L', 'S', 'T', 'R', 'A', 'J', '0', '2'};
   std::fwrite(magic, 1, sizeof(magic), f);
   const std::uint32_t n = static_cast<std::uint32_t>(traj.size());
   std::uint8_t head[8];
@@ -119,11 +165,17 @@ void write_trajectory(const std::string& path, const std::vector<TrajPose>& traj
   head[3] = static_cast<std::uint8_t>((n >> 24) & 0xFFu);
   head[4] = head[5] = head[6] = head[7] = 0;
   std::fwrite(head, 1, sizeof(head), f);
-  for (const TrajPose& p : traj) {
+  for (std::size_t i = 0; i < traj.size(); ++i) {
+    const TrajPose& p = traj[i];
     const float xyz[3] = {static_cast<float>(p.p[0]), static_cast<float>(p.p[1]),
                           static_cast<float>(p.p[2])};
-    std::uint8_t buf[12];
-    std::memcpy(buf, xyz, sizeof(buf));
+    std::uint8_t buf[16];
+    std::memcpy(buf, xyz, 12);
+    const std::uint32_t flags = traj_flags(traj, i);
+    buf[12] = static_cast<std::uint8_t>(flags & 0xFFu);
+    buf[13] = static_cast<std::uint8_t>((flags >> 8) & 0xFFu);
+    buf[14] = static_cast<std::uint8_t>((flags >> 16) & 0xFFu);
+    buf[15] = static_cast<std::uint8_t>((flags >> 24) & 0xFFu);
     std::fwrite(buf, 1, sizeof(buf), f);
   }
   std::fclose(f);
@@ -204,6 +256,26 @@ void write_sidecar(const std::string& path, const ReprocessReport& r) {
                  static_cast<long long>(x.t_ns), x.jump_translation_m, x.jump_rotation_deg,
                  to_string(x.decision), x.observability, x.mismatch_analytic_m,
                  x.mismatch_refined_m, (i + 1 == s.seams.size()) ? "" : ",");
+  }
+  // ROUND 18 item 68 — the gaps that were EXAMINED and not turned into seams.
+  // Until this round the sidecar carried only the applied corrections, so a
+  // capture like the owner's scan-046 — whose one 6.9 s gap was examined,
+  // measured against the gyro (178.63 deg vs the tracker's 72.28) and
+  // honestly refused — produced a stitch.json indistinguishable from a clean
+  // walk's. The refusals are half the verdict, and the half the operator's
+  // "why does my path look wrong" question actually needs. Additive: every
+  // existing key is unchanged and the app's kotlinx parser ignores unknowns.
+  std::fprintf(f, "  ],\n  \"gapsExamined\": [\n");
+  for (std::size_t i = 0; i < s.gaps_examined.size(); ++i) {
+    const SectionSeam& x = s.gaps_examined[i];
+    std::fprintf(f,
+                 "    {\"tMonoNs\": %lld, \"gapS\": %.3f, \"jumpM\": %.6f, \"jumpDeg\": %.6f, "
+                 "\"gyroDeg\": %.6f, \"residualM\": %.6f, \"residualDeg\": %.6f, "
+                 "\"decision\": \"%s\", \"reason\": \"%s\"}%s\n",
+                 static_cast<long long>(x.t_ns), x.gap_s, x.jump_translation_m,
+                 x.jump_rotation_deg, x.gyro_rotation_deg, x.residual_translation_m,
+                 x.residual_rotation_deg, to_string(x.decision), x.reason,
+                 (i + 1 == s.gaps_examined.size()) ? "" : ",");
   }
   std::fprintf(f, "  ]\n}\n");
   std::fclose(f);

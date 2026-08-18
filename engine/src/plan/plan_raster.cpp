@@ -311,6 +311,7 @@ constexpr Rgb kOpeningWindow{0x1F, 0x8A, 0x6D};
 constexpr Rgb kTrail{0x1E, 0x8C, 0x7F};       // ROUND 16 item 59: the walk
 constexpr Rgb kTrailStart{0x2E, 0xC4, 0xB6};  // ...where it began
 constexpr Rgb kTrailEnd{0xE8, 0x6A, 0x2B};    // ...and where it ended
+constexpr Rgb kTrailBreak{0xC0, 0x3A, 0x3A};  // ROUND 18 item 70: a blind bridge, dashed
 constexpr Rgb kFrame{0x99, 0x99, 0x93};
 
 // The drawing extent, with the tails trimmed.
@@ -536,6 +537,26 @@ Status build_plan_png(const PlanModel& model, const OccupancyGrid* density,
     for (std::size_t i = 1; i < opts.trajectory.size(); ++i) {
       const Vec2& a = opts.trajectory[i - 1];
       const Vec2& c = opts.trajectory[i];
+      // ROUND 18 item 70: a segment the tracker was blind across is a dashed
+      // half-strength bridge, not a walked line. Dashes drawn as short
+      // sub-segments — the canvas has no dash primitive and does not need
+      // one for a straight line.
+      const bool broken =
+          std::find(opts.trajectory_breaks.begin(), opts.trajectory_breaks.end(),
+                    static_cast<std::uint32_t>(i)) != opts.trajectory_breaks.end();
+      if (broken) {
+        const double dx = c.x - a.x, dy = c.y - a.y;
+        const double len = std::sqrt(dx * dx + dy * dy);
+        const double dash_m = 0.10;  // 10 cm on, 10 cm off, at plan scale
+        const int n = std::max(1, static_cast<int>(len / dash_m));
+        for (int k = 0; k < n; k += 2) {
+          const double t0 = static_cast<double>(k) / n;
+          const double t1 = static_cast<double>(std::min(k + 1, n)) / n;
+          cv.line(PX(a.x + dx * t0), PY(a.y + dy * t0), PX(a.x + dx * t1), PY(a.y + dy * t1),
+                  std::max(1.0, opts.trajectory_stroke_px * 0.75), kTrailBreak);
+        }
+        continue;
+      }
       cv.line(PX(a.x), PY(a.y), PX(c.x), PY(c.y),
               std::max(1.0, opts.trajectory_stroke_px), kTrail);
     }

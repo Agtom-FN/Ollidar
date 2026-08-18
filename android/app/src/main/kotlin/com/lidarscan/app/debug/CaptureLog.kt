@@ -140,6 +140,38 @@ class CaptureLog(context: Context) {
     /** True while a capture debug log is open — for the HUD's developer strip. */
     val captureDebugPath: String? get() = synchronized(lock2) { captureSink?.absolutePath }
 
+    // ── ROUND 18 item 71: the sink now outlives the seal (it stays open while
+    // the capture's auto-process runs, because the round-17 close-at-seal rule
+    // meant the log never carried the one verdict the owner's question needed
+    // — what Process decided about his gaps). That opens a race the round-17
+    // shape never had: a NEW capture can begin, repointing the sink at ITS
+    // bundle, while the previous capture's auto-process is still running. The
+    // two methods below are the guard — they write/close ONLY when the open
+    // sink still belongs to the named project, so a late completion can never
+    // scribble another capture's verdicts into the wrong bundle. Monitor locks
+    // are reentrant, so calling debug() under lock2 is safe.
+
+    private fun sinkBelongsTo(projectDir: File): Boolean =
+        captureSink?.absolutePath?.startsWith(projectDir.absolutePath + File.separator) == true
+
+    /** [debug], but only when the open sink belongs to [projectDir]. */
+    fun debugFor(projectDir: File, tag: String, message: String) {
+        synchronized(lock2) {
+            if (!sinkBelongsTo(projectDir)) return
+            debug(tag, message)
+        }
+    }
+
+    /** [endCaptureDebug], but only when the open sink belongs to [projectDir]. */
+    fun endCaptureDebugFor(projectDir: File, footer: String) {
+        synchronized(lock2) {
+            if (!sinkBelongsTo(projectDir)) return
+            debug("capture", footer)
+            captureSink = null
+            captureSinkRotated = null
+        }
+    }
+
     /**
      * Verbose, capture-only, bundle-local. Goes to the open sink and to logcat
      * and to NOTHING else — in particular not to `capture.log`, whose value is
@@ -287,7 +319,11 @@ class CaptureLog(context: Context) {
 
             capture-debug.log is a verbose, human-readable transcript of one
             capture: session lifecycle, pose acceptance, re-anchor decisions,
-            watchdog transitions, operator cues and preset changes.
+            tracking-loss reasons (ARCore's own verdicts), watchdog
+            transitions, operator cues, preset changes, and — since 0.9.3 —
+            the auto-process verdicts for this capture (the log stays open
+            until processing completes; gap-by-gap detail is in
+            processed/stitch.json under "gapsExamined").
 
             It is NOT a recorded stream. It is not chunked, not CRC'd, not
             listed in manifest.json, and NOT part of the replay guarantee:

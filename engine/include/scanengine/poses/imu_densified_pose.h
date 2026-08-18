@@ -127,6 +127,31 @@ struct ImuDensifyConfig {
   // Ring capacity for the IMU samples. 400 Hz * 8 s.
   std::size_t capacity = 3200;
 
+  // ROUND 18 item 68 — how far short of a bridged interval's EDGES the gyro
+  // stream may fall before the bridge refuses.
+  //
+  // Zero would restate the bug this field fixes. On every one of the owner's
+  // 0.9.2 captures the first gyro sample lands 44-70 ms AFTER the first ARCore
+  // pose (SensorManager delivers its first event tens of milliseconds after
+  // registerListener; ARCore was already running), and his 3 AM sessions lost
+  // tracking at capture start, so the bracket's `t0` IS the first pose. The old
+  // rule — the ring must reach within `max_imu_gap_ns` (25 ms) of both ends —
+  // then refused the ENTIRE bridge over a missing 46 ms sliver at the edge of
+  // a 1554 ms window it covered 97% of: scan-053's `refused: no continuous
+  // gyro across the gap` for a 0.010 m / 0.28 deg jump, with the same IMU
+  // stream reporting 22,401 samples at 399.1 Hz.
+  //
+  // 100 ms, deliberately the same span as `GapPolicy::snap_gap_ns`, because it
+  // is the same physical claim: over <=100 ms a walking human's rotation is
+  // bounded by the frame budget round 13 measured (~1 deg), so an uncovered
+  // EDGE slice that short contributes less error than the gyro's own drift
+  // over the window. This tolerance applies to the interval's two edges ONLY
+  // and ONLY through relative_rotation(); a hole in the interior is still a
+  // hole (a stuttering gyro fabricates a shape), and sample_at()'s bracket
+  // densification still requires full coverage — a 33 ms bracket with no
+  // samples must fall back, not integrate nothing and call it a path.
+  std::int64_t bridge_edge_slack_ns = 100'000'000;
+
   // ROUND 17 item 63: where the bias estimate starts. Zero is right for a live
   // session, which has no prior. The OFFLINE gap bridge builds a second source
   // over the whole recorded stream purely to integrate across tracking gaps,
@@ -194,6 +219,17 @@ class ImuDensifiedPoseSource : public PoseInterpolator, public reanchor::GyroBri
   // For the offline path, which knows the whole stream up front.
   std::size_t buffered() const;
 
+  // ROUND 18 item 68 — the ring's contents, oldest first, so a caller that
+  // REBUILDS the densifier (set_imu_extrinsics constructs a new one, because
+  // ImuDensifyConfig is fixed at construction) can carry the samples across.
+  // The samples are raw IMU-frame measurements — `camera_from_imu` is applied
+  // at integration time, not at push time — so they are valid under any
+  // extrinsic. Without this, every sample pushed between start_session() and
+  // the extrinsic application was silently discarded, which shortens the gap
+  // bridge's reach at exactly the start-of-capture moment the owner's
+  // captures break at.
+  void snapshot_ring(std::vector<PhoneImuSample>* out) const;
+
   // ROUND 17 item 63 — the gyro across an ARBITRARY interval, for bridging a
   // TRACKING GAP rather than densifying a bracket.
   //
@@ -210,15 +246,25 @@ class ImuDensifiedPoseSource : public PoseInterpolator, public reanchor::GyroBri
   // fatal (reanchor.h refuses on it — a stuttering gyro fabricates a shape,
   // which is exactly the failure this bridge exists to avoid making).
   //
-  // Returns false when the ring does not straddle the interval at all.
+  // ROUND 18 item 68: the stream may fall short of either EDGE of [t0, t1] by
+  // up to `ImuDensifyConfig::bridge_edge_slack_ns` (see that field for the
+  // owner-capture failure this repairs); the uncovered edge slice is treated
+  // as zero rotation — the snap-gap assumption, applied to a snap-sized
+  // sliver. An interior hole is still a hole.
+  //
+  // Returns false when the ring does not straddle the interval to within that
+  // slack.
   bool relative_rotation(std::int64_t t0, std::int64_t t1, double q_rel[4],
                          double* peak_rate_rad_s, bool* saw_hole) const override;
 
  private:
   // Integrate the bias-corrected gyro from `t0` to `t1`, returning the relative
   // rotation as a quaternion in the CAMERA frame. False when the ring does not
-  // cover [t0, t1] closely enough.
-  bool integrate_(std::int64_t t0, std::int64_t t1, double q_rel[4],
+  // cover [t0, t1] closely enough. `edge_slack_ns` is how far the stream may
+  // fall short of either edge before that refusal (0 for a densification
+  // bracket; `cfg_.bridge_edge_slack_ns` for a gap bridge — see the config
+  // field's comment).
+  bool integrate_(std::int64_t t0, std::int64_t t1, std::int64_t edge_slack_ns, double q_rel[4],
                   double* peak_rate, bool* saw_gap) const;
 
   const PoseInterpolator* base_ = nullptr;

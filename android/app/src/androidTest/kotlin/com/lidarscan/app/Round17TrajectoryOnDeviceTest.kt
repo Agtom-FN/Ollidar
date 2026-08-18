@@ -81,12 +81,15 @@ class Round17TrajectoryOnDeviceTest {
         assertTrue("processed/trajectory.bin was not written", traj.isFile)
 
         // 2. And it is exactly the length the format says: an 8-byte magic, a
-        //    u32 count, a u32 reserved, then 3 floats per pose. If the C++
+        //    u32 count, a u32 reserved, then a record per pose. If the C++
         //    writer and this arithmetic ever disagree, the phone reads garbage
-        //    or nothing — and it would do it silently.
+        //    or nothing — and it would do it silently. ROUND 18 item 70: the
+        //    record grew from 12 to 16 bytes ("LSTRAJ02" — xyz plus a u32 of
+        //    untracked/jump flags, so Review stops drawing the tracker's blind
+        //    stretches as walked lines).
         assertEquals(
             "trajectory.bin length disagrees with the pose count the engine reported",
-            16L + 12L * r.poses,
+            16L + 16L * r.poses,
             traj.length(),
         )
 

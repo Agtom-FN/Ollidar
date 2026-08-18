@@ -232,15 +232,30 @@ class ProcessingRepository(private val scope: CoroutineScope) {
         lscanDir: File,
         refineSeams: Boolean = true,
         onProgress: ((Float) -> Boolean)? = null,
-    ): StitchResult? = runCatching {
-        StitchResult.fromNative(
-            ScanEngineNative.nativeProcReprocessD6(
-                lscanDir.absolutePath,
-                refineSeams,
-                onProgress?.let { cb -> ScanEngineNative.ReprocessProgress { f -> cb(f) } },
-            ),
-        )
-    }.getOrNull()
+    ): StitchResult? =
+        // ROUND 18 item 71 — one reprocess per container at a time, process
+        // wide. The seal's auto-process and an export's ensure-processed can
+        // now both ask for the same directory (the owner's scan-053 was
+        // exported while its auto-process was mid-write, and the bundle
+        // shipped with no trajectory.bin and no map_stitched.bin); two
+        // concurrent writers into one processed/ is a half-written correction
+        // wearing two frames. The second caller waits and then redoes an
+        // idempotent job — waiting IS the "export waits for auto-process"
+        // behaviour, with no new state to keep true.
+        synchronized(reprocessLocks.computeIfAbsent(lscanDir.absolutePath) { Any() }) {
+            runCatching {
+                StitchResult.fromNative(
+                    ScanEngineNative.nativeProcReprocessD6(
+                        lscanDir.absolutePath,
+                        refineSeams,
+                        onProgress?.let { cb -> ScanEngineNative.ReprocessProgress { f -> cb(f) } },
+                    ),
+                )
+            }.getOrNull()
+        }
+
+    private val reprocessLocks =
+        java.util.concurrent.ConcurrentHashMap<String, Any>()
 
     // --- ROUND 15 item 56: the floor plan -----------------------------------
 

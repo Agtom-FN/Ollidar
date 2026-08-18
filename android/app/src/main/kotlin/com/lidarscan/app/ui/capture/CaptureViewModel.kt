@@ -242,6 +242,15 @@ class CaptureViewModel(
     private val logDebug: (String, String) -> Unit = { _, _ -> },
     private val endDebugLog: (String) -> Unit = { },
     /**
+     * ROUND 18 item 71 — the project-guarded variants, for writes that happen
+     * AFTER the seal (auto-process verdicts). The sink now stays open through
+     * auto-process, and a new capture may begin meanwhile; these write/close
+     * only when the sink still belongs to the named bundle, so a late
+     * completion can never scribble into the wrong capture's log.
+     */
+    private val logDebugFor: (java.io.File, String, String) -> Unit = { _, _, _ -> },
+    private val endDebugLogFor: (java.io.File, String) -> Unit = { _, _ -> },
+    /**
      * ROUND 6 (owner items 21 + 22): what this phone can carry. Drives the
      * preset table's per-device numbers and the conservative defaults that
      * replaced 0.2.1's "every control at its maximum".
@@ -1780,14 +1789,36 @@ class CaptureViewModel(
                 // ROUND 8 gate actually judges on.
                 logEvent(
                     LOG_TAG_AR,
-                    "mount re-zero captured: magnitude=%.2fdeg spread=%.2fdeg spreadP90=%.2fdeg samples=%d"
+                    "mount re-zero captured: magnitude=%.2fdeg spread=%.2fdeg spreadP90=%.2fdeg samples=%d accuracyDeg=%s"
                         .format(
                             result.trim.magnitudeDeg,
                             result.trim.spreadDeg,
                             result.trim.spreadP90Deg,
                             result.trim.sampleCount,
+                            result.trim.accuracyDeg?.let { "%.2f".format(it) } ?: "unmeasured",
                         ),
                 )
+                // ROUND 18 item 72 — the acceptance bar and the refine goal,
+                // reconciled. The movement gate (p90 <= 2.50 deg) answers "was
+                // the rig still enough to AVERAGE" and it was right to accept
+                // the owner's 03:15:59 re-zero at spreadP90 2.24. The round-10
+                // refine goal (0.8 deg) is a different claim — the split-half
+                // accuracy of the resulting MEAN — and that capture measured
+                // 1.35 deg, which round 11 puts at ~16 cm of paint error at
+                // 3 m per 1.4 deg. Both bars did their jobs; what was missing
+                // is this sentence, at the moment of acceptance, instead of a
+                // silent seal-time trimAccuracyDeg nobody is looking at yet.
+                if (result.trim.accuracyIsPoor) {
+                    _mountTrimNote.value =
+                        ("Mount reference set, but its measured accuracy is %.2f° — past the %.1f° " +
+                            "goal. It will be used; a longer, stiller hold (tap Re-zero) would " +
+                            "tighten it.")
+                            .format(
+                                result.trim.accuracyDeg ?: 0.0,
+                                com.lidarscan.core.calib.MountTrimRefiner.DEFAULT_TARGET_STABILITY_DEG,
+                            )
+                    _mountTrimNoteIsWarning.value = true
+                }
                 applyMountExtrinsicNow()
                 // A trim taken mid-session belongs to the project being recorded.
                 (_uiState.value as? CaptureUiState.Loaded)?.project?.let { project ->
@@ -2395,22 +2426,44 @@ class CaptureViewModel(
             // different hold lengths are not comparable, which is the whole of
             // ROUND 12's scan-028 finding.
             if (result.trim.qualityRank > trim.qualityRank) {
+                // ROUND 18 item 72 — this line used to print the raw ranks,
+                // and the rank of an UNMEASURED trim is `100 + spreadP90` (the
+                // UNMEASURED_RANK_BASE penalty that makes "measured beats
+                // unmeasured" sortable). The owner's 03:15 field log therefore
+                // read "kept rank=0.78, candidate rank=100.55" — a penalty
+                // constant leaking into a log line as if it were a
+                // measurement, describing a candidate whose one-second window
+                // (31 samples) simply cannot be split-half checked, under a
+                // headline calling it "worse". It was not worse; it was
+                // unverifiable, and the incumbent's 0.78 deg measured accuracy
+                // rightly outranks an unverifiable sample. Say that.
+                val kept = trim.accuracyDeg
+                val cand = result.trim.accuracyDeg
+                val why = when {
+                    cand == null && kept != null ->
+                        "the incumbent's accuracy is MEASURED (split-half %.2f deg) and a one-second start sample cannot be split-half checked — an unverifiable sample never replaces a verified one".format(kept)
+                    cand != null && kept != null ->
+                        "both are measured and the incumbent is better (%.2f deg vs %.2f deg split-half)".format(kept, cand)
+                    else ->
+                        "neither is measured and the incumbent's frame jitter is smaller (p90 %.2f deg vs %.2f deg)".format(trim.spreadP90Deg, result.trim.spreadP90Deg)
+                }
                 logEvent(
                     LOG_TAG_AR,
-                    ("mount trim auto-refresh declined (fresh sample is worse): " +
-                        "kept rank=%.2f (%s), candidate rank=%.2f spreadP90=%.2fdeg samples=%d")
-                        .format(
-                            trim.qualityRank,
-                            provenance.logSuffix,
-                            result.trim.qualityRank,
-                            result.trim.spreadP90Deg,
-                            result.trim.sampleCount,
-                        ),
+                    ("mount trim auto-refresh declined: kept %s — " + why +
+                        ". candidateSpreadP90=%.2fdeg candidateSamples=%d")
+                        .format(provenance.logSuffix, result.trim.spreadP90Deg, result.trim.sampleCount),
                 )
                 _mountTrimNote.value =
-                    "Mount reference is ${provenance.ageLabel}. A fresh sample was taken and was less " +
-                        "steady than the one already set, so the better one was kept — tap Re-zero and " +
-                        "hold still if the bracket has moved."
+                    if (result.trim.accuracyDeg == null && trim.accuracyDeg != null) {
+                        "Mount reference is ${provenance.ageLabel}. A fresh one-second sample was taken " +
+                            "but its accuracy cannot be verified from so short a hold, so the measured " +
+                            "one already set was kept — tap Re-zero and hold still for a few seconds " +
+                            "if the bracket has moved."
+                    } else {
+                        "Mount reference is ${provenance.ageLabel}. A fresh sample was taken and was less " +
+                            "steady than the one already set, so the better one was kept — tap Re-zero and " +
+                            "hold still if the bracket has moved."
+                    }
                 _mountTrimNoteIsWarning.value = true
                 return
             }
@@ -2786,6 +2839,18 @@ class CaptureViewModel(
                 controller.resetSections()
                 _sectionCount.value = 1
                 _unhealedSectionBreaks.value = 0
+                // ROUND 18 item 70 (owner correction): the 3 AM losses were
+                // NOT low light — the owner reports good lighting, and the
+                // bytes say the operator was ~1.0-1.2 m from surfaces with
+                // 63-70 % of returns under 1.5 m at every long loss (round
+                // 13's measured re-anchor diet: close, feature-poor walls).
+                // What the app never recorded is ARCore's OWN verdict, which
+                // it hands over on every lost frame and which nothing
+                // persisted. Into the bundle's debug log, so the next session
+                // needs no guessing.
+                controller.onTrackingLost = { arcoreReason ->
+                    logDebug(LOG_TAG_AR, "tracking lost: arcoreReason=$arcoreReason")
+                }
                 controller.onSectionBreak = { br, healed ->
                     // ROUND 17 items 63 + 66: the re-anchor decision, with the
                     // numbers it was made on, into the bundle's own log. This
@@ -2807,12 +2872,27 @@ class CaptureViewModel(
                     // app already did, and ROUND 13 measured that a cue buzz
                     // is itself capable of causing the next break.
                     if (!healed) _unhealedSectionBreaks.value = controller.unhealedBreakCount
+                    // ROUND 18 item 68: the unhealed arm used to print a
+                    // FABRICATED reason — "(no usable bracket)" — for every
+                    // refusal, including the engine's own verdicts. The
+                    // owner's whole 0.9.2 session read as bracket failures
+                    // when the engine had in fact examined each gap and
+                    // refused it with numbers (or, for scan-053, refused it
+                    // wrongly for want of 46 ms of gyro coverage — a bug this
+                    // line's wording helped hide for a round). Print what the
+                    // engine decided; "no verdict recorded" is the honest
+                    // fallback when the bracket really never reached it.
                     logEvent(
                         LOG_TAG_AR,
                         "SECTION BREAK #${controller.sections.sectionCount() - 1} " +
-                            (if (healed) "HEALED live " else "NOT healed (no usable bracket) ") +
+                            (if (healed) "HEALED live " else "NOT healed ") +
                             "reason=${br.reason} jump=%.3fm/%.2fdeg gapMs=${br.gapMillis} t=${br.tMonoNs}"
-                                .format(br.positionJumpM, br.rotationJumpDeg),
+                                .format(br.positionJumpM, br.rotationJumpDeg) +
+                            if (!healed) {
+                                " :: " + (controller.lastReanchorSummary() ?: "no verdict recorded (bracket never reached the engine)")
+                            } else {
+                                ""
+                            },
                     )
                 }
             }
@@ -3305,6 +3385,8 @@ class CaptureViewModel(
             pointsCaptured = finalStats.pointsCaptured,
             elapsedMillis = finalStats.elapsedMillis,
             pathLengthMeters = trailRecorder.totalPathM.value.toDouble(),
+            // ROUND 18 item 70: the teleports, named and kept out of pathM.
+            jumpLengthMeters = trailRecorder.totalJumpM.value.toDouble(),
             sections = sectionBreaks.size + 1,
             trackingDrops = trackingDrops,
             recordingSizeBytes = finalStats.recordingSizeBytes,
@@ -3358,7 +3440,7 @@ class CaptureViewModel(
             "summary built: headline=${summary.headline} grade=${summary.grade} " +
                 "engineStarted=${summary.engineStarted} " +
                 "worldPoints=${summary.worldPointsResolved} poses=${summary.posesRecorded} " +
-                ("pathM=%.2f".format(summary.pathLengthMeters)),
+                ("pathM=%.2f jumpM=%.2f".format(summary.pathLengthMeters, summary.jumpLengthMeters)),
         )
         // ROUND 13, bug (A)+(B), and they were ONE bug.
         //
@@ -3379,7 +3461,7 @@ class CaptureViewModel(
         logEvent(
             LOG_TAG_SEAL,
             (
-                "summary: grade=%s points=%d durationMs=%d pathM=%.1f poses=%d " +
+                "summary: grade=%s points=%d durationMs=%d pathM=%.1f jumpM=%.1f poses=%d " +
                     "sectionsLive=%d drops=%d " +
                     "ptsPerM=%.0f trimAccuracyDeg=%s loopEndGapM=%s"
             ).format(
@@ -3387,6 +3469,7 @@ class CaptureViewModel(
                 summary.pointsCaptured,
                 summary.elapsedMillis,
                 summary.pathLengthMeters,
+                summary.jumpLengthMeters,
                 summary.posesRecorded ?: -1L,
                 // ROUND 16 item 62: LABELLED `sectionsLive`, because that is
                 // what it is — the count the live break detector arrived at
@@ -3531,13 +3614,26 @@ class CaptureViewModel(
                         ""
                     },
             )
-            // ROUND 17 item 66. Closed AFTER the summary and the seal line, so
-            // both are inside the file, and before the prune below, which may
-            // delete the directory it lives in.
-            endDebugLog(
-                "capture debug log closed — sealed OK, grade=${summary.headline}, " +
-                    "points=${finalStats.pointsCaptured}",
-            )
+            // ROUND 17 item 66 closed the log here, AFTER the summary and the
+            // seal line — and thereby before auto-process, so the file never
+            // carried the offline verdicts. ROUND 18 item 71: the log now
+            // stays open through auto-process for exactly the capture that is
+            // about to run one; scan-053's log would then have carried the
+            // gap verdicts the owner's question needed. A scan about to be
+            // PRUNED still closes here — the directory it lives in is deleted
+            // three lines down.
+            if (pruneEmptyScan) {
+                endDebugLog(
+                    "capture debug log closed — sealed OK (empty, about to be pruned), " +
+                        "grade=${summary.headline}, points=${finalStats.pointsCaptured}",
+                )
+            } else {
+                logDebug(
+                    LOG_TAG_SEAL,
+                    "sealed OK, grade=${summary.headline}, points=${finalStats.pointsCaptured} — " +
+                        "log stays open for this capture's auto-process verdicts",
+                )
+            }
         }
         // ROUND 9 (item 33): the prune itself, after the seal has been written
         // and read back — so the capture log still carries the full `sealed OK …
@@ -3741,6 +3837,13 @@ class CaptureViewModel(
                                     "trajectory to resolve against"
                         } + " (Process would fail for the same reason)",
                 )
+                // ROUND 18 item 71: nothing more will be decided about this
+                // capture, so the log closes here with the refusal inside it.
+                endDebugLogFor(
+                    verified.directory,
+                    "capture debug log closed — auto-process refused before starting: " +
+                        (_autoProcess.value.blocked ?: "no reason recorded"),
+                )
             } else if (autoProcessPlan(sectionBreaks.size + 1, mountWarned)) {
                 startAutoProcess(activeId, verified.directory, sectionBreaks.size + 1)
             } else {
@@ -3845,6 +3948,15 @@ class CaptureViewModel(
                     "auto-process FAILED for $projectId — the scan is saved and untouched; " +
                         "open it and tap Process",
                 )
+                // ROUND 18 item 71: the failure is a verdict too, and the
+                // bundle's own log is where the person who exports this scan
+                // will look for it. Guarded close — a newer capture may own
+                // the sink by now.
+                endDebugLogFor(
+                    directory,
+                    "capture debug log closed — auto-process FAILED (ran=${result?.ran ?: false}); " +
+                        "raw streams intact, Process can be retried from Review",
+                )
                 return@launch
             }
             _autoProcess.value = _autoProcess.value.copy(
@@ -3859,6 +3971,21 @@ class CaptureViewModel(
                     "selfCheckMeasurable=${result.selfCheck?.measurable} " +
                     ("selfCheckCm=%.2f".format((result.selfCheck?.offsetMeters ?: 0.0) * 100)),
             )
+            // ROUND 18 item 71: the offline verdicts, into the bundle's own
+            // log, then close. `processed/stitch.json` beside this file has
+            // the full record (including the round-18 `gapsExamined` array —
+            // every blind gap the stitcher measured and what it decided);
+            // this line is the summary a person greps for.
+            logDebugFor(
+                directory,
+                LOG_TAG_SEAL,
+                "auto-process verdicts: sectionsProcessed=${result.sections} " +
+                    "refined=${result.seamsRefined} " +
+                    "selfCheckMeasurable=${result.selfCheck?.measurable} " +
+                    ("selfCheckCm=%.2f".format((result.selfCheck?.offsetMeters ?: 0.0) * 100)) +
+                    " — gap-by-gap detail in processed/stitch.json (gapsExamined)",
+            )
+            endDebugLogFor(directory, "capture debug log closed — auto-process complete")
         }
     }
 

@@ -1156,9 +1156,15 @@ SCAN_API scan_error_t scan_engine_push_imu(scan_engine* engine, int64_t t_mono_n
  * but it distorts the interpolated path between them, which is the whole value
  * being added. Non-finite or zero-norm is SCAN_ERR_INVALID_ARGUMENT.
  *
- * Applying it REBUILDS the densifier, dropping its buffered samples and its
- * estimated gyro bias, so call it once during setup — before
- * scan_engine_start() — exactly like the mount extrinsic. */
+ * Applying it REBUILDS the densifier. ROUND 18: the buffered IMU samples are
+ * CARRIED ACROSS the rebuild — they are raw sensor-frame measurements and the
+ * extrinsic is applied at integration time, so they are valid under the new
+ * value, and dropping them shortened the tracking-gap bridge's reach by
+ * exactly the samples pushed before the app applied the extrinsic (~24 ms
+ * after start on the owner's captures, and the whole preview on a future
+ * caller). The estimated gyro bias is still reset — it was learned under the
+ * old extrinsic. Call it once during setup, before scan_engine_start(),
+ * exactly like the mount extrinsic. */
 SCAN_API scan_error_t scan_engine_set_imu_extrinsics(scan_engine* engine,
                                                      const double quat_xyzw[4]);
 
