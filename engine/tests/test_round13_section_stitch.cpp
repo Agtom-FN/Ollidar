@@ -93,7 +93,7 @@ void paint(const std::vector<TrajPose>& poses, std::vector<PointVertex>* pts,
 // Re-express every pose and point from index `first` onward in a NEW world
 // frame, i.e. exactly what ARCore does when it re-anchors: apply T to the
 // poses, and to the points those poses painted.
-void reanchor(std::vector<TrajPose>* poses, std::vector<PointVertex>* pts,
+void apply_reanchor(std::vector<TrajPose>* poses, std::vector<PointVertex>* pts,
               std::vector<std::int64_t>* times, std::size_t first, const double T[16]) {
   const std::int64_t t_at = (*poses)[first].t_ns;
   for (std::size_t i = first; i < poses->size(); ++i) {
@@ -176,7 +176,7 @@ TEST_CASE("round13/stitch/one re-anchor is undone to the millimetre") {
     const double t[3] = {0.62, 0.05, -0.63};
     se3::mat4_from_quat_pos(q, t, T);
   }
-  reanchor(&poses, &pts, &times, 100, T);
+  apply_reanchor(&poses, &pts, &times, 100, T);
   CHECK(max_error(truth, pts) > 0.5);  // the capture really is broken
 
   SectionStitchConfig cfg;
@@ -231,7 +231,7 @@ TEST_CASE("round13/stitch/four re-anchors compose in the right order") {
     quat_from_yaw(yaw[k] * M_PI / 180.0, q);
     const double t[3] = {tx[k], 0.03 * (k + 1), -tx[k] * 0.8};
     se3::mat4_from_quat_pos(q, t, T);
-    reanchor(&poses, &pts, &times, 100 * static_cast<std::size_t>(k + 1), T);
+    apply_reanchor(&poses, &pts, &times, 100 * static_cast<std::size_t>(k + 1), T);
     for (int i = 0; i < 16; ++i) Ts.push_back(T[i]);
   }
 
@@ -320,7 +320,7 @@ TEST_CASE("round13/stitch/the answer does not depend on the order points arrive 
   quat_from_yaw(9.0 * M_PI / 180.0, q);
   const double t[3] = {0.5, 0.02, -0.4};
   se3::mat4_from_quat_pos(q, t, T);
-  reanchor(&poses, &pts, &times, 150, T);
+  apply_reanchor(&poses, &pts, &times, 150, T);
 
   SectionCorrection c1, c2;
   const SectionStitchReport r1 = stitch_sections(

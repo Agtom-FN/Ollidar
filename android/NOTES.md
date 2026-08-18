@@ -8656,3 +8656,257 @@ the trajectory crosses as a file and the loop-end closer is inside
   healing wants one real-Pixel re-anchor walk, `planSlice` only in the Options
   fold, the Mid-360 ABI rewire (needs hardware), `restoreOrphaned()`.
 * Nothing was run on kc-m4; macOS/desktop untouched. No commit, no push.
+
+---
+
+## ROUND 17 — THE HEAL WAS RIGHT FOR 33 ms AND WRONG FOR SIX SECONDS; START WAS ONE PRESS TOO MANY; AND THE PATH WAS BUILT AND NEVER PUBLISHED
+
+Owner's 0.9.1 field session, `lidarscan-capture-log-2026-08-19-0038.txt`:
+
+> *"the scan is not good. the shift of my position shifted quite a lot. my path
+> not show in the point cloud. its just a 2d map of my path."*
+
+Three sentences, three separate bugs. `docs/design/REVIEW_FEEDBACK.md` items
+**63–67** carry the derivations; this is what changed and what was measured.
+
+### 63 — THE SIX BLIND SECONDS (the headline)
+
+`scan-040`, one line of its seal log: `HEALED live jump=0.678m/66.21deg
+**gapMs=6065**`.
+
+Round 13 wrote `T_k = pose_after · pose_before⁻¹` and wrote its own assumption
+beside it — *the operator's own motion during the **33 ms** gap is inside T_k
+too, but the gyro bounds it at ~1 deg*. Every break it measured was one ARCore
+frame wide. Round 15 then applied that transform live, to whatever bracket the
+detector handed over, and scan-040's bracket was **6.065 seconds** wide.
+
+Measured on his bytes, against his own 399.2 Hz gyro:
+
+| | |
+|---|---|
+| ARCore, last tracked → first re-acquired | 66.21° |
+| gyro, integrated over the same 6.065 s | **144.94°** raw / **142.75°** bias-corrected |
+| ARCore's own motion during the loss (181 poses) | 0.00° / 0.000 m |
+
+ARCore **froze** — 181 consecutive poses identical to the last good one, which
+a phone in a walking hand does not do. The 66.21° is the leftover of a 145°
+turn the tracker only saw the end of, and applying it rotated his whole map.
+That is "the shift of my position shifted quite a lot", in our arithmetic.
+
+The gyro is good over exactly this span. Re-measured against ARCore over every
+clean 1 s window of all three captures: median **0.109° / 0.152° / 0.465°**, p90
+**0.363° / 0.494° / 0.711°** (040/041/042) — round 14's 0.221° p90, confirmed on
+three more captures.
+
+**`engine/include/scanengine/poses/reanchor.h`** — predict, then heal only the
+residual. `q_pred = q_before · q_gyro`; translation is **bounded, not
+predicted** (`1.8 m/s × gap + 0.30 m`, and only the excess beyond it is charged
+to the frame — on scan-040 the bound is 11.2 m against 0.678 m claimed, so the
+translation correction is exactly zero). Gated:
+
+| gap | verdict |
+|---|---|
+| ≤ 100 ms | `snap` — round 13's transform, bit-identical |
+| bridged, residual ≥ 1 cm or 0.25° | `bridged` |
+| bridged, residual below that | `negligible` — the jump was the operator; **no cue** |
+| no continuous gyro / > 8 s / residual > 25° or > 2 m | refused |
+
+**scan-040 refuses at a 76.77° residual** (78.91° if the gyro bias is left in —
+the engine unit test pins that one, the production path prints the corrected
+one; the verdict is the same either way). Every re-anchor round 13 measured was
+8–14°; ARCore correcting itself by 79° against its own session map is not a
+thing that happens, nothing in the container can say what did, and a refusal
+with a recorded seam is the honest answer.
+
+One policy, two callers — `core/engine.cpp` (live, gyro from the densifier's
+8 s ring) and `slam/post/section_stitch.cpp` (offline, over a kept copy of the
+whole stream). Item 62's lesson about two detectors applies twice as hard to two
+decisions.
+
+**The offline detector was blind too, and this is new.** It derived seams from
+RATES, and 0.678 m over 6.065 s is 0.11 m/s — under every threshold. So Process
+found **one section** in a capture with a 66° fold in it. A run of poses the
+tracker disowned between two it owned is now a candidate on its own. And the
+**ruler votes last**, exactly like item 60's seventh gate: scan-041's 468 ms gap
+proposes a defensible 14.18° correction that makes the map worse (self-check
+2.86 → 3.39 cm, flat-floor wander 0.50 → 0.79 m), and the surfaces refuse it.
+
+Through `engine_cli --d6-reprocess`, before → after:
+
+| scan | sections | self-check | extents | outcome |
+|---|---|---|---|---|
+| 040 | 1 → 1 | 2.64 → **2.64 cm** | 0.134 m vert, 4.182 m end gap — unchanged | gap **named**, refused |
+| 041 | 2 → 2 | 2.86 → **2.86 cm** | 0.496→0.811 m — unchanged | bridge refused by the ruler (25.29 vs 24.48 cm) |
+| 042 | 1 → 1 | 3.54 → **3.54 cm** | unchanged | one negligible (5.72° gyro vs 5.70° tracker), one thin-submap |
+
+**Every offline number is identical to round 16's, deliberately.** Offline
+gained a diagnosis, not a change — a correction nobody can check is the thing
+item 63 exists to stop applying. What the container says now that it never said:
+`longest blind stretch 6.065 s; 1 gap(s) refused`. The LIVE pass is where the
+behaviour changed, and it is the change he asked for.
+
+New engine surface: `ImuDensifiedPoseSource::relative_rotation()` (a public door
+onto the existing integrator, with no `max_bracket_ns` ceiling — that ceiling is
+about distributing a closing error, and a prediction has no far end to close
+against), `reanchor::GyroBridge`, `SectionStitchReport::gaps_examined`, and
+`engine_cli --d6-stitch` now prints every gap it looked at.
+
+**ABI 11 → 12, additive.** `scan_engine_last_reanchor()` +
+`scan_gap_verdict_str()` + `scan_reanchor_info` + `scan_gap_verdict`. Nothing
+existing changed size, order or meaning; an ABI-11 consumer relinks unmodified
+and gets the fix. The new symbols only let it SAY why —
+`heal_live_frame` returns a `Status`, and a `Status` cannot carry "the gyro says
+he turned 145 degrees while the tracker was frozen and I am not rotating your
+room on that evidence".
+
+### 64 — TWO STARTS, ONE PROJECT (scan-045)
+
+`startCapture()` had **no re-entry guard at all** — no `captureState` check, no
+disabled button — and the round-12 tracking gate holds a press for four to
+eight seconds during which nothing on screen changed, because `_startWarmup`
+was computed and rendered **nowhere** (8 hits, all inside `CaptureViewModel`).
+A button that does not respond gets pressed again.
+
+The second press fell through both `if (!startPending)` blocks and started the
+capture, orphaning the first press's `startGateJob` (cancelled only when a NEW
+gate opens). Four seconds later the orphan re-entered `startCapture()`
+mid-recording and ran `resetPoseCounters()`, `resetWorldFrame()` — rebuilding
+the live ARCore session mid-walk — and `trailRecorder.clear()` **before** the
+engine refused it with `invalid state`.
+
+`trailRecorder.clear()` is `pathM=0.0`, and that did not merely lose a number:
+round 14's `isFromTheSpot` reads "≥ 20 s and < 5 m" as a deliberate sweep and
+grades on points per SECOND, which 55,228 returns over 28 s passes easily. One
+section, no drops, 225 poses (so round 16's zero-pose check could not fire) →
+**GOOD SCAN**, on a bundle with no `map.bin` and no `processed/`.
+
+Fixed in three places: an `AtomicBoolean` claimed by the first press and held
+across the gate wait; a `starting` flow the transport button renders (dimmed,
+inert, spinner, "Starting — waiting for tracking"); and two new `ScanSummary`
+fields ranked **above** everything else — `engineStarted` (what
+`scan_engine_start` answered) and `worldPointsResolved` (read off
+`streams/map.bin` at 16 B per `PointVertex` — **the file, not a counter**,
+because a counter is exactly what got reset). Headlines "NOT RECORDED" and "NO
+ROOM — NOTHING WAS PLACED"; auto-process now names which of the three reasons it
+refused for.
+
+Both fields nullable, and **the `?:` that is not there is the point** — round
+16's rule, and it caught the same mistake within the hour: four round-15 unit
+tests run with no AR controller and therefore no pushbroom writing `map.bin`,
+and reading its absence as zero made every one of them "NO ROOM".
+
+### 65 — THE PATH WAS BUILT AND NEVER PUBLISHED
+
+Round 16 built all of it: the metric flow, its accessor, `TrajectoryRibbon`,
+`trail.mat`, a `LINE_STRIP` drawn in the **same 3D pass** as the points with the
+same depth state, `TrajectoryFile`, `ReviewViewModel.loadTrajectory`. And
+published `_worldPoints` from `setCapacity()` and `clear()` **and nowhere else**.
+`setCapacity()` runs when the performance preset changes, so the live ribbon
+held whatever the walk looked like when a preset was last touched — the empty
+list, on every real capture. The bird's-eye tile, published two lines away in
+the same method, kept updating.
+
+*"its just a 2d map of my path"* is a precise bug report. One assignment.
+
+It had no test because everything it lived in took a `com.google.ar.core.Frame`,
+so `onPose(x, y, z, tracking)` is split out of `onFrame` and five bare-JVM tests
+walk it. Two things beside it:
+
+* **Review said nothing when there was no path** — `EMPTY` removed the entity
+  from the scene in silence, which is indistinguishable from a broken renderer,
+  and **every container processed by a pre-round-16 engine is in that state**
+  (which is every scan the owner already owns). There is now a line under the
+  toggle saying which it is.
+* **The device path had never been asserted** — the round-16 commit touched zero
+  files under `src/androidTest/`. `Round17TrajectoryOnDeviceTest` drives the real
+  `libscanengine_jni.so` over staged scan-030 bytes and checks the engine writes
+  the file, that its length is exactly `16 + 12 × poses`, that the phone's own
+  independent decoder yields ≥ 2 finite vertices with real extent, and that a
+  second Process does not corrupt it.
+
+### 66 — A DEBUG LOG THAT TRAVELS WITH THE SCAN
+
+`<proj>.lscan/debug/capture-debug.log`, plus a `README.txt` beside it. Carries
+every `[ar]`/`[session]`/`[seal]`/`[net]` line **plus** capture-only verbose
+events — re-anchor decisions with item 63's six numbers via the new ABI-12 call,
+pose acceptance, watchdog transitions, cues, preset changes.
+
+Opened **before** the engine start, so a capture whose engine refuses still
+leaves a bundle that says why (the scan-045 case). Closed on both seal arms,
+before the empty-scan prune that may delete the directory it lives in. 5 MB × 2
+files.
+
+**Explicitly not a stream, and the README says so in the bundle**: not chunked,
+not CRC'd, not in the manifest, not part of the replay guarantee.
+`record/replay` walks `streams/`, so byte-identical replay is untouched — which
+is what lets the log be as verbose as it likes.
+
+Developer Mode = seven taps on the version footer (which already had a stable
+test tag and an unused `clickable` import).
+
+### 67 — CAMERA HONESTY, AND ONE REAL LEAK
+
+Audited every path that can touch an ARCore image. The GL background renderer is
+GPU-only (no `glReadPixels`/`PixelCopy`/`MediaCodec` anywhere in `app/` or
+`core/`); the calibration wizard takes the **luma plane only** into a heap array
+and closes the image immediately; no engine code writes an image file; **no
+chunk type can carry image bytes** (`kCameraFrameIndex` is path + pose +
+intrinsics + timestamp).
+
+**One real leak.** `CaptureViewModel` gated the UI flow with
+`FeatureFlags.COLORIZE_ENABLED` and then called `setEnabled(...)` on the line
+below **without** it, at two sites. Three presets set `keyframesEnabled = true`
+and the preset picker is reachable **during a recording**, so changing preset
+mid-walk re-armed the recorder and wrote `streams/frames/kf_*.jpg` while the
+HUD, reading the correctly-gated flow, reported keyframes as off. Both sites now
+pass the gated flow — and `KeyframeRecorder` defaults to `false` and enforces
+the flag **at the source**, so with colorization off no argument to
+`setEnabled()` turns the camera writer on. That makes the class of bug
+impossible rather than fixed twice. `recorder.start()` is likewise no longer
+called, so no empty `streams/frames/` appears in a bundle.
+
+The sentence, now on the capture sheet and in a Settings section of its own:
+**"Camera is used for position tracking only — no images are saved."**
+
+### TESTS AND VERSION
+
+Engine **616 cases / 2,515,610 assertions**, ctest **7/7** serial. `:core`
+**560**, `:app` **99**, emulator **22/22** on `b4_test` with the native library
+rebuilt from this round's engine sources (verified: the round-17 refusal string
+is present in both the arm64-v8a and x86_64 `libscanengine_jni.so` the test APK
+shipped). ABI **11 → 12**, additive only. Replay bit-identical: all three owner
+captures reprocess to the same self-check to two decimals (2.64 / 2.86 / 3.54
+cm) and the round-11/12/13/15/16 fixtures are unmoved. VERSION **0.9.2**.
+
+### BACKLOG
+
+* **scan-040's 76.77° is refused, not explained.** Something made ARCore report
+  a pose 77° away from where the gyro says the operator was, and nothing in the
+  container says what. The next real-Pixel session should reproduce a long
+  tracking loss deliberately (cover the lens for five seconds mid-walk) and see
+  whether the residual is repeatable — if it is, the tracker restarted its frame
+  and there is a bigger correction available; if it is not, refusing is the
+  permanent answer.
+* **The refused gap is a hole in the map that nobody has closed.** scan-040's
+  two halves are 66° apart and the offline pass now says so instead of
+  pretending otherwise. Closing it needs lidar-to-lidar registration across the
+  seam, gyro-constrained — the same project scan-039's rescue needs, and the
+  same one item 60's null space keeps pointing at.
+* **`CaptureViewModel.displayParams` synthesizes rather than loads.** It builds
+  a fresh `DisplayParams` from five live controls, so `showTrajectory` is a
+  constant `true` in the live view and Review's toggle never reaches it —
+  contradicting its own KDoc — and every field outside the five-way `combine`
+  (`showPoseGraph`, `edlEnabled`, the clip fields, `fixQualityColors`) is reset
+  to the data-class default when a project is created. Benign today because the
+  defaults are what everyone wants; a lossy round trip either way. This is item
+  61's "two display panels" backlog entry wearing a different hat.
+* **`syncTrail` consumes `trailDirty` before its null guard** on
+  `trailMaterialInstance` (`PointCloudRenderer.kt`). Cannot fire today because
+  the material loads before the first frame callback; the flag is on the wrong
+  side of the guard regardless.
+* Unchanged from round 16: the pose race is hardened not reproduced (wants a
+  Pixel session with `framesYielded=`), loop-end fires on one capture in six,
+  scan-039 is rescuable-later, room polygons, floor-map thickness assumed,
+  `planSlice` only in the Options fold, the Mid-360 ABI rewire (needs hardware),
+  `restoreOrphaned()`.
+* Nothing was run on kc-m4; macOS/desktop untouched. No commit, no push.

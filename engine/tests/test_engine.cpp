@@ -227,7 +227,7 @@ TEST_CASE("engine/create_starts_idle_and_reports_a_version") {
   //    (scan_lscan_floor_plan + scan_plan_options/_result). Additive: ABI 10's
   //    scan_reprocess_options and scan_reprocess_result are byte-identical,
   //    which is exactly why the ruler arrives on a NEW entry point.
-  CHECK(kEngineAbiVersion == 11);
+  CHECK(kEngineAbiVersion == 12);
 }
 
 TEST_CASE("engine/session_transitions_are_enforced_and_announced") {

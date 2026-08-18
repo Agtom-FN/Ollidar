@@ -167,6 +167,15 @@ class SettingsViewModel(
         viewModelScope.launch { settingsRepository.setKeepEmptyScans(keep) }
     }
 
+    /** ROUND 17 item 66: the seven-tap unlock, and its one setting. */
+    fun setDeveloperMode(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setDeveloperMode(enabled) }
+    }
+
+    fun setCaptureDebugLog(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setCaptureDebugLog(enabled) }
+    }
+
     /** ROUND 11 (owner item 43). */
     fun setOperatorCuesEnabled(enabled: Boolean) {
         viewModelScope.launch { settingsRepository.setOperatorCuesEnabled(enabled) }

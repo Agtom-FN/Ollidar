@@ -38,6 +38,7 @@ import com.lidarscan.app.ui.components.Hint
 import com.lidarscan.app.ui.components.PrimaryPill
 import com.lidarscan.app.ui.components.ScanDims
 import com.lidarscan.app.ui.components.SegmentedPill
+import com.lidarscan.app.ui.components.SheetNote
 import com.lidarscan.app.ui.components.SheetRowLabel
 import com.lidarscan.app.ui.components.SheetSection
 import com.lidarscan.app.ui.components.SheetSlider
@@ -254,6 +255,23 @@ fun CaptureSettingsSheet(
                 // Hidden, not disabled: a dimmed switch invites the question
                 // "why can't I turn that on", and the answer is "there is
                 // nothing on the other side of it right now".
+                // ROUND 17 item 67 — the sentence the operator is owed.
+                //
+                // The app asks for CAMERA permission and holds the camera open
+                // for the whole of every walk, because ARCore's visual-inertial
+                // odometry IS the camera; that is what puts each lidar return
+                // somewhere. Nothing in the app said so, and an app that keeps
+                // your camera on for eighty seconds in your own home and does
+                // not explain itself has earned the suspicion. Audited in
+                // ROUND 17: with colorization off, no frame is acquired,
+                // encoded or written by any path (KeyframeRecorder refuses at
+                // the source), so this line is true unconditionally.
+                if (!com.lidarscan.core.FeatureFlags.COLORIZE_ENABLED) {
+                    SheetNote(
+                        "Camera is used for position tracking only — no images are saved.",
+                        modifier = Modifier.testTag("cameraHonestyNote"),
+                    )
+                }
                 if (com.lidarscan.core.FeatureFlags.COLORIZE_ENABLED) {
                     SheetSwitchRow(
                         title = "Camera keyframes",

@@ -152,6 +152,11 @@ const char* to_string(SeamDecision d) {
     case SeamDecision::kNotConverged: return "not-converged";
     case SeamDecision::kRefinementTooBig: return "refinement-too-big";
     case SeamDecision::kMapGotWorse: return "map-got-worse";
+    case SeamDecision::kBridged: return "gyro-bridged";
+    case SeamDecision::kGapRefusedNoGyro: return "gap-refused-no-gyro";
+    case SeamDecision::kGapRefusedTooLong: return "gap-refused-too-long";
+    case SeamDecision::kGapRefusedDisagree: return "gap-refused-gyro-disagrees";
+    case SeamDecision::kGapNegligible: return "gap-negligible";
   }
   return "unknown";
 }
@@ -230,11 +235,18 @@ SectionStitchReport stitch_sections(const std::vector<TrajPose>& poses,
 
   // --- 1. derive the seams from the pose stream ------------------------------
   //
-  // Exactly PoseSectionTracker's rule: a step no person could take, or a turn
-  // no hand could make, between two consecutive poses.
-  for (std::size_t i = 1; i < poses.size(); ++i) {
-    const double dt_s = static_cast<double>(poses[i].t_ns - poses[i - 1].t_ns) * 1e-9;
-    if (!(dt_s > cfg.min_dt_s)) continue;
+  // Two rules, and ROUND 17 added the second one.
+  //
+  //  (a) PoseSectionTracker's: a step no person could take, or a turn no hand
+  //      could make, between two CONSECUTIVE poses.
+  //  (b) A run of poses the tracker DISOWNED, between two it owned. A rate
+  //      cannot see this — the owner's scan-040 crossed 6.065 s of blindness
+  //      at 0.11 m/s — and it is the case that broke his capture.
+  //
+  // Both hand the pair to reanchor::resolve_reanchor(), which is also what the
+  // live healer calls, so the phone and Process cannot decide differently.
+  std::size_t last_good = poses.size();  // = "none yet"
+  for (std::size_t i = 0; i < poses.size(); ++i) {
     // A pose the tracker disowned is not a world frame, so the step into or
     // out of one is not a re-anchor. The owner's scan-030 opens with 14 poses
     // at exactly the origin carrying quality 0 / tracking_lost 1; counting
@@ -242,35 +254,192 @@ SectionStitchReport stitch_sections(const std::vector<TrajPose>& poses,
     // change and, measurably, makes the stitched map worse. The Android
     // PoseSectionTracker is fed only tracking poses, so this also keeps the
     // two detectors agreeing on the same capture.
-    if (poses[i].tracking_lost != 0 || poses[i - 1].tracking_lost != 0) continue;
-    if (poses[i].quality == 0 || poses[i - 1].quality == 0) continue;
-    const double dx = poses[i].p[0] - poses[i - 1].p[0];
-    const double dy = poses[i].p[1] - poses[i - 1].p[1];
-    const double dz = poses[i].p[2] - poses[i - 1].p[2];
+    if (poses[i].tracking_lost != 0 || poses[i].quality == 0) continue;
+    const std::size_t j = last_good;
+    last_good = i;
+    if (j >= poses.size()) continue;
+
+    const double dt_s = static_cast<double>(poses[i].t_ns - poses[j].t_ns) * 1e-9;
+    if (!(dt_s > cfg.min_dt_s)) continue;
+    // Poses the tracker disowned sat between these two, or it stopped
+    // reporting altogether. Either way it was blind, and for how long is the
+    // only thing that decides how the jump may be read.
+    const bool blind = (i != j + 1) ||
+                       (poses[i].t_ns - poses[j].t_ns) > cfg.gap.snap_gap_ns;
+    if (blind) rep.longest_gap_s = std::max(rep.longest_gap_s, dt_s);
+
+    const double dx = poses[i].p[0] - poses[j].p[0];
+    const double dy = poses[i].p[1] - poses[j].p[1];
+    const double dz = poses[i].p[2] - poses[j].p[2];
     const double d = std::sqrt(dx * dx + dy * dy + dz * dz);
     double ra[9], rb[9];
-    se3::quat_to_matrix(poses[i - 1].q, ra);
+    se3::quat_to_matrix(poses[j].q, ra);
     se3::quat_to_matrix(poses[i].q, rb);
     const double rot_deg = se3::rot_angle_deg(ra, rb);
-    if (d / dt_s <= cfg.max_speed_mps && rot_deg / dt_s <= cfg.max_turn_rate_deg_s) continue;
+
+    // The RATE rule is about two poses the tracker delivered back to back. It
+    // is deliberately NOT applied across a blind stretch: dividing a jump by
+    // six seconds of blindness yields a walking pace and says nothing, and
+    // dividing it by 33 ms would be a different capture's arithmetic. ROUND 13
+    // reached the same place by only ever looking at `i` and `i - 1`; this
+    // spells it out because the loop now also looks further back.
+    const bool impossible =
+        (i == j + 1) &&
+        (d / dt_s > cfg.max_speed_mps || rot_deg / dt_s > cfg.max_turn_rate_deg_s);
+    const bool long_gap = cfg.bridge_long_gaps && blind &&
+                          (poses[i].t_ns - poses[j].t_ns) > cfg.gap.snap_gap_ns;
+    if (!impossible && !long_gap) continue;
 
     SectionSeam s;
-    s.index = rep.seams.size();
-    s.pose_before = i - 1;
+    s.pose_before = j;
     s.pose_after = i;
     s.t_ns = poses[i].t_ns;
     s.gap_s = dt_s;
     s.jump_translation_m = d;
     s.jump_rotation_deg = rot_deg;
-    // T_k = pose_after * pose_before^-1, in the world frame.
-    double ma[16], mb[16], mbi[16];
-    se3::mat4_from_quat_pos(poses[i].q, poses[i].p, ma);
-    se3::mat4_from_quat_pos(poses[i - 1].q, poses[i - 1].p, mb);
-    se3::mat4_inverse_rigid(mb, mbi);
-    se3::mat4_mul(ma, mbi, s.analytic);
-    s.reason = "ARCore re-anchored; frame change taken from the pose jump";
+
+    // The gyro, when the caller brought one. A short gap does not need it and
+    // resolve_reanchor() will not look at it.
+    double q_gyro[4] = {0, 0, 0, 1};
+    bool have_gyro = false;
+    bool gyro_hole = false;
+    if (cfg.gyro != nullptr) {
+      double peak = 0.0;
+      have_gyro = cfg.gyro->relative_rotation(poses[j].t_ns, poses[i].t_ns, q_gyro, &peak,
+                                              &gyro_hole);
+    }
+    const reanchor::GapResult g = reanchor::resolve_reanchor(
+        poses[j].q, poses[j].p, poses[j].t_ns, poses[i].q, poses[i].p, poses[i].t_ns,
+        have_gyro ? q_gyro : nullptr, gyro_hole, cfg.gap);
+    s.gyro_rotation_deg = g.gyro_rotation_deg;
+    s.residual_translation_m = g.residual_translation_m;
+    s.residual_rotation_deg = g.residual_rotation_deg;
+    s.reason = g.reason;
+
+    if (!reanchor::applies(g.verdict)) {
+      switch (g.verdict) {
+        case reanchor::GapVerdict::kNegligible: s.decision = SeamDecision::kGapNegligible; break;
+        case reanchor::GapVerdict::kRefusedNoGyro:
+          s.decision = SeamDecision::kGapRefusedNoGyro;
+          break;
+        case reanchor::GapVerdict::kRefusedTooLong:
+          s.decision = SeamDecision::kGapRefusedTooLong;
+          break;
+        default: s.decision = SeamDecision::kGapRefusedDisagree; break;
+      }
+      if (s.decision != SeamDecision::kGapNegligible) ++rep.gaps_refused;
+      // NOT a seam. There is no correction to apply, so splitting the cloud
+      // here would only hand the refinement a rotation nobody vouched for —
+      // which is the whole failure item 63 is about. It is reported instead.
+      s.index = rep.gaps_examined.size();
+      rep.gaps_examined.push_back(s);
+      SCAN_LOG_WARN(kMod,
+                    "gap at %.3f s of blindness: tracker says %.3f m / %.2f deg, gyro says "
+                    "%.2f deg, residual %.3f m / %.2f deg — %s",
+                    dt_s, d, rot_deg, g.gyro_rotation_deg, g.residual_translation_m,
+                    g.residual_rotation_deg, g.reason);
+      continue;
+    }
+
+    s.index = rep.seams.size();
+    for (int k = 0; k < 16; ++k) s.analytic[k] = g.correction[k];
+    if (g.verdict == reanchor::GapVerdict::kBridged) {
+      // NOT recorded in `gaps_examined` yet: step 1b may still take it away,
+      // and a gap that appears twice under two verdicts is a report that
+      // cannot be read. Whichever decision survives is the one recorded.
+      s.decision = SeamDecision::kBridged;
+    } else {
+      s.decision = SeamDecision::kAnalytic;
+      s.reason = "ARCore re-anchored; frame change taken from the pose jump";
+    }
     rep.seams.push_back(s);
   }
+  // --- 1b. ROUND 17: a BRIDGED seam must earn its place, and the ruler is the
+  //         referee -----------------------------------------------------------
+  //
+  // ROUND 16's loop-end closure ends with a seventh gate for a reason worth
+  // restating: six gates can all pass while the number the operator is shown
+  // gets worse, and the ruler votes last. The same applies here, and the
+  // owner's scan-041 is the case that proved it — a 468 ms gap where the gyro
+  // says the phone turned 13.90 deg and the tracker says 0.78, so the bridge
+  // proposes a 14.18 deg frame correction that is entirely defensible from the
+  // pose stream and that makes the map measurably worse (self-check 2.86 ->
+  // 3.39 cm, trajectory vertical wander 0.50 -> 0.79 m on a flat floor).
+  //
+  // A short SNAP is not gated: ROUND 13 proved its direction against gravity
+  // across five captures and its assumption (nobody moves in 33 ms) is not in
+  // doubt. What is in doubt is a correction derived from six seconds of
+  // inference, and that one has to show its work: does putting section k
+  // through T_k bring the two sides of the seam CLOSER than leaving it alone?
+  // If not, the pose stream and the gyro have told a story the surfaces do not
+  // support, and the surfaces win.
+  if (!rep.seams.empty() && cloud.size() > 0 && cloud.size() == point_times.size()) {
+    const std::int64_t half_ns = static_cast<std::int64_t>(cfg.submap_half_window_s * 1e9);
+    std::vector<SectionSeam> kept;
+    kept.reserve(rep.seams.size());
+    for (SectionSeam& seam : rep.seams) {
+      if (seam.decision != SeamDecision::kBridged) {
+        kept.push_back(seam);
+        continue;
+      }
+      // Whatever this loop decides, the gap is reported — the surviving
+      // verdict, once, which is what makes the list readable.
+      const std::int64_t t = seam.t_ns;
+      std::vector<PointVertex> raw = window_points(cloud, point_times, t - half_ns, t,
+                                                   cfg.max_submap_points);
+      std::vector<PointVertex> tgt = window_points(cloud, point_times, t, t + half_ns,
+                                                   cfg.max_submap_points);
+      if (raw.size() < cfg.min_submap_points || tgt.size() < cfg.min_submap_points) {
+        // Nothing to weigh it with. A correction nobody can check is exactly
+        // the kind item 63 stopped applying.
+        seam.decision = SeamDecision::kThinSubmap;
+        seam.reason = "too few points either side of the gap to check the bridged correction";
+        ++rep.gaps_refused;
+        rep.gaps_examined.push_back(seam);
+        continue;
+      }
+      std::vector<PointVertex> moved = raw;
+      for (PointVertex& v : moved) {
+        const double in[3] = {v.x, v.y, v.z};
+        double o[3];
+        se3::mat4_apply(seam.analytic, in, o);
+        v.x = static_cast<float>(o[0]);
+        v.y = static_cast<float>(o[1]);
+        v.z = static_cast<float>(o[2]);
+      }
+      detail::PointIndex ti;
+      ti.build(&tgt[0].x, 4, tgt.size(), cfg.max_correspondence_m);
+      const double zero[3] = {0, 0, 0};
+      std::size_t p_leave = 0, p_apply = 0;
+      const double leave = mean_nn(ti, raw, zero, cfg.max_correspondence_m, &p_leave);
+      const double apply = mean_nn(ti, moved, zero, cfg.max_correspondence_m, &p_apply);
+      seam.mismatch_analytic_m = leave;
+      seam.mismatch_refined_m = apply;
+      seam.pairs = p_apply;
+      if (p_apply >= cfg.min_pairs && apply < leave) {
+        rep.gaps_examined.push_back(seam);
+        kept.push_back(seam);
+        continue;
+      }
+      {
+        seam.decision = SeamDecision::kMapGotWorse;
+        seam.reason =
+            "the gyro-bridged correction does not bring the two sides of the gap closer; "
+            "the frame is left alone and the seam is recorded";
+        ++rep.gaps_refused;
+        rep.gaps_examined.push_back(seam);
+        SCAN_LOG_WARN(kMod,
+                      "gap at %.3f s: bridged correction refused by the ruler — across-seam "
+                      "mismatch %.2f cm applied vs %.2f cm left alone",
+                      seam.gap_s, apply * 100.0, leave * 100.0);
+      }
+    }
+    if (kept.size() != rep.seams.size()) {
+      rep.seams = kept;
+      for (std::size_t k = 0; k < rep.seams.size(); ++k) rep.seams[k].index = k;
+    }
+  }
+
   rep.sections = rep.seams.size() + 1;
   if (rep.seams.empty()) {
     rep.summary = "one section — nothing to stitch";

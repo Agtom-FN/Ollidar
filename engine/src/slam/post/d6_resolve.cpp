@@ -298,6 +298,19 @@ struct D6ResolvePipeline::Impl {
   std::unique_ptr<ImuDensifiedPoseSource> densified;
   std::unique_ptr<D6PushbroomAssembler> assembler;
 
+  // ROUND 17 item 63. `densified`'s ring is 8 s deep by design — it exists to
+  // bridge 33 ms brackets, and a ring that held a whole capture would be a
+  // megabyte of cache miss on the hot path. Bridging a TRACKING GAP asks the
+  // same integrator a question about a moment that may be minutes in the past,
+  // so the gap bridge gets its own source over a kept copy of the stream,
+  // built once after the decode and thrown away with the run. Kept only when
+  // stitching will actually ask (12.8 KB per second of capture).
+  std::vector<PhoneImuSample> imu_kept;
+  std::unique_ptr<ImuDensifiedPoseSource> gap_gyro;
+  // The config `densified` was built with, so the gap bridge can be built with
+  // the same extrinsic and the same hole tolerance.
+  ImuDensifyConfig densified_cfg{};
+
   // ROUND 11 item 41. Owned when the caller did not supply its own sinks, so
   // that `close_loops` works without the caller having to know it needs them.
   std::vector<TrajPose> traj_own;
@@ -458,6 +471,7 @@ Status D6ResolvePipeline::run(const std::string& lscan_dir) {
       s.stats.imu_extrinsics_from_manifest = true;
     }
   }
+  s.densified_cfg = icfg;
   s.densified = std::make_unique<ImuDensifiedPoseSource>(s.poses.get(), icfg);
 
   // --- ROUND 11 item 41: the sinks loop closure needs -----------------------
@@ -577,6 +591,7 @@ Status D6ResolvePipeline::run(const std::string& lscan_dir) {
           smp.accel_m_s2[i] = rec.accel_m_s2[i];
         }
         if (s.densified->push_imu(smp)) ++s.stats.imu_accepted;
+        if (s.cfg.stitch_sections && s.cfg.sections.bridge_long_gaps) s.imu_kept.push_back(smp);
       }
     } else if (h.type == lscan::ChunkType::kD6Raw) {
       ++s.stats.lidar_chunks;
@@ -639,10 +654,24 @@ Status D6ResolvePipeline::run(const std::string& lscan_dir) {
                     cloud.size(), s.times->size());
       s.stats.sections.summary = "the cloud and its per-point timestamps disagree in length";
     } else {
+      // ROUND 17 item 63: the gyro, over the WHOLE stream, so a gap in the
+      // first minute can still be asked about in the last. Seeded with the
+      // bias the resolve just measured rather than zero — that estimate is the
+      // only calibration this capture will ever get.
+      SectionStitchConfig scfg = s.cfg.sections;
+      if (scfg.bridge_long_gaps && scfg.gyro == nullptr && !s.imu_kept.empty()) {
+        ImuDensifyConfig gcfg = s.densified_cfg;
+        gcfg.capacity = s.imu_kept.size();
+        const ImuDensifyStats ist = s.densified->stats();
+        for (int i = 0; i < 3; ++i) gcfg.initial_bias_rad_s[i] = ist.bias_rad_s[i];
+        s.gap_gyro = std::make_unique<ImuDensifiedPoseSource>(nullptr, gcfg);
+        for (const PhoneImuSample& smp : s.imu_kept) (void)s.gap_gyro->push_imu(smp);
+        scfg.gyro = s.gap_gyro.get();
+      }
       SectionCorrection corr;
       s.stats.sections = stitch_sections(
           *s.traj, Span<const PointVertex>(cloud.data(), cloud.size()),
-          Span<const std::int64_t>(s.times->data(), s.times->size()), s.cfg.sections, &corr);
+          Span<const std::int64_t>(s.times->data(), s.times->size()), scfg, &corr);
       if (corr.active()) {
         std::size_t k = 0;
         for (const PageId id : ids) {

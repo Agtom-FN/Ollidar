@@ -79,6 +79,7 @@
 
 #include "scanengine/core/types.h"
 #include "scanengine/poses/pose_interpolator.h"
+#include "scanengine/poses/reanchor.h"
 #include "scanengine/poses/se3.h"
 
 namespace scanengine {
@@ -125,6 +126,14 @@ struct ImuDensifyConfig {
 
   // Ring capacity for the IMU samples. 400 Hz * 8 s.
   std::size_t capacity = 3200;
+
+  // ROUND 17 item 63: where the bias estimate starts. Zero is right for a live
+  // session, which has no prior. The OFFLINE gap bridge builds a second source
+  // over the whole recorded stream purely to integrate across tracking gaps,
+  // and that one should start from the bias the resolve already measured
+  // rather than re-learn it from scratch on a path that never calls
+  // sample_at().
+  double initial_bias_rad_s[3] = {0.0, 0.0, 0.0};
 };
 
 struct ImuDensifyStats {
@@ -168,7 +177,7 @@ struct PhoneImuSample {
 //
 // Thread-safety mirrors `ExternalPoseSource`: `push_imu()` may be called from
 // the sensor thread while `sample_at()` runs on the lidar thread.
-class ImuDensifiedPoseSource : public PoseInterpolator {
+class ImuDensifiedPoseSource : public PoseInterpolator, public reanchor::GyroBridge {
  public:
   ImuDensifiedPoseSource(const PoseInterpolator* base, const ImuDensifyConfig& cfg = {});
 
@@ -184,6 +193,26 @@ class ImuDensifiedPoseSource : public PoseInterpolator {
 
   // For the offline path, which knows the whole stream up front.
   std::size_t buffered() const;
+
+  // ROUND 17 item 63 — the gyro across an ARBITRARY interval, for bridging a
+  // TRACKING GAP rather than densifying a bracket.
+  //
+  // `sample_at()` refuses a bracket longer than `max_bracket_ns` (200 ms) and
+  // it is right to: past that, distributing the closing error linearly stops
+  // being a good model of a pose. This is a different question. There is no
+  // closing error here, because there is no trusted pose at the far end — that
+  // is the whole point. What comes back is a PREDICTION to be differenced
+  // against whatever the tracker eventually reports, so the only thing that
+  // has to hold is that the ring actually covers [t0, t1] without a hole.
+  //
+  // `*saw_hole` is set when a step inside the interval exceeded
+  // `ImuDensifyConfig::max_imu_gap_ns`; the caller decides whether that is
+  // fatal (reanchor.h refuses on it — a stuttering gyro fabricates a shape,
+  // which is exactly the failure this bridge exists to avoid making).
+  //
+  // Returns false when the ring does not straddle the interval at all.
+  bool relative_rotation(std::int64_t t0, std::int64_t t1, double q_rel[4],
+                         double* peak_rate_rad_s, bool* saw_hole) const override;
 
  private:
   // Integrate the bias-corrected gyro from `t0` to `t1`, returning the relative

@@ -619,6 +619,20 @@ private fun DisplayPanel(state: ReviewUiState, vm: ReviewViewModel) {
         ) { on ->
             vm.updateDisplay { it.copy(showTrajectory = on) }
         }
+        // ROUND 17 item 65: and when there is no path, say so. A missing
+        // trajectory used to remove the entity from the scene in silence,
+        // which is indistinguishable from a broken renderer.
+        val trajectoryNote by vm.trajectoryNote.collectAsStateWithLifecycle()
+        trajectoryNote?.let { note ->
+            Text(
+                note,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline,
+                modifier = Modifier
+                    .padding(horizontal = 4.dp, vertical = 6.dp)
+                    .testTag("trajectoryNote"),
+            )
+        }
 
         TextButton(onClick = vm::resetToProfileDefault) { Text("Reset to this project's profile defaults") }
     }

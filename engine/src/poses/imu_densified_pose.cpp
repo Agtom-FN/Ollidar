@@ -19,6 +19,7 @@ ImuDensifiedPoseSource::ImuDensifiedPoseSource(const PoseInterpolator* base,
     : base_(base), cfg_(cfg) {
   ring_.resize(cfg_.capacity > 0 ? cfg_.capacity : 1);
   se3::quat_normalize(cfg_.camera_from_imu);
+  for (int i = 0; i < 3; ++i) bias_[i] = cfg_.initial_bias_rad_s[i];
 }
 
 bool ImuDensifiedPoseSource::push_imu(const PhoneImuSample& s) {
@@ -46,7 +47,7 @@ void ImuDensifiedPoseSource::reset() {
   head_ = 0;
   size_ = 0;
   last_t_ns_ = 0;
-  bias_[0] = bias_[1] = bias_[2] = 0.0;
+  for (int i = 0; i < 3; ++i) bias_[i] = cfg_.initial_bias_rad_s[i];
   stats_ = ImuDensifyStats{};
   closing_sum_deg_ = 0.0;
   closing_n_ = 0;
@@ -144,6 +145,20 @@ bool ImuDensifiedPoseSource::integrate_(std::int64_t t0, std::int64_t t1, double
   se3::quat_mul(tmp, c_conj, out);
   for (int i = 0; i < 4; ++i) q_rel[i] = out[i];
   return true;
+}
+
+// ROUND 17 item 63. A thin public door onto integrate_ — same arithmetic, same
+// ring, same bias, no bracket-length ceiling. See the header for why the
+// ceiling does not apply to a prediction.
+bool ImuDensifiedPoseSource::relative_rotation(std::int64_t t0, std::int64_t t1, double q_rel[4],
+                                               double* peak_rate_rad_s, bool* saw_hole) const {
+  double peak = 0.0;
+  bool hole = false;
+  std::lock_guard<std::mutex> lk(m_);
+  const bool ok = integrate_(t0, t1, q_rel, &peak, &hole);
+  if (peak_rate_rad_s != nullptr) *peak_rate_rad_s = peak;
+  if (saw_hole != nullptr) *saw_hole = hole;
+  return ok;
 }
 
 PoseSample ImuDensifiedPoseSource::sample_at(std::int64_t t_mono_ns) const {

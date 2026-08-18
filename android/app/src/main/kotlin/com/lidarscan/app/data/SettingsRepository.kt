@@ -61,6 +61,12 @@ class SettingsRepository(private val context: Context) {
         /** ROUND 9 (item 33): keep 0-point scans instead of pruning them. Default false. */
         val KEEP_EMPTY_SCANS = booleanPreferencesKey("keep_empty_scans")
 
+        /** ROUND 17 (item 66): the seven-tap developer unlock. Default false. */
+        val DEVELOPER_MODE = booleanPreferencesKey("developer_mode")
+
+        /** ROUND 17 (item 66): the per-capture debug log. Default true, but gated by DEVELOPER_MODE. */
+        val CAPTURE_DEBUG_LOG = booleanPreferencesKey("capture_debug_log")
+
         /** ROUND 11 (item 43): haptic + audio operator cues. Unset means ON. */
         val OPERATOR_CUES = booleanPreferencesKey("operator_cues_enabled")
         val DND_DURING_CAPTURE = booleanPreferencesKey("dnd_during_capture")
@@ -105,6 +111,10 @@ class SettingsRepository(private val context: Context) {
             // ROUND 9 (item 33): the default IS the fix — an unset preference
             // means empty scans are pruned.
             keepEmptyScans = prefs[Keys.KEEP_EMPTY_SCANS] ?: false,
+            // ROUND 17 (item 66): unset means locked, which is the whole point
+            // of a gesture-unlocked section.
+            developerMode = prefs[Keys.DEVELOPER_MODE] ?: false,
+            captureDebugLog = prefs[Keys.CAPTURE_DEBUG_LOG] ?: true,
             // ROUND 11 (item 43): default ON, so an unset preference buzzes.
             operatorCuesEnabled = prefs[Keys.OPERATOR_CUES] ?: true,
             dndDuringCapture = prefs[Keys.DND_DURING_CAPTURE] ?: true,
@@ -223,6 +233,16 @@ class SettingsRepository(private val context: Context) {
     /** ROUND 9 (item 33): see [AppSettings.keepEmptyScans]. */
     suspend fun setKeepEmptyScans(keep: Boolean) {
         context.settingsDataStore.edit { it[Keys.KEEP_EMPTY_SCANS] = keep }
+    }
+
+    /** ROUND 17 (item 66): see [AppSettings.developerMode]. */
+    suspend fun setDeveloperMode(enabled: Boolean) {
+        context.settingsDataStore.edit { it[Keys.DEVELOPER_MODE] = enabled }
+    }
+
+    /** ROUND 17 (item 66): see [AppSettings.captureDebugLog]. */
+    suspend fun setCaptureDebugLog(enabled: Boolean) {
+        context.settingsDataStore.edit { it[Keys.CAPTURE_DEBUG_LOG] = enabled }
     }
 
     /** ROUND 11 (item 43). */

@@ -348,6 +348,23 @@ class CaptureArController(
     }
 
     /**
+     * ROUND 17 item 63 — one sentence about the last re-anchor decision, for
+     * the capture debug log. Null when nothing has been decided this session or
+     * the engine is not attached.
+     */
+    fun lastReanchorSummary(): String? {
+        val handle = engineHandle
+        if (handle == 0L) return null
+        val v = runCatching { ScanEngineNative.nativeLastReanchor(handle) }.getOrNull() ?: return null
+        if (v.size < 10 || v[0] == 0.0) return null
+        return ("verdict=%s gapS=%.3f reported=%.3fm/%.2fdeg gyro=%.2fdeg " +
+            "residual=%.3fm/%.2fdeg walkBound=%.2fm gyroUsed=%s").format(
+            ScanEngineNative.GapVerdict.name(v[1].toInt()),
+            v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9] != 0.0,
+        )
+    }
+
+    /**
      * Returns true when the engine accepted the correction. False means the
      * bracket could not define a rigid transform — a pose the tracker
      * disowned, a degenerate rotation, two poses with the same stamp — and

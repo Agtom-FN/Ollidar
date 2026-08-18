@@ -194,6 +194,41 @@ object ScanEngineNative {
     /** `[applied, refused, active, translationM, rotationDeg]`, or null on a bad handle. */
     external fun nativeLiveHealStats(handle: Long): DoubleArray?
 
+    // --- ROUND 17 item 63 (ABI 12): the re-anchor VERDICT --------------------
+    //
+    // [nativeHealLiveFrame] answers yes or no. Since ROUND 17 the interesting
+    // captures are the ones it says no to, and "no" on its own is not a
+    // diagnosis: the owner's scan-040 was refused because the tracker was blind
+    // for 6.065 s and came back 66.21 deg from where it let go, while the
+    // phone's own gyro says he turned 144.94 deg in the same six seconds. Those
+    // are the numbers a field log needs, and this is where they come from.
+    //
+    // `[valid, verdict, gapS, reportedM, reportedDeg, gyroDeg, residualM,
+    //   residualDeg, walkBoundM, gyroUsed]`. Null on a bad handle.
+    external fun nativeLastReanchor(handle: Long): DoubleArray?
+
+    /** Mirrors `scan_gap_verdict` (`engine/capi/scanengine_c.h`, ABI 12). */
+    object GapVerdict {
+        const val SNAP = 0
+        const val BRIDGED = 1
+        const val NEGLIGIBLE = 2
+        const val REFUSED_NO_GYRO = 3
+        const val REFUSED_TOO_LONG = 4
+        const val REFUSED_DISAGREE = 5
+        const val REFUSED_DEGENERATE = 6
+
+        fun name(v: Int): String = when (v) {
+            SNAP -> "snap"
+            BRIDGED -> "gyro-bridged"
+            NEGLIGIBLE -> "negligible (the jump was the operator)"
+            REFUSED_NO_GYRO -> "refused: no continuous gyro across the gap"
+            REFUSED_TOO_LONG -> "refused: blind for longer than the gyro is trusted"
+            REFUSED_DISAGREE -> "refused: the gyro and the tracker disagree"
+            REFUSED_DEGENERATE -> "refused: not a usable pose pair"
+            else -> "unknown($v)"
+        }
+    }
+
     // --- ROUND 9 (owner item 35): the phone's own IMU, in --------------------
     //
     // "lidar data and the imu position data need sync the frequency." ARCore

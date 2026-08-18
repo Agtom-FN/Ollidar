@@ -141,6 +141,8 @@ fun SettingsRoute(
         emptyScanCount = emptyScanCount,
         emptyScanNote = emptyScanNote,
         onKeepEmptyScansChange = viewModel::setKeepEmptyScans,
+        onDeveloperModeChange = viewModel::setDeveloperMode,
+        onCaptureDebugLogChange = viewModel::setCaptureDebugLog,
         onOperatorCuesChange = viewModel::setOperatorCuesEnabled,
         onDndDuringCaptureChange = viewModel::setDndDuringCapture,
         dndAccessGranted = dndAccessGranted,
@@ -194,6 +196,9 @@ fun SettingsScreen(
     /** What the last "clean up empty scans" actually did. */
     emptyScanNote: String? = null,
     onKeepEmptyScansChange: (Boolean) -> Unit = {},
+    /** ROUND 17 item 66: the seven-tap unlock and the one thing behind it. */
+    onDeveloperModeChange: (Boolean) -> Unit = {},
+    onCaptureDebugLogChange: (Boolean) -> Unit = {},
     onOperatorCuesChange: (Boolean) -> Unit = {},
     onDndDuringCaptureChange: (Boolean) -> Unit = {},
     /**
@@ -432,18 +437,85 @@ fun SettingsScreen(
             }
         }
 
+        // ── ROUND 17 item 67: the camera sentence ───────────────────────────
+        //
+        // The app holds the rear camera open for every second of every walk,
+        // because ARCore's visual-inertial odometry is what places each lidar
+        // return. Nothing anywhere told the operator that, and the one place
+        // the camera WAS mentioned — the profile reference card — said "no
+        // camera", which is true about storage and false about the lens.
+        //
+        // Audited in ROUND 17 across every path that can touch an ARCore image
+        // (KeyframeRecorder, the calibration wizard, the GL background
+        // renderer, the C++ colorizer and the container's chunk types). With
+        // colorization off, no frame is acquired, encoded or written by any of
+        // them, and KeyframeRecorder now refuses at the source rather than
+        // relying on its callers.
+        SettingsSection("Camera") {
+            ScanCard {
+                CardTitle("Camera is used for position tracking only")
+                Hint(
+                    "No images are saved. The rear camera runs for the whole of a scan because " +
+                        "that is what tells the app where the sensor is — every lidar return is " +
+                        "placed using it. The frames go to the tracker and nowhere else: nothing " +
+                        "is written to the scan file, nothing is kept in the app, and nothing " +
+                        "leaves the phone.",
+                    modifier = Modifier.testTag("cameraHonestyCard"),
+                )
+            }
+        }
+
+        // ── ROUND 17 item 66: Developer Mode ────────────────────────────────
+        if (settings.developerMode) {
+            SettingsSection("Developer") {
+                ScanCard {
+                    ScanSwitchRow(
+                        title = "Per-capture debug log",
+                        detail = "Writes debug/capture-debug.log inside each scan's own .lscan " +
+                            "bundle: session lifecycle, pose acceptance, re-anchor decisions " +
+                            "with their numbers, watchdog transitions, cues and preset changes. " +
+                            "It travels with the scan, so a bundle you send is the whole story. " +
+                            "Capped at 5 MB; not a recorded stream and not part of the replay " +
+                            "guarantee.",
+                        checked = settings.captureDebugLog,
+                        onCheckedChange = onCaptureDebugLogChange,
+                        modifier = Modifier.testTag("captureDebugLogRow"),
+                    )
+                    Hint("Tap the version line below seven times again to lock this away.")
+                }
+            }
+        }
+
         Spacer(Modifier.height(16.dp))
+        // ROUND 17 item 66: seven taps on the version line unlocks the
+        // Developer section. Android's own idiom, used for its own reason — a
+        // setting nobody can reach by accident needs no warning beside it. The
+        // counter is remembered against `developerMode` so re-locking starts
+        // the count over rather than re-unlocking on the next single tap.
+        var versionTaps by remember(settings.developerMode) { mutableStateOf(0) }
         Text(
             "LidarScan v${com.lidarscan.app.BuildConfig.VERSION_NAME} " +
-                "(build ${com.lidarscan.app.BuildConfig.VERSION_CODE})",
+                "(build ${com.lidarscan.app.BuildConfig.VERSION_CODE})" +
+                if (settings.developerMode) "  ·  developer" else "",
             style = MonoLabel,
             color = MaterialTheme.colorScheme.outline,
-            modifier = Modifier.testTag("app_version_footer"),
+            modifier = Modifier
+                .testTag("app_version_footer")
+                .clickable {
+                    versionTaps += 1
+                    if (versionTaps >= DEVELOPER_UNLOCK_TAPS) {
+                        versionTaps = 0
+                        onDeveloperModeChange(!settings.developerMode)
+                    }
+                },
         )
 
         Spacer(Modifier.height(ScanDims.TabBarClearance))
     }
 }
+
+/** ROUND 17 item 66: Android's own number, for Android's own reason. */
+private const val DEVELOPER_UNLOCK_TAPS = 7
 
 /** A mono, uppercase, ember-tinted section rule + its content. */
 @Composable

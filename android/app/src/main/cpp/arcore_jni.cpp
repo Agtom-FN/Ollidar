@@ -176,6 +176,37 @@ Java_com_lidarscan_app_engine_ScanEngineNative_nativeLiveHealStats(JNIEnv* env, 
   return out;
 }
 
+// ROUND 17 item 63 (ABI 12): why the last heal was applied, or refused.
+//
+// `[valid, verdict, gapS, reportedM, reportedDeg, gyroDeg, residualM,
+//   residualDeg, walkBoundM, gyroUsed]` — ten slots, in that order, and the
+// Kotlin side names every one of them. A DoubleArray for the same reason the
+// heal stats are one: it is a hand-maintained slot contract with no JNI object
+// construction on a path that runs during a walk, and the instrumented test
+// asserts the length so a mismatch is a visible failure and not a silent
+// mis-read.
+JNIEXPORT jdoubleArray JNICALL
+Java_com_lidarscan_app_engine_ScanEngineNative_nativeLastReanchor(JNIEnv* env, jclass,
+                                                                  jlong handle) {
+  auto* engine = reinterpret_cast<scan_engine*>(handle);
+  scan_reanchor_info info{};
+  if (scan_engine_last_reanchor(engine, &info) != SCAN_OK) return nullptr;
+  jdouble v[10] = {info.valid ? 1.0 : 0.0,
+                   static_cast<jdouble>(info.verdict),
+                   info.gap_s,
+                   info.reported_translation_m,
+                   info.reported_rotation_deg,
+                   info.gyro_rotation_deg,
+                   info.residual_translation_m,
+                   info.residual_rotation_deg,
+                   info.walk_bound_m,
+                   info.gyro_used ? 1.0 : 0.0};
+  jdoubleArray out = env->NewDoubleArray(10);
+  if (out == nullptr) return nullptr;
+  env->SetDoubleArrayRegion(out, 0, 10, v);
+  return out;
+}
+
 // Interpolated lookup. Returns the GATE (SCAN_POSE_GATE_*), which is always
 // written even on failure — the five-outcome distinction §3.3 asks for is
 // exactly what a caller wants here, so it is the return value rather than

@@ -95,7 +95,58 @@ data class ScanSummary(
      * two-dimensional data, honestly described.
      */
     val posesRecorded: Long? = null,
+    /**
+     * ROUND 17 item 64 — did the ENGINE session actually start?
+     *
+     * `null` for any caller that does not know (the unit tests, and every
+     * summary built before this round). `false` means
+     * `scan_engine_start` refused, and a capture whose engine never started
+     * recorded nothing that can become a room, whatever else the counters say.
+     *
+     * The owner's scan-045 is why this field exists. Two `[session] start`
+     * lines fired for one project six seconds apart; the second one hit
+     * `scan_engine_start failed: invalid state`, and on the way to that failure
+     * it had already wiped the trail and the pose counters of the capture that
+     * WAS running. The card then read the wreckage — `pathM=0.0`, 55,228
+     * points, 225 poses — and graded it **GOOD**, because a zero path looks
+     * exactly like a deliberate from-the-spot sweep and flips the grader onto
+     * points-per-SECOND, which the wreckage passes comfortably.
+     */
+    val engineStarted: Boolean? = null,
+    /**
+     * ROUND 17 item 64 — how many points the pushbroom actually RESOLVED into
+     * the world frame, as opposed to how many returns arrived.
+     *
+     * [pointsCaptured] counts what the sensor delivered. This counts what
+     * became a room. They are the same number on a healthy capture and they
+     * are very different on scan-045, whose exported bundle has no `map.bin`
+     * at all: 55,228 returns arrived and not one of them landed anywhere.
+     *
+     * `null` when the caller cannot tell, which must never be read as zero.
+     */
+    val worldPointsResolved: Long? = null,
 ) {
+    /**
+     * ROUND 17 item 64 — the engine refused to start this capture.
+     *
+     * Kept separate from [isNoRoom] because the two ask for different things
+     * from the operator: this one is "press Start again", that one is "your
+     * scan has no positions in it".
+     */
+    val engineStartFailed: Boolean
+        get() = engineStarted == false
+
+    /**
+     * ROUND 17 item 64 — returns arrived and none of them became world points.
+     *
+     * The ROUND 16 check ([isTwoDimensionalOnly]) asked whether any POSES were
+     * recorded, and scan-045 had 225 of them, so it passed — while the bundle
+     * it sealed contains no `map.bin` and no `processed/` at all. Poses are a
+     * necessary condition for a room and not a sufficient one; this is the
+     * sufficient one, and it is the number the file itself is made of.
+     */
+    val isNoRoom: Boolean
+        get() = worldPointsResolved != null && worldPointsResolved <= 0L && pointsCaptured > 0L
     /**
      * ROUND 16 item 58 — true when the capture recorded points but no poses.
      *
@@ -177,6 +228,13 @@ data class ScanSummary(
     val grade: ScanGrade
         get() = when {
             pointsCaptured <= 0L -> ScanGrade.POOR
+            // ROUND 17 item 64, above everything: a capture whose engine
+            // refused to start, or which resolved no world points, is not a
+            // scan that can be graded on density at all. scan-045 was graded
+            // GOOD on 1,970 points per second of data that never reached a
+            // world frame.
+            engineStartFailed -> ScanGrade.POOR
+            isNoRoom -> ScanGrade.POOR
             // ROUND 16 item 58, and it goes FIRST for the same reason zero
             // points does: a scan with no trajectory cannot be improved by
             // anything the rest of this `when` measures, and every one of those
@@ -204,6 +262,15 @@ data class ScanSummary(
         get() = when {
             pointsCaptured <= 0L ->
                 "No points were recorded. Check the D6 cable and rescan."
+            engineStartFailed ->
+                "The recording engine never started, so nothing in this file was placed in a " +
+                    "room. Nothing on the phone can recover it. Press Start again — and if it " +
+                    "refuses twice, close the app and reopen it."
+            isNoRoom ->
+                "NO ROOM — ${pointsCaptured} returns arrived and none of them were placed in " +
+                    "space, so this file has a sensor recording and no map. Start a new scan: " +
+                    "point the rear camera at something with texture for a couple of seconds " +
+                    "and wait for \"Tracking steady\" before you press Start."
             isTwoDimensionalOnly ->
                 "2D ONLY — the camera never told this scan where it was, so the " +
                     "${pointsCaptured} returns have no positions and there is no room in this " +
@@ -283,7 +350,15 @@ data class ScanSummary(
      * differently about walking speed or coverage. The card says what it is.
      */
     val headline: String
-        get() = if (isTwoDimensionalOnly) "2D ONLY" else grade.name
+        get() = when {
+            // ROUND 17 item 64. Same argument as ROUND 16's: "POOR" invites
+            // "rescan and it will be better", and neither of these gets better
+            // for anything the operator does differently about walking.
+            engineStartFailed -> "NOT RECORDED"
+            isNoRoom -> "NO ROOM"
+            isTwoDimensionalOnly -> "2D ONLY"
+            else -> grade.name
+        }
 
     /**
      * ROUND 13 — what to DO before the next walk, or null when the scan needs
@@ -297,6 +372,14 @@ data class ScanSummary(
     val nextWalkAdvice: String?
         get() = when {
             pointsCaptured <= 0L -> null
+            // ROUND 17 item 64.
+            engineStartFailed ->
+                "Press Start once and wait — the button takes a few seconds to arm while the " +
+                    "camera settles. Pressing it twice starts nothing and stops the scan that " +
+                    "was already running."
+            isNoRoom ->
+                "Before the next scan: give the rear camera a lit, textured surface to look at " +
+                    "and let the Start button say \"Tracking steady\" before you press it."
             isTwoDimensionalOnly ->
                 "Before the next scan: give the rear camera a lit, textured surface to look at " +
                     "and let the Start button say \"Tracking steady\" before you press it. If it " +

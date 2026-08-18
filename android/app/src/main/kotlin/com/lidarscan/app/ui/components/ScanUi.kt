@@ -518,6 +518,22 @@ fun SheetRowLabel(
     }
 }
 
+/**
+ * ROUND 17 item 67 — a plain statement of fact inside a sheet, with no control
+ * beside it. Not a hint (which suggests an action) and not a warning (which
+ * suggests a problem): the app is telling the operator what it does with their
+ * camera, and that sentence needs no adornment.
+ */
+@Composable
+fun SheetNote(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodySmall,
+        color = InkFaint,
+        modifier = modifier.fillMaxWidth().padding(vertical = 8.dp),
+    )
+}
+
 /** A 44 dp switch row: title + sub-label on the left, a big toggle on the right. */
 @Composable
 fun SheetSwitchRow(

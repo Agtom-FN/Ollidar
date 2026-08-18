@@ -219,7 +219,7 @@ extern "C" {
  *     ROUND 12 self-consistency ruler over the cloud the run just produced.
  *   * scan_lscan_floor_plan() — A12's floor-plan extractor over a sealed
  *     container, writing DXF + PDF + a rendered PNG. */
-#define SCAN_ABI_VERSION 11u
+#define SCAN_ABI_VERSION 12u
 
 /* --- errors: mirror of scanengine::ScanError --------------------------- */
 typedef int32_t scan_error_t;
@@ -1894,6 +1894,55 @@ typedef struct scan_plan_result {
 SCAN_API scan_error_t scan_lscan_floor_plan(const char* lscan_dir,
                                             const scan_plan_options* opts,
                                             scan_plan_result* out);
+
+
+/* ======================================================================== */
+/* ROUND 17 (ABI 12): why a re-anchor was healed, or refused                */
+/* ======================================================================== */
+
+/* ADDITIVE. scan_engine_heal_live_frame() is unchanged in signature and its
+ * meaning is unchanged in the case that matters — a short gap still folds
+ * ARCore's own transform into the live frame. What changed underneath it is
+ * the LONG gap: across the owner's scan-040 the tracker was blind for 6.065 s,
+ * and the 66.21 deg it had left over when it came back was the leftover of a
+ * 145 deg turn the operator really made, not a frame correction. Applying it
+ * rotated his room. poses/reanchor.h has the measurement.
+ *
+ * So heal_live_frame() now bridges a long gap with the recorded gyro and heals
+ * only the residual, and refuses outright when the two witnesses disagree by
+ * more than a re-anchor can be. A Status can carry "refused"; it cannot carry
+ * the six numbers that justify the refusal, and those numbers belong in the
+ * capture log while the walk is still happening. This is where they are.
+ *
+ * Cleared by scan_engine_clear_live_correction() and by starting a session. */
+
+typedef enum scan_gap_verdict {
+  SCAN_GAP_SNAP = 0,           /* short gap: ARCore's transform, applied */
+  SCAN_GAP_BRIDGED = 1,        /* long gap, gyro agreed: residual applied */
+  SCAN_GAP_NEGLIGIBLE = 2,     /* long gap: the jump was the operator. NOT a refusal */
+  SCAN_GAP_REFUSED_NO_GYRO = 3,
+  SCAN_GAP_REFUSED_TOO_LONG = 4,
+  SCAN_GAP_REFUSED_DISAGREE = 5, /* scan-040 */
+  SCAN_GAP_REFUSED_DEGENERATE = 6
+} scan_gap_verdict;
+
+typedef struct scan_reanchor_info {
+  uint8_t valid;      /* 0 = no re-anchor has been resolved this session */
+  uint8_t gyro_used;
+  int32_t verdict;    /* scan_gap_verdict */
+  double gap_s;
+  double reported_translation_m;
+  double reported_rotation_deg;
+  double gyro_rotation_deg;      /* what the operator actually turned */
+  double residual_translation_m; /* what was (or would have been) healed */
+  double residual_rotation_deg;
+  double walk_bound_m;           /* how far a walk could have carried them */
+} scan_reanchor_info;
+
+SCAN_API scan_error_t scan_engine_last_reanchor(scan_engine* engine, scan_reanchor_info* out);
+
+/* One word for a verdict, for a log line. Never NULL. */
+SCAN_API const char* scan_gap_verdict_str(int32_t verdict);
 
 
 #ifdef __cplusplus

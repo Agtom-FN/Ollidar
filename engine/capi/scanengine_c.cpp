@@ -23,6 +23,7 @@
 #include "scanengine/core/instance_guard.h"
 #include "scanengine/discovery/discovery.h"
 #include "scanengine/jobs/job_types.h"
+#include "scanengine/poses/reanchor.h"
 #include "scanengine/slam/post/d6_resolve.h"
 #include "scanengine/slam/post/lscan_plan.h"
 #include "scanengine/slam/post/reprocess.h"
@@ -2050,6 +2051,31 @@ scan_error_t scan_engine_live_heal_stats(scan_engine* engine, scan_live_heal_sta
   for (int i = 0; i < 16; ++i) out->matrix[i] = s.matrix[i];
   return SCAN_OK;
   SCAN_GUARD_END
+}
+
+scan_error_t scan_engine_last_reanchor(scan_engine* engine, scan_reanchor_info* out) {
+  SCAN_GUARD_BEGIN
+  if (engine == nullptr || out == nullptr) {
+    return fail(ScanError::kInvalidArgument, "null argument");
+  }
+  const Engine::LastReanchor r = handle_of(engine)->engine->last_reanchor();
+  std::memset(out, 0, sizeof(*out));
+  out->valid = r.valid ? 1 : 0;
+  out->gyro_used = r.gyro_used ? 1 : 0;
+  out->verdict = r.verdict;
+  out->gap_s = r.gap_s;
+  out->reported_translation_m = r.reported_translation_m;
+  out->reported_rotation_deg = r.reported_rotation_deg;
+  out->gyro_rotation_deg = r.gyro_rotation_deg;
+  out->residual_translation_m = r.residual_translation_m;
+  out->residual_rotation_deg = r.residual_rotation_deg;
+  out->walk_bound_m = r.walk_bound_m;
+  return SCAN_OK;
+  SCAN_GUARD_END
+}
+
+const char* scan_gap_verdict_str(int32_t verdict) {
+  return reanchor::to_string(static_cast<reanchor::GapVerdict>(verdict));
 }
 
 scan_error_t scan_lscan_reprocess_d6_ex(const char* lscan_dir, const scan_reprocess_options* opts,

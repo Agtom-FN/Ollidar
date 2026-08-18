@@ -73,6 +73,94 @@ class CaptureLog(context: Context) {
         runCatching { dir.mkdirs() }
     }
 
+    // ── ROUND 17 item 66: the per-capture debug log ─────────────────────────
+    //
+    // The owner asked, in developer mode, for a verbose log written INTO the
+    // bundle. The reason is the one this class was built for, one level
+    // sharper: `filesDir/logs/capture.log` is a rolling app-lifetime log that
+    // has to be exported separately and then matched up by timestamp against a
+    // scan that may be one of five taken that evening. A log that travels with
+    // the scan needs no matching up — the `.lscan` a person sends is already
+    // the whole story.
+    //
+    // Deliberately NOT a stream. See `debug/README` written beside it: this is
+    // not chunked, not CRC'd, not in the manifest, and not part of the replay
+    // guarantee. `record/replay` walks `streams/`, so a byte-identical replay
+    // is unaffected by anything here — which is the property that lets the log
+    // be as verbose as it likes.
+    //
+    // Two files here as well, for the same reason, and a hard cap: a capture
+    // that runs for an hour with the verbose sink on must not be able to fill
+    // the phone.
+
+    private val lock2 = Any()
+    private var captureSink: File? = null
+    private var captureSinkRotated: File? = null
+
+    /**
+     * ROUND 17 item 66 — Developer Mode's answer, mirrored here so the decision
+     * lives at ONE place and no call site has to carry a preference around.
+     * Written from the Capture route's settings collector, read on the capture
+     * thread at Start.
+     */
+    @Volatile
+    var developerCaptureDebug: Boolean = false
+
+    /**
+     * Points the verbose sink at `<proj>.lscan/debug/capture-debug.log`.
+     * Silently does nothing when [enabled] is false, which is how the developer
+     * toggle reaches every call site without any call site knowing about it.
+     */
+    fun beginCaptureDebug(projectDir: File, header: String) {
+        synchronized(lock2) {
+            captureSink = null
+            captureSinkRotated = null
+            if (!developerCaptureDebug) return
+            runCatching {
+                val d = File(projectDir, DEBUG_DIR).apply { mkdirs() }
+                File(d, "README.txt").writeText(README)
+                val f = File(d, DEBUG_FILE)
+                f.writeText("")
+                captureSink = f
+                captureSinkRotated = File(d, "$DEBUG_FILE.1")
+            }
+            debug("capture", header)
+        }
+    }
+
+    /** Closes the sink. Idempotent; safe to call for a capture that never opened one. */
+    fun endCaptureDebug(footer: String) {
+        synchronized(lock2) {
+            if (captureSink != null) debug("capture", footer)
+            captureSink = null
+            captureSinkRotated = null
+        }
+    }
+
+    /** True while a capture debug log is open — for the HUD's developer strip. */
+    val captureDebugPath: String? get() = synchronized(lock2) { captureSink?.absolutePath }
+
+    /**
+     * Verbose, capture-only, bundle-local. Goes to the open sink and to logcat
+     * and to NOTHING else — in particular not to `capture.log`, whose value is
+     * that it stays readable.
+     */
+    fun debug(tag: String, message: String) {
+        val line = "${timestamps.format(Date())} [$tag] $message"
+        runCatching {
+            synchronized(lock2) {
+                val target = captureSink ?: return@synchronized
+                if (target.isFile && target.length() > DEBUG_MAX_BYTES) {
+                    captureSinkRotated?.let { r ->
+                        r.delete()
+                        if (!target.renameTo(r)) target.delete()
+                    }
+                }
+                target.appendText(line + "\n")
+            }
+        }
+    }
+
     /**
      * Appends one line under [tag]. Also mirrors to `logcat` so a bench session
      * with a cable attached sees it in both places.
@@ -81,6 +169,11 @@ class CaptureLog(context: Context) {
         val line = "${timestamps.format(Date())} [$tag] $message"
         _lastLine.value = line
         Log.i(LOGCAT_TAG, line)
+        // ROUND 17 item 66: every [ar]/[session]/[seal]/[net] line also lands
+        // in the open capture's own log, so the bundle carries the narrative
+        // and not just its own bytes. A no-op when no sink is open, which is
+        // the case for every capture that did not ask for one.
+        debug(tag, message)
         runCatching {
             synchronized(lock) {
                 if (file.isFile && file.length() > MAX_BYTES) {
@@ -176,6 +269,35 @@ class CaptureLog(context: Context) {
 
         // Tags, so the log greps cleanly and every call site spells them the
         // same way. These are the capture-survival path end to end.
+        // ROUND 17 item 66.
+        const val DEBUG_DIR = "debug"
+        const val DEBUG_FILE = "capture-debug.log"
+
+        /**
+         * 5 MB per file, two files. A verbose capture writes a few hundred
+         * bytes a second, so this is hours before the first rotation and it is
+         * a hard ceiling either way — a developer toggle must not be a way to
+         * fill a phone.
+         */
+        const val DEBUG_MAX_BYTES = 5L * 1024L * 1024L
+
+        val README: String =
+            """
+            This directory is a DEVELOPER DIAGNOSTIC and is not part of the scan.
+
+            capture-debug.log is a verbose, human-readable transcript of one
+            capture: session lifecycle, pose acceptance, re-anchor decisions,
+            watchdog transitions, operator cues and preset changes.
+
+            It is NOT a recorded stream. It is not chunked, not CRC'd, not
+            listed in manifest.json, and NOT part of the replay guarantee:
+            re-resolving this container reads only streams/, so this file has
+            no effect on the geometry and deleting it changes nothing.
+
+            Written only while Developer Mode is on (Settings -> tap the version
+            footer seven times). Capped at 5 MB per file, two files.
+            """.trimIndent()
+
         const val TAG_PROJECT = "project"
         const val TAG_SESSION = "session"
         const val TAG_SEAL = "seal"

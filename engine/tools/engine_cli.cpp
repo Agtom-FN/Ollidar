@@ -1606,6 +1606,23 @@ int cmd_d6_stitch(const std::string& lscan_dir, bool refine, bool densify, doubl
                   s.refine_delta[1], s.refine_delta[2]);
     }
   }
+  // ROUND 17 item 63: the long gaps this pass LOOKED at. A gap that was
+  // refused or found negligible moved nothing and is therefore in no seam
+  // list, which is precisely how scan-040's six blind seconds came to be
+  // reported as "1 section".
+  for (const post::SectionSeam& g : sr.gaps_examined) {
+    std::printf("  gap at t=%.2f s: %.3f s blind; tracker %.3f m / %.2f deg, gyro %.2f deg, "
+                "residual %.3f m / %.2f deg -> %s\n",
+                static_cast<double>(g.t_ns - before.traj.front().t_ns) * 1e-9, g.gap_s,
+                g.jump_translation_m, g.jump_rotation_deg, g.gyro_rotation_deg,
+                g.residual_translation_m, g.residual_rotation_deg,
+                post::to_string(g.decision));
+    std::printf("       %s\n", g.reason);
+  }
+  if (sr.longest_gap_s > 0.0) {
+    std::printf("  longest blind stretch %.3f s; %zu gap(s) refused\n", sr.longest_gap_s,
+                sr.gaps_refused);
+  }
   std::printf("\n  first section moved %.3f m / %.2f deg into the last section's frame\n",
               sr.total_translation_m, sr.total_rotation_deg);
   std::printf("  trajectory VERTICAL extent (flat floor, so smaller is right): %.3f m -> %.3f m\n",

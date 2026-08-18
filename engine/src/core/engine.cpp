@@ -14,6 +14,7 @@
 #include "scanengine/color/frames_idx.h"
 #include "scanengine/core/log.h"
 #include "scanengine/jobs/job_queue.h"
+#include "scanengine/poses/reanchor.h"
 #include "scanengine/poses/se3.h"
 
 namespace scanengine {
@@ -257,6 +258,9 @@ struct Engine::Impl {
   double heal_m4[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
   std::uint32_t heal_applied = 0;
   std::uint32_t heal_refused = 0;
+  // ROUND 17 item 63: the gap policy, and what the last call decided.
+  reanchor::GapPolicy gap_policy{};
+  Engine::LastReanchor last_reanchor{};
   // ROUND 8: the last extrinsic set_mount_extrinsics() accepted, kept so
   // start_session() can put it in the manifest. The assembler stores it too,
   // but only as its internal composed form; the manifest needs the number the
@@ -758,6 +762,7 @@ Status Engine::start_session(const SessionConfig& cfg) {
     impl_->heal_active = false;
     impl_->heal_applied = 0;
     impl_->heal_refused = 0;
+    impl_->last_reanchor = Engine::LastReanchor{};
   }
 
   // 3. The local ENU origin, on both halves of the georef stack. Both latch on
@@ -1229,47 +1234,92 @@ Status Engine::heal_live_frame(const Pose& before, const Pose& after) {
   if (before.tracking_lost != 0 || after.tracking_lost != 0) {
     std::lock_guard<std::mutex> lock(impl_->heal_m);
     ++impl_->heal_refused;
+    impl_->last_reanchor = Engine::LastReanchor{};
     return set_last_error(ScanError::kInvalidArgument,
                           "heal_live_frame: a pose the tracker disowned cannot define a frame");
   }
-  if (after.t_mono_ns <= before.t_mono_ns) {
-    std::lock_guard<std::mutex> lock(impl_->heal_m);
-    ++impl_->heal_refused;
-    return set_last_error(ScanError::kInvalidArgument,
-                          "heal_live_frame: the two poses are not in order");
-  }
-  double qb[4], qa[4];
-  for (int i = 0; i < 4; ++i) {
-    qb[i] = before.orientation[i];
-    qa[i] = after.orientation[i];
-  }
-  const bool finite =
-      std::isfinite(qb[0]) && std::isfinite(qb[1]) && std::isfinite(qb[2]) &&
-      std::isfinite(qb[3]) && std::isfinite(qa[0]) && std::isfinite(qa[1]) &&
-      std::isfinite(qa[2]) && std::isfinite(qa[3]) && std::isfinite(before.position[0]) &&
-      std::isfinite(before.position[1]) && std::isfinite(before.position[2]) &&
-      std::isfinite(after.position[0]) && std::isfinite(after.position[1]) &&
-      std::isfinite(after.position[2]);
-  if (!finite || !se3::quat_normalize(qb) || !se3::quat_normalize(qa)) {
-    std::lock_guard<std::mutex> lock(impl_->heal_m);
-    ++impl_->heal_refused;
-    return set_last_error(ScanError::kInvalidArgument,
-                          "heal_live_frame: a pose is not finite or its rotation is degenerate");
+
+  // ROUND 17 item 63. WHAT USED TO BE HERE was ROUND 13's line, applied to
+  // whatever pair the detector handed over:
+  //
+  //     T = pose_after * pose_before^-1
+  //
+  // which is the frame change ONLY while the operator's own motion inside the
+  // gap is negligible. Over one ARCore frame it is. Over the owner's scan-040
+  // gap of 6.065 s it is 145 degrees of real turning, and applying the 66.21
+  // degrees the tracker had left over rotated his whole room. reanchor.h has
+  // the measurement and the derivation; this function's job is now to fetch
+  // the one witness to the blind window and let the policy decide.
+  //
+  // The gyro comes from the densifier's own ring (8 s at 400 Hz, which is what
+  // bounds GapPolicy::max_bridge_gap_ns). imu_m guards only the POINTER, and
+  // relative_rotation() takes the densifier's own lock, so this cannot deadlock
+  // against heal_m — which is taken after, and never held across it.
+  double q_gyro[4] = {0, 0, 0, 1};
+  bool have_gyro = false;
+  bool gyro_hole = false;
+  {
+    ImuDensifiedPoseSource* dens = nullptr;
+    {
+      std::lock_guard<std::mutex> ilock(impl_->imu_m);
+      dens = impl_->densified_poses.get();
+    }
+    if (dens != nullptr) {
+      double peak = 0.0;
+      have_gyro = dens->relative_rotation(before.t_mono_ns, after.t_mono_ns, q_gyro, &peak,
+                                          &gyro_hole);
+    }
   }
 
-  // T = pose_after * pose_before^-1 — literally section_stitch.cpp's line.
-  double ma[16], mb[16], mbi[16], T[16], Ti[16];
-  se3::mat4_from_quat_pos(qa, after.position, ma);
-  se3::mat4_from_quat_pos(qb, before.position, mb);
-  se3::mat4_inverse_rigid(mb, mbi);
-  se3::mat4_mul(ma, mbi, T);
-  if (!se3::mat4_is_rigid(T, 1e-4)) {
+  reanchor::GapPolicy policy;
+  {
     std::lock_guard<std::mutex> lock(impl_->heal_m);
-    ++impl_->heal_refused;
-    return set_last_error(ScanError::kInvalidArgument,
-                          "heal_live_frame: the pose pair does not define a rigid transform");
+    policy = impl_->gap_policy;
   }
-  se3::mat4_inverse_rigid(T, Ti);
+  const reanchor::GapResult g = reanchor::resolve_reanchor(
+      before.orientation, before.position, before.t_mono_ns, after.orientation, after.position,
+      after.t_mono_ns, have_gyro ? q_gyro : nullptr, gyro_hole, policy);
+
+  Engine::LastReanchor last;
+  last.valid = true;
+  last.verdict = static_cast<int>(g.verdict);
+  last.gap_s = g.gap_s;
+  last.reported_translation_m = g.reported_translation_m;
+  last.reported_rotation_deg = g.reported_rotation_deg;
+  last.gyro_rotation_deg = g.gyro_rotation_deg;
+  last.residual_translation_m = g.residual_translation_m;
+  last.residual_rotation_deg = g.residual_rotation_deg;
+  last.walk_bound_m = g.walk_bound_m;
+  last.gyro_used = g.gyro_used;
+
+  if (!reanchor::applies(g.verdict)) {
+    std::lock_guard<std::mutex> lock(impl_->heal_m);
+    impl_->last_reanchor = last;
+    // kNegligible is NOT a refusal and must not be counted as one: nothing
+    // went wrong, the two witnesses simply agreed, and the operator cue exists
+    // for seams that survive uncorrected — not for seams that were never
+    // there. Counting it would buzz a walking operator about arithmetic.
+    if (reanchor::is_refusal(g.verdict)) ++impl_->heal_refused;
+    if (g.verdict == reanchor::GapVerdict::kNegligible) {
+      SCAN_LOG_INFO(kMod,
+                    "re-anchor %s over %.3f s: tracker says %.3f m / %.2f deg, gyro says "
+                    "%.2f deg, residual %.3f m / %.2f deg — %s",
+                    reanchor::to_string(g.verdict), g.gap_s, g.reported_translation_m,
+                    g.reported_rotation_deg, g.gyro_rotation_deg, g.residual_translation_m,
+                    g.residual_rotation_deg, g.reason);
+      return kOkStatus;
+    }
+    SCAN_LOG_WARN(kMod,
+                  "re-anchor %s over %.3f s: tracker says %.3f m / %.2f deg, gyro says %.2f deg, "
+                  "residual %.3f m / %.2f deg (walk bound %.2f m) — %s",
+                  reanchor::to_string(g.verdict), g.gap_s, g.reported_translation_m,
+                  g.reported_rotation_deg, g.gyro_rotation_deg, g.residual_translation_m,
+                  g.residual_rotation_deg, g.walk_bound_m, g.reason);
+    return set_last_error(ScanError::kInvalidArgument, "heal_live_frame: %s", g.reason);
+  }
+
+  double Ti[16];
+  se3::mat4_inverse_rigid(g.correction, Ti);
 
   std::lock_guard<std::mutex> lock(impl_->heal_m);
   double next[16];
@@ -1277,17 +1327,14 @@ Status Engine::heal_live_frame(const Pose& before, const Pose& after) {
   for (int i = 0; i < 16; ++i) impl_->heal_m4[i] = next[i];
   impl_->heal_active = true;
   ++impl_->heal_applied;
+  impl_->last_reanchor = last;
   SCAN_LOG_INFO(kMod,
-                "live heal #%u: ARCore re-anchored by %.3f m / %.2f deg; the live map keeps the "
-                "frame it was already drawn in (recorded stream untouched)",
-                impl_->heal_applied,
-                std::sqrt(T[3] * T[3] + T[7] * T[7] + T[11] * T[11]),
-                [&] {
-                  double Ra[9], Rb[9];
-                  se3::quat_to_matrix(qb, Rb);
-                  se3::quat_to_matrix(qa, Ra);
-                  return se3::rot_angle_deg(Rb, Ra);
-                }());
+                "live heal #%u (%s, gap %.3f s): ARCore re-anchored by %.3f m / %.2f deg of the "
+                "%.3f m / %.2f deg it reported (gyro %.2f deg); the live map keeps the frame it "
+                "was already drawn in (recorded stream untouched)",
+                impl_->heal_applied, reanchor::to_string(g.verdict), g.gap_s,
+                g.residual_translation_m, g.residual_rotation_deg, g.reported_translation_m,
+                g.reported_rotation_deg, g.gyro_rotation_deg);
   return kOkStatus;
 }
 
@@ -1297,6 +1344,12 @@ void Engine::clear_live_correction() {
   impl_->heal_active = false;
   impl_->heal_applied = 0;
   impl_->heal_refused = 0;
+  impl_->last_reanchor = Engine::LastReanchor{};
+}
+
+Engine::LastReanchor Engine::last_reanchor() const {
+  std::lock_guard<std::mutex> lock(impl_->heal_m);
+  return impl_->last_reanchor;
 }
 
 Engine::LiveHealStats Engine::live_heal_stats() const {

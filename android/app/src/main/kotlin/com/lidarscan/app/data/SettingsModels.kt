@@ -120,6 +120,31 @@ data class AppSettings(
      * would be deleting something this capture did not create.
      */
     val keepEmptyScans: Boolean = false,
+
+    /**
+     * ROUND 17 item 66 — **Developer Mode**, unlocked by tapping the version
+     * footer seven times.
+     *
+     * Off by default and deliberately not discoverable, because everything
+     * behind it costs something an ordinary operator should not pay: the
+     * per-capture debug log writes a few hundred bytes a second into every
+     * bundle and makes each `.lscan` carry a transcript of how it was taken.
+     * That is exactly what is wanted when a scan has gone wrong and a person is
+     * going to send it to somebody, and it is noise the rest of the time.
+     *
+     * The seven-tap gesture is Android's own long-standing idiom for this, and
+     * it is used here for the reason it exists: a setting nobody can reach by
+     * accident does not need a warning beside it.
+     */
+    val developerMode: Boolean = false,
+
+    /**
+     * ROUND 17 item 66 — write `debug/capture-debug.log` into each capture's
+     * bundle. Only ever consulted when [developerMode] is on; locking developer
+     * mode leaves the preference alone but stops it having any effect, so
+     * unlocking again restores what was chosen.
+     */
+    val captureDebugLog: Boolean = true,
     /**
      * ROUND 11 (owner item 43): haptic + audio operator cues, **default ON**.
      *

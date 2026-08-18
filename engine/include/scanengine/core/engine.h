@@ -112,7 +112,17 @@ class JobQueue;
 // meaning: scan_reprocess_result and scan_reprocess_options are untouched, so
 // an ABI-10 consumer relinks unmodified and gets identical behaviour (the
 // live correction starts at identity and stays there unless asked).
-inline constexpr std::uint32_t kEngineAbiVersion = 11;
+// ROUND 17: 11 -> 12, additive only. Two new C entry points
+// (scan_engine_last_reanchor, scan_gap_verdict_str), one new POD
+// (scan_reanchor_info) and one new enum (scan_gap_verdict). NOTHING existing
+// changed size, order or meaning. scan_engine_heal_live_frame keeps its
+// signature and its behaviour for the case it was written for — a jump across
+// ONE ARCore frame — and changes it for the case it was never written for: a
+// jump across SECONDS, where the operator's own walking is inside the
+// transform and applying it rotates the room. See poses/reanchor.h for the
+// measurement on the owner's scan-040. An ABI-11 consumer relinks unmodified
+// and gets the fix; the new symbols only let it SAY why.
+inline constexpr std::uint32_t kEngineAbiVersion = 12;
 const char* engine_version_string();  // "scanengine 0.1.0 (<clock backend>)"
 
 struct EngineConfig {
@@ -315,6 +325,30 @@ class Engine {
     double matrix[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
   };
   LiveHealStats live_heal_stats() const;
+
+  // ROUND 17 item 63 — what the LAST heal_live_frame() call decided, and the
+  // numbers it decided on.
+  //
+  // heal_live_frame() returns a Status, and a Status can say "refused" but not
+  // "refused because the gyro says the operator turned 145 degrees while the
+  // tracker was frozen and I am not rotating your room on that evidence". The
+  // owner's scan-040 is exactly that sentence, and it belongs in the capture
+  // log while the walk is still happening. Cleared by clear_live_correction().
+  struct LastReanchor {
+    bool valid = false;
+    // reanchor::GapVerdict, as an int so core/ callers and the C ABI agree
+    // without either including the policy header.
+    int verdict = 0;
+    double gap_s = 0.0;
+    double reported_translation_m = 0.0;
+    double reported_rotation_deg = 0.0;
+    double gyro_rotation_deg = 0.0;
+    double residual_translation_m = 0.0;
+    double residual_rotation_deg = 0.0;
+    double walk_bound_m = 0.0;
+    bool gyro_used = false;
+  };
+  LastReanchor last_reanchor() const;
 
   // --- ROUND 9 item 35: the phone's IMU ------------------------------------
   //

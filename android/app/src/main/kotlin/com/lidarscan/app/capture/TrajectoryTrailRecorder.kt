@@ -108,11 +108,23 @@ class TrajectoryTrailRecorder(
         // rotated for rendering and would make the trail turn when the phone is
         // rotated in the hand.
         val pose = camera.pose
-        val x = pose.tx()
-        val z = pose.tz()
-        // ROUND 16 item 59: and the height, which this recorder used to drop on
-        // the floor. See TrajectoryTrail.Point.
-        val y = pose.ty()
+        onPose(pose.tx(), pose.ty(), pose.tz(), tracking)
+    }
+
+    /**
+     * ROUND 17 item 65 — the whole of [onFrame] except the ARCore types.
+     *
+     * Split out because the bug this method now contains the fix for could not
+     * be tested: everything here used to live inside a method whose only
+     * argument is a `com.google.ar.core.Frame`, which cannot be constructed on
+     * a bare JVM and does not exist on the capture emulator either. So the one
+     * line that decides whether the operator sees their path in the 3D cloud
+     * had no test, and shipped without one.
+     *
+     * `x`/`z` are the ground plane and `y` is height, all in ARCore's world
+     * frame, exactly as `Pose.tx()/ty()/tz()` report them.
+     */
+    fun onPose(x: Float, y: Float, z: Float, tracking: Boolean) {
         if (!trail.add(x, z, tracking, y)) return
         if (!lastKeptX.isNaN()) {
             val dx = x - lastKeptX
@@ -124,6 +136,24 @@ class TrajectoryTrailRecorder(
         loopReturn.add(x, z, _totalPathM.value)
         _points.value = trail.normalized()
         _pathLengthM.value = trail.pathLengthM()
+        // ROUND 17 item 65 — THE OWNER'S "my path not show in the point cloud.
+        // its just a 2d map of my path", in one line.
+        //
+        // ROUND 16 added `_worldPoints`, added its accessor, added the ribbon
+        // builder, the material, the LINE_STRIP draw and the Review reader —
+        // and published `_worldPoints` from `setCapacity()` and `clear()` and
+        // from nowhere else. `setCapacity()` is called when the operator
+        // changes the performance preset, so the live 3D ribbon held whatever
+        // the walk looked like at the moment a preset was last touched, which
+        // on every real capture is the empty list. The 108 dp bird's-eye tile
+        // beside it kept updating, because it is published two lines up. So the
+        // operator got exactly one view of their path and it was the 2D one —
+        // which is what he said, precisely.
+        //
+        // Same instant, same gate: both flows are published only when the trail
+        // actually kept a point, so the tile and the cloud can never show two
+        // different walks.
+        _worldPoints.value = trail.snapshot()
     }
 
     /** Clears the trail — used when a new session starts, so one walk is one trail. */

@@ -249,6 +249,14 @@ fun CaptureRoute(
                     // persistent on-device log, so the NEXT field failure
                     // arrives with evidence attached.
                     logEvent = container.captureLog::log,
+                    // ROUND 17 item 66. The gate lives HERE, at the one place
+                    // that can read a preference, so nothing downstream needs
+                    // to know Developer Mode exists: with it off,
+                    // `beginCaptureDebug` opens no sink and every `logDebug`
+                    // call in the ViewModel is a null check that returns.
+                    beginDebugLog = container.captureLog::beginCaptureDebug,
+                    logDebug = container.captureLog::debug,
+                    endDebugLog = container.captureLog::endCaptureDebug,
                     // ROUND 6 (items 21 + 22): this phone's class, its real
                     // display ceiling and the live page-store sizing its engine
                     // was created with — the three inputs the preset table and
@@ -392,6 +400,17 @@ fun CaptureRoute(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val connectionState by viewModel.connectionState.collectAsStateWithLifecycle()
     val captureState by viewModel.captureState.collectAsStateWithLifecycle()
+    // ROUND 17 item 64.
+    val starting by viewModel.starting.collectAsStateWithLifecycle()
+    // ROUND 17 item 66: Developer Mode's answer, kept current on the one object
+    // that acts on it. Collected here rather than passed into the ViewModel
+    // because the flag has to be right at Start, and Start can happen long
+    // after the ViewModel was built.
+    LaunchedEffect(container) {
+        container.settingsRepository.settings.collect {
+            container.captureLog.developerCaptureDebug = it.developerMode && it.captureDebugLog
+        }
+    }
     val stats by viewModel.stats.collectAsStateWithLifecycle()
     val health by viewModel.deviceHealth.collectAsStateWithLifecycle()
     val sessionSummary by viewModel.sessionSummary.collectAsStateWithLifecycle()
@@ -615,6 +634,7 @@ fun CaptureRoute(
         gamma = gamma,
         brightness = brightness,
         isReplaySession = viewModel.isReplaySession,
+        starting = starting,
         arAvailable = viewModel.arAvailable,
         arTracking = arStatus?.tracking == true,
         arSessionRunning = arStatus?.sessionRunning == true,
@@ -780,6 +800,8 @@ fun CaptureScreen(
     gamma: Float,
     brightness: Float,
     isReplaySession: Boolean,
+    /** ROUND 17 item 64: a Start is in flight — see TransportRow's `starting`. */
+    starting: Boolean = false,
     arAvailable: Boolean,
     arTracking: Boolean,
     arSessionRunning: Boolean,
@@ -1001,6 +1023,7 @@ fun CaptureScreen(
                             isReplaySession = isReplaySession,
                             pauseSupported = !isReplaySession && sensor != SensorType.MID360,
                             stats = stats,
+                            starting = starting,
                             onLiveViewChange = onLiveViewChange,
                             onStart = onStart,
                             onPause = onPause,
@@ -2569,6 +2592,16 @@ private fun TransportRow(
      * spacers (~80 dp). See the `body` lambda in [CaptureScreen].
      */
     stats: CaptureStats,
+    /**
+     * ROUND 17 item 64 — true from the press until the capture is recording or
+     * the attempt has failed. The ROUND 12 tracking gate can hold Start for
+     * four to eight seconds and, until this round, NOTHING on screen changed
+     * for the whole of it: `_startWarmup` was computed and rendered nowhere.
+     * The owner pressed again, which is what any reasonable person does to a
+     * button that does not respond, and that second press is the entire
+     * scan-045 failure. A control that is working has to look like it.
+     */
+    starting: Boolean = false,
     onLiveViewChange: (Boolean) -> Unit,
     onStart: () -> Unit,
     onPause: () -> Unit,
@@ -2685,16 +2718,21 @@ private fun TransportRow(
         // already existed (bar the replay path, which says "replay").
         val recordLabel = when {
             live -> "Stop recording"
+            starting -> "Starting — waiting for tracking"
             isReplaySession -> "Start replay"
             else -> "Start new scan"
         }
+        // ROUND 17 item 64: armed = the press will do something. While a start
+        // is in flight the button is dimmed and inert, so the operator is told
+        // by the control itself rather than by a scan that comes out wrong.
+        val armed = connected && !stopping && !starting
         Box(
             Modifier
                 .size(if (live) 76.dp else 64.dp)
-                .alpha(if (connected && !stopping) 1f else 0.45f)
+                .alpha(if (armed || live) 1f else 0.45f)
                 .shadow(16.dp, CircleShape, ambientColor = Ember, spotColor = Ember)
                 .background(Ember, CircleShape)
-                .clickable(enabled = connected && !stopping, role = Role.Button) {
+                .clickable(enabled = armed, role = Role.Button) {
                     if (live) onStop() else onStart()
                 }
                 .semantics { contentDescription = recordLabel }
@@ -2704,11 +2742,19 @@ private fun TransportRow(
             // A filled circle while idle, a square while live — the universal
             // record/stop pair, drawn rather than iconified so the ember ring
             // reads as one control.
-            Box(
-                Modifier
-                    .size(if (live) 30.dp else 26.dp)
-                    .background(OnEmber, if (live) RoundedCornerShape(7.dp) else CircleShape),
-            )
+            if (starting && !live) {
+                androidx.compose.material3.CircularProgressIndicator(
+                    modifier = Modifier.size(26.dp),
+                    color = OnEmber,
+                    strokeWidth = 3.dp,
+                )
+            } else {
+                Box(
+                    Modifier
+                        .size(if (live) 30.dp else 26.dp)
+                        .background(OnEmber, if (live) RoundedCornerShape(7.dp) else CircleShape),
+                )
+            }
         }
     }
 }
@@ -2950,6 +2996,10 @@ private fun ScanGradeBanner(
     // capture with no trajectory will not be better for anything the operator
     // does differently about walking. The card says what it is.
     val (accent, word) = when {
+        // ROUND 17 item 64: two more ways a capture can be not-a-scan, and both
+        // of them used to reach "GOOD SCAN" — scan-045 did exactly that.
+        summary.engineStartFailed -> SemBad to "NOT RECORDED"
+        summary.isNoRoom -> SemBad to "NO ROOM — NOTHING WAS PLACED"
         summary.isTwoDimensionalOnly -> SemBad to "2D ONLY — NO ROOM"
         summary.grade == com.lidarscan.core.capture.ScanGrade.GOOD -> SemGood to "GOOD SCAN"
         summary.grade == com.lidarscan.core.capture.ScanGrade.FAIR -> SemWarn to "USABLE"

@@ -411,16 +411,38 @@ class ReviewViewModel(
     // duplicated surface item 61 is about. Default ON, from
     // `DisplayParams`' own default.
 
+    /**
+     * ROUND 17 item 65 — why there is no path, when there is no path.
+     *
+     * ROUND 16's comment above says this "says so rather than drawing a
+     * straight line", and it did not: a missing `processed/trajectory.bin`
+     * produced `EMPTY`, `setTrail(count = 0)` quietly removed the entity from
+     * the scene, and the operator got a cloud with no path and no explanation —
+     * which looks precisely like the bug the owner reported. EVERY container
+     * processed by a pre-ROUND-16 engine is in that state, which is every scan
+     * he already owns, so the silent case was not an edge case at all.
+     */
+    private val _trajectoryNote = MutableStateFlow<String?>(null)
+    val trajectoryNote: StateFlow<String?> = _trajectoryNote.asStateFlow()
+
     private fun loadTrajectory(directory: java.io.File) {
         viewModelScope.launch {
+            val file = java.io.File(directory, "processed/trajectory.bin")
+            val existed = withContext(Dispatchers.IO) { runCatching { file.isFile }.getOrDefault(false) }
             val ribbon = withContext(Dispatchers.IO) {
                 runCatching {
-                    com.lidarscan.app.processing.TrajectoryFile.read(
-                        java.io.File(directory, "processed/trajectory.bin"),
-                    )
+                    com.lidarscan.app.processing.TrajectoryFile.read(file)
                 }.getOrNull() ?: com.lidarscan.core.capture.TrajectoryRibbon.EMPTY
             }
             _trajectory.value = ribbon
+            _trajectoryNote.value = when {
+                ribbon.count >= 2 -> null
+                !existed ->
+                    "No walked path in this scan yet — tap Process to build one. (Scans taken " +
+                        "before this version were saved without one.)"
+                else ->
+                    "This scan's walked path could not be read, so the cloud is shown without it."
+            }
             pushTrajectory()
         }
     }

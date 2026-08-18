@@ -2005,3 +2005,288 @@ fans, which needs overlap the D6's single sweeping plane barely provides), and
 constrain it with the gyro. That is a real project, not a flag. The container is
 kept and the raw streams are untouched, so nothing about that project is
 foreclosed.
+
+---
+
+## ROUND 17 (v0.9.2) — the owner's 0.9.1 field session, 2026-08-19
+
+> *"the scan is not good. the shift of my position shifted quite a lot. my path
+> not show in the point cloud. its just a 2d map of my path."*
+
+Three sentences, three separate bugs, and the first one is the largest thing
+this project has shipped wrong on purpose. Items 63–67.
+
+**63 — THE HEALING WAS RIGHT FOR 33 MILLISECONDS AND CATASTROPHIC FOR SIX
+SECONDS.**
+
+The seal log for scan-040 has the whole failure in one line:
+
+```
+HEALED live jump=0.678m/66.21deg gapMs=6065
+```
+
+Round 13 derived the transform and stated its own assumption in the same
+breath: `T_k = pose_after · pose_before⁻¹`, *"the operator's own motion during
+the 33 ms gap is inside T_k too, but the gyro bounds it at ~1 deg and the
+trajectory bounds the translation at ~1 cm, so T_k is the frame change to
+within that."* Every break round 13 measured was **one ARCore frame wide**, and
+over one frame a person is a statue: whatever the pose did, the world did.
+
+Over 6.065 seconds a person is not a statue. Measured on scan-040's own bytes
+against its own recorded 399.2 Hz gyro:
+
+| | |
+|---|---|
+| ARCore, last tracked → first re-acquired | **66.21°** |
+| gyro, integrated across the same 6.065 s | **144.94°** raw / **142.75°** bias-corrected |
+| ARCore's motion *during* the loss (181 poses) | **0.00° / 0.000 m** |
+
+ARCore **froze** — all 181 poses inside the blind window carry the last good
+pose verbatim, which is not something a phone in a walking hand does. The gyro
+did not freeze. So the 66.21° is not a frame correction; it is the leftover of
+a 145° turn the tracker only saw the end of, and round 15 applied all of it as
+a world rotation to every point already on screen. That is *"the shift of my
+position shifted quite a lot"*, exactly, and it is our arithmetic rather than
+his walking.
+
+**The gyro is trustworthy over exactly this span, and it is the only witness to
+the blind window.** Re-measured here on all three of his captures, against
+ARCore itself over every clean 1 s window:
+
+| scan | windows | median | p90 | max |
+|---|---|---|---|---|
+| 040 | 2188 | 0.109° | 0.363° | 2.430° |
+| 041 | 1058 | 0.152° | 0.494° | 1.637° |
+| 042 | 667 | 0.465° | 0.711° | 5.173° |
+
+So `poses/reanchor.h`: **predict, then heal only the residual.**
+
+```
+q_pred = q_before · q_gyro          the operator's real rotation
+p_pred = p_after − û · excess       see below
+T      = M_after · M_pred⁻¹         what is left over IS the frame
+```
+
+Translation is **not predicted, it is bounded**. Double-integrating a consumer
+accelerometer over six seconds gives metres of nonsense (item 46's note,
+restated), and inventing a displacement is the null space item 60 spent its
+round refusing to fill. What can be said without inventing anything is how far
+a person could possibly have walked — `1.8 m/s × gap + 0.30 m` — and only the
+EXCESS beyond that is charged to the frame. On scan-040 the bound is 11.2 m
+against a reported 0.678 m, so the translation correction is exactly **zero**,
+which is the honest answer: nobody knows where he was, and the tracker's claim
+is not impossible.
+
+Gated by gap duration, one policy, two callers (`core/engine.cpp` live and
+`slam/post/section_stitch.cpp` offline — item 62's lesson about two detectors
+applies twice as hard to two DECISIONS):
+
+| gap | verdict |
+|---|---|
+| ≤ 100 ms | `snap` — round 13's transform, unchanged, bit-identical |
+| > 100 ms, gyro agrees | `bridged` — the residual only |
+| > 100 ms, gyro agrees and residual < 1 cm / 0.25° | `negligible` — the jump WAS the operator; nothing applied and **no cue** |
+| no continuous gyro | refused |
+| > 8 s | refused |
+| residual > 25° or > 2 m | **refused** ← scan-040, at 76.77° |
+
+(Two gyro figures because there are two: 144.94° integrating the raw stream,
+142.75° once the resolve's own measured bias is taken out. The production path
+uses the second and the engine unit test pins the first, since it is given the
+quaternion directly. Either way the residual is ~77–79° and the verdict is the
+same; quoting one number and hiding the other would be the kind of tidiness
+that costs a reader the ability to reproduce it.)
+
+**scan-040 is refused, and that is the headline.** 76.77° is not a re-anchor:
+every one round 13 measured was 8–14°, and ARCore correcting itself by 79
+degrees against its own session map is not a thing that happens. Something else
+is true — the tracker restarted its frame, or the gyro is lying, or both — and
+nothing in the container can say which. The answer is not a better guess; it is
+a refusal, a recorded seam, and an operator who is told.
+
+**Offline, taught the same lesson — and it turned out to be blind as well.**
+`stitch_sections` derived seams from RATES only, and 0.678 m over 6.065 s is
+0.11 m/s: under every threshold. So the offline pass found **one section** in a
+capture with a 66-degree fold in the middle of it. (Item 62 recorded this and
+called it *"bridged rather than split"*; that was true and was not the whole
+truth — nothing was bridged, the seam was simply invisible.) A run of poses the
+tracker disowned between two it owned is now a candidate on its own, resolved
+by the same policy, and **the ruler votes last**, exactly as item 60's seventh
+gate does. That gate earned itself immediately: scan-041 has a 468 ms gap where
+the gyro says the phone turned 13.90° and the tracker says 0.78°, so the bridge
+proposes a perfectly defensible 14.18° correction that makes the map *worse*
+(self-check 2.86 → 3.39 cm, flat-floor vertical wander 0.50 → 0.79 m). Refused
+by the surfaces, which is the referee.
+
+Measured through the production path (`engine_cli --d6-reprocess`), before and
+after, on the owner's real bytes:
+
+| scan | sections | self-check | trajectory extents | outcome |
+|---|---|---|---|---|
+| 040 | 1 → 1 | 2.64 → **2.64 cm** | 0.134 m vert / 4.182 m end gap, unchanged | gap **named** and refused (6.065 s blind, residual 76.77°) |
+| 041 | 2 → 2 | 2.86 → **2.86 cm** | 0.496→0.811 m, unchanged | bridge refused by the ruler (25.29 cm applied vs 24.48 cm left alone) |
+| 042 | 1 → 1 | 3.54 → **3.54 cm** | unchanged | one gap negligible (5.72° gyro vs 5.70° tracker), one thin-submap |
+
+**Every offline number is identical to round 16's, on purpose.** A correction
+nobody can check is exactly what item 63 exists to stop applying, so the
+offline pass gained a diagnosis and not a change — while the LIVE pass stopped
+rotating his room by 66 degrees, which is the fix he asked for. What the
+container now says out loud is `longest blind stretch 6.065 s; 1 gap(s)
+refused`, where before it said nothing at all.
+
+ABI 11 → 12, additive: `scan_engine_last_reanchor()` + `scan_gap_verdict_str()`
+carry the six numbers a `Status` cannot, so the capture log can print *why*
+while the walk is still happening.
+
+**64 — TWO STARTS FOR ONE PROJECT, AND A WRECK GRADED GOOD (scan-045).**
+
+Root cause, and it is not the operator's finger. `startCapture()` had **no
+re-entry guard of any kind**: it never looked at `captureState`, the Start
+button was never disabled, and the round-12 tracking gate holds the press for
+four to eight seconds during which — because `_startWarmup` was computed and
+rendered **nowhere** — nothing on the screen changed at all. A person who
+presses a button that does not respond presses it again. That is not operator
+error; it is a button that lied.
+
+The second press fell through both `if (!startPending)` blocks and started the
+capture, leaving the *first* press's `startGateJob` alive (it is cancelled only
+when a NEW gate opens, which never happened). Four seconds later that orphan
+re-entered `startCapture()` mid-recording and, before the engine finally
+refused it with `invalid state`, had already run `resetPoseCounters()`,
+`resetWorldFrame()` — destroying and rebuilding the live ARCore session in the
+middle of the walk — and `trailRecorder.clear()`.
+
+That last call is `pathM=0.0`, and here is the part that matters most: **a zero
+path did not merely lose a number, it flipped the grading axis.** Round 14's
+`isFromTheSpot` reads "≥ 20 s elapsed and < 5 m walked" as a deliberate
+from-the-spot sweep and grades on points per SECOND, which 55,228 returns over
+28 s passes comfortably. One section, no drops, 225 poses (so round 16's
+zero-pose check could not fire) → **GOOD SCAN**, on a bundle with no `map.bin`
+and no `processed/` in it.
+
+Fixed in three places, because the failure needed all three:
+
+* **The button.** One `AtomicBoolean`, claimed by the first press and held
+  across the whole gate wait; the gate's own re-entry walks through it. Plus a
+  `starting` flow the transport button actually renders — dimmed, inert, with a
+  spinner and the label "Starting — waiting for tracking". The operator now both
+  cannot and no longer needs to press twice.
+* **The grade.** `ScanSummary.engineStarted` (what `scan_engine_start`
+  answered) and `worldPointsResolved` (read off `streams/map.bin`, 16 bytes per
+  `PointVertex` — the file, not a counter, because a counter is what got reset).
+  Both rank **above** density, sections and everything else. Headlines
+  "NOT RECORDED" and "NO ROOM — NOTHING WAS PLACED", for round 16's reason:
+  "POOR" invites "walk it again more carefully", and neither of these gets
+  better for anything the operator does differently.
+* **The refusal.** Auto-process now names which of the three reasons it
+  skipped for. `auto-process FAILED` with no error text reads as a bug in
+  Process and was nothing of the kind.
+
+Both new fields are **nullable, and the `?:` that is not there is the point** —
+the same rule round 16 wrote for `posesRecorded`, and it caught the same
+mistake within the hour: a Mid-360 session, a replay and four round-15 unit
+tests have no pushbroom writing `map.bin`, and reading its absence as zero made
+every one of them "NO ROOM".
+
+**65 — THE PATH WAS BUILT AND NEVER PUBLISHED. ONE LINE.**
+
+Round 16 built all of it: the metric flow, its accessor, the `:core` vertex
+builder, the Filament material, a `LINE_STRIP` drawn in the **same 3D pass** as
+the points with the same depth state, and the Review-side file reader. What it
+never did was publish the metric flow as the walk happened.
+`_worldPoints` was written by `setCapacity()` and by `clear()` and **by nothing
+else** — and `setCapacity()` is called when the performance preset changes, so
+the live 3D ribbon held whatever the walk looked like at the moment a preset
+was last touched, which on every real capture is the empty list. The 108 dp
+bird's-eye tile, published two lines away in the same method, kept updating.
+
+So the operator got exactly one view of his path and it was the 2D one. *"its
+just a 2d map of my path"* is a precise bug report.
+
+The renderer, the frame, the material and the file were all correct, and
+scan-040's `processed/trajectory.bin` sits comfortably inside its own cloud —
+so nothing here points at the shader or the coordinate frame. It was one
+missing assignment, and it had no test because everything it lived in took a
+`com.google.ar.core.Frame`. `onPose(x, y, z, tracking)` is now split out of
+`onFrame` for exactly that reason, and five bare-JVM tests walk it.
+
+Two things beside it, both found on the way:
+
+* **Review said nothing when there was no path.** Round 16's comment claims it
+  *"says so rather than drawing a straight line"*; it did not — a missing
+  `trajectory.bin` produced `EMPTY`, the entity was removed from the scene in
+  silence, and the result is indistinguishable from a broken renderer. **Every
+  container processed by a pre-round-16 engine is in that state**, which is
+  every scan the owner already owns. There is now a line under the toggle
+  saying which it is and what to do.
+* **The device path had never been asserted.** The round-16 commit touched zero
+  files under `src/androidTest/`. `Round17TrajectoryOnDeviceTest` now drives the
+  real `libscanengine_jni.so` over staged scan-030 bytes and checks that the
+  engine writes the file, that its length is exactly `16 + 12 × poses`, that
+  the phone's own independent decoder turns it into ≥ 2 finite vertices with
+  real extent, and that a second Process does not corrupt it.
+
+**66 — A DEBUG LOG THAT TRAVELS WITH THE SCAN.**
+
+`filesDir/logs/capture.log` is an app-lifetime rolling log that has to be
+exported separately and then matched up by timestamp against a scan that may be
+one of five taken that evening. `<proj>.lscan/debug/capture-debug.log` needs no
+matching up: the bundle a person sends **is** the whole story. It carries every
+`[ar]`/`[session]`/`[seal]`/`[net]` line plus capture-only verbose events — pose
+acceptance, re-anchor decisions with their six numbers (item 63's, via the new
+ABI-12 call), watchdog transitions, cues, preset changes.
+
+Opened *before* the engine start, so a capture whose engine refuses still
+leaves a bundle that says why — the scan-045 case exactly. Closed on both seal
+arms, before the empty-scan prune that may delete the directory it lives in.
+Capped at 5 MB × 2 files: a developer toggle must not be a way to fill a phone.
+
+**Explicitly not a stream, and a `debug/README.txt` beside it says so in the
+bundle**: not chunked, not CRC'd, not in the manifest, not part of the replay
+guarantee. `record/replay` walks `streams/`, so byte-identical replay is
+untouched by anything written here — which is the property that lets the log be
+as verbose as it likes.
+
+Developer Mode is the standard seven taps on the version footer (which already
+had a stable test tag and an unused `clickable` import). Android's own idiom,
+used for its own reason: a setting nobody can reach by accident needs no warning
+beside it.
+
+**67 — CAMERA HONESTY, AND ONE REAL LEAK FOUND WHILE LOOKING.**
+
+Audited every path that can touch an ARCore image: `KeyframeRecorder`, the
+calibration wizard, the GL background renderer, the C++ colorizer, `frames_idx`,
+and the container's chunk types. Findings:
+
+* The GL background renderer is GPU-only — no `glReadPixels`, no `PixelCopy`,
+  no `MediaCodec` anywhere in `app/` or `core/`.
+* The calibration wizard takes the **luma plane only**, into a heap array, and
+  closes the image immediately; it persists angles, never pixels.
+* No engine code writes an image file, and **no chunk type can carry image
+  bytes** — `kCameraFrameIndex` is a path + pose + intrinsics + timestamp.
+
+**And one real leak.** `CaptureViewModel` gated the UI flow with
+`FeatureFlags.COLORIZE_ENABLED` and then called
+`keyframeRecorder.setEnabled(tuning.keyframesEnabled)` on the line *below*
+without it — at two sites. Three performance presets set `keyframesEnabled =
+true`, and the preset picker is reachable **during a recording**, so changing
+preset mid-walk re-armed the recorder and started writing
+`streams/frames/kf_*.jpg` while the app's own HUD, reading the correctly-gated
+flow, went on reporting keyframes as off. Both sites now pass the gated flow —
+and `KeyframeRecorder` itself now defaults to `false` and enforces the flag **at
+the source**, so with colorization off there is no argument to `setEnabled()`
+that turns the camera writer on. That is what makes the class of bug impossible
+rather than fixed twice.
+
+With that closed, the sentence is true unconditionally, and it is now on the
+capture sheet and in a Settings section of its own:
+
+> **Camera is used for position tracking only — no images are saved.**
+
+Worth stating why it was needed. The app asks for CAMERA permission and holds
+the camera open for every second of every walk, because ARCore's
+visual-inertial odometry *is* what places each lidar return. Nothing anywhere
+said so, and the one place the camera was mentioned — the profile reference
+card — said "no camera", which is true about storage and false about the lens.
+An app that keeps your camera on for eighty seconds in your own home and does
+not explain itself has earned the suspicion.

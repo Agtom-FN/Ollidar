@@ -105,12 +105,40 @@ class KeyframeRecorder(
      * the ARCore/GL thread in [onFrame] and written from the UI thread, hence
      * atomic.
      */
-    private val keyframesEnabled = AtomicBoolean(true)
+    /**
+     * ROUND 17 item 67 — **fail CLOSED.**
+     *
+     * This defaulted to `true`, so any construction site that forgot to call
+     * [setEnabled] recorded camera images by default. On a pipeline whose
+     * output is JPEGs of the operator's home, the safe default is the one that
+     * writes nothing; every caller that wants frames says so.
+     */
+    private val keyframesEnabled = AtomicBoolean(false)
 
-    /** Turns the keyframe pipeline on/off mid-session without stopping the recorder. */
+    /**
+     * Turns the keyframe pipeline on/off mid-session without stopping the
+     * recorder.
+     *
+     * ROUND 17 item 67 — the feature flag is enforced HERE, in the class that
+     * does the writing, and not only at the call sites.
+     *
+     * Two call sites asked for keyframes without consulting
+     * `FeatureFlags.COLORIZE_ENABLED`, while the line immediately above each of
+     * them gated the UI flow with it: `CaptureViewModel.applyTuning` and
+     * `setKeyframesEnabled`. Since three of the performance presets set
+     * `keyframesEnabled = true` and the preset picker is reachable DURING a
+     * recording, changing preset mid-walk re-armed this recorder and started
+     * writing `streams/frames/kf_*.jpg` — while the app's own HUD, reading the
+     * correctly-gated flow, went on reporting keyframes as off.
+     *
+     * Both call sites are fixed. This line is what makes the class of bug
+     * impossible rather than fixed twice: with colorization off there is no
+     * argument to this function that turns the camera writer on.
+     */
     fun setEnabled(enabled: Boolean) {
-        val was = keyframesEnabled.getAndSet(enabled)
-        if (!was && enabled) selector.reset()
+        val want = enabled && com.lidarscan.core.FeatureFlags.COLORIZE_ENABLED
+        val was = keyframesEnabled.getAndSet(want)
+        if (!was && want) selector.reset()
     }
 
     /** §3.5's 2–5 fps cadence, changeable from the sheet while recording. */

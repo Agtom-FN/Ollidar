@@ -88,6 +88,7 @@
 
 #include "scanengine/cloud/point_page.h"
 #include "scanengine/core/span.h"
+#include "scanengine/poses/reanchor.h"
 #include "scanengine/slam/post/trajectory_loop.h"
 
 namespace scanengine {
@@ -108,6 +109,27 @@ struct SectionStitchConfig {
   double max_speed_mps = 6.0;
   double max_turn_rate_deg_s = 400.0;
   double min_dt_s = 0.008;
+
+  // --- ROUND 17 item 63: the LONG gap ---------------------------------------
+  //
+  // The three rules above are RATES, and a rate cannot see the failure that
+  // broke the owner's scan-040. The tracker was blind for 6.065 s and came
+  // back 0.678 m / 66.21 deg from where it let go — 0.11 m/s and 10.9 deg/s,
+  // under every threshold, so this detector found ONE section in a capture
+  // with a 66-degree fold in the middle of it. (Item 62 recorded exactly this
+  // and called it "bridged rather than split", which was true and was not the
+  // whole truth: nothing was bridged, the seam was simply invisible here.)
+  //
+  // So a run of poses the tracker DISOWNED, between two it did not, is a seam
+  // candidate on its own — no rate involved. What happens to a candidate is
+  // reanchor.h's decision, not this file's, and it needs the gyro to make it:
+  // without `gyro` a long gap can only ever be refused, which is the correct
+  // and useless answer, so a caller that has the recorded IMU should pass it.
+  //
+  // `bridge_long_gaps = false` restores the ROUND-13 detector exactly.
+  bool bridge_long_gaps = true;
+  const reanchor::GyroBridge* gyro = nullptr;
+  reanchor::GapPolicy gap{};
 
   // --- refinement ----------------------------------------------------------
   bool refine = true;
@@ -153,6 +175,17 @@ enum class SeamDecision {
   kNotConverged,      // the solve did not settle
   kRefinementTooBig,  // it settled somewhere implausible
   kMapGotWorse,       // the refinement made the two sides agree less
+  // ROUND 17: a seam across a gap long enough for the operator to have moved
+  // inside it. `kBridged` reached the correction through the gyro instead of
+  // through the raw jump; the three refusals below produced NO correction and
+  // NO section split, because inventing one is what item 63 exists to stop.
+  kBridged,
+  kGapRefusedNoGyro,
+  kGapRefusedTooLong,
+  kGapRefusedDisagree,
+  // The gyro and the tracker agreed: the jump was the operator walking, not
+  // the frame moving. Nothing to correct, and nothing wrong.
+  kGapNegligible,
 };
 
 const char* to_string(SeamDecision d);
@@ -170,6 +203,15 @@ struct SectionSeam {
   double analytic[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
   // Translation the refinement added, in the final (last section's) frame.
   double refine_delta[3] = {0.0, 0.0, 0.0};
+
+  // ROUND 17 item 63. What the recorded gyro says the OPERATOR turned across
+  // the same span, and what is left of the jump once that is taken out. On a
+  // 33 ms seam the two residuals are the jump itself (nobody moves in 33 ms);
+  // on scan-040's 6.065 s gap the gyro says 144.94 deg against the tracker's
+  // 66.21, and the 78.91 deg left over is why that seam is refused.
+  double gyro_rotation_deg = 0.0;
+  double residual_translation_m = 0.0;
+  double residual_rotation_deg = 0.0;
 
   SeamDecision decision = SeamDecision::kAnalytic;
   const char* reason = "";
@@ -215,6 +257,16 @@ class SectionCorrection {
 struct SectionStitchReport {
   std::size_t sections = 1;
   std::vector<SectionSeam> seams;
+  // ROUND 17 item 63: every long gap this pass LOOKED at, seam or not, with
+  // the numbers it judged on. A gap that resolved to kGapNegligible or to one
+  // of the refusals is not in `seams` — it moved nothing — and would otherwise
+  // vanish without trace, which is exactly how scan-040's six blind seconds
+  // came to be reported as "1 section".
+  std::vector<SectionSeam> gaps_examined;
+  std::size_t gaps_refused = 0;
+  // The longest stretch the tracker was blind for, seconds. The one number
+  // that says "this capture has a hole in it" whatever was decided about it.
+  double longest_gap_s = 0.0;
   std::size_t poses = 0;
   std::size_t points = 0;
   // How far the correction moves the FIRST section's origin — the headline

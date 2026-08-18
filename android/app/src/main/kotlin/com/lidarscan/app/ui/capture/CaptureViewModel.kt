@@ -225,6 +225,23 @@ class CaptureViewModel(
      */
     private val logEvent: (String, String) -> Unit = { _, _ -> },
     /**
+     * ROUND 17 item 66 — the per-capture debug log, as three lambdas for the
+     * same reason [logEvent] is one.
+     *
+     * [beginDebugLog] is handed the capture's own `.lscan` directory and
+     * decides for itself (from Developer Mode) whether to open a sink;
+     * [logDebug] is a no-op whenever no sink is open, which is what lets it be
+     * called freely from hot paths without a flag check at every site;
+     * [endDebugLog] closes it at the seal.
+     *
+     * Verbose on purpose. `capture.log` has to stay readable because a person
+     * reads the whole of it looking for one line; this one is read by grep,
+     * travels inside the bundle it describes, and is explicitly not a stream.
+     */
+    private val beginDebugLog: (java.io.File, String) -> Unit = { _, _ -> },
+    private val logDebug: (String, String) -> Unit = { _, _ -> },
+    private val endDebugLog: (String) -> Unit = { },
+    /**
      * ROUND 6 (owner items 21 + 22): what this phone can carry. Drives the
      * preset table's per-device numbers and the conservative defaults that
      * replaced 0.2.1's "every control at its maximum".
@@ -1530,6 +1547,85 @@ class CaptureViewModel(
     private var startPending = false
 
     /**
+     * ROUND 17 item 64 — **Start is one press, however many times it is
+     * pressed.**
+     *
+     * The owner's scan-045 recorded two `[session] start` lines for one project
+     * six seconds apart, and the second one is the whole failure. There was no
+     * guard of any kind: `startCapture()` never looked at [captureState], the
+     * button was never disabled, and the ROUND 12 warmup gate takes four to
+     * eight seconds during which — because `_startWarmup` was written and
+     * rendered nowhere — **nothing on the screen changed at all**. An operator
+     * who presses a button that does not respond presses it again. That is not
+     * operator error; it is a button that lied.
+     *
+     * The second press then fell straight through both `if (!startPending)`
+     * blocks and started the capture, leaving the FIRST press's gate job alive
+     * (it is cancelled only when a new gate opens, which never happened). Four
+     * seconds later that orphan re-entered `startCapture()` mid-recording and,
+     * before the engine finally refused it with `invalid state`, had already
+     * run `resetPoseCounters()`, `resetWorldFrame()` — destroying and rebuilding
+     * the live ARCore session in the middle of the walk — and
+     * `trailRecorder.clear()`. That last one is `pathM=0.0`, and a zero path
+     * makes the grader think the operator was standing still on purpose, which
+     * is how a wrecked capture came to be labelled GOOD.
+     *
+     * So: one atomic, claimed by the first press and held for the whole
+     * sequence INCLUDING the gate's wait, released on every exit. Combined
+     * with [starting] (which the button now renders), the operator both cannot
+     * and no longer needs to press twice.
+     */
+    private val startInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /**
+     * ROUND 17 item 64 — whether `scan_engine_start` said yes for the capture
+     * that is being sealed. Reset at the top of every Start attempt so a
+     * previous scan's answer can never be read as this one's. See
+     * [com.lidarscan.core.capture.ScanSummary.engineStarted].
+     */
+    private val _engineStarted = MutableStateFlow<Boolean?>(null)
+
+    private val _starting = MutableStateFlow(false)
+
+    /**
+     * ROUND 17 item 64 — true from the moment Start is pressed until the
+     * capture is recording or the attempt has failed. The Capture screen
+     * disables the transport button on it and shows the warmup verdict, so the
+     * four-to-eight second gate is a state the operator can SEE.
+     */
+    val starting: StateFlow<Boolean> = _starting.asStateFlow()
+
+    /**
+     * ROUND 17 item 64 — how many points reached the WORLD, read off the file.
+     *
+     * `streams/map.bin` is `StreamId::kSlamMap`: the resolved, world-frame
+     * cloud, written only while the pushbroom is actually resolving. Its
+     * chunked framing carries a 32-byte stream header and 16 bytes of overhead
+     * per chunk around 16-byte `PointVertex` records, so this is an estimate of
+     * the count and NOT an exact one — which is fine, because the only question
+     * being asked of it is "is this zero".
+     *
+     * Returns `null` when the directory is unknown, because "I could not look"
+     * must never be graded as "there was nothing there" (the same rule
+     * `posesRecorded` follows).
+     */
+    private fun resolvedWorldPoints(dir: java.io.File?): Long? {
+        if (dir == null) return null
+        val f = java.io.File(java.io.File(dir, "streams"), "map.bin")
+        return runCatching {
+            if (!f.isFile) 0L else ((f.length() - 32L).coerceAtLeast(0L) / 16L)
+        }.getOrNull()
+    }
+
+    /** ROUND 17 item 64: released on every exit from the start sequence. */
+    private fun releaseStart() {
+        startPending = false
+        _starting.value = false
+        _startWarmup.value = null
+        startInFlight.set(false)
+    }
+
+    /**
      * Start (or restart) a hold. Called on press; [cancelMountHold] on release.
      *
      * The hold ANCHOR moves forward whenever the live gate fails, which is the
@@ -1776,7 +1872,9 @@ class CaptureViewModel(
         _lodBudgetMPoints.value = tuning.lodBudgetMPoints
         _keyframesEnabled.value =
             tuning.keyframesEnabled && com.lidarscan.core.FeatureFlags.COLORIZE_ENABLED
-        keyframeRecorder?.setEnabled(tuning.keyframesEnabled)
+        // ROUND 17 item 67: the already-gated flow, not the raw preset value —
+        // one source of truth. See KeyframeRecorder.setEnabled.
+        keyframeRecorder?.setEnabled(_keyframesEnabled.value)
         _keyframeRateFps.value = tuning.keyframeRateFps
         keyframeRecorder?.setTargetFps(tuning.keyframeRateFps.toDouble())
         _trailPoints.value = tuning.trailPoints
@@ -2362,6 +2460,40 @@ class CaptureViewModel(
      * series number must only ever be spent on a scan that was actually taken.
      */
     fun startCapture() {
+        // ── ROUND 17 item 64: one press, one start. ─────────────────────────
+        //
+        // Claimed by the first press and held across the ROUND 12 gate's whole
+        // wait, so the gate's own re-entry (which arrives with `startPending`
+        // set) walks straight through instead of trying to take it again. See
+        // [startInFlight] for scan-045.
+        if (!startPending) {
+            if (!startInFlight.compareAndSet(false, true)) {
+                logEvent(
+                    LOG_TAG_SESSION,
+                    "start IGNORED: a start is already in flight for this screen — " +
+                        "the tracking gate can take up to " +
+                        "${2 * com.lidarscan.core.capture.TrackingWarmup.MAX_WAIT_MILLIS}ms",
+                )
+                return
+            }
+            val already = captureState.value
+            if (already == com.lidarscan.core.engine.CaptureState.RECORDING ||
+                already == com.lidarscan.core.engine.CaptureState.PAUSED
+            ) {
+                logEvent(LOG_TAG_SESSION, "start IGNORED: already $already")
+                releaseStart()
+                return
+            }
+            _starting.value = true
+            _engineStarted.value = null
+            // A gate job from an earlier press has no business surviving into
+            // this one. It cannot happen while the atomic holds, and it is
+            // cancelled here anyway: the failure it caused was silent and cost
+            // the owner a capture.
+            startGateJob?.cancel()
+            startGateJob = null
+        }
+
         // ── ROUND 14: every capture gets its own world. ─────────────────────
         //
         // The owner asked whether the origin zeroes at the start of each
@@ -2520,6 +2652,8 @@ class CaptureViewModel(
             }
             _startWarmup.value = null
         }
+        // The gate is behind us; the atomic stays claimed until the sequence
+        // resolves (ROUND 17 item 64), but `startPending` has done its job.
         startPending = false
 
         // ── ROUND 14 (owner item 53): do not record zero bytes. ─────────────
@@ -2544,6 +2678,7 @@ class CaptureViewModel(
             )
             if (verdict.blocking) {
                 _saveError.value = verdict.summary + (verdict.fix?.let { "\n\n$it" } ?: "")
+                releaseStart()  // ROUND 17 item 64
                 return
             }
         }
@@ -2571,8 +2706,21 @@ class CaptureViewModel(
             val reopened = (_uiState.value as? CaptureUiState.Loaded)?.project
             val project = reopened
                 ?: createProjectForThisScan()
-                ?: return@launch
+                // ROUND 17 item 64: a start that never made a project is a
+                // start that ended, and the button must arm again.
+                ?: run { releaseStart(); return@launch }
             val createdByThisStart = reopened == null
+            // ROUND 17 item 66: opened BEFORE the engine, so a capture whose
+            // engine refuses to start still leaves a bundle that says why —
+            // which is exactly the scan-045 case.
+            beginDebugLog(
+                project.directory,
+                "capture debug log opened for ${project.id} — app " +
+                    "v${com.lidarscan.app.BuildConfig.VERSION_NAME} " +
+                    "(build ${com.lidarscan.app.BuildConfig.VERSION_CODE}), " +
+                    "sensor=${project.manifest.sensor} profile=${project.manifest.profile} " +
+                    "preset=${_preset.value} tier=$deviceTier liveSlam=${_liveSlam.value}",
+            )
             // ROUND 13 (owner item 47). BEFORE the engine session, so the
             // filter is already in place for the first frame, and recorded in
             // the same line the field report is read from — an unprotected walk
@@ -2614,8 +2762,15 @@ class CaptureViewModel(
                 _saveError.value =
                     "The scan did not start (${why?.message ?: "the engine refused"}). Nothing is being " +
                         "recorded — check the sensor connection and press Start again."
+                // ROUND 17 item 64: the seal must never be able to call this a
+                // GOOD scan. ScanSummary.engineStartFailed is graded above
+                // density, above sections, above everything.
+                _engineStarted.value = false
+                releaseStart()
                 return@launch
             }
+            _engineStarted.value = true
+            releaseStart()
             sealPending.set(true)
             // ROUND 7 (field bug 2): from here on, a scan that receives nothing
             // has two seconds before it has to say so.
@@ -2632,6 +2787,17 @@ class CaptureViewModel(
                 _sectionCount.value = 1
                 _unhealedSectionBreaks.value = 0
                 controller.onSectionBreak = { br, healed ->
+                    // ROUND 17 items 63 + 66: the re-anchor decision, with the
+                    // numbers it was made on, into the bundle's own log. This
+                    // is the line that would have made scan-040 obvious on the
+                    // evening it was taken.
+                    logDebug(
+                        LOG_TAG_AR,
+                        "section break: reason=${br.reason} gapMs=${br.gapMillis} " +
+                            ("jump=%.3fm/%.2fdeg".format(br.positionJumpM, br.rotationJumpDeg)) +
+                            " healed=$healed" +
+                            (controller.lastReanchorSummary()?.let { " :: $it" } ?: ""),
+                    )
                     _sectionCount.value = controller.sections.sectionCount()
                     // ROUND 15 item 54: only an UNHEALED break can reach the
                     // cue. The count the scheduler keys on is this one, not
@@ -2916,7 +3082,15 @@ class CaptureViewModel(
             val listener: (com.google.ar.core.Frame) -> Unit = recorder::onFrame
             keyframeFrameListener = listener
             controller.addFrameListener(listener)
-            recorder.start(project.directory)
+            // ROUND 17 item 67: `start()` creates `streams/frames/` and opens a
+            // native index handle. Both are harmless with keyframes off (the
+            // index FILE is written on the first record and there is never a
+            // first record) — but an empty `frames/` directory in every bundle
+            // invites exactly the question the capture screen now answers, so
+            // it is not created unless something is going to be put in it.
+            if (com.lidarscan.core.FeatureFlags.COLORIZE_ENABLED) {
+                recorder.start(project.directory)
+            }
             viewModelScope.launch {
                 recorder.stats.collect { _keyframeStats.value = it }
             }
@@ -3154,8 +3328,38 @@ class CaptureViewModel(
             // app promptly refused to process their scans for a reason that
             // was not true of them.
             posesRecorded = arController?.acceptedPoseCount,
+            // ROUND 17 item 64: the two things scan-045 needed and did not have.
+            //
+            // `engineStarted` is what `scan_engine_start` answered; `false`
+            // outranks every other measurement on the card.
+            //
+            // `worldPointsResolved` is read off the FILE, not off a counter —
+            // `streams/map.bin` is the resolved world cloud (16 bytes per
+            // PointVertex) and its absence is what "no room" literally means.
+            // scan-045 sealed 55,228 returns with no map.bin at all, and the
+            // ROUND 16 pose check could not see it: it had 225 poses. A counter
+            // can be reset by a stray call; the bytes on disk cannot.
+            engineStarted = _engineStarted.value,
+            // ...and the SAME `?:`-that-is-not-here rule as the line above,
+            // for the same reason and learned the same way. A rig with no AR
+            // controller — a Mid-360 session, a replay, the four round-15 unit
+            // tests — has no pushbroom writing `map.bin`, so its absence there
+            // is not evidence of anything. Reading it as zero made every one of
+            // those captures "NO ROOM", which is exactly the mistake ROUND 16's
+            // comment three lines up was written to stop being repeated.
+            worldPointsResolved = arController?.let {
+                resolvedWorldPoints((_uiState.value as? CaptureUiState.Loaded)?.project?.directory)
+            },
         )
         _scanSummary.value = summary
+        // ROUND 17 item 66.
+        logDebug(
+            LOG_TAG_SEAL,
+            "summary built: headline=${summary.headline} grade=${summary.grade} " +
+                "engineStarted=${summary.engineStarted} " +
+                "worldPoints=${summary.worldPointsResolved} poses=${summary.posesRecorded} " +
+                ("pathM=%.2f".format(summary.pathLengthMeters)),
+        )
         // ROUND 13, bug (A)+(B), and they were ONE bug.
         //
         // `"a" + "b".format(args)` does not format `"a" + "b"`: a method call
@@ -3303,6 +3507,9 @@ class CaptureViewModel(
                 "SEAL FAILED id=$activeId sealedManifest=${sealed != null} readback=${verified != null} " +
                     "points=${finalStats.pointsCaptured} dir=${projectDir?.absolutePath}",
             )
+            // ROUND 17 item 66: closed on BOTH arms — a bundle whose seal
+            // failed is the one a person is most likely to send.
+            endDebugLog("capture debug log closed (seal failed)")
         } else {
             // ROUND 9 (item 33): a scan that is about to be pruned was not
             // "saved to <path>" — saying so would send the operator to a
@@ -3323,6 +3530,13 @@ class CaptureViewModel(
                     } else {
                         ""
                     },
+            )
+            // ROUND 17 item 66. Closed AFTER the summary and the seal line, so
+            // both are inside the file, and before the prune below, which may
+            // delete the directory it lives in.
+            endDebugLog(
+                "capture debug log closed — sealed OK, grade=${summary.headline}, " +
+                    "points=${finalStats.pointsCaptured}",
             )
         }
         // ROUND 9 (item 33): the prune itself, after the seal has been written
@@ -3482,22 +3696,50 @@ class CaptureViewModel(
             // it to place a return, the section stitch is a function of it, the
             // ruler measures a cloud that does not exist without it. With zero
             // poses the honest answer is available before the attempt.
-            if (summary.isTwoDimensionalOnly) {
+            if (summary.engineStartFailed || summary.isNoRoom || summary.isTwoDimensionalOnly) {
                 _autoProcess.value = AutoProcessState(
                     projectId = activeId,
                     running = false,
                     progress = 1f,
                     failed = true,
-                    blocked = "This scan has no camera positions, so there is nothing to " +
-                        "process: every stage — placing the returns, stitching the pieces, " +
-                        "measuring the map — needs the trajectory, and this capture recorded " +
-                        "none. The raw sensor data is saved and untouched.",
+                    // ROUND 17 item 64: three reasons, three sentences. The
+                    // owner's scan-045 hit the third one, said nothing about
+                    // it, and then reported a bare "auto-process FAILED" —
+                    // which reads as a bug in Process and was nothing of the
+                    // kind. A refusal that names its reason is a diagnosis; a
+                    // failure that does not is a mystery.
+                    blocked = when {
+                        summary.engineStartFailed ->
+                            "The recording engine never started for this scan, so there is " +
+                                "nothing to process. The raw sensor data is saved and untouched."
+                        summary.isNoRoom ->
+                            "This scan has no resolved map: the returns arrived but none of " +
+                                "them were placed in space, so there is no cloud for Process " +
+                                "to stitch or measure. The raw sensor data is saved and " +
+                                "untouched."
+                        else ->
+                            "This scan has no camera positions, so there is nothing to " +
+                                "process: every stage — placing the returns, stitching the " +
+                                "pieces, measuring the map — needs the trajectory, and this " +
+                                "capture recorded none. The raw sensor data is saved and " +
+                                "untouched."
+                    },
                 )
                 logEvent(
                     LOG_TAG_SEAL,
-                    "auto-process SKIPPED for $activeId — zero poses recorded; the container " +
-                        "has lidar.bin and imu_phone.bin but no poses_ar.bin, so there is no " +
-                        "trajectory to resolve against (Process would fail for the same reason)",
+                    "auto-process SKIPPED for $activeId — " +
+                        when {
+                            summary.engineStartFailed ->
+                                "scan_engine_start refused this capture; nothing was recorded " +
+                                    "into a world frame"
+                            summary.isNoRoom ->
+                                "no streams/map.bin — ${summary.pointsCaptured} returns " +
+                                    "arrived and none resolved to world points"
+                            else ->
+                                "zero poses recorded; the container has lidar.bin and " +
+                                    "imu_phone.bin but no poses_ar.bin, so there is no " +
+                                    "trajectory to resolve against"
+                        } + " (Process would fail for the same reason)",
                 )
             } else if (autoProcessPlan(sectionBreaks.size + 1, mountWarned)) {
                 startAutoProcess(activeId, verified.directory, sectionBreaks.size + 1)
@@ -3710,7 +3952,7 @@ class CaptureViewModel(
     /** Sheet: camera keyframes on/off. Applies to a live recorder immediately. */
     fun setKeyframesEnabled(enabled: Boolean) {
         _keyframesEnabled.value = enabled && com.lidarscan.core.FeatureFlags.COLORIZE_ENABLED
-        keyframeRecorder?.setEnabled(enabled)
+        keyframeRecorder?.setEnabled(_keyframesEnabled.value)  // ROUND 17 item 67
         markCustomIfDiverged()
     }
 
