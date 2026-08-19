@@ -438,6 +438,10 @@ fun CaptureRoute(
     val starting by viewModel.starting.collectAsStateWithLifecycle()
     // ROUND 20 item 78: the hold-steady stage.
     val startHold by viewModel.startHold.collectAsStateWithLifecycle()
+    // ROUND 21 items 84/85: the unified start-progress panel — which stage the
+    // start sequence is in, since when, and the gate's live verdict.
+    val startProgress by viewModel.startProgress.collectAsStateWithLifecycle()
+    val startWarmup by viewModel.startWarmup.collectAsStateWithLifecycle()
     // ROUND 20 item 83: the New-capture confirm.
     val showNewCaptureConfirm by viewModel.showNewCaptureConfirm.collectAsStateWithLifecycle()
     // ROUND 17 item 66: Developer Mode's answer, kept current on the one object
@@ -686,6 +690,8 @@ fun CaptureRoute(
         isReplaySession = viewModel.isReplaySession,
         starting = starting,
         startHold = startHold,
+        startProgress = startProgress,
+        startWarmup = startWarmup,
         showNewCaptureConfirm = showNewCaptureConfirm,
         onNewCapture = viewModel::requestNewCapture,
         onConfirmNewCapture = viewModel::confirmNewCapture,
@@ -865,6 +871,10 @@ fun CaptureScreen(
     starting: Boolean = false,
     /** ROUND 20 item 78: the Start hold-steady stage's banner state, or null. */
     startHold: CaptureViewModel.StartHoldState? = null,
+    /** ROUND 21 item 85: the start sequence's stage/elapsed/pulse state, or null. */
+    startProgress: CaptureViewModel.StartProgress? = null,
+    /** ROUND 21 item 85: the ROUND 12 gate's live verdict while it holds Start. */
+    startWarmup: com.lidarscan.core.capture.TrackingWarmup.Verdict? = null,
     /** ROUND 20 item 83: the New-capture confirm dialog (a capture is live). */
     showNewCaptureConfirm: Boolean = false,
     onNewCapture: () -> Unit = {},
@@ -1164,11 +1174,20 @@ fun CaptureScreen(
                     // protect a viewport that is showing nothing worth protecting
                     // would be the wrong trade in both directions.
                     val loudBanners: @Composable () -> Unit = {
-                        // ROUND 20 item 78: the hold-steady stage. First in the
-                        // band — while it is up it IS the instruction, and the
-                        // GO cue that replaces it is the moment the walk begins.
-                        if (startHold != null) {
-                            HoldSteadyBanner(state = startHold)
+                        // ROUND 21 item 85 (owner request, verbatim: "i dont
+                        // know what is the app loading with, show me the
+                        // progress and tell me what i am waiting for and how
+                        // long and what should i do while waiting"): ONE panel
+                        // for the whole start sequence, from the instant of the
+                        // press. It folds the ROUND 20 hold banner in — while it
+                        // is up it IS the instruction — and the GO stage that
+                        // ends it is the moment the walk begins.
+                        if (startProgress != null || startHold != null) {
+                            StartProgressPanel(
+                                progress = startProgress,
+                                warmup = startWarmup,
+                                hold = startHold,
+                            )
                         }
                         if (saveError != null) {
                             SaveErrorBanner(saveError, onDismissSaveError)
@@ -1924,55 +1943,231 @@ private fun SaveErrorBanner(message: String, onDismiss: () -> Unit) =
  * owner two field sessions.
  */
 /**
- * ROUND 20 (item 78) — the hold-steady stage's banner: the instruction while
- * the trim converges, the live steadiness read-out, and the GO moment. Not
- * dismissible (it IS the start flow), never a modal (round 5's rule), and it
- * clears itself — GO lingers [CaptureViewModel.START_HOLD_GO_LINGER_MS] into
- * the walk and vanishes.
+ * ROUND 21 (item 85) — the unified start-progress panel, owner request
+ * verbatim: "i dont know what is the app loading with, show me the progress
+ * and tell me what i am waiting for and how long and what should i do while
+ * waiting".
+ *
+ * One panel, up from the instant Start is pressed, showing the whole
+ * sequence — (1) new tracking session, (2) locking position tracking (the
+ * ROUND 12 gate, with its live verdict in plain words), (3) measuring the
+ * mount (the ROUND 20 hold-steady stage, folded in from what used to be
+ * HoldSteadyBanner), (4) GO. Each stage carries a one-line instruction for
+ * what the operator should DO, and the active stage shows elapsed against
+ * what is expected. A press swallowed by the ROUND 17 one-press guard pulses
+ * the panel ([CaptureViewModel.StartProgress.pulses]) — the app answering
+ * "yes, I heard you, I'm already on it" instead of the silence that made the
+ * owner press three times at 01:29–01:31.
+ *
+ * Not dismissible (it IS the start flow), never a modal (round 5's rule), and
+ * it clears itself — GO lingers [CaptureViewModel.START_HOLD_GO_LINGER_MS]
+ * into the walk and vanishes. Wording never blames light or the room
+ * (round-19 owner correction): every instruction is the measured diet —
+ * scanning pose, features an arm's length or more away.
  */
 @Composable
-private fun HoldSteadyBanner(state: CaptureViewModel.StartHoldState) {
-    val accent = if (state.go) SemGood else ScanTeal
+private fun StartProgressPanel(
+    progress: CaptureViewModel.StartProgress?,
+    warmup: com.lidarscan.core.capture.TrackingWarmup.Verdict?,
+    hold: CaptureViewModel.StartHoldState?,
+) {
+    val go = hold?.go == true
+    val accent = if (go) SemGood else ScanTeal
     val shape = RoundedCornerShape(ScanDims.TileRadius)
+
+    // Which stage is live. `hold` outlives `progress` by the GO linger, so GO
+    // is derived from the hold state itself.
+    val activeStage = when {
+        go -> 3
+        hold != null || progress?.stage == CaptureViewModel.StartStage.HOLD -> 2
+        progress?.stage == CaptureViewModel.StartStage.GATE -> 1
+        else -> 0
+    }
+
+    // Elapsed since the press, ticking while the panel is up.
+    var nowMillis by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(progress?.beganAtMillis) {
+        while (true) {
+            nowMillis = System.currentTimeMillis()
+            kotlinx.coroutines.delay(250)
+        }
+    }
+    val elapsedS = progress?.let { ((nowMillis - it.beganAtMillis) / 1000L).coerceAtLeast(0L) }
+
+    // Item 85: a swallowed press flashes the panel and answers out loud.
+    val pulses = progress?.pulses ?: 0
+    var pulseFlash by remember { mutableStateOf(false) }
+    LaunchedEffect(pulses) {
+        if (pulses > 0) {
+            pulseFlash = true
+            kotlinx.coroutines.delay(900)
+            pulseFlash = false
+        }
+    }
+
+    val gateCapS = 2 * com.lidarscan.core.capture.TrackingWarmup.MAX_WAIT_MILLIS / 1000L
+    val holdCapS = CaptureViewModel.START_HOLD_TIMEOUT_MS / 1000L
+
     Column(
         Modifier
             .fillMaxWidth()
             .padding(horizontal = 14.dp, vertical = 6.dp)
-            .background(accent.copy(alpha = 0.14f), shape)
-            .border(1.dp, accent, shape)
+            .background(accent.copy(alpha = if (pulseFlash) 0.26f else 0.14f), shape)
+            .border(if (pulseFlash) 2.dp else 1.dp, accent, shape)
             .padding(12.dp)
-            .testTag("holdSteadyBanner"),
+            .testTag("startProgressPanel"),
     ) {
-        Text(
-            if (state.go) "GO — START WALKING" else "HOLD STILL — SETTING MOUNT REFERENCE",
-            style = MonoLabel,
-            color = accent,
-            modifier = Modifier.testTag(if (state.go) "holdSteadyGo" else "holdSteadyHolding"),
-        )
-        Spacer(Modifier.height(4.dp))
-        val p = state.progress
-        Text(
-            when {
-                state.go && state.fallbackNote != null -> state.fallbackNote
-                state.go -> "Mount reference set in this scan's own frame — recording."
-                p == null -> "Hold the phone still in your scanning pose…"
-                !p.gatePasses && p.holdMillis < 300L -> "Hold the phone still in your scanning pose…"
-                !p.gatePasses -> "Too much movement — brace the phone and hold…"
-                p.stabilityDeg >= 0.0 -> "Steady… %.1f° and improving. Keep holding.".format(p.stabilityDeg)
-                else -> "Steady… keep holding."
-            },
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-        if (!state.go && p != null) {
-            Spacer(Modifier.height(6.dp))
-            androidx.compose.material3.LinearProgressIndicator(
-                progress = { p.fraction },
-                modifier = Modifier.fillMaxWidth().testTag("holdSteadyProgress"),
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (go) "GO — START WALKING" else "STARTING SCAN",
+                style = MonoLabel,
                 color = accent,
+                modifier = Modifier.testTag(if (go) "holdSteadyGo" else "startProgressTitle"),
+            )
+            Spacer(Modifier.weight(1f))
+            if (!go && elapsedS != null) {
+                Text(
+                    "${elapsedS}s · usually 4–8 s",
+                    style = MonoLabel,
+                    color = InkFaint,
+                )
+            }
+        }
+        if (pulseFlash) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Heard you — this start is already running, no need to press again.",
+                style = MaterialTheme.typography.bodySmall,
+                color = accent,
+                modifier = Modifier.testTag("startProgressPulseNote"),
             )
         }
+        Spacer(Modifier.height(6.dp))
+
+        // ── stage 1: the ROUND 14 world-frame reset ─────────────────────────
+        StartStageRow(
+            index = 0,
+            activeStage = activeStage,
+            title = "New tracking session",
+            status = "Fresh world frame for this scan — under a second.",
+            instruction = null,
+            accent = accent,
+        )
+        // ── stage 2: the ROUND 12 tracking gate ─────────────────────────────
+        StartStageRow(
+            index = 1,
+            activeStage = activeStage,
+            title = "Locking position tracking",
+            status = when {
+                activeStage != 1 -> null
+                warmup == null -> "Watching the tracker settle…"
+                warmup.blocker == com.lidarscan.core.capture.TrackingWarmup.Blocker.NO_POSES ->
+                    "Camera warming up — nothing from the tracker yet…"
+                warmup.blocker == com.lidarscan.core.capture.TrackingWarmup.Blocker.NOT_TRACKING ->
+                    "Tracking not locked yet…"
+                else -> "Steady %.1f s of the 2 s needed".format(warmup.stableMillis / 1000.0)
+            }?.plus("  (waits up to $gateCapS s)"),
+            instruction = "Hold the phone in your scanning pose and keep the camera pointed " +
+                "at the room — furniture and edges an arm's length or more away.",
+            accent = accent,
+            fraction = if (activeStage == 1) warmup?.fraction else null,
+        )
+        // ── stage 3: the ROUND 20 hold-steady stage (the old banner, folded in) ──
+        val p = hold?.progress
+        StartStageRow(
+            index = 2,
+            activeStage = activeStage,
+            title = "Measuring the mount — hold still",
+            status = when {
+                activeStage != 2 -> null
+                p == null -> "Hold the phone still in your scanning pose…"
+                !p.gatePasses && p.holdMillis < 300L -> "Hold the phone still in your scanning pose…"
+                !p.gatePasses -> "Moved a little — measuring again from now. Keep holding…"
+                p.stabilityDeg >= 0.0 -> "Steady… %.1f° and improving. Keep holding.".format(p.stabilityDeg)
+                else -> "Steady… keep holding."
+            }?.plus("  (usually 1–2 s, up to $holdCapS s)"),
+            instruction = "Stand still exactly as you will scan. The walk starts at GO.",
+            accent = accent,
+            fraction = if (activeStage == 2) p?.fraction else null,
+            statusTag = if (activeStage == 2) "holdSteadyHolding" else null,
+        )
+        // ── stage 4: GO ──────────────────────────────────────────────────────
+        StartStageRow(
+            index = 3,
+            activeStage = activeStage,
+            title = "GO — start walking",
+            status = when {
+                !go -> null
+                hold?.fallbackNote != null -> hold.fallbackNote
+                else -> "Mount reference set in this scan's own frame — recording."
+            },
+            instruction = null,
+            accent = accent,
+        )
     }
+}
+
+/** One row of [StartProgressPanel]: ✓ done · ● live (status + instruction + bar) · ○ waiting. */
+@Composable
+private fun StartStageRow(
+    index: Int,
+    activeStage: Int,
+    title: String,
+    status: String?,
+    instruction: String?,
+    accent: Color,
+    fraction: Float? = null,
+    statusTag: String? = null,
+) {
+    val done = index < activeStage
+    val live = index == activeStage
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            when {
+                done -> "✓"
+                live -> "●"
+                else -> "○"
+            },
+            style = MonoLabel,
+            color = if (done || live) accent else InkFaint,
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            title,
+            style = MonoLabel,
+            color = if (live) accent else if (done) MaterialTheme.colorScheme.onSurface else InkFaint,
+        )
+    }
+    if (live && status != null) {
+        Text(
+            status,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier
+                .padding(start = 20.dp)
+                .let { m -> if (statusTag != null) m.testTag(statusTag) else m },
+        )
+    }
+    if (live && instruction != null) {
+        Text(
+            instruction,
+            style = MaterialTheme.typography.bodySmall,
+            color = InkFaint,
+            modifier = Modifier.padding(start = 20.dp),
+        )
+    }
+    if (live && fraction != null) {
+        Spacer(Modifier.height(4.dp))
+        androidx.compose.material3.LinearProgressIndicator(
+            progress = { fraction },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 20.dp)
+                .testTag(if (index == 2) "holdSteadyProgress" else "startProgressBar"),
+            color = accent,
+        )
+    }
+    Spacer(Modifier.height(4.dp))
 }
 
 @Composable
@@ -2979,9 +3174,17 @@ private fun TransportRow(
             isReplaySession -> "Start replay"
             else -> "Start new scan"
         }
-        // ROUND 17 item 64: armed = the press will do something. While a start
-        // is in flight the button is dimmed and inert, so the operator is told
-        // by the control itself rather than by a scan that comes out wrong.
+        // ROUND 17 item 64: armed = the press will start something new. While a
+        // start is in flight the button is dimmed and spinning, so the operator
+        // is told by the control itself rather than by a scan that comes out
+        // wrong.
+        //
+        // ROUND 21 item 85: the button stays TAPPABLE while a start is in
+        // flight. The press still cannot start anything — the ROUND 17 atomic
+        // swallows it — but it now PULSES the start-progress panel ("heard
+        // you, already on it") instead of vanishing into an inert control.
+        // The owner pressed a silent button three times at 01:29–01:31; a
+        // swallowed press must never again be indistinguishable from a dead one.
         val armed = connected && !stopping && !starting
         Box(
             Modifier
@@ -2989,7 +3192,7 @@ private fun TransportRow(
                 .alpha(if (armed || live) 1f else 0.45f)
                 .shadow(16.dp, CircleShape, ambientColor = Ember, spotColor = Ember)
                 .background(Ember, CircleShape)
-                .clickable(enabled = armed, role = Role.Button) {
+                .clickable(enabled = connected && !stopping, role = Role.Button) {
                     if (live) onStop() else onStart()
                 }
                 .semantics { contentDescription = recordLabel }

@@ -2847,3 +2847,136 @@ versionCode 905 verified in the built APK. Two pre-round-20 tests
 (round 7/8) had SYNTHETIC pure-yaw trim fixtures — exactly what item 79
 discards — and were re-pointed at a horizontal axis so they keep testing
 what they were about (persistence).
+
+## ROUND 21 (v0.9.6) — HOTFIX: v0.9.5 cannot start any COIN-D6 capture
+
+The owner's 2026-08-20 01:33 log (`lidarscan-capture-log-2026-08-20-0133.txt`,
+lines 1145–1184) shows three Start attempts — 01:29:07, 01:29:53, 01:31:47 —
+and each one is the same three-line tombstone: `start gate: cleared` → `start
+hold: trim captured in the scan's own frame` → **`start IGNORED: a start is
+already in flight`**. Zero seal summaries in the whole session. Round 20's own
+flagship feature killed every capture on the real phone, and the owner had to
+kill the app between attempts (the `device tier` re-log before each one is a
+process restart). This round is the fix, the owner's visibility request, and
+his calibration-box question.
+
+**84 — THE START DEADLOCK.** `startCapture()` cleared `startPending` *before*
+launching the round-20 hold stage, so the stage's re-entry
+(`startCapture(skipChecklist = true)`) arrived with `startPending == false`,
+fell into the round-17 one-press guard, and was refused by the very atomic its
+own sequence still held — `startInFlight` was then never released and every
+later press was ignored until process death. The round-20 comment claimed "the
+stage's own re-entry arrives with `holdPending` set and walks straight
+through"; nothing ever consulted `holdPending`. Fix: re-entries are now
+STRUCTURAL — a `StartResume` token (`PRESS` / `AFTER_GATE` / `AFTER_HOLD`)
+names what is resuming, only a `PRESS` may claim (or be refused by) the
+atomic, and both stage jobs are fenced so no outcome — timeout, crash,
+anything — can end them without resuming the sequence (a resume into a
+released sequence is dropped, never recorded). Audit of every exit: checklist
+returns pre-claim; RECORDING/PAUSED, Mid-360 preflight, failed project
+creation and engine refusal all release; gate and hold timeouts resume by
+construction. Backstop for the exit nobody predicted: a **start watchdog**
+(25 s = reset <1 s + gate 2×4 s + hold 10 s + project/engine I/O margin;
+checklist excluded — it returns before the claim) cancels whatever is left,
+logs `start WATCHDOG`, puts an actionable failure on screen and re-arms the
+button. Start must never be permanently dead. Why no test caught it: the hold
+stage is skipped without an AR controller, and no JVM test could build one —
+so a `StartPoseSource` seam now lets a fake pose ring drive the REAL gate →
+hold → record path, and `CaptureRound21Test` reproduces the owner's log shape
+(gate waits, hold converges, re-entry must reach the record call), proves a
+second press mid-hold is still swallowed, proves three consecutive Starts make
+three captures, and proves the watchdog frees a hung sequence.
+
+**85 — VISIBLE START PROGRESS (owner, verbatim: "i dont know what is the app
+loading with, show me the progress and tell me what i am waiting for and how
+long and what should i do while waiting").** One `StartProgressPanel` on the
+capture screen from the instant of the press: the four stages by name — "New
+tracking session" (<1 s), "Locking position tracking" (the gate's live verdict
+in plain words, "steady X of 2 s needed", "camera warming up" for NO_POSES,
+waits up to 8 s), "Measuring the mount — hold still" (the round-20 hold banner
+folded in: steadiness read-out, progress ring, gentle re-start wording on
+movement, usually 1–2 s), "GO — start walking" — each with elapsed-vs-expected
+and a one-line instruction for what to DO (scanning pose, camera at the room,
+furniture and edges an arm's length or more away; never a word about light —
+the round-19 guard stands). The `start IGNORED` UX is fixed with it: the
+record button stays tappable while a start runs, a swallowed press pulses the
+panel and prints "Heard you — this start is already running", because a
+swallowed press must never again be indistinguishable from a dead one.
+Failures and timeouts surface through the existing loud banner with the action
+to take (the watchdog's message says exactly what to press next).
+
+**86 — CALIBRATION BOX: NOT NEEDED (owner asked "do i need to make a
+calibration box for the device?").** No bench rig is required for current
+accuracy, on the evidence: (a) the mount ROTATION — the error that actually
+cost centimetres (2.4° ≈ 13.1 cm of doubled feature at 1.66 m,
+`test_round11_mount_trim.cpp`) — is now self-measured at every Start in the
+scan's own frame (round 20, items 78/79), typically to ≤0.8°, and refined
+offline by auto-level (item 80); no box measures it better than the phone
+already does. (b) The lever-arm TRANSLATION is second-order at walking pace:
+round-20's preliminary measurement put its effect at ≤1.5 mm, consistent with
+the gait fixture's own arithmetic (±3° of trunk yaw per step ×
+centimetre-scale lever-arm uncertainty ≈ 0.03 m × sin 3° ≈ 1.6 mm) — an order
+of magnitude below the 1.4–1.8 cm self-check floor of the owner's best scans.
+A tape measure into Settings → Mount profile (item 82's three cm fields) is
+sufficient; being wrong by a full centimetre there costs millimetres. (c) The
+planar-checkerboard wizard (`engine/.../pushbroom/mount_calibration.h`, wired
+to `MountCalibrationScreen`) remains available for anyone who wants a
+measured rotation without holding still — available, and unnecessary. Future
+(deliberately NOT built this round): the lever arm could likely be
+auto-estimated from existing data — fast-turn residuals (the trim's
+turn-around split already isolates rotation; what reverses with turn
+DIRECTION at fixed trim is the lever) over the recorded trajectory of any
+ordinary scan; noted for a later round if accuracy targets ever tighten below
+the millimetre it buys.
+
+### Resolution — 2026-08-20 (0.9.6, round 21 hotfix)
+
+**84 — fixed, and proven the honest way round.** The fix is the
+`StartResume` token (`CaptureViewModel.runStartSequence`): `PRESS` is the
+only claimer of the round-17 atomic, `AFTER_GATE`/`AFTER_HOLD` re-entries
+skip the claimed blocks structurally, resumes into a released sequence are
+dropped, and both stage jobs are try/catch-fenced so no outcome ends them
+without resuming. The start watchdog (25 s, `START_WATCHDOG_MS`, injectable)
+cancels a sequence that neither recorded nor failed, logs `start WATCHDOG`,
+surfaces "press Start to try again" and re-arms the button. The
+`StartPoseSource` seam (new; `CaptureArController` implements it) lets
+`CaptureRound21Test` drive the REAL gate → hold → record path on the JVM
+with a pose ring shaped like the owner's log (empty after the reset, steady
+after). **Proof the test catches the bug:** with the v0.9.5 resume line
+(`startCapture(skipChecklist = true)`) restored at the hold job's call site,
+the regression test, the second-press test and the three-consecutive-starts
+test all time out waiting for RECORDING — the owner's exact failure — while
+the watchdog test (which avoids the hold path) passes; with the round-21
+line, all four pass. A second press mid-hold is still swallowed (round-17
+protection intact), and now pulses the panel instead of vanishing.
+
+**85 — shipped.** `StartProgressPanel` (CaptureScreen.kt) replaces
+`HoldSteadyBanner`, whose content it folds into stage 3 unchanged in
+substance; stages are driven by `startProgress` (new flow: stage + pressed-at
++ pulses) with live detail from the flows that already carried it
+(`startWarmup`, `startHold`) — nothing duplicated. The record button stays
+tappable during a start; the VM guard swallows the press, pulses the panel
+and prints "Heard you — this start is already running". No wording mentions
+light or the environment; the round-19 guard test still passes.
+
+**86 — answered above: no calibration box.** Rotation self-measures at Start
+(≤0.8° goal) and auto-level backstops it; the lever arm is worth ≤1.5 mm at
+walking pace (round-20 prelim, consistent with 0.03 m × sin 3° ≈ 1.6 mm)
+against a 1.4–1.8 cm self-check floor, so the item-82 tape-measure fields
+suffice; the checkerboard wizard remains available-but-unnecessary. The
+fast-turn-residual auto-estimate is noted as a future item and deliberately
+not built.
+
+**Numbers.** Engine untouched, ABI 12: ctest 7/7 re-verified. `:core` 587
+(unchanged, 0 failures). `:app` **129** (125 + 4 new in
+`CaptureRound21Test`), 0 failures. Emulator `connectedDebugAndroidTest`
+22/22 on b4_test. VERSION 0.9.6; **versionCode 906 and versionName 0.9.6
+verified in the built APK** (aapt2 badging). Changed files: VERSION,
+app/ar/StartPoseSource.kt (new), app/ar/CaptureArController.kt,
+app/ui/capture/CaptureViewModel.kt, app/ui/capture/CaptureScreen.kt,
+app/src/test/.../CaptureRound21Test.kt (new), this file. Deliberately not
+done: no engine changes; no lever-arm auto-estimation; the watchdog does not
+roll back a project a cancelled record phase may have half-created (the
+round-9 rollback still covers the engine-refusal path; a watchdog-cancelled
+create is a bounded, listable leftover rather than a risk taken with the
+latch).

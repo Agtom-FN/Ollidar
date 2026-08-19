@@ -62,7 +62,7 @@ import kotlinx.coroutines.flow.asStateFlow
 class CaptureArController(
     private val context: Context,
     private val installer: ArInstaller = ArInstaller(),
-) {
+) : StartPoseSource {
 
     /**
      * ROUND 5 AUDIT bugfix (field report: "the AR camera not show up").
@@ -662,7 +662,7 @@ class CaptureArController(
      * successful resets cleared the start gate in ~2.0 s); paying for a second
      * one on the rare bad draw is much cheaper than a 2D scan.
      */
-    fun resetWorldFrame(attempts: Int): ResetResult {
+    override fun resetWorldFrame(attempts: Int): ResetResult {
         if (session == null) return ResetResult(ok = false, attempts = 0, yieldedFrames = 0L)
         val before = framesYielded.get()
         driveLock.lock()
@@ -719,7 +719,7 @@ class CaptureArController(
     val lastAcceptedPoseAtMillis: Long get() = lastPoseElapsedMillis
 
     /** Arms the two counters above for a new capture (or a new reset). */
-    fun resetPoseCounters() {
+    override fun resetPoseCounters() {
         posesAccepted.set(0)
         lastPoseElapsedMillis = 0L
     }
@@ -729,7 +729,7 @@ class CaptureArController(
      * mount re-zero. Snapshotted from [motion] (the same tracker B8's gate uses)
      * so the re-zero costs no extra ARCore work at all.
      */
-    fun poseWindow(): List<com.lidarscan.core.capture.PoseSample> = motion.snapshot()
+    override fun poseWindow(): List<com.lidarscan.core.capture.PoseSample> = motion.snapshot()
 
     /** Display geometry, from the `GLSurfaceView`'s `onSurfaceChanged` and the activity's display rotation. */
     fun setDisplayGeometry(display: Display?, width: Int, height: Int) {

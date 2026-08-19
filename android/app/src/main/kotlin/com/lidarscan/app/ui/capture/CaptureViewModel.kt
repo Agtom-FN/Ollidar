@@ -148,6 +148,15 @@ class CaptureViewModel(
      */
     private val arController: com.lidarscan.app.ar.CaptureArController? = null,
     /**
+     * ROUND 21 (item 84): the slice of [arController] the START SEQUENCE runs
+     * on — pose ring, world-frame reset, pose-counter arm. Defaults to the
+     * controller itself, so production behaviour is unchanged; JVM tests pass
+     * a fake so the REAL gate → hold → record path finally runs somewhere a
+     * regression can be caught. The round-20 deadlock (three dead Starts in
+     * the owner's 01:33 log) lived precisely on the path no test could reach.
+     */
+    private val startPoseSource: com.lidarscan.app.ar.StartPoseSource? = arController,
+    /**
      * ROUND 9 (owner item 35): the phone's own gyro + accelerometer, pushed into
      * the engine's IMU-densified pose interpolator for the whole of a capture.
      *
@@ -177,6 +186,11 @@ class CaptureViewModel(
     /** Peeks at what the next series number *would* be, for the name field's placeholder. */
     private val peekSeriesNumber: suspend () -> Int = { 1 },
     private val clock: () -> Long = System::currentTimeMillis,
+    /**
+     * ROUND 21 (item 84): the hard ceiling on an unresolved start sequence —
+     * injectable so the watchdog can be tested without a 25-second wait.
+     */
+    private val startWatchdogMillis: Long = START_WATCHDOG_MS,
     /**
      * ROUND 5 manual fallback: the serial devices currently attached, for the
      * inline manual panel's list. A supplier rather than a snapshot — devices
@@ -1688,6 +1702,98 @@ class CaptureViewModel(
     private var startHoldGoClearJob: kotlinx.coroutines.Job? = null
     private var holdPending = false
 
+    // ── ROUND 21 item 84: the start watchdog ─────────────────────────────────
+    //
+    // Every stage of the start sequence has its own timeout and every KNOWN
+    // exit releases [startInFlight] — and v0.9.5 proved the unknown exit
+    // exists anyway: the hold stage's re-entry was refused by the sequence's
+    // own atomic and the latch was held until process death. The watchdog is
+    // the structural guarantee the flags cannot give: if the sequence has
+    // neither begun recording nor honestly failed within [startWatchdogMillis]
+    // (reset <1 s + gate 2×4 s incl. the NO_POSES rebuild + hold 10 s + project
+    // and engine I/O margin), whatever is left of it is cancelled, the failure
+    // is put on screen with the action to take, and the button re-arms.
+    private var startWatchdogJob: kotlinx.coroutines.Job? = null
+
+    /** The record phase (project create → engine start → pipelines), cancellable by the watchdog. */
+    private var startRecordJob: kotlinx.coroutines.Job? = null
+
+    private fun armStartWatchdog() {
+        startWatchdogJob?.cancel()
+        startWatchdogJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(startWatchdogMillis)
+            if (!startInFlight.get()) return@launch
+            val state = captureState.value
+            if (state == com.lidarscan.core.engine.CaptureState.RECORDING ||
+                state == com.lidarscan.core.engine.CaptureState.PAUSED
+            ) {
+                // Recording began; the record phase releases the latch itself.
+                return@launch
+            }
+            logEvent(
+                LOG_TAG_SESSION,
+                "start WATCHDOG: the start sequence did not resolve within ${startWatchdogMillis} ms " +
+                    "(gateActive=${startGateJob?.isActive == true} " +
+                    "holdActive=${startHoldJob?.isActive == true} " +
+                    "recordActive=${startRecordJob?.isActive == true}) — " +
+                    "cancelling it and re-arming Start; the button must never be permanently dead",
+            )
+            startGateJob?.cancel()
+            startGateJob = null
+            startHoldJob?.cancel()
+            startHoldJob = null
+            startRecordJob?.cancel()
+            startRecordJob = null
+            _saveError.value =
+                "Start did not finish within ${startWatchdogMillis / 1000} s, so it was cancelled. " +
+                    "Nothing is being recorded — press Start to try again. If it happens twice in a " +
+                    "row, close and reopen the app, then send the capture log from Settings."
+            releaseStart()
+        }
+    }
+
+    // ── ROUND 21 item 85: the start-progress panel's state ──────────────────
+    //
+    // The owner, verbatim: "i dont know what is the app loading with, show me
+    // the progress and tell me what i am waiting for and how long and what
+    // should i do while waiting". One object drives the panel; the live stage
+    // detail keeps coming from the flows that already carried it
+    // ([startWarmup] for the gate, [startHold] for the hold/GO) so nothing is
+    // duplicated — this adds only what was missing: WHICH stage is running,
+    // since WHEN, and that a swallowed press was heard ([StartProgress.pulses]).
+
+    enum class StartStage {
+        /** "New tracking session" — the ROUND 14 world-frame reset, <1 s. */
+        RESET,
+
+        /** "Locking position tracking" — the ROUND 12 gate, up to 2×4 s. */
+        GATE,
+
+        /** "Measuring the mount" — the ROUND 20 hold-steady stage, ~1–2 s, 10 s cap. */
+        HOLD,
+    }
+
+    data class StartProgress(
+        val stage: StartStage,
+        /** [clock] millis when the press claimed the sequence — drives the elapsed read-out. */
+        val beganAtMillis: Long,
+        /** Bumped for every press swallowed mid-sequence; the panel pulses on change (item 85). */
+        val pulses: Int = 0,
+    )
+
+    private val _startProgress = MutableStateFlow<StartProgress?>(null)
+
+    /** Non-null from the press until the sequence resolves (recording or honest failure). */
+    val startProgress: StateFlow<StartProgress?> = _startProgress.asStateFlow()
+
+    private fun setStartStage(stage: StartStage) {
+        _startProgress.value = _startProgress.value?.copy(stage = stage)
+    }
+
+    private fun pulseStartProgress() {
+        _startProgress.value = _startProgress.value?.let { it.copy(pulses = it.pulses + 1) }
+    }
+
     /**
      * ROUND 17 item 64 — **Start is one press, however many times it is
      * pressed.**
@@ -1765,6 +1871,12 @@ class CaptureViewModel(
         holdPending = false
         _starting.value = false
         _startWarmup.value = null
+        // ROUND 21 item 84/85: a resolved sequence needs no watchdog and no
+        // progress panel. (The watchdog itself calls this last, and a job
+        // cancelling itself after its final suspension point is a no-op.)
+        startWatchdogJob?.cancel()
+        startWatchdogJob = null
+        _startProgress.value = null
         // ROUND 20 item 78: a start that failed clears its hold banner; a GO
         // banner lingers into the walk and is cleared by its own delayed job.
         if (_startHold.value?.go != true) _startHold.value = null
@@ -2712,24 +2824,80 @@ class CaptureViewModel(
      * series number must only ever be spent on a scan that was actually taken.
      */
     fun startCapture(skipChecklist: Boolean = false) {
+        runStartSequence(skipChecklist = skipChecklist, resume = StartResume.PRESS)
+    }
+
+    /**
+     * ROUND 21 (item 84) — **a stage's own re-entry must never be mistaken for
+     * a finger.**
+     *
+     * The v0.9.5 regression, from the owner's own log (01:29:07, 01:29:53,
+     * 01:31:47 — `start hold: trim captured…` immediately followed by `start
+     * IGNORED: a start is already in flight`, three times, zero seal summaries
+     * after): `startPending` was cleared BEFORE the round-20 hold stage
+     * launched, so the hold stage's re-entry knocked on the same door a second
+     * finger-press does — the ROUND 17 atomic — which was (correctly) still
+     * claimed by the very sequence trying to resume. The re-entry was ignored,
+     * the atomic was never released, and Start was dead until process death.
+     * The round-20 comment claimed "the stage's own re-entry arrives with
+     * `holdPending` set and walks straight through" — but nothing ever
+     * consulted `holdPending`, and no test could catch it because the hold
+     * stage only runs with a live controller.
+     *
+     * So the distinction is now STRUCTURAL rather than inferred from latch
+     * flags: every internal re-entry carries the stage it resumes from, a
+     * finger is always [PRESS], and only a PRESS may claim (or be refused by)
+     * the in-flight atomic. A re-entry whose sequence has already been
+     * released (watchdog, failure, stop) is dropped instead of recording into
+     * a released latch.
+     */
+    private enum class StartResume {
+        /** A finger (or the checklist sheet's continue). The only claimer. */
+        PRESS,
+
+        /** The ROUND 12 tracking gate's wait finished (cleared or timed out). */
+        AFTER_GATE,
+
+        /** The ROUND 20 hold-steady stage finished (trim captured or fell back). */
+        AFTER_HOLD,
+    }
+
+    private fun runStartSequence(skipChecklist: Boolean, resume: StartResume) {
+        // ── ROUND 21 item 84: a re-entry into a sequence that no longer holds
+        // the latch (the watchdog released it, or a failure did) must stop
+        // here — resuming it would start a recording nothing owns.
+        if (resume != StartResume.PRESS && !startInFlight.get()) {
+            logEvent(
+                LOG_TAG_SESSION,
+                "start resume DROPPED at $resume: the sequence was already released " +
+                    "(watchdog or failure) — nothing to resume into",
+            )
+            return
+        }
         // ── ROUND 19 item 77: the checklist intercepts the FIRST press ──────
         //
         // Before the in-flight claim, so nothing is held while the sheet is
-        // up; never on the gate's own re-entry (`startPending` — that walk
-        // has already begun); never for a replay. The sheet's Start button
-        // calls back with `skipChecklist = true`, so this adds no gate and no
-        // wait — one tap becomes two exactly once per device.
-        if (!skipChecklist && !startPending && !isReplay && _preScanChecklistEnabled.value) {
+        // up; never on a stage's own re-entry (those are never PRESS); never
+        // while a sequence is already in flight (that press belongs to the
+        // guard below, which swallows it VISIBLY — item 85); never for a
+        // replay. The sheet's Start button calls back with `skipChecklist =
+        // true`, so this adds no gate and no wait — one tap becomes two
+        // exactly once per device.
+        if (resume == StartResume.PRESS && !skipChecklist && !isReplay &&
+            !startInFlight.get() && _preScanChecklistEnabled.value
+        ) {
             _showPreScanChecklist.value = true
             return
         }
         // ── ROUND 17 item 64: one press, one start. ─────────────────────────
         //
-        // Claimed by the first press and held across the ROUND 12 gate's whole
-        // wait, so the gate's own re-entry (which arrives with `startPending`
-        // set) walks straight through instead of trying to take it again. See
-        // [startInFlight] for scan-045.
-        if (!startPending) {
+        // Claimed by the first press and held across the whole sequence —
+        // gate wait, hold stage, project + engine start — and released on
+        // every exit. Stage re-entries never come through this block at all
+        // (ROUND 21: they carry their resume token), so the only thing the
+        // atomic can refuse is a real second press. See [startInFlight] for
+        // scan-045.
+        if (resume == StartResume.PRESS) {
             if (!startInFlight.compareAndSet(false, true)) {
                 logEvent(
                     LOG_TAG_SESSION,
@@ -2737,6 +2905,11 @@ class CaptureViewModel(
                         "the tracking gate can take up to " +
                         "${2 * com.lidarscan.core.capture.TrackingWarmup.MAX_WAIT_MILLIS}ms",
                 )
+                // ROUND 21 item 85: a swallowed press must be VISIBLE. The
+                // owner pressed a silent button three times at 01:29–01:31;
+                // the panel now pulses so "the app IS working on it" needs no
+                // guessing.
+                pulseStartProgress()
                 return
             }
             val already = captureState.value
@@ -2755,6 +2928,23 @@ class CaptureViewModel(
             // the owner a capture.
             startGateJob?.cancel()
             startGateJob = null
+            // ── ROUND 21 item 84: the watchdog. Every stage below has its own
+            // timeout (gate 2×4 s, hold 10 s) and every KNOWN exit releases the
+            // latch — but v0.9.5 is the proof that the unknown exit exists, and
+            // an unknown exit used to mean a Start that was dead until the app
+            // was killed. If the sequence has neither begun recording nor
+            // honestly failed within [startWatchdogMillis], the watchdog
+            // cancels whatever is left of it, says so on screen, and frees the
+            // button. Start must never be permanently dead.
+            armStartWatchdog()
+            // ── ROUND 21 item 85: the start-progress panel, from the very
+            // first instant of the press — the owner's own words: "i dont know
+            // what is the app loading with, show me the progress and tell me
+            // what i am waiting for and how long".
+            _startProgress.value = StartProgress(
+                stage = StartStage.RESET,
+                beganAtMillis = clock(),
+            )
         }
 
         // ── ROUND 14: every capture gets its own world. ─────────────────────
@@ -2785,9 +2975,9 @@ class CaptureViewModel(
         // scan-039), retries once, and REPORTS. `yielded` is how many render
         // frames the lock actually turned away, which is the evidence that the
         // mutual exclusion ran at all rather than being a claim in a comment.
-        if (!startPending) {
-            arController?.resetPoseCounters()
-            arController?.let { controller ->
+        if (resume == StartResume.PRESS) {
+            startPoseSource?.resetPoseCounters()
+            startPoseSource?.let { controller ->
                 val reset = controller.resetWorldFrame(
                     attempts = com.lidarscan.app.ar.CaptureArController.RESET_ATTEMPTS,
                 )
@@ -2819,100 +3009,36 @@ class CaptureViewModel(
         // after it.
         //
         // This waits (it never refuses — see TrackingWarmup's header) and then
-        // re-enters startCapture(). `startPending` makes the re-entry a plain
-        // fall-through so the gate can never loop.
-        if (!startPending) {
-            val verdict = trackingWarmup.evaluate(arController?.poseWindow().orEmpty())
-            if (!verdict.ready && arController != null) {
+        // re-enters the sequence as [StartResume.AFTER_GATE], which skips this
+        // block structurally — the gate can never loop (ROUND 21; the old
+        // `startPending` fall-through told the same story less honestly).
+        if (resume == StartResume.PRESS) {
+            val verdict = trackingWarmup.evaluate(startPoseSource?.poseWindow().orEmpty())
+            if (!verdict.ready && startPoseSource != null) {
                 logEvent(LOG_TAG_AR, "start gate: waiting for tracking — ${verdict.logSuffix}")
                 _startWarmup.value = verdict
+                setStartStage(StartStage.GATE)
                 startPending = true
                 startGateJob?.cancel()
                 startGateJob = viewModelScope.launch {
-                    val giveUpAt =
-                        clock() + com.lidarscan.core.capture.TrackingWarmup.MAX_WAIT_MILLIS
-                    while (clock() < giveUpAt) {
-                        val v = trackingWarmup.evaluate(arController?.poseWindow().orEmpty())
-                        _startWarmup.value = v
-                        if (v.ready) break
-                        kotlinx.coroutines.delay(MOUNT_HOLD_TICK_MS)
-                    }
-                    val finalVerdict =
-                        trackingWarmup.evaluate(arController?.poseWindow().orEmpty())
-                    logEvent(
-                        LOG_TAG_AR,
-                        "start gate: ${if (finalVerdict.ready) "cleared" else "timed out"} — " +
-                            finalVerdict.logSuffix,
-                    )
-                    // ── ROUND 16 item 58: NO_POSES is not "not settled yet". ──
-                    //
-                    // The other three blockers mean ARCore is running and the
-                    // pose stream is not good enough yet, which is what waiting
-                    // is for. NO_POSES means ARCore delivered NOTHING in four
-                    // seconds — and that is the exact signature of the session
-                    // the world-frame reset race leaves behind: created,
-                    // resumed, reporting healthy, and never handed a camera
-                    // frame. The owner's log shows it twice in one session
-                    // (scan-037 and scan-039), and both times the app started
-                    // recording anyway and produced a scan with no trajectory.
-                    //
-                    // So this blocker gets ONE rebuild and ONE more wait before
-                    // the capture is allowed to begin. It still never refuses —
-                    // ROUND 12's rule stands, and an app that will not start is
-                    // worse than a warned one — but it no longer walks past its
-                    // own diagnosis without acting on it.
-                    var verdictNow = finalVerdict
-                    if (!verdictNow.ready &&
-                        verdictNow.blocker == com.lidarscan.core.capture.TrackingWarmup.Blocker.NO_POSES
-                    ) {
-                        val again = arController?.resetWorldFrame(
-                            attempts = com.lidarscan.app.ar.CaptureArController.RESET_ATTEMPTS,
-                        )
+                    // ROUND 21 item 84: the wait is fenced so that NO outcome —
+                    // not even a crash inside the gate's own body — can end the
+                    // job without re-entering the sequence. An un-resumed
+                    // sequence is a held latch, and a held latch is a dead
+                    // Start button.
+                    try {
+                        runStartGateWait()
+                    } catch (t: kotlinx.coroutines.CancellationException) {
+                        throw t // cancelled by the watchdog or a release — the canceller owns the latch
+                    } catch (t: Throwable) {
                         logEvent(
                             LOG_TAG_AR,
-                            "start gate: NO_POSES after " +
-                                "${com.lidarscan.core.capture.TrackingWarmup.MAX_WAIT_MILLIS}ms — " +
-                                "the tracking session delivered no frames at all; rebuilding it " +
-                                "once more (rebuilt=${again?.ok == true} tries=${again?.attempts ?: 0})",
+                            "start gate: CRASHED (${t.javaClass.simpleName}: ${t.message}) — " +
+                                "starting anyway rather than leaving Start dead",
                         )
-                        arController?.resetPoseCounters()
-                        val secondDeadline =
-                            clock() + com.lidarscan.core.capture.TrackingWarmup.MAX_WAIT_MILLIS
-                        while (clock() < secondDeadline) {
-                            val v = trackingWarmup.evaluate(arController?.poseWindow().orEmpty())
-                            _startWarmup.value = v
-                            if (v.ready) break
-                            kotlinx.coroutines.delay(MOUNT_HOLD_TICK_MS)
-                        }
-                        verdictNow = trackingWarmup.evaluate(arController?.poseWindow().orEmpty())
-                        logEvent(
-                            LOG_TAG_AR,
-                            "start gate (after rebuild): " +
-                                "${if (verdictNow.ready) "cleared" else "still blocked"} — " +
-                                verdictNow.logSuffix,
-                        )
-                    }
-                    if (!verdictNow.ready) {
-                        _mountTrimNote.value = if (
-                            verdictNow.blocker == com.lidarscan.core.capture.TrackingWarmup.Blocker.NO_POSES
-                        ) {
-                            "NO POSITION TRACKING — the camera has sent nothing at all, twice. " +
-                                "Starting anyway, but this scan will be 2D: the returns will have " +
-                                "no positions and there will be no room in the file. Stop, close " +
-                                "the app and reopen it, then try again."
-                        } else {
-                            // ROUND 20: reworded to the measured causes (round
-                            // 18's diet) — light is never blamed.
-                            "Tracking had not settled after " +
-                                "${com.lidarscan.core.capture.TrackingWarmup.MAX_WAIT_MILLIS / 1000}s — " +
-                                "starting anyway. The first seconds of this scan may be in a " +
-                                "different frame; point the camera at furniture and edges an " +
-                                "arm's length or more away."
-                        }
-                        _mountTrimNoteIsWarning.value = true
                     }
                     _startWarmup.value = null
-                    startCapture()
+                    runStartSequence(skipChecklist = true, resume = StartResume.AFTER_GATE)
                 }
                 return
             }
@@ -2923,21 +3049,41 @@ class CaptureViewModel(
         startPending = false
 
         // ── ROUND 20 item 78: hold steady — the trim is taken HERE, in the ──
-        // scan's own world frame, after the reset and the tracking gate. Same
-        // latch pattern as the gate above: the stage's own re-entry arrives
-        // with `holdPending` set and walks straight through. Replay sessions
-        // and rigs with no AR controller skip it (there is nothing to hold),
-        // and a Mid-360 does not run a pushbroom trim at all.
-        if (!holdPending) {
-            val controller = arController
+        // scan's own world frame, after the reset and the tracking gate.
+        // Replay sessions and rigs with no AR controller skip it (there is
+        // nothing to hold), and a Mid-360 does not run a pushbroom trim at all.
+        //
+        // ROUND 21 item 84 — THIS is where v0.9.5 deadlocked. The stage used to
+        // resume via a bare `startCapture(skipChecklist = true)`, whose path
+        // re-entered the ROUND 17 in-flight guard (startPending was already
+        // false) and was refused by the sequence's own still-held atomic:
+        // "start IGNORED", latch never released, every later press dead. The
+        // round-20 comment claimed the re-entry "arrives with holdPending set
+        // and walks straight through" — holdPending was never consulted. The
+        // re-entry now names itself ([StartResume.AFTER_HOLD]) and skips this
+        // block structurally, and the stage body is fenced exactly like the
+        // gate's: no outcome may end the job without resuming the sequence.
+        if (resume != StartResume.AFTER_HOLD) {
+            val controller = startPoseSource
             if (controller != null && !isReplay &&
                 _sensor.value == com.lidarscan.core.model.SensorType.COIN_D6
             ) {
                 holdPending = true
+                setStartStage(StartStage.HOLD)
                 startHoldJob?.cancel()
                 startHoldJob = viewModelScope.launch {
-                    runStartHoldStage(controller)
-                    startCapture(skipChecklist = true)
+                    try {
+                        runStartHoldStage(controller)
+                    } catch (t: kotlinx.coroutines.CancellationException) {
+                        throw t // watchdog or release — the canceller owns the latch
+                    } catch (t: Throwable) {
+                        logEvent(
+                            LOG_TAG_AR,
+                            "start hold: CRASHED (${t.javaClass.simpleName}: ${t.message}) — " +
+                                "continuing on the persisted trim rather than leaving Start dead",
+                        )
+                    }
+                    runStartSequence(skipChecklist = true, resume = StartResume.AFTER_HOLD)
                 }
                 return
             }
@@ -2986,7 +3132,10 @@ class CaptureViewModel(
         _saveError.value = null
         _lastSavedProject.value = null
         _liveMapFullNote.value = null
-        viewModelScope.launch {
+        // ROUND 21 item 84: the record phase is a named job so the watchdog can
+        // cancel a stuck one (project I/O or an engine start that never
+        // returns) instead of leaving it holding the latch forever.
+        startRecordJob = viewModelScope.launch {
             // ROUND 9 (item 33): remember whether THIS Start is what put the
             // project on disk. Only a project this call created may be rolled
             // back below — a reopened/deep-linked one existed before the button
@@ -3189,7 +3338,99 @@ class CaptureViewModel(
      * trim with an honest note. NEVER fails the capture — the exit is always
      * "GO", the only question is which trim the walk runs on.
      */
-    private suspend fun runStartHoldStage(controller: com.lidarscan.app.ar.CaptureArController) {
+
+    /**
+     * ROUND 21 (item 84): the ROUND 12 gate's wait body, verbatim, moved out of
+     * the launch block so it can be fenced by try/catch — see the call site.
+     * Waits (never refuses), retries a NO_POSES session once (ROUND 16), and
+     * leaves the honest note when it starts anyway.
+     */
+    private suspend fun runStartGateWait() {
+        val giveUpAt =
+            clock() + com.lidarscan.core.capture.TrackingWarmup.MAX_WAIT_MILLIS
+        while (clock() < giveUpAt) {
+            val v = trackingWarmup.evaluate(startPoseSource?.poseWindow().orEmpty())
+            _startWarmup.value = v
+            if (v.ready) break
+            kotlinx.coroutines.delay(MOUNT_HOLD_TICK_MS)
+        }
+        val finalVerdict =
+            trackingWarmup.evaluate(startPoseSource?.poseWindow().orEmpty())
+        logEvent(
+            LOG_TAG_AR,
+            "start gate: ${if (finalVerdict.ready) "cleared" else "timed out"} — " +
+                finalVerdict.logSuffix,
+        )
+        // ── ROUND 16 item 58: NO_POSES is not "not settled yet". ──
+        //
+        // The other three blockers mean ARCore is running and the
+        // pose stream is not good enough yet, which is what waiting
+        // is for. NO_POSES means ARCore delivered NOTHING in four
+        // seconds — and that is the exact signature of the session
+        // the world-frame reset race leaves behind: created,
+        // resumed, reporting healthy, and never handed a camera
+        // frame. The owner's log shows it twice in one session
+        // (scan-037 and scan-039), and both times the app started
+        // recording anyway and produced a scan with no trajectory.
+        //
+        // So this blocker gets ONE rebuild and ONE more wait before
+        // the capture is allowed to begin. It still never refuses —
+        // ROUND 12's rule stands, and an app that will not start is
+        // worse than a warned one — but it no longer walks past its
+        // own diagnosis without acting on it.
+        var verdictNow = finalVerdict
+        if (!verdictNow.ready &&
+            verdictNow.blocker == com.lidarscan.core.capture.TrackingWarmup.Blocker.NO_POSES
+        ) {
+            val again = startPoseSource?.resetWorldFrame(
+                attempts = com.lidarscan.app.ar.CaptureArController.RESET_ATTEMPTS,
+            )
+            logEvent(
+                LOG_TAG_AR,
+                "start gate: NO_POSES after " +
+                    "${com.lidarscan.core.capture.TrackingWarmup.MAX_WAIT_MILLIS}ms — " +
+                    "the tracking session delivered no frames at all; rebuilding it " +
+                    "once more (rebuilt=${again?.ok == true} tries=${again?.attempts ?: 0})",
+            )
+            startPoseSource?.resetPoseCounters()
+            val secondDeadline =
+                clock() + com.lidarscan.core.capture.TrackingWarmup.MAX_WAIT_MILLIS
+            while (clock() < secondDeadline) {
+                val v = trackingWarmup.evaluate(startPoseSource?.poseWindow().orEmpty())
+                _startWarmup.value = v
+                if (v.ready) break
+                kotlinx.coroutines.delay(MOUNT_HOLD_TICK_MS)
+            }
+            verdictNow = trackingWarmup.evaluate(startPoseSource?.poseWindow().orEmpty())
+            logEvent(
+                LOG_TAG_AR,
+                "start gate (after rebuild): " +
+                    "${if (verdictNow.ready) "cleared" else "still blocked"} — " +
+                    verdictNow.logSuffix,
+            )
+        }
+        if (!verdictNow.ready) {
+            _mountTrimNote.value = if (
+                verdictNow.blocker == com.lidarscan.core.capture.TrackingWarmup.Blocker.NO_POSES
+            ) {
+                "NO POSITION TRACKING — the camera has sent nothing at all, twice. " +
+                    "Starting anyway, but this scan will be 2D: the returns will have " +
+                    "no positions and there will be no room in the file. Stop, close " +
+                    "the app and reopen it, then try again."
+            } else {
+                // ROUND 20: reworded to the measured causes (round
+                // 18's diet) — light is never blamed.
+                "Tracking had not settled after " +
+                    "${com.lidarscan.core.capture.TrackingWarmup.MAX_WAIT_MILLIS / 1000}s — " +
+                    "starting anyway. The first seconds of this scan may be in a " +
+                    "different frame; point the camera at furniture and edges an " +
+                    "arm's length or more away."
+            }
+            _mountTrimNoteIsWarning.value = true
+        }
+    }
+
+    private suspend fun runStartHoldStage(controller: com.lidarscan.app.ar.StartPoseSource) {
         val startedAt = clock()
         val deadline = startedAt + START_HOLD_TIMEOUT_MS
         var anchorNs = controller.poseWindow().lastOrNull()?.tMonoNs ?: 0L
@@ -4627,7 +4868,10 @@ class CaptureViewModel(
         return dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
     }
 
-    private companion object {
+    // ROUND 21: `internal` (was private) — the start-progress panel renders the
+    // stage budgets (item 85) and the round-21 tests pin the watchdog ceiling
+    // (item 84); the constants were always the single source of those numbers.
+    internal companion object {
         /** ROUND 6 log tags — mirrors `com.lidarscan.app.debug.CaptureLog`'s, without depending on it. */
         const val LOG_TAG_SESSION = "session"
         const val LOG_TAG_SEAL = "seal"
@@ -4678,6 +4922,17 @@ class CaptureViewModel(
          * worse than the wrong-frame bug it replaces.
          */
         const val START_HOLD_TIMEOUT_MS = 10_000L
+
+        /**
+         * ROUND 21 item 84 — the start watchdog's ceiling: world reset (<1 s)
+         * + tracking gate (2×[com.lidarscan.core.capture.TrackingWarmup.MAX_WAIT_MILLIS],
+         * the NO_POSES rebuild included) + hold stage ([START_HOLD_TIMEOUT_MS])
+         * + margin for project creation and the engine's own start. The
+         * checklist sheet is excluded by construction (it returns before the
+         * claim). Generous on purpose: the watchdog exists for the failure
+         * nobody predicted, not to race the stages that already have timeouts.
+         */
+        const val START_WATCHDOG_MS = 25_000L
 
         /** How long the "GO — start walking" banner lingers into the walk. */
         const val START_HOLD_GO_LINGER_MS = 2_500L
