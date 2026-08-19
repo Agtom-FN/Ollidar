@@ -24,6 +24,13 @@ data class ProjectsUiState(
      * Settings › Scans › "Clean up empty scans" has been used once.
      */
     val hiddenEmptyCount: Int = 0,
+    /**
+     * ROUND 22 item 96 — project id → progress (0..1) of a reprocess started
+     * from that project's card, so the card can carry a small progress chip
+     * instead of the operator having to go and find a Jobs screen that Simple
+     * mode no longer shows.
+     */
+    val running: Map<String, Float> = emptyMap(),
 )
 
 /**
@@ -45,6 +52,24 @@ data class ProjectsUiState(
 class ProjectsListViewModel(
     private val projectStore: ProjectStore,
     private val keepEmptyScans: suspend () -> Boolean = { true },
+    /**
+     * ROUND 22 item 96 — the card's "Process again". The SAME handle-less
+     * `ProcessingRepository.reprocessD6` the seal's auto-process uses, so this
+     * is a new caller and not a new pipeline: it takes a directory, opens its
+     * own PageStore, holds the per-container lock ROUND 18 added, and is
+     * therefore safe to run while a capture is arming.
+     *
+     * Defaults to a no-op so the project PICKER (which shares this ViewModel)
+     * and every JVM test keep working untouched.
+     */
+    private val reprocess: suspend (java.io.File, (Float) -> Boolean) -> Unit = { _, _ -> },
+    /**
+     * ROUND 22 items 90 + 96: the scope a reprocess runs in. It must outlive
+     * this screen — the operator taps "Process again" and then, quite
+     * reasonably, walks away from the tab. `AppContainer.containerScope` in the
+     * app; `viewModelScope` when null, which is what tests want.
+     */
+    private val jobScope: kotlinx.coroutines.CoroutineScope? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ProjectsUiState())
@@ -65,6 +90,37 @@ class ProjectsListViewModel(
                     projects = visible,
                     hiddenEmptyCount = all.size - visible.size,
                 )
+            }
+        }
+    }
+
+    /**
+     * ROUND 22 item 96 — "Process again" from the card's ⋯ menu.
+     *
+     * Refuses a second run for the same project rather than queueing one: the
+     * repository already serialises per container (ROUND 18's lock), so a
+     * second tap would simply block a coroutine for the length of the first
+     * run and then redo an idempotent job. Saying "it is already running" with
+     * a progress chip is the same behaviour, visible.
+     */
+    fun reprocessProject(projectId: String) {
+        if (_uiState.value.running.containsKey(projectId)) return
+        val project = _uiState.value.projects.firstOrNull { it.id == projectId } ?: return
+        _uiState.update { it.copy(running = it.running + (projectId to 0f)) }
+        (jobScope ?: viewModelScope).launch(Dispatchers.IO) {
+            try {
+                reprocess(project.directory) { f ->
+                    _uiState.update { s -> s.copy(running = s.running + (projectId to f.coerceIn(0f, 1f))) }
+                    true
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                // ROUND 22 item 90's rule, applied here too: cancellation is
+                // never swallowed and never reported as a failure.
+                throw cancelled
+            } finally {
+                _uiState.update { it.copy(running = it.running - projectId) }
+                ProjectPreviewCache.invalidate(projectId)
+                refresh()
             }
         }
     }

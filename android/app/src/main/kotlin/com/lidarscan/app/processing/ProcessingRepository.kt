@@ -39,6 +39,16 @@ import java.io.File
  */
 class ProcessingRepository(private val scope: CoroutineScope) {
 
+    /**
+     * ROUND 22 item 90 — where a swallowed reprocess failure now goes.
+     *
+     * `reprocessD6` returned `null` for "the native call threw" and `null` for
+     * "nothing to do", and printed neither. `AppContainer` points this at the
+     * app's `CaptureLog`; unset in tests. See [reprocessD6].
+     */
+    @Volatile
+    var onDiagnostic: ((String) -> Unit)? = null
+
     private var handle: Long = 0L
 
     private val _jobs = MutableStateFlow<List<ProcessingJob>>(emptyList())
@@ -243,7 +253,23 @@ class ProcessingRepository(private val scope: CoroutineScope) {
         // idempotent job — waiting IS the "export waits for auto-process"
         // behaviour, with no new state to keep true.
         synchronized(reprocessLocks.computeIfAbsent(lscanDir.absolutePath) { Any() }) {
-            runCatching {
+            // ── ROUND 22 item 90: this `runCatching` invented a failure ─────
+            //
+            // `runCatching { … }.getOrNull()` catches EVERYTHING, and in a
+            // coroutine "everything" includes `CancellationException` — which
+            // is not a failure, it is the caller's own scope being torn down.
+            // Item 88's navigation cancelled `viewModelScope` on every seal, so
+            // this returned `null`, the caller printed `ran=false`, and the
+            // engine had in fact finished and written output byte-identical to
+            // a re-run. Days were spent on a failure that never happened.
+            //
+            // Two rules now, both narrow: cancellation is RETHROWN (structured
+            // concurrency's contract — swallowing it makes a scope uncancellable
+            // and hides the real reason), and a genuine throwable is LOGGED with
+            // its class and message before the null goes back. `null` still
+            // means "no result"; it no longer means "and nobody will ever know
+            // why".
+            try {
                 StitchResult.fromNative(
                     ScanEngineNative.nativeProcReprocessD6(
                         lscanDir.absolutePath,
@@ -251,7 +277,15 @@ class ProcessingRepository(private val scope: CoroutineScope) {
                         onProgress?.let { cb -> ScanEngineNative.ReprocessProgress { f -> cb(f) } },
                     ),
                 )
-            }.getOrNull()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (t: Throwable) {
+                onDiagnostic?.invoke(
+                    "reprocess THREW for ${lscanDir.name}: " +
+                        "${t.javaClass.name}: ${t.message ?: "(no message)"}",
+                )
+                null
+            }
         }
 
     private val reprocessLocks =

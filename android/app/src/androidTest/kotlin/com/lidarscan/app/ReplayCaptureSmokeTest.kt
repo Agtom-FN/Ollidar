@@ -108,7 +108,10 @@ class ReplayCaptureSmokeTest {
                 }.getOrDefault(false)
             }
 
-            composeRule.onNodeWithText("Capture").performClick()
+            // ROUND 22 item 94: the tab is labelled "Scan" now. Driven by its
+            // stable test tag rather than its label, so the next rewording does
+            // not break the emulator suite.
+            composeRule.onNodeWithTag("tab_capture").performClick()
 
             // The tab IS the new-scan screen: name field + auto-detect line, no
             // picker in front of it.
@@ -116,7 +119,7 @@ class ReplayCaptureSmokeTest {
                 composeRule.onAllNodesWithTag("scanNameField").fetchSemanticsNodes().isNotEmpty()
             }
             composeRule.onNodeWithTag("autoDetectStatus").assertIsDisplayed()
-            composeRule.onNodeWithContentDescription("Start new scan").assertIsDisplayed()
+            composeRule.onNodeWithContentDescription("Start a scan").assertIsDisplayed()
 
             // Auto-detect races a USB probe (no devices: immediate) against a 5 s
             // Mid-360 heartbeat listen, so the failure — and with it the automatic

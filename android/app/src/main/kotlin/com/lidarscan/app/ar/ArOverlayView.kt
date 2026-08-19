@@ -67,6 +67,11 @@ fun ArOverlayView(
     renderer.setPointSizePx(pointSizePx)
     renderer.setCameraMode(CameraMode.AR)
 
+    // ROUND 22 item 89: this overlay instance's own claim — see
+    // [ArPosePumpView]'s note for the race it closes. Archived today
+    // (`AR_OVERLAY_ARCHIVED`), and kept correct so that reviving it does not
+    // revive the bug.
+    val overlayClaim = remember { java.util.concurrent.atomic.AtomicReference<ArSessionGate.Claim?>(null) }
     Box(modifier = modifier.fillMaxSize()) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
@@ -82,7 +87,7 @@ fun ArOverlayView(
                 // actually samples — a permanently black background with no
                 // exception and no log line, which is exactly the reported
                 // symptom.
-                controller.claimRenderer(CaptureArController.RendererOwner.OVERLAY)
+                overlayClaim.set(controller.claimRenderer(CaptureArController.RendererOwner.OVERLAY))
                 GLSurfaceView(ctx).apply {
                     preserveEGLContextOnPause = true
                     setEGLContextClientVersion(2)
@@ -93,7 +98,7 @@ fun ArOverlayView(
                     // per-device EGL surprises.
                     setEGLConfigChooser(8, 8, 8, 8, 16, 0)
                     setRenderer(
-                        ArCameraBackgroundRenderer(controller, CaptureArController.RendererOwner.OVERLAY) { frame ->
+                        ArCameraBackgroundRenderer(controller, overlayClaim.get()) { frame ->
                             // Runs on the GL thread, immediately after the
                             // pose for this frame has been pushed. Hand the
                             // Filament camera the SAME frame's matrices so the
@@ -113,7 +118,7 @@ fun ArOverlayView(
             },
             onRelease = {
                 it.onPause()
-                controller.releaseRenderer(CaptureArController.RendererOwner.OVERLAY)
+                controller.releaseRenderer(overlayClaim.getAndSet(null))
             },
         )
 

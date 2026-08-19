@@ -2980,3 +2980,336 @@ roll back a project a cancelled record phase may have half-created (the
 round-9 rollback still covers the engine-refusal path; a watchdog-cancelled
 create is a bounded, listable leftover rather than a risk taken with the
 latch).
+
+## ROUND 22 (v0.9.7) — STABILITY: six root-caused defects, then SIMPLE MODE
+
+Two halves, in this order because the first unblocks the field testing the
+second is for. Half A is a **completed diagnosis** of the owner's 2026-08-20
+session — eight process deaths that left no trace, a "tracking lost until app
+restart", an auto-process that reported `ran=false` while the engine had
+already written byte-identical output, a scan (scan-068) that decoded 194,067
+points and recorded 0, doubled operator cues, and a crash on the LOD slider.
+Six items, 87–92. Half B is the owner-approved UX simplification, items 93–99.
+
+**87 — THE CRASH RECORDER (why the other five took days).** Eight process
+deaths on 2026-08-20 and the app's own log — the one built in round 6 for
+exactly this — has nothing about any of them, because an uncaught exception
+never went anywhere near it. `Thread.setDefaultUncaughtExceptionHandler` in
+`LidarScanApplication.onCreate` now writes the thread name, the full stack,
+the app version and free/total/max heap through `CaptureLog` under `[crash]`
+(the same channel and the same file as `[session]`/`[ar]`, so the narrative
+and its ending are in one place), flushes synchronously, and then **delegates
+to the previous handler** — the system crash dialog, the ANR flow and Play's
+own reporting are untouched, because a recorder that swallows the platform's
+handling is a second bug wearing the first one's clothes. Coroutine-swallowed
+throwables are logged at the two `runCatching` sites item 90 names.
+
+**88 — THE NAVIGATION DEFECT (one line, four symptoms).** `LidarScanApp.kt`'s
+`goTab()` navigated with `popUpTo(PROJECTS)` and no `saveState`/`restoreState`.
+Every seal → Projects hop therefore **destroyed the `CAPTURE_NEW` back-stack
+entry and its `ViewModelStore`**, and every tab tap back into Scan built a new
+`CaptureViewModel`. The owner's log shows **four `CaptureViewModel` inits in
+37 seconds** (the mount-trim-restored line is the observable). Downstream: the
+capture's own auto-process job died with the scope (item 90), a second VM's
+listeners doubled the operator cues, and the AR ownership race of item 89 was
+armed on every single tab switch. Fixed to standard bottom-tab behaviour —
+`popUpTo(startDestination) { saveState = true }`, `launchSingleTop = true`,
+`restoreState = true` — so the Scan entry and its ViewModel survive tab
+switches. Pinned by a test that switches tabs and counts VM constructions.
+
+**89 — AR SESSION OWNERSHIP BY INSTANCE TOKEN, and the two more places that
+made the same mistake.** `ArSessionGate.release(candidate)` compare-and-set on
+the owner **ENUM VALUE**. With `AR_OVERLAY_ARCHIVED = true` every claim and
+every release in the shipping app is `POSE_PUMP`, so the enum carries no
+identity at all: Navigation Compose keeps the outgoing destination composed
+through the transition, so the OLD `ArPosePumpView`'s `onRelease`
+(`ArPosePumpView.kt:93`) lands **after** the new one's `factory` claim
+(`:68`) and nulls it. `mayDrive` then returns `NOT_OWNER`,
+`CaptureArController.onFrameLocked` (`:810`) `return null`s — **bare, silent,
+forever** — and the owner sees "tracking lost until I restart the app". The
+silence is the half that cost the days: fixed as its own rule, every
+non-`PROCEED` decision is now logged at ≤1 Hz with its reason.
+
+`claim()` therefore returns an **opaque per-claim token**; `release(token)` /
+`surfaceDestroyed(token)` compare-and-set on that token, so a stale view's
+release cannot touch a newer claim whatever the enum says;
+`resetWorldFrame` verifies (and re-takes) the claim before rebuilding. Two
+sibling defects of the same class, found by looking for it:
+
+* `CaptureScreen.kt:646-648` — a per-screen `DisposableEffect` pausing the
+  **process-wide** `arController` on dispose. A screen instance that is being
+  replaced must only pause what it still owns.
+* `CaptureViewModel.kt:4861` — `onCleared()` zeroing
+  `arController.engineHandle` on the shared singleton. This is scan-068:
+  the outgoing VM's `onCleared` ran after the incoming capture had armed the
+  handle, so the pushbroom decoded **194,067 points into handle 0** and
+  recorded none. Now zeroed only if it still refers to THIS ViewModel's
+  capture.
+
+**90 — AUTO-PROCESS OFF `viewModelScope`, AND ERRORS THAT ARE NOT INVENTED.**
+The post-seal auto-process ran in `viewModelScope`, which item 88's navigation
+cancelled the instant the seal navigated to Projects. The engine finished
+anyway (its output is byte-identical to a re-run), and then two
+`runCatching{…}.getOrNull()` sites — `ProcessingRepository.kt:245-254` and
+`CaptureViewModel.kt:4543-4553` — **swallowed the `CancellationException`**
+and the UI printed a fabricated `ran=false`. Two fixes, and they are separate:
+the auto-process is hoisted onto `AppContainer.containerScope` (`:55`) so it
+outlives the screen that started it, and both `runCatching` sites now rethrow
+`CancellationException` and log the actual `Throwable` (class + message). A
+`null` result is reported **distinctly** from `ran == false` — "the call
+failed" and "the engine declined" are different facts — and the `auto-process
+FAILED` log line carries the reason instead of a boolean.
+
+**91 — THE LOD-SLIDER CRASH: six renderer memory defects.** Moving Review's
+Detail slider up killed the process, and the arithmetic says why:
+
+1. The budget counted `page.count` (`PointCloudRenderer.kt:1281`) while the
+   allocation was `max(page.capacity, page.count) × 16 B` (`:1305-1307`).
+   Review's pages are **1 M capacity**, so a page holding 1,000 points was
+   charged 1,000 and allocated 16 MB — up to ~1000× under-accounting. A 20 M
+   budget therefore admitted **336 MB** of VBO; 50 M admitted ~839 MB.
+   Budgeting is now in **allocated bytes**, not points.
+2. Each `VertexBuffer` is sized to the page's **actual count** (rounded up to
+   the next 4 K so a growing page is not reallocated per frame), not to the
+   page's capacity.
+3. `MAX_NEW_PAGES_PER_FRAME = 24` (`:1803`) was a count where it needed to be
+   bytes: 24 × 16.78 MB = **402 MB of allocation in one Choreographer frame**.
+   Replaced with a per-frame **byte** budget, the pattern
+   `MAX_UPLOAD_BYTES_PER_FRAME` already established two lines away.
+4. `ensureSharedIndexBuffer` (`:1075-1091`) destroyed an `IndexBuffer` that
+   every live `GpuPage` still referenced (`:1329`, `:1358`) — a use-after-free
+   the driver is entitled to turn into anything. It never destroys while
+   `gpuPages` is non-empty; it grows into a fresh buffer and the old one is
+   retired only when no page holds it.
+5. `setSource`'s **non-null** branch did not clear `gpuPages` (`:411-415`) —
+   only the null branch did. Swapping one project's source for another's kept
+   the first project's pages resident and drew two clouds. Any source swap now
+   clears.
+6. Engine pages evicted by `kEvictOldest` (`page_store.h:26-57`) left orphaned
+   `GpuPage`s in the scene **forever** — the pageId stops resolving and nothing
+   ever reaped them. A reaper drops GPU pages whose id no longer resolves.
+
+The arithmetic is extracted into pure `:core` (`render/GpuPageBudget.kt`) and
+unit-tested with the real numbers, including the reaper's set logic; the
+renderer keeps the Filament calls and nothing else.
+
+**92 — THE START-HOLD TRIM GATE ACCEPTED ANYTHING.** `runStartHoldStage`
+(`CaptureViewModel.kt:3455-3462`) took the first `Captured` result it got and
+applied it — no comparison with the incumbent at all, even though the
+auto-refresh path four hundred lines away (`:2751-2758`) had had exactly that
+comparison since round 12. The owner's log is the cost: a **3.18°**-accuracy
+start-hold trim silently replaced a measured **0.29°** one. Now the same
+incumbent comparison runs on the start-hold path: a materially worse candidate
+is refused, sampling continues until the timeout, and the fallback to the
+incumbent is **logged** rather than assumed. `accuracyDeg` and `warn=` join
+the `[pushbroom]` extrinsic-applied line.
+
+And the shape of that sample is itself a signal. A hold whose frame jitter
+(`spreadP90` 0.20°) is an order of magnitude **below** its split-half accuracy
+(`stabilityDeg` 3.18°) is not a noisy hold — it is a hold during which the
+pose **drifted monotonically**, which is a tracking fault, not a mount
+measurement. That case now surfaces in the round-21 start progress panel as
+"tracking is drifting — hold on" instead of being accepted as a trim.
+
+---
+
+**93 — THEME: Agtom orange.** Material `primary`/accent becomes **#F26A1B** in
+both light and dark, from a **single token** so the hex is one edit later.
+Progress bars, active chips, sliders and the big buttons follow it because
+they already read `MaterialTheme.colorScheme.primary`. No component shape or
+layout changes — this is a repaint, not a restyle.
+
+**94 — TABS.** The Capture tab's label becomes **"Scan"** (routes and internals
+keep their names — renaming `Routes.CAPTURE_NEW` would be a back-stack risk
+bought for nothing). **Projects keeps its name**, per the owner. Settings
+unchanged. `goTab` is item 88's fix.
+
+**95 — SCAN TAB.** One dominant **SCAN** button built from the existing pill
+components scaled up (STOP while recording, CANCEL during the start sequence);
+the status chips stay where they are and stay glanceable. One **ADVANCED ⚙**
+button opens the full existing settings sheet — Detail, display options,
+New-scan reset, every power-user control — **nothing is deleted, it is
+gathered behind one tap**. DETAIL replaces the LIGHT/OPTIMAL/FULL presets with
+**Auto / High / Max**: Auto is the device-tier-safe ceiling, High and Max map
+to the old OPTIMAL and FULL under item 91's fixed accounting. The pre-scan
+checklist stops being a separate modal — its checks fold into the round-21
+`StartProgressPanel` and surface only when a check actually blocks. The
+`startCapture(skipChecklist)` API, the checklist code and its tests stay,
+behind the flag.
+
+**96 — PROJECTS TAB.** Tapping a card opens the **viewer** directly. A per-card
+**⋯** menu carries Export, Process again, Delete. With Simple mode on, the
+"Details, jobs & export" hub and the separate Processing screen leave
+navigation: **Export becomes a button + format row on Review**, reusing
+`ProcessingViewModel`'s export and transfer paths verbatim (PLY/LAS/PCD/Bundle,
+the same Downloads delivery — this is a new caller, not a new pipeline), and a
+running job shows as a small progress chip on the project card. After Stop the
+auto-process runs (item 90) and the app opens the viewer when it is ready.
+
+**97 — ONE 'Advanced features' SWITCH** in Settings, default **OFF**, a
+feature-flag gate with nothing deleted; each item returns exactly as it is
+today when the switch is on: the Survey display profile **and its
+capture-blocking GNSS gate rule**, the Floor plan (the Review pill at
+`ReviewScreen.kt:323-328`, `Routes.PLAN`, and the "Floor plan" DisplayProfile
+chip), the Research display profile, the Merge screen, and Cloud processing
+mode. **RTK and the Mid-360 connect wizard are NOT hidden** — they appear
+contextually whenever Mid-360 is the selected sensor, because the owner is
+testing Mid-360 + RTK shortly. ProjectDetail and Processing stay reachable
+when Advanced is ON.
+
+**98 — WORDING LAW, enforced like the round-19 light guard.** Every
+instruction is **≤6 words**, with at most one detail line of **≤12 words**;
+an error says what happened and what to do. A unit test **fails the build** if
+a key user-facing instruction string breaks the limits or carries design-doc
+jargon ("§", "A12", "A15", "RANSAC", "CRS", "ECEF") outside the advanced
+screens — the same enforcement shape that has kept "light" out of the advice
+strings since round 19. Rewritten at minimum: the empty-Projects texts, the
+Review load states and measure hint, the Detail budget explainer, the walked
+path row ("Show my path"), the multi-piece card (auto-runs now, so it reports
+rather than asks), the export flow and the delete dialog. The **EDL row is
+removed** — the inventory confirms it renders nothing on a phone, and a switch
+with no effect is worse than an absent one. Advanced-ON screens get a lighter
+pass: the paragraphs over 25 words are trimmed.
+
+**99 — APP ICON: SHIPPED (amended mid-round).** The item opened as "pipeline
+only, no new icon — the owner is choosing between four proposals". He then
+chose: **"4g · Slice-scan A" on the pulse-ring base**, so v0.9.7 ships it. The
+pipeline half stands and is the reason the mark could be dropped in as one
+change: background is a single colour resource, one foreground vector, one
+monochrome vector, and the `mipmap-anydpi-v26` XML is wiring only — no art, no
+colours, no geometry — with the swap procedure documented at the top of it. The
+retired placeholder is renamed rather than deleted
+(`ic_launcher_foreground_legacy.xml`, `ic_launcher_background_legacy.xml`).
+`<monochrome>` is declared for the first time, so themed icons work at all.
+
+**100 — THE LOD CEILING IS THE DEVICE'S, NOT THE USER'S (owner, verbatim:
+"ceiling the LOD depends on the device. User will not able to increase the LOD
+due to the detected hardware they are using").**
+
+Item 91 capped resident vertex-buffer bytes at a flat 256 MiB. That number was
+right for the phone it was reasoned about and wrong as a constant: the same
+ceiling starves a flagship and still overruns a modest device. It becomes a
+**per-tier ladder**, keyed off the `DeviceTier` the app has probed since ROUND
+6 (`[store] device tier=STANDARD ram=11573MB cores=9`) — no new probe, no new
+heuristic:
+
+| tier | ceiling | points at 16 B |
+|---|---|---|
+| `MODEST` | 96 MiB | 6.3 M |
+| `STANDARD` | 256 MiB | 16.8 M |
+| `FLAGSHIP` | 512 MiB | 33.6 M |
+
+And the ceiling is **enforced in the controls, not only in the renderer**. A
+slider that offers 50 M points on a phone that can hold 6.3 M is the app
+inviting the crash item 91 just fixed. So: DETAIL's Auto/High/Max
+(item 95) and every LOD control in the Advanced sheet and the Review display
+panel are clamped to the tier ceiling; an option above it is **not selectable**
+— it is absent, with one short note ("Limited by this device") rather than a
+disabled control the operator argues with. **There is no override**, which is
+the owner's explicit instruction and the right call: the alternative is a
+setting whose only function is to crash the app.
+
+Persisted display params that exceed the ceiling — a project saved on a bigger
+phone, or an old RESEARCH profile carrying 50 M — are **clamped on load**,
+silently and safely, with one debug line recording original → clamped so the
+change is never invisible in a log. The 256 MiB constant survives as the
+`STANDARD` rung.
+
+### Resolution — 2026-08-20 (0.9.7, round 22)
+
+**87 — shipped.** `LidarScanApplication.installCrashRecorder` writes thread
+name, full stack (causes included), app version/code and heap
+free/total/max through `CaptureLog` under the new `[crash]` tag — the same
+file, in order, beneath the `[ar]`/`[session]` lines that describe what the app
+was doing — then delegates to the previous handler, so the system crash dialog
+and the ANR flow are untouched. `CaptureLog.log` appends per line, so the flush
+is synchronous by construction. Every part is wrapped: a crash recorder that
+can throw turns one fatal exception into two.
+
+**88 — fixed, and pinned twice.** `goTab` now uses
+`popUpTo(start) { saveState = true }` + `launchSingleTop` + `restoreState`
+(`LidarScanApp.kt`), and the decision is separated from the Android call into
+`tabNavSpec` so it can be asserted on a bare JVM (`TabNavSpecTest`, 6 cases) —
+`NavOptionsBuilder` cannot be constructed off-device, and this fix had to be
+regression-tested by the suite that runs on every build. `inclusive` is now
+false for every tab, including Projects, whose special case was itself part of
+the defect. `CaptureViewModel.constructions` counts the observable the owner's
+log carried (four inits in 37 s) so the end-to-end property is assertable on
+the emulator.
+
+**89 — fixed at all three sites.** `ArSessionGate.claim()` returns an opaque
+`Claim` token with its own serial; `release`/`surfaceDestroyed` compare-and-set
+on the token, so a stale `ArPosePumpView` can only ever release its own claim —
+with `AR_OVERLAY_ARCHIVED = true` the old enum CAS was a guaranteed success for
+whoever asked, which is why one tab switch could null the live claim and strand
+`mayDrive` at `NOT_OWNER` until process death. `resetWorldFrame` verifies the
+bound texture's claim before re-binding and re-claims rather than rebuilding an
+ownerless session. Every non-`PROCEED` decision is now reported through a sink
+at ≤1 Hz with a suppressed-count, because the bare `return null` is what cost
+the days. Siblings: `CaptureScreen`'s `DisposableEffect` takes a **session
+lease** and pauses only if it still holds it; `CaptureViewModel.onCleared`
+compare-and-clears the engine handle it armed (`clearEngineHandleIf`) — that
+line is scan-068. `ArSessionGateTest` grew from 13 to 21 cases, including the
+same-role stale-release race and the rate limiter.
+
+**90 — fixed, and the errors are no longer invented.** Auto-process runs on
+`AppContainer.containerScope` (now public, with the reason in its KDoc);
+`ProcessingRepository.reprocessD6` and `CaptureViewModel.startAutoProcess` both
+rethrow `CancellationException` and log the actual throwable's class and
+message. Three outcomes are now three sentences — threw / returned null /
+engine declined — and `ran=false` is printed only for the third.
+`CaptureRound22Test` proves the job belongs to the injected scope (a
+`CoroutineName` read from inside the reprocess lambda), that each failure mode
+produces its own line, and that a cancellation produces **no** failure at all.
+
+**91 — fixed (six defects), plus a ceiling.** See the sub-agent's work in
+`PointCloudRenderer.kt` and the new pure-math `core/render/GpuPageBudget.kt`
+(23 cases): budgeting in allocated bytes, per-page allocation sized to count
+(4 K granularity), a per-frame **byte** budget for new page allocation, an
+`IndexBuffer` that is never destroyed while pages reference it, `gpuPages`
+cleared on any source swap, and a reaper for evicted page ids that treats an
+empty observation as "no answer" rather than "no pages".
+
+**92 — fixed.** `StartHoldTrimGate` (`:core`, 17 cases against the owner's real
+0.20 / 3.18 vs 0.29) refuses a candidate materially worse than the incumbent
+(0.10° margin on `qualityRank`) and refuses a **drifting** hold outright: a
+`spreadP90` an order of magnitude below `stabilityDeg` is not a noisy hold, it
+is a hold during which the pose moved monotonically while the phone was still.
+The start panel says "Tracking is drifting — hold on." instead of "Steady…
+3.2° and improving". Sampling continues to the timeout and the fall-back to the
+incumbent is logged with the refusal's reason. `accuracyDeg=` and `warn=` are on
+the `[pushbroom] extrinsic applied` line. `CaptureRound22Test` drives a real
+drifting pose ring through the REAL refiner and asserts the whole sequence.
+
+**93–99 — Simple mode.** Agtom **#F26A1B** is one token (`AgtomOrange`) that
+`Ember` derives from, primary in **both** themes, with `OnEmber`'s near-black
+as `onPrimary` (≈6.9:1 against the orange, where white was ≈3.0:1). The Capture
+tab is labelled **"Scan"** — label only; routes, tags and internals are
+untouched, and the two emulator tests that clicked the word now use the stable
+`tab_capture` tag. The record button is the SAME ember circle scaled to 96/108
+dp with its word drawn on it (SCAN / STOP / CANCEL) and the record-vs-stop mark
+kept above it; one **Advanced ⚙** button beside it opens the existing
+`CaptureSettingsSheet` unchanged. Projects cards open the viewer on tap and
+carry a ⋯ menu (Export / Process again / Delete, plus Details when Advanced is
+on) and a progress chip for a running reprocess. Export is a button + format row
+on Review driving the **real** `ProcessingViewModel` — same formats, same job,
+same ROUND 7 Downloads delivery. `SimpleMode` (`:core`) is the one place that
+decides what the switch hides; RTK and the Mid-360 wizard are contextual on
+sensor, never hidden. The wording law is `WordingLaw` + `Wording` + 17 guard
+cases that fail the build, in the shape of the round-19 light guard — and the
+round-19 rule is re-asserted over every round-22 string. The **EDL row is
+removed** (its own text said it rendered nothing); the field survives on
+`DisplayParams`. The icon shipped: see item 99.
+
+**100 — shipped.** `GpuPageBudget.ceilingBytesFor` is a per-tier ladder
+(MODEST 96 MiB / STANDARD 256 MiB / FLAGSHIP 512 MiB) keyed off the existing
+`PerformancePresets.tierFor` probe — no new heuristic. `maxSelectableLodPoints`
+and `clampLodPointBudget` clamp the controls; `DetailLevels.selectableOn` drops
+any rung the ceiling has flattened, so an option above the ceiling is **absent**
+rather than disabled, with one four-word note. `SettingsRepository` clamps on
+load **and** on save with a `[store]` line recording original → clamped. There
+is no override. 28 cases across `DeviceTierLodCeilingTest` and `DetailLevelTest`.
+
+**Numbers.** Engine untouched, **ABI stays 12**. `:core` **672** (was 587),
+`:app` **153** (was 129), 0 failures. VERSION 0.9.7; **versionCode 907 and
+versionName 0.9.7 verified in the built APK** (aapt2 badging).

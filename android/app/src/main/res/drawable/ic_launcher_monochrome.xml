@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ================================================================
+     LAUNCHER ICON - MONOCHROME LAYER (Android 13+ themed icons)
+     Round 22, v0.9.7. Variant "4g - Slice-scan A" (owner-approved).
+
+     Same slice-line A as the foreground, flattened to a single opaque
+     colour. The launcher DISCARDS this colour and re-tints the layer from
+     the user's wallpaper palette, so the #FFFFFF below is a stand-in for
+     "fully opaque" - it is never what ships on screen. For that reason
+     there are deliberately NO pulse rings and NO per-line opacity ramp
+     here: once every stroke is one flat tint, the rings crowd the mark and
+     the fade just reads as noise. The themed-icon spec wants a simple,
+     high-contrast silhouette, and that is the A alone.
+
+     Segment coordinates are identical to the foreground layer's (b) block
+     and come from the same computation - see the header of
+     drawable/ic_launcher_foreground.xml for how the clip is resolved and
+     why there is no <clip-path>. Keep the two files in step: if the A
+     geometry changes, re-run scratchpad/a_slice_geom.py and update BOTH.
+
+     Drawn extent x 32.58..75.42, y 35.96..79.66 after the 0.847 safe-zone
+     fit; furthest corner 32.98 from centre, inside the r=33 safe circle.
+     ================================================================ -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- SAFE-ZONE FIT. The approved "4g" geometry is drawn on a square canvas
+         and its feet reach 38.94 units from the icon centre - past the 36-unit
+         circular mask, so on a round-mask launcher the bottom scan lines were
+         being sliced off. This group scales the A-mark (and ONLY the A-mark -
+         the rings above are meant to bleed) by 0.847 about the icon centre,
+         which lands the furthest corner at 32.98, just inside the documented
+         66dp/r=33 safe circle. Proportions are untouched: every path below is
+         the raw computed geometry, so this one attribute is the whole
+         correction and reverting it restores the literal spec. Use 0.9246 to
+         fit only the r=36 mask if a larger mark is preferred. -->
+    <group
+        android:pivotX="54"
+        android:pivotY="54"
+        android:scaleX="0.847"
+        android:scaleY="0.847">
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="2.6"
+        android:strokeLineCap="round" android:pathData="M48.16,34 L59.84,34" />
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="2.6"
+        android:strokeLineCap="round" android:pathData="M45.57,41 L62.43,41" />
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="2.6"
+        android:strokeLineCap="round" android:pathData="M42.98,48 L65.02,48" />
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="2.6"
+        android:strokeLineCap="round" android:pathData="M40.38,55 L50.58,55" />
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="2.6"
+        android:strokeLineCap="round" android:pathData="M57.42,55 L67.62,55" />
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="2.6"
+        android:strokeLineCap="round" android:pathData="M37.79,62 L70.21,62" />
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="2.6"
+        android:strokeLineCap="round" android:pathData="M35.2,69 L72.8,69" />
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="2.6"
+        android:strokeLineCap="round" android:pathData="M32.61,76 L42.8,76" />
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="2.6"
+        android:strokeLineCap="round" android:pathData="M65.2,76 L75.39,76" />
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="2.6"
+        android:strokeLineCap="round" android:pathData="M30.01,83 L40.21,83" />
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="2.6"
+        android:strokeLineCap="round" android:pathData="M67.79,83 L77.99,83" />
+    </group>
+</vector>

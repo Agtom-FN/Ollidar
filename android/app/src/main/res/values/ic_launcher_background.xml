@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- ============================================================
+         LAUNCHER ICON PARAMETERS - round 22, v0.9.7
+         Variant "4g - Slice-scan A" (owner-approved).
+
+         This file is the SINGLE source of truth for the adaptive icon's
+         background colour. Nothing else hard-codes it: the adaptive-icon
+         definitions in mipmap-anydpi-v26/ reference @color/ic_launcher_background
+         directly, so re-tinting the icon is a one-line change here.
+
+         Colours used ONLY by the launcher icon live in this file. App theme
+         colours belong in themes.xml - do not cross-reference the two, or a
+         theme tweak will silently restyle the launcher icon.
+         ============================================================ -->
+
+    <!-- Icon plate. Deep slate; deliberately darker and cooler than the app
+         surface so the mark reads on both light and dark launcher wallpapers. -->
+    <color name="ic_launcher_background">#1C2430</color>
+</resources>

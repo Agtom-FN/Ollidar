@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- RETIRED (round 22, v0.9.7). Former launcher background: solid #12181F vector.
+     Superseded by the @color/ic_launcher_background colour resource in
+     values/ic_launcher_background.xml, which the adaptive-icon XML now uses
+     directly. Kept, not deleted, so the previous mark stays retrievable. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"

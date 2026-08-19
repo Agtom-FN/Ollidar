@@ -75,10 +75,19 @@ fun PointCloudView(
      */
     deviceRefreshCeilingHz: Int = 0,
     onRefreshDownshift: ((Int) -> Unit)? = null,
+    /**
+     * ROUND 22 item 100 — what this phone may hold. Drives
+     * `GpuPageBudget.ceilingBytesFor`, which is the hard limit on resident
+     * vertex-buffer bytes whatever the Detail control says. Defaulted to
+     * `STANDARD` so every existing call site keeps item 91's 256 MiB.
+     */
+    deviceTier: com.lidarscan.core.capture.DeviceTier =
+        com.lidarscan.core.capture.DeviceTier.STANDARD,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val renderer = remember { PointCloudRenderer(context) }
+    renderer.setDeviceTier(deviceTier)
 
     val resolvedCeiling = if (deviceRefreshCeilingHz > 0) {
         deviceRefreshCeilingHz

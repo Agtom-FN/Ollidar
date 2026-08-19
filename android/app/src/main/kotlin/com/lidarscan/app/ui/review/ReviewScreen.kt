@@ -83,9 +83,20 @@ fun ReviewRoute(
     container: AppContainer,
     projectId: String,
     onBack: () -> Unit,
-    onOpenPlan: (String) -> Unit,
-    /** Redesign: Export is now a first-class button here; it lands on this project's Jobs queue. */
-    onOpenExport: (String) -> Unit = {},
+    /**
+     * ROUND 22 item 97: **null hides the floor-plan door.** It is an Advanced
+     * feature now, and a null callback hides the pill and makes the route
+     * unreachable from here in one statement.
+     */
+    onOpenPlan: ((String) -> Unit)?,
+    /**
+     * Redesign: Export is a first-class button here. ROUND 22 item 96: null in
+     * Simple mode, where Review carries its OWN export row instead of sending
+     * the operator to a Processing screen Simple mode does not show.
+     */
+    onOpenExport: ((String) -> Unit)? = null,
+    /** ROUND 22 item 97 — see [com.lidarscan.core.SimpleMode]. */
+    advanced: Boolean = false,
 ) {
     val vm: ReviewViewModel = viewModel(
         factory = viewModelFactory {
@@ -95,12 +106,34 @@ fun ReviewRoute(
         },
     )
     val state by vm.uiState.collectAsStateWithLifecycle()
+    // ── ROUND 22 item 96: Export on Review, VERBATIM ────────────────────────
+    //
+    // Simple mode removes the Processing screen from navigation, and the brief
+    // is explicit that export must reuse its paths rather than grow a second
+    // implementation: PLY / LAS / PCD / Bundle, the same job, the same
+    // ROUND 7 Downloads delivery, the same ROUND 18 "wait for the auto-process
+    // before zipping" rule. So the export row drives the REAL
+    // `ProcessingViewModel` — the screen it used to live on is what changed,
+    // not the pipeline. Built unconditionally (a ViewModel with no collector
+    // costs one object) so the branch below is purely about what is drawn.
+    val exportVm: com.lidarscan.app.ui.processing.ProcessingViewModel = viewModel(
+        key = "review-export-$projectId",
+        factory = viewModelFactory {
+            initializer {
+                com.lidarscan.app.ui.processing.ProcessingViewModel(
+                    container, container.projectStore, container.settingsRepository, projectId,
+                )
+            }
+        },
+    )
     ReviewScreen(
         state = state,
         vm = vm,
+        exportVm = exportVm,
         onBack = onBack,
-        onOpenPlan = { onOpenPlan(projectId) },
-        onOpenExport = { onOpenExport(projectId) },
+        onOpenPlan = onOpenPlan?.let { open -> { open(projectId) } },
+        onOpenExport = onOpenExport?.let { open -> { open(projectId) } },
+        advanced = advanced,
     )
 }
 
@@ -124,9 +157,16 @@ fun ReviewScreen(
     state: ReviewUiState,
     vm: ReviewViewModel,
     onBack: () -> Unit,
-    onOpenPlan: () -> Unit,
-    onOpenExport: () -> Unit = {},
+    exportVm: com.lidarscan.app.ui.processing.ProcessingViewModel? = null,
+    onOpenPlan: (() -> Unit)?,
+    onOpenExport: (() -> Unit)? = null,
+    advanced: Boolean = false,
 ) {
+    // ROUND 22 item 96: the Downloads write needs a Context (ROUND 7's
+    // MediaStore delivery). Read once here rather than at the click, so the
+    // export path is identical to the Processing screen's.
+    val exportContext = androidx.compose.ui.platform.LocalContext.current
+
     var showPanel by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     val manifest = state.project?.manifest
@@ -315,23 +355,38 @@ fun ReviewScreen(
             Spacer(Modifier.height(10.dp))
         }
 
-        // ── Floor plan / Export split ───────────────────────────────────
+        // ── ROUND 22 items 96 + 97: Floor plan (Advanced) / Export ──────────
+        //
+        // The floor plan is behind the Advanced switch, so on an ordinary walk
+        // this row is one full-width Export button — which is the point of
+        // item 96: Export used to mean "open the Details hub, find the
+        // Processing screen, pick a format there". It is here now, on the
+        // screen the operator is already looking at.
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 14.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            SecondaryPill(
-                text = "Floor plan",
-                icon = Icons.Filled.GridView,
-                onClick = onOpenPlan,
-                modifier = Modifier.weight(1f),
-            )
+            if (onOpenPlan != null) {
+                SecondaryPill(
+                    text = "Floor plan",
+                    icon = Icons.Filled.GridView,
+                    onClick = onOpenPlan,
+                    modifier = Modifier.weight(1f),
+                )
+            }
             PrimaryPill(
-                text = "Export",
+                text = com.lidarscan.core.Wording.EXPORT_ACTION,
                 icon = Icons.Filled.IosShare,
-                onClick = onOpenExport,
-                modifier = Modifier.weight(1f),
+                onClick = {
+                    if (onOpenExport != null) onOpenExport() else exportVm?.export(exportContext)
+                },
+                modifier = Modifier.weight(1f).testTag("reviewExportButton"),
             )
+        }
+        if (onOpenExport == null && exportVm != null) {
+            // Item 96: the format row, on Review, reusing ProcessingViewModel's
+            // export paths verbatim — same formats, same Downloads delivery.
+            ExportFormatRow(exportVm)
         }
 
         Spacer(Modifier.height(ScanDims.TabBarClearance))
@@ -367,13 +422,19 @@ private fun MeasureHud(state: ReviewUiState, vm: ReviewViewModel) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    "Between the two nearest sampled points — the tool picks from a bounded sample of the cloud, not " +
-                        "every point, so a pick can sit a few centimetres from the return drawn under your finger.",
+                    // ROUND 22 item 98: was 37 words explaining the sampling
+                    // strategy. The honesty that matters — the pick can be a
+                    // few centimetres out — survives; the explanation of WHY
+                    // does not belong on a measuring tool.
+                    com.lidarscan.core.Wording.MEASURE_DETAIL,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
-                Text(state.pickMessage ?: "Tap a point to start.", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    state.pickMessage ?: com.lidarscan.core.Wording.MEASURE_HINT,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 MeasureUnit.entries.forEach { u ->
@@ -567,9 +628,12 @@ private fun DisplayPanel(state: ReviewUiState, vm: ReviewViewModel) {
                 com.lidarscan.core.render.DisplayLimits.LOD_MAX_M,
             "${(d.lodPointBudget / 1_000_000f).roundToInt()} M points",
         ) { v -> vm.updateDisplay { it.copy(lodPointBudget = (v * 1_000_000f).roundToInt()) } }
+        // ROUND 22 item 98: was 37 words about page order and decimation.
+        // ROUND 22 item 100: and when the device is what is limiting the
+        // slider, say THAT instead — it is the only one of the two the
+        // operator can act on (by using a different phone).
         Text(
-            "A ceiling on how many points are uploaded to the GPU, applied in page order. It stops before the budget " +
-                "rather than decimating within a page — that is what this renderer does, stated plainly.",
+            com.lidarscan.core.Wording.DETAIL_BUDGET_HINT,
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -609,16 +673,21 @@ private fun DisplayPanel(state: ReviewUiState, vm: ReviewViewModel) {
         }
 
         HorizontalDivider()
+        // ROUND 22 item 98: the EDL row is REMOVED.
+        //
+        // Its own detail text said it: "Persisted, but NOT rendered in this
+        // build — points.mat has no post-process pass". A switch that renders
+        // nothing on the only device this app runs on is worse than an absent
+        // one: it costs the operator a decision and returns nothing for it. The
+        // FIELD survives on `DisplayParams` (it travels with the project, so a
+        // desktop that can draw EDL still gets the intent) and the day a
+        // post-process pass exists the row comes straight back.
         SwitchRow(
-            "EDL shading",
-            d.edlEnabled,
-            "Persisted, but NOT rendered in this build: points.mat has no post-process pass and S3 never measured " +
-                "EDL's cost on a phone GPU. The setting travels with the project so a desktop that can draw it will.",
-        ) { on -> vm.updateDisplay { it.copy(edlEnabled = on) } }
-        SwitchRow(
-            "Walked path",
+            com.lidarscan.core.Wording.SHOW_MY_PATH,
             d.showTrajectory,
-            "Draws your walk through the cloud — start teal, end amber, red where tracking was lost.",
+            // Was: "Draws your walk through the cloud — start teal, end amber,
+            // red where tracking was lost." The colour legend is on screen.
+            "Start green, end amber, red where tracking was lost.",
         ) { on ->
             vm.updateDisplay { it.copy(showTrajectory = on) }
         }
@@ -761,6 +830,65 @@ private fun ProcessSectionsCard(
             ) {
                 Text(if (state.isStitched) "Process again" else "Process this scan")
             }
+        }
+    }
+}
+
+
+/**
+ * ROUND 22 item 96 — **the export row, on the screen the operator is already
+ * looking at.**
+ *
+ * Simple mode removes the "Details, jobs & export" hub and the Processing
+ * screen from navigation, so exporting used to be three navigations away from
+ * the scan being exported. This is the same four formats
+ * ([com.lidarscan.core.model.ExportFormat]) driven through the same
+ * [com.lidarscan.app.ui.processing.ProcessingViewModel] — `setExportFormat`
+ * and `export` are the Processing screen's own calls, unchanged. Nothing about
+ * the pipeline, the job, the gates or the ROUND 7 Downloads delivery is
+ * reimplemented here; only where the buttons live moved.
+ *
+ * The format note the Processing screen shows (`exportFormatNote` — e.g. LAS
+ * wanting a georeference) is carried through, because it is the one thing that
+ * can make an export produce a file the operator did not expect.
+ */
+@Composable
+private fun ExportFormatRow(vm: com.lidarscan.app.ui.processing.ProcessingViewModel) {
+    val state by vm.uiState.collectAsStateWithLifecycle()
+    Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.testTag("reviewExportFormats"),
+        ) {
+            com.lidarscan.core.model.ExportFormat.entries.forEach { format ->
+                FilterChip(
+                    selected = state.exportFormat == format,
+                    onClick = { vm.setExportFormat(format) },
+                    label = { Text(format.name.substringBefore('_')) },
+                )
+            }
+        }
+        Text(
+            com.lidarscan.core.Wording.EXPORT_DETAIL,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 6.dp),
+        )
+        state.exportNote?.let { note ->
+            Text(
+                note,
+                style = MaterialTheme.typography.labelSmall,
+                color = SemWarn,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+        state.message?.let { message ->
+            Text(
+                message,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp).testTag("reviewExportMessage"),
+            )
         }
     }
 }

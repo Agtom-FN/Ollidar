@@ -1,35 +1,158 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- ================================================================
+     LAUNCHER ICON - FOREGROUND LAYER
+     Round 22, v0.9.7. Variant "4g - Slice-scan A" (owner-approved).
+
+     108x108 adaptive-icon viewport. The launcher mask keeps roughly the
+     centre 66 units (x,y in 21..87) and crops the outer 18 units on every
+     side, so anything that must always be legible lives inside 21..87.
+
+     COMPOSITION, in z-order:
+       (a) two Agtom-orange pulse rings, centred (54,58). These INTENTIONALLY
+           bleed past the safe zone (the r=40 ring spans x 12.75..95.25,
+           y 16.75..99.25) and are meant to be cropped by the mask - that
+           crop is what makes the rings read as an expanding sweep rather
+           than as two complete circles.
+       (b) the A-mark: eight horizontal scan lines clipped to the silhouette
+           of a stroked "A", scaled 0.847 to clear the mask (see the
+           SAFE-ZONE FIT note on the group below). As drawn it spans
+           x 32.58..75.42, y 35.96..79.66, and its furthest corner is 32.98
+           units from the centre - inside the r=33 safe circle, so the A
+           never clips on the round, squircle or teardrop mask.
+           Beware: the 21..87 bounding box is NOT the real test. The
+           guaranteed-visible region is a CIRCLE, and the unscaled geometry
+           passes the box while failing the circle at the A's feet.
+
+     WHY THERE IS NO <clip-path> HERE:
+     VectorDrawable has no mask element, and its <clip-path> is antialiased
+     poorly on several Android versions (hard, stair-stepped edges on the
+     diagonals, which is exactly where this mark lives). So the clip is
+     resolved AHEAD OF TIME: each scan line is emitted as an explicit
+     pre-clipped <path>. The result renders identically on every API level.
+
+     The "A" silhouette used as the clip is the stroke outline of
+         M34,86 L54,32 L74,86   plus crossbar   M43,66 L65,66
+     at stroke width 12 with round caps and round joins - i.e. exactly the
+     Minkowski sum of that polyline with a disk of radius 6. Each scan line's
+     visible interval is that region's intersection with y = const, then
+     inset by 1.3 (half the 2.6 scan stroke) at both ends so the ROUND caps
+     land on the silhouette boundary instead of bulging past it.
+     Lines that cross both legs above the crossbar yield two segments
+     (y=55, 76, 83); the rest yield one.
+
+     Geometry recomputed by scratchpad/a_slice_geom.py - if the silhouette
+     polyline, the stroke width, or the scan-line y values change, re-run it
+     and paste the output rather than hand-editing coordinates.
+     ================================================================ -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Placeholder brand mark: a radar/point-cloud sweep. Swap for real
-         product art before store release; kept intentionally simple. -->
+
+    <!-- (a) Pulse rings. #F26A1B is the Agtom orange the app theme uses this
+         round; keep the two in step if the brand colour is ever revised. -->
     <path
-        android:strokeColor="#4FD1C5"
+        android:strokeColor="#F26A1B"
+        android:strokeAlpha="0.30"
+        android:strokeWidth="2.5"
+        android:pathData="M54,58 m-40,0 a40,40 0 1,0 80,0 a40,40 0 1,0 -80,0" />
+    <path
+        android:strokeColor="#F26A1B"
+        android:strokeAlpha="0.50"
         android:strokeWidth="3"
+        android:pathData="M54,58 m-28,0 a28,28 0 1,0 56,0 a28,28 0 1,0 -56,0" />
+
+    <!-- (b) A-mark scan lines, top to bottom: white fading into Agtom orange. -->
+
+    <!-- SAFE-ZONE FIT. The approved "4g" geometry is drawn on a square canvas
+         and its feet reach 38.94 units from the icon centre - past the 36-unit
+         circular mask, so on a round-mask launcher the bottom scan lines were
+         being sliced off. This group scales the A-mark (and ONLY the A-mark -
+         the rings above are meant to bleed) by 0.847 about the icon centre,
+         which lands the furthest corner at 32.98, just inside the documented
+         66dp/r=33 safe circle. Proportions are untouched: every path below is
+         the raw computed geometry, so this one attribute is the whole
+         correction and reverting it restores the literal spec. Use 0.9246 to
+         fit only the r=36 mask if a larger mark is preferred. -->
+    <group
+        android:pivotX="54"
+        android:pivotY="54"
+        android:scaleX="0.847"
+        android:scaleY="0.847">
+    <!-- y=34 - apex -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeAlpha="1.0"
+        android:strokeWidth="2.6"
         android:strokeLineCap="round"
-        android:pathData="M54,54 m-30,0 a30,30 0 1,0 60,0 a30,30 0 1,0 -60,0" />
+        android:pathData="M48.16,34 L59.84,34" />
+    <!-- y=41 -->
     <path
-        android:strokeColor="#4FD1C5"
-        android:strokeWidth="2"
-        android:strokeAlpha="0.6"
+        android:strokeColor="#FFFFFF"
+        android:strokeAlpha="0.95"
+        android:strokeWidth="2.6"
         android:strokeLineCap="round"
-        android:pathData="M54,54 m-18,0 a18,18 0 1,0 36,0 a18,18 0 1,0 -36,0" />
+        android:pathData="M45.57,41 L62.43,41" />
+    <!-- y=48 -->
     <path
-        android:fillColor="#4FD1C5"
-        android:pathData="M54,54 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0" />
+        android:strokeColor="#FFFFFF"
+        android:strokeAlpha="0.90"
+        android:strokeWidth="2.6"
+        android:strokeLineCap="round"
+        android:pathData="M42.98,48 L65.02,48" />
+    <!-- y=55 - above the crossbar, so it splits across the two legs -->
     <path
-        android:fillColor="#F4A261"
-        android:pathData="M78,36 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0" />
+        android:strokeColor="#FFFFFF"
+        android:strokeAlpha="0.85"
+        android:strokeWidth="2.6"
+        android:strokeLineCap="round"
+        android:pathData="M40.38,55 L50.58,55" />
     <path
-        android:fillColor="#F4A261"
-        android:pathData="M32,74 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0" />
+        android:strokeColor="#FFFFFF"
+        android:strokeAlpha="0.85"
+        android:strokeWidth="2.6"
+        android:strokeLineCap="round"
+        android:pathData="M57.42,55 L67.62,55" />
+    <!-- y=62 - crossbar (round-capped, so it reaches y 60..72) bridges the legs -->
     <path
-        android:fillColor="#F4A261"
-        android:pathData="M80,72 m-2.5,0 a2.5,2.5 0 1,0 5,0 a2.5,2.5 0 1,0 -5,0" />
+        android:strokeColor="#FFFFFF"
+        android:strokeAlpha="0.80"
+        android:strokeWidth="2.6"
+        android:strokeLineCap="round"
+        android:pathData="M37.79,62 L70.21,62" />
+    <!-- y=69 - still spanned by the crossbar -->
     <path
-        android:fillColor="#F4A261"
-        android:pathData="M30,38 m-2.5,0 a2.5,2.5 0 1,0 5,0 a2.5,2.5 0 1,0 -5,0" />
+        android:strokeColor="#F9B27C"
+        android:strokeAlpha="0.75"
+        android:strokeWidth="2.6"
+        android:strokeLineCap="round"
+        android:pathData="M35.2,69 L72.8,69" />
+    <!-- y=76 - below the crossbar, splits again -->
+    <path
+        android:strokeColor="#F9B27C"
+        android:strokeAlpha="0.70"
+        android:strokeWidth="2.6"
+        android:strokeLineCap="round"
+        android:pathData="M32.61,76 L42.8,76" />
+    <path
+        android:strokeColor="#F9B27C"
+        android:strokeAlpha="0.70"
+        android:strokeWidth="2.6"
+        android:strokeLineCap="round"
+        android:pathData="M65.2,76 L75.39,76" />
+    <!-- y=83 - the feet -->
+    <path
+        android:strokeColor="#F26A1B"
+        android:strokeAlpha="0.65"
+        android:strokeWidth="2.6"
+        android:strokeLineCap="round"
+        android:pathData="M30.01,83 L40.21,83" />
+    <path
+        android:strokeColor="#F26A1B"
+        android:strokeAlpha="0.65"
+        android:strokeWidth="2.6"
+        android:strokeLineCap="round"
+        android:pathData="M67.79,83 L77.99,83" />
+    </group>
 </vector>

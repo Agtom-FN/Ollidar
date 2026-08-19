@@ -122,6 +122,37 @@ data class AppSettings(
     val keepEmptyScans: Boolean = false,
 
     /**
+     * ROUND 22 item 97 — **the one Advanced-features switch. Default OFF.**
+     *
+     * Simple mode is the app's normal shape now: one dominant SCAN button, a
+     * Projects list whose cards open the viewer, and Export on the Review
+     * screen. Everything the owner does not use on an ordinary walk lives
+     * behind this one switch, and **nothing is deleted** — each item returns
+     * exactly as it is today the moment it is turned on:
+     *
+     *  * the **Survey** display profile and its capture-blocking GNSS gate rule
+     *  * the **Floor plan** (the Review pill, `Routes.PLAN`, and the
+     *    "Floor plan" DisplayProfile chip)
+     *  * the **Research** display profile
+     *  * the **Merge** screen
+     *  * **Cloud** processing mode
+     *  * the **Details, jobs & export** hub (`ProjectDetailScreen`) and the
+     *    separate **Processing** screen, which stay reachable when this is on
+     *
+     * **RTK and the Mid-360 connect wizard are deliberately NOT behind it.**
+     * They appear contextually whenever Mid-360 is the selected sensor,
+     * because the owner is testing Mid-360 + RTK shortly and hiding the two
+     * screens that trip is about behind a switch he would have to find first
+     * would be the simplification working against him. See
+     * [com.lidarscan.core.SimpleMode].
+     *
+     * A feature-flag gate rather than a deletion, for the reason
+     * `FeatureFlags` has given since ROUND 10: every one of these is *paused*,
+     * not wrong, and the code behind them stays compiled and stays under test.
+     */
+    val advancedFeatures: Boolean = false,
+
+    /**
      * ROUND 17 item 66 — **Developer Mode**, unlocked by tapping the version
      * footer seven times.
      *

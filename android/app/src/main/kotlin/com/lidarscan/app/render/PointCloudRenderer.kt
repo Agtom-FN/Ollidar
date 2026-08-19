@@ -29,6 +29,7 @@ import com.lidarscan.core.render.Colormap
 import com.lidarscan.core.render.ColormapLut
 import com.lidarscan.core.render.FollowCamera
 import com.lidarscan.core.render.FollowCameraConfig
+import com.lidarscan.core.render.GpuPageBudget
 import com.lidarscan.core.render.PointSizeMode
 import com.lidarscan.core.render.UpAxis
 import java.nio.ByteBuffer
@@ -162,6 +163,22 @@ class PointCloudRenderer(
     private var sharedIndexBuffer: IndexBuffer? = null
     private var sharedIndexBufferCapacity = 0
 
+    /**
+     * ROUND 22 item 91 (iv): shared `IndexBuffer`s that have been superseded but
+     * are **still referenced by live [GpuPage]s**, awaiting the frame in which
+     * nothing points at them any more.
+     *
+     * [ensureSharedIndexBuffer] used to `destroyIndexBuffer` the old buffer the
+     * instant a bigger one was needed — while every already-built GpuPage still
+     * held that exact object and handed it to `setGeometryAt` on every frame
+     * that page uploaded. That is a use-after-free of a native Filament object
+     * from the UI thread: it survives exactly as long as the driver happens not
+     * to reuse the memory, which is why it presented as an intermittent crash
+     * on the LOD slider (the slider is what makes the renderer ask for a bigger
+     * index buffer in the first place) rather than as a reliable one.
+     */
+    private val retiredIndexBuffers = ArrayList<IndexBuffer>()
+
     // ── ROUND 16 item 59: THE WALKED PATH, INSIDE THE CLOUD ─────────────────
     //
     // Owner, on 0.9.0: *"i want to see the path of mine showing in the
@@ -272,10 +289,45 @@ class PointCloudRenderer(
      */
     private var lodPointBudget: Long = Long.MAX_VALUE
 
+    /**
+     * ROUND 22 item 100 — the tier whose resident-bytes ceiling this renderer
+     * enforces.
+     *
+     * `STANDARD` by default, which is exactly item 91's 256 MiB constant, so a
+     * renderer nobody has told about the device behaves as it did before this
+     * item rather than losing its ceiling entirely. `PointCloudView` sets the
+     * real one.
+     *
+     * This is the LAST of three places the ceiling is applied — the controls
+     * cannot offer more (`GpuPageBudget.maxSelectableLodPoints`) and
+     * `SettingsRepository` clamps on load and on save. It is here anyway
+     * because the failure it prevents is a process death, and a memory ceiling
+     * enforced only by the code paths that happen to ask for it is a memory
+     * ceiling with a hole in it.
+     */
+    private var deviceTier: com.lidarscan.core.capture.DeviceTier =
+        com.lidarscan.core.capture.DeviceTier.STANDARD
+
+    /** ROUND 22 item 100. Safe to call repeatedly; takes effect on the next frame. */
+    fun setDeviceTier(tier: com.lidarscan.core.capture.DeviceTier) {
+        deviceTier = tier
+    }
+
+    /**
+     * One engine page, resident on the GPU.
+     *
+     * ROUND 22 item 91 (ii): [capacity] means **vertices actually allocated in
+     * [vertexBuffer]**, which since this round is
+     * [GpuPageBudget.allocationVertices] of the page's *count* — not the engine
+     * page's capacity, which for Review's `1 << 20` store is 16 MiB per page
+     * regardless of how few points it holds. [vertexBuffer] is therefore a
+     * `var`: a page that outgrows its buffer is reallocated in place by
+     * [growGpuPage], and [capacity] moves with it.
+     */
     private class GpuPage(
         val entity: Int,
-        val vertexBuffer: VertexBuffer,
-        val indexBuffer: IndexBuffer,
+        var vertexBuffer: VertexBuffer,
+        var indexBuffer: IndexBuffer,
         var uploaded: Int,
         var capacity: Int,
     )
@@ -386,8 +438,15 @@ class PointCloudRenderer(
 
         gpuPages.values.forEach { destroyGpuPage(it) }
         gpuPages.clear()
+        // ROUND 22 item 91 (iv): retired index buffers are held alive only while
+        // a page still references one. Nothing does now, and `detach()` must
+        // free EVERYTHING regardless — this is the last chance before the
+        // Engine itself goes away.
+        retiredIndexBuffers.forEach { engine.destroyIndexBuffer(it) }
+        retiredIndexBuffers.clear()
         sharedIndexBuffer?.let { engine.destroyIndexBuffer(it) }
         sharedIndexBuffer = null
+        sharedIndexBufferCapacity = 0
 
         destroyTrail()
         trailMaterialInstance?.let { engine.destroyMaterialInstance(it) }
@@ -408,31 +467,60 @@ class PointCloudRenderer(
         surfaceView = null
     }
 
+    /**
+     * Point the renderer at a different cloud — or at nothing.
+     *
+     * **ROUND 22 item 91 (v): every state reset below used to happen ONLY on
+     * `setSource(null)`.** Handing the renderer a different *non-null* source
+     * cleared nothing at all: the previous session's GPU pages stayed in the
+     * Filament scene, keyed by page ids that mean something entirely different
+     * in the new source's store, so the new cloud drew on top of the old one and
+     * the old one's 16 MiB-per-page VertexBuffers were never freed. Two page
+     * stores' worth of resident VBOs is the same memory ceiling item 91 is about
+     * from the other end.
+     *
+     * `CaptureViewModel.clearLiveViewport()` documents the workaround it had to
+     * invent for this — *"handing it a different non-null source clears nothing.
+     * So the flow is null'd and then re-read"*. That dance is now belt and
+     * braces rather than the only thing holding the viewport together.
+     *
+     * The identity check is the whole guard: this is called on **every
+     * recomposition** of `PointCloudView`, and a reset per recomposition would
+     * destroy and re-upload the entire cloud several times a second. Identity,
+     * not equality — two `NativePointCloudSource`s over the same engine handle
+     * are the same session, but nothing in that type promises `equals`.
+     */
     fun setSource(newSource: PointCloudSource?) {
+        if (newSource === source) return
         source = newSource
-        if (newSource == null) {
-            gpuPages.values.forEach { destroyGpuPage(it) }
-            gpuPages.clear()
-            pageStreams.clear()
-            mappedPageSeen = false
-            haveBounds = false
-            // ROUND 11 (item 42): the density grid is one session's coverage of
-            // one room. Carrying it into the next capture would open the new
-            // scan claiming the operator had already covered a room they have
-            // not walked into — the same class of bug ROUND 10 item 38 spent a
-            // round on with the page store.
-            resetCoverage()
-            // ROUND 8: the follow camera's whole state — trail, heading, framing
-            // distance — belongs to ONE session's local metric frame. Carrying it
-            // into the next capture would ease the camera from the old origin
-            // toward the new one across whatever void lies between two unrelated
-            // frames. The pose latch goes with it, or the first frame of the new
-            // session would consume the last pose of the old one.
-            followCamera.reset()
-            synchronized(rigPoseLock) { rigPoseValid = false }
-            haveRealRigPose = false
-            recentGeometryValid = false
-        }
+
+        // The GPU-side bookkeeping belongs to the source that produced it: page
+        // ids, per-page streams, the mapped-page latch and the combined bounds
+        // are all keyed to ONE page store.
+        gpuPages.values.forEach { destroyGpuPage(it) }
+        gpuPages.clear()
+        pageStreams.clear()
+        mappedPageSeen = false
+        haveBounds = false
+        // ROUND 22 item 91 (iv): with no pages left, every retired shared index
+        // buffer is now unreferenced and can go.
+        drainRetiredIndexBuffers()
+        // ROUND 11 (item 42): the density grid is one session's coverage of
+        // one room. Carrying it into the next capture would open the new
+        // scan claiming the operator had already covered a room they have
+        // not walked into — the same class of bug ROUND 10 item 38 spent a
+        // round on with the page store.
+        resetCoverage()
+        // ROUND 8: the follow camera's whole state — trail, heading, framing
+        // distance — belongs to ONE session's local metric frame. Carrying it
+        // into the next capture would ease the camera from the old origin
+        // toward the new one across whatever void lies between two unrelated
+        // frames. The pose latch goes with it, or the first frame of the new
+        // session would consume the last pose of the old one.
+        followCamera.reset()
+        synchronized(rigPoseLock) { rigPoseValid = false }
+        haveRealRigPose = false
+        recentGeometryValid = false
     }
 
     fun setColorMode(mode: ColorMode) {
@@ -716,6 +804,9 @@ class PointCloudRenderer(
             gpuPages.remove(pageId)
             pageStreams.remove(pageId)
         }
+        // ROUND 22 item 91 (iv): pages just went away, so a retired shared
+        // index buffer may now be unreferenced.
+        drainRetiredIndexBuffers()
         haveBounds = false
     }
 
@@ -1072,23 +1163,79 @@ class PointCloudRenderer(
         )
     }
 
+    /**
+     * The identity index buffer every page draws through (Filament requires an
+     * index buffer even for `PrimitiveType.POINTS`), grown on demand.
+     *
+     * **ROUND 22 item 91 (iv): the old buffer is RETIRED, never destroyed here.**
+     * Live [GpuPage]s hold the exact `IndexBuffer` object they were built with
+     * and pass it to `setGeometryAt` every frame they upload, so destroying it
+     * the moment a bigger one is wanted was a use-after-free — see
+     * [retiredIndexBuffers]. Retired buffers are freed by
+     * [drainRetiredIndexBuffers] on the first frame no page references them,
+     * and unconditionally by [detach].
+     *
+     * The requested size is rounded up to a power of two (floor 65 536 indices
+     * = 256 KB) so that growth happens a handful of times rather than once per
+     * page: the ladder from 64 k to the engine's 1 << 20 page is five
+     * generations totalling ~8 MB of index data if all five are somehow alive
+     * at once, against re-growing for all ~700 distinct page sizes a right-sized
+     * allocation would otherwise produce.
+     */
     private fun ensureSharedIndexBuffer(minCapacity: Int): IndexBuffer {
         sharedIndexBuffer?.let { if (sharedIndexBufferCapacity >= minCapacity) return it }
-        sharedIndexBuffer?.let { engine.destroyIndexBuffer(it) }
+        val capacity = indexBufferSizeFor(minCapacity)
 
         val ib = IndexBuffer.Builder()
-            .indexCount(minCapacity)
+            .indexCount(capacity)
             .bufferType(IndexBuffer.Builder.IndexType.UINT)
             .build(engine)
-        val idx = ByteBuffer.allocateDirect(minCapacity * 4).order(ByteOrder.nativeOrder())
+        val idx = ByteBuffer.allocateDirect(capacity * 4).order(ByteOrder.nativeOrder())
         val ints = idx.asIntBuffer()
-        for (i in 0 until minCapacity) ints.put(i)
+        for (i in 0 until capacity) ints.put(i)
         idx.rewind()
         ib.setBuffer(engine, idx)
 
+        // Retire, do not destroy: pages built against the previous buffer are
+        // still drawing through it this very frame.
+        sharedIndexBuffer?.let { retiredIndexBuffers.add(it) }
         sharedIndexBuffer = ib
-        sharedIndexBufferCapacity = minCapacity
+        sharedIndexBufferCapacity = capacity
+        drainRetiredIndexBuffers()
         return ib
+    }
+
+    /** Rounds an index count up to a power of two, floored at 65 536 — see [ensureSharedIndexBuffer]. */
+    private fun indexBufferSizeFor(minCapacity: Int): Int {
+        var size = MIN_SHARED_INDEX_COUNT
+        while (size < minCapacity) {
+            if (size >= Int.MAX_VALUE / 2) return Int.MAX_VALUE
+            size *= 2
+        }
+        return size
+    }
+
+    /**
+     * ROUND 22 item 91 (iv): destroy every retired shared `IndexBuffer` that no
+     * live [GpuPage] still references.
+     *
+     * A scan rather than a refcount because both collections are tiny — at most
+     * a handful of retired generations against a few hundred pages, once per
+     * frame — and because a scan cannot go wrong the way a hand-maintained count
+     * can when a page is destroyed on one of the four paths that destroy pages
+     * (reap, stream-filter drop, source swap, detach).
+     */
+    private fun drainRetiredIndexBuffers() {
+        if (retiredIndexBuffers.isEmpty()) return
+        val iterator = retiredIndexBuffers.iterator()
+        while (iterator.hasNext()) {
+            val ib = iterator.next()
+            val referenced = gpuPages.values.any { it.indexBuffer === ib }
+            if (!referenced) {
+                engine.destroyIndexBuffer(ib)
+                iterator.remove()
+            }
+        }
     }
 
     // --- ROUND 16 item 59: the trajectory ribbon --------------------------
@@ -1239,6 +1386,26 @@ class PointCloudRenderer(
         val count = src.pageCount()
         var resident = 0L
         var pagesDrawn = 0
+        // ROUND 22 item 91 (i): the admission budget is accounted in ALLOCATED
+        // BYTES, not in points.
+        //
+        // `resident` (points) is kept — it is what `PointCloudRenderStats`
+        // reports and what the operator sees — but it is no longer what the
+        // budget is spent against, because it never was what memory was spent
+        // against. The old test charged `page.count` and the allocation twenty
+        // lines below built `max(page.capacity, page.count)` vertices: for
+        // Review's `1 << 20` page store that is 16 777 216 bytes for a page
+        // holding a thousand points, so a 20 M-point budget admitted 20 000
+        // pages and asked the driver for 335 GB. See `GpuPageBudget` for the
+        // whole table.
+        var residentBytes = 0L
+        val budgetBytes = GpuPageBudget.budgetBytesFor(lodPointBudget, deviceTier)
+        // ROUND 22 item 91 (vi): every page id the source reported this frame.
+        // The engine's live store evicts the oldest page when full
+        // (`page_store.h`, `PageFullPolicy::kEvictOldest`), so ids disappear on
+        // a long walk and their GpuPages have to go with them — see the reap
+        // pass after the loop.
+        val seenPageIds = HashSet<Int>(count.coerceAtLeast(0) * 2)
         // ROUND 5.3 (item 17, the crash path): per-frame upload work is BOUNDED.
         //
         // Before this, every page whose `count` had grown since the last frame was
@@ -1254,11 +1421,22 @@ class PointCloudRenderer(
         // up exactly where this one stopped, which is "coalesce/drop render frames
         // under pressure" rather than "drop points".
         var uploadBudgetBytes = MAX_UPLOAD_BYTES_PER_FRAME
-        var newPagesThisFrame = 0
+        // ROUND 22 item 91 (iii): and per-frame ALLOCATION is bounded in bytes
+        // too, for exactly the same reason one line up. `MAX_NEW_PAGES_PER_FRAME
+        // = 24` counted pages, which stopped meaning anything the moment pages
+        // stopped being one size: 24 of Review's pages is 402 653 184 bytes of
+        // VertexBuffer requested inside a single Choreographer callback.
+        var newPageBytesThisFrame = 0L
 
         for (i in 0 until count) {
             val pageId = src.pageIdAt(i)
             if (pageId < 0) continue
+            // Seen = listed by the store, recorded BEFORE any filter/budget
+            // skip below: a page the stream filter rejects or the LOD budget
+            // refuses is still very much alive, and reaping it would fight the
+            // budget for the rest of the session. Recorded before `getPage`
+            // too, so a transient read failure does not destroy GPU state.
+            seenPageIds.add(pageId)
             val page = src.getPage(pageId) ?: continue
             // B3: pages are single-stream (INT24 §2, "pages are single-stream:
             // StreamId::kSlamMap gets its own pages"), so one check per page
@@ -1274,23 +1452,42 @@ class PointCloudRenderer(
             }
             if (!streamFilter.accepts(page.stream, mappedPageSeen)) continue
 
+            var gpu = gpuPages[pageId]
+            // ROUND 22 item 91 (ii): what this page would actually cost — its
+            // COUNT rounded up to a 4 096-point granule, capped by the engine
+            // page's capacity. For the 1 000-point page above that is 65 536
+            // bytes, where `max(page.capacity, page.count)` was 16 777 216.
+            val allocBytes = GpuPageBudget.allocationBytes(page.count, page.capacity)
+
             // B10 / §3.12's LOD budget: stop admitting pages once the budget is
             // reached, but never drop a page already on the GPU — a budget that
             // evicted resident pages would make the cloud flicker as page order
             // shifted between frames. Pages already uploaded keep growing.
-            if (resident >= lodPointBudget && !gpuPages.containsKey(pageId)) continue
+            //
+            // ROUND 22 item 91 (i): in bytes now, against the byte ceiling
+            // `GpuPageBudget.budgetBytesFor` derives from the LOD slider.
+            if (gpu == null && !GpuPageBudget.admits(residentBytes, allocBytes, budgetBytes)) continue
 
             pageStreams[pageId] = page.stream
             resident += page.count
 
-            var gpu = gpuPages[pageId]
             if (gpu == null) {
                 // Creating a page is a VertexBuffer allocation plus an entity; a
                 // capture that suddenly exposes 200 new pages (a replay seek, a
                 // stream filter flip) must not do all of it in one frame.
-                if (newPagesThisFrame >= MAX_NEW_PAGES_PER_FRAME) continue
-                newPagesThisFrame++
-                val capacity = max(page.capacity, page.count)
+                //
+                // ROUND 22 item 91 (iii): bounded in BYTES, not in pages — 24
+                // pages was 1.5 MB of a live 32 k-point store and 384 MiB of
+                // Review's. Refused work is not lost: the page is simply built
+                // on a later frame, the same contract as the upload budget.
+                if (!GpuPageBudget.admitsNewAllocation(
+                        newPageBytesThisFrame, allocBytes, MAX_NEW_PAGE_BYTES_PER_FRAME,
+                    )
+                ) {
+                    continue
+                }
+                newPageBytesThisFrame += allocBytes
+                val capacity = GpuPageBudget.allocationVertices(page.count, page.capacity)
                 val vb = VertexBuffer.Builder()
                     .bufferCount(1)
                     .vertexCount(capacity)
@@ -1320,19 +1517,60 @@ class PointCloudRenderer(
                     .culling(false)
                     .castShadows(false)
                     .receiveShadows(false)
-                    .geometry(0, RenderableManager.PrimitiveType.POINTS, vb, ib, 0, page.count)
+                    // ROUND 22 item 91 (ii): clamped to the allocation. The
+                    // renderable is re-pointed at `gpu.uploaded` a few lines
+                    // below anyway; what matters is that the initial count can
+                    // never name a vertex the buffer does not have.
+                    .geometry(
+                        0, RenderableManager.PrimitiveType.POINTS, vb, ib, 0,
+                        minOf(page.count, capacity),
+                    )
                     .material(0, mi)
                     .build(engine, entity)
                 scene.addEntity(entity)
 
                 gpu = GpuPage(entity, vb, ib, uploaded = 0, capacity = capacity)
                 gpuPages[pageId] = gpu
+            } else if (GpuPageBudget.needsGrowth(gpu.capacity, page.count)) {
+                // ROUND 22 item 91 (ii), the other half of right-sizing: a LIVE
+                // page climbs from its first 4 096-vertex buffer to the store's
+                // capacity one revolution at a time, so a buffer sized to the
+                // count it had when it was first seen WILL be outgrown.
+                //
+                // Growth doubles (`GpuPageBudget.growthVertices`) and is charged
+                // against the same per-frame allocation budget as a brand-new
+                // page — at its full new size, which is what bounds the
+                // re-upload that follows it, since the prefix being re-sent is
+                // always smaller than the buffer being paid for. A frame that
+                // cannot afford the growth simply does not grow: the upload
+                // below is clamped to `gpu.capacity`, so the page stalls at its
+                // current size for a frame or two rather than overrunning its
+                // buffer.
+                val grown = GpuPageBudget.growthVertices(gpu.capacity, page.count, page.capacity)
+                val growthBytes = GpuPageBudget.bytesForVertices(grown)
+                if (GpuPageBudget.admitsNewAllocation(
+                        newPageBytesThisFrame, growthBytes, MAX_NEW_PAGE_BYTES_PER_FRAME,
+                    )
+                ) {
+                    newPageBytesThisFrame += growthBytes
+                    growGpuPage(gpu, page, grown)
+                }
             }
 
-            if (page.count > gpu.uploaded && uploadBudgetBytes > 0) {
+            // ROUND 22 item 91 (i): what this page ACTUALLY occupies, after any
+            // creation or growth above — the number the next page's admission
+            // test is measured against.
+            residentBytes += GpuPageBudget.bytesForVertices(gpu.capacity)
+
+            // ROUND 22 item 91 (ii): never upload past the allocation. Before
+            // right-sizing the buffer was `max(page.capacity, page.count)` so
+            // this could not overrun; now it can, and `setBufferAt` past the end
+            // of a VertexBuffer is a native heap write.
+            val uploadableCount = minOf(page.count, gpu.capacity)
+            if (uploadableCount > gpu.uploaded && uploadBudgetBytes > 0) {
                 // Clamp this page's slice to what is left of the frame's budget.
                 // The remainder is uploaded next frame from the same offset.
-                val wantedPoints = page.count - gpu.uploaded
+                val wantedPoints = uploadableCount - gpu.uploaded
                 val affordablePoints = (uploadBudgetBytes / POINT_STRIDE_BYTES).coerceAtLeast(1)
                 val newPoints = minOf(wantedPoints, affordablePoints)
                 val uploadTo = gpu.uploaded + newPoints
@@ -1383,9 +1621,120 @@ class PointCloudRenderer(
             pagesDrawn++
         }
 
+        reapEvictedPages(seenPageIds)
         publishRecentGeometry()
         refreshCoverageTints(src, System.currentTimeMillis())
         lastStats = PointCloudRenderStats(resident, pagesDrawn, haveBounds, mappedPageSeen)
+    }
+
+    /**
+     * ROUND 22 item 91 (vi): destroy the GPU pages whose engine page no longer
+     * exists.
+     *
+     * The live store runs `PageFullPolicy::kEvictOldest` — *"when full, the
+     * OLDEST page is retired to make room, so the view is a moving window over
+     * the newest data and a live preview never dead-ends"*
+     * (`engine/include/scanengine/cloud/page_store.h`, the fix for the field
+     * bug of 2026-08-17). So on any walk long enough to fill the store, page ids
+     * stop resolving one at a time, forever, and **nothing here noticed**: the
+     * `GpuPage` kept its VertexBuffer, its entity and its place in the Filament
+     * scene for the life of the surface, still drawing points the engine has
+     * thrown away. A 64-page store cycling through a long capture leaks the
+     * whole store's worth of VBOs per cycle — the same memory the LOD budget
+     * above is trying to bound, being consumed behind its back.
+     *
+     * [GpuPageBudget.reap] holds the one rule that matters for safety: an
+     * **empty** observation reaps nothing. A frame in which the source reported
+     * no pages at all is a store between epochs, a replay seek or a handle that
+     * went to 0 for one poll — not an instruction to destroy and re-upload the
+     * entire cloud.
+     *
+     * `haveBounds` is deliberately NOT invalidated. The combined box merely
+     * becomes conservative (a superset of the remaining pages) and stays
+     * usable, where clearing it would re-fit the camera every time the store
+     * evicted a page — a visible jump every few seconds on a long walk.
+     */
+    private fun reapEvictedPages(seenPageIds: Set<Int>) {
+        val doomed = GpuPageBudget.reap(gpuPages.keys, seenPageIds)
+        if (doomed.isEmpty()) return
+        for (pageId in doomed) {
+            gpuPages.remove(pageId)?.let { destroyGpuPage(it) }
+            // The stream map is keyed by the same ids and would otherwise grow
+            // without bound for the life of the surface.
+            pageStreams.remove(pageId)
+        }
+        drainRetiredIndexBuffers()
+    }
+
+    /**
+     * ROUND 22 item 91 (ii): reallocate one page's `VertexBuffer` to
+     * [vertices] and re-upload what was already on it.
+     *
+     * Filament vertex buffers cannot be resized, so growth is destroy +
+     * rebuild, and the prefix has to be re-sent because the old buffer's
+     * contents cannot be read back. The source page still holds every point
+     * from index 0, which is what makes this cheap enough to do inline:
+     * `page.buffer` is the same memory the incremental upload path reads.
+     *
+     * The prefix is re-sent in ONE call, outside the round-5.3 per-frame upload
+     * budget, and that is deliberate: splitting it across frames would mean
+     * setting the renderable's count below what was already on screen, so every
+     * growth event would show as the page briefly shrinking. The size is bounded
+     * instead by the caller having charged the whole new buffer against
+     * [MAX_NEW_PAGE_BYTES_PER_FRAME] — at most one worst-case page's worth of
+     * re-upload per frame, and 8 growth events over a page's entire life
+     * because [GpuPageBudget.growthVertices] doubles.
+     *
+     * The re-upload goes through [tintInto] rather than `countAndMaybeTint`:
+     * these points have already been counted into the coverage grid and into
+     * ROUND 8's recent-geometry accumulator, and counting them twice would
+     * inflate both.
+     */
+    private fun growGpuPage(gpu: GpuPage, page: com.lidarscan.app.engine.NativePointPage, vertices: Int) {
+        val previous = minOf(gpu.uploaded, vertices)
+        val newVb = VertexBuffer.Builder()
+            .bufferCount(1)
+            .vertexCount(vertices)
+            .attribute(
+                VertexBuffer.VertexAttribute.POSITION, 0,
+                VertexBuffer.AttributeType.FLOAT3, 0, 16,
+            )
+            .attribute(
+                VertexBuffer.VertexAttribute.COLOR, 0,
+                VertexBuffer.AttributeType.UBYTE4, 12, 16,
+            )
+            .normalized(VertexBuffer.VertexAttribute.COLOR, true)
+            .build(engine)
+
+        if (previous > 0) {
+            val le = page.buffer.duplicate().order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            val payload = if (colorMode == com.lidarscan.core.render.ColorMode.COVERAGE) {
+                tintInto(le, 0, previous)
+            } else {
+                val copy = page.buffer.duplicate()
+                copy.position(0)
+                copy.limit(previous * POINT_STRIDE_BYTES)
+                copy.slice()
+            }
+            newVb.setBufferAt(engine, 0, payload, 0, previous * POINT_STRIDE_BYTES)
+        }
+
+        val ib = ensureSharedIndexBuffer(vertices)
+        val rm = engine.renderableManager
+        val instance = rm.getInstance(gpu.entity)
+        if (instance != 0) {
+            // Re-point the renderable BEFORE the old buffer dies, or the frame
+            // between the two draws through a destroyed native object — the
+            // same class of use-after-free as item 91 (iv)'s index buffer.
+            rm.setGeometryAt(
+                instance, 0, RenderableManager.PrimitiveType.POINTS, newVb, ib, 0, previous,
+            )
+        }
+        engine.destroyVertexBuffer(gpu.vertexBuffer)
+        gpu.vertexBuffer = newVb
+        gpu.indexBuffer = ib
+        gpu.capacity = vertices
+        gpu.uploaded = previous
     }
 
     // --- ROUND 8: what the newest points say about where the operator is ------
@@ -1799,8 +2148,38 @@ class PointCloudRenderer(
          */
         const val COVERAGE_REFRESH_MS = 250L
 
-        /** Companion bound for allocations, not bytes: new pages created in one frame. */
-        const val MAX_NEW_PAGES_PER_FRAME = 24
+        /**
+         * ROUND 22 item 91 (iii): the companion bound to
+         * [MAX_UPLOAD_BYTES_PER_FRAME] — new VertexBuffer **allocation** per
+         * frame, in bytes.
+         *
+         * This replaces `MAX_NEW_PAGES_PER_FRAME = 24`, which counted the wrong
+         * thing. A count of pages only bounds memory if pages are one size, and
+         * they are not: 24 pages is 1.5 MB of a live 32 k-point store
+         * ([com.lidarscan.core.render.LivePageStoreSizing]) and **402 653 184
+         * bytes** of the `1 << 20` store the Review screen replays through —
+         * asked of the driver inside a single Choreographer callback, which is
+         * the LOD slider's crash.
+         *
+         * The value and the reasoning live in
+         * [GpuPageBudget.MAX_NEW_PAGE_BYTES_PER_FRAME] because the tests for
+         * this arithmetic are in `:core` (this class cannot be unit-tested —
+         * Filament is native and the app module has no Robolectric); it is
+         * aliased here so the two per-frame budgets read as the pair they are.
+         */
+        const val MAX_NEW_PAGE_BYTES_PER_FRAME = GpuPageBudget.MAX_NEW_PAGE_BYTES_PER_FRAME
+
+        /**
+         * ROUND 22 item 91 (iv): the floor for the shared identity index
+         * buffer, in indices — 65 536 × 4 B = 256 KB.
+         *
+         * Right-sized vertex buffers (item 91 (ii)) come in ~700 distinct sizes
+         * rather than one, so an index buffer grown to fit each of them exactly
+         * would retire a generation per page. Powers of two from this floor make
+         * it five generations at most between an empty scene and the engine's
+         * largest page.
+         */
+        const val MIN_SHARED_INDEX_COUNT = 65536
 
         /**
          * ROUND 8: take every 16th point when measuring recent geometry.

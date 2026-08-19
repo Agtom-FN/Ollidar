@@ -31,6 +31,22 @@ private val Context.settingsDataStore by preferencesDataStore(name = "settings")
  */
 class SettingsRepository(private val context: Context) {
 
+    /**
+     * ROUND 22 item 100 — the tier whose ceiling a loaded display block is
+     * clamped to, and where the clamp is reported.
+     *
+     * Set once by `AppContainer` (which owns the `DeviceTier` probe). Defaults
+     * to `STANDARD` so a repository built in a test behaves exactly as it did
+     * before this item, and so a missing wiring degrades to the old constant
+     * rather than to "no ceiling at all".
+     */
+    @Volatile
+    var deviceTier: com.lidarscan.core.capture.DeviceTier =
+        com.lidarscan.core.capture.DeviceTier.STANDARD
+
+    @Volatile
+    var onDiagnostic: ((String) -> Unit)? = null
+
     private object Keys {
         val UNITS = stringPreferencesKey("units")
         val THEME_MODE = stringPreferencesKey("theme_mode")
@@ -60,6 +76,9 @@ class SettingsRepository(private val context: Context) {
 
         /** ROUND 9 (item 33): keep 0-point scans instead of pruning them. Default false. */
         val KEEP_EMPTY_SCANS = booleanPreferencesKey("keep_empty_scans")
+
+        /** ROUND 22 item 97: see [AppSettings.advancedFeatures]. */
+        val ADVANCED_FEATURES = booleanPreferencesKey("advanced_features")
 
         /** ROUND 17 (item 66): the seven-tap developer unlock. Default false. */
         val DEVELOPER_MODE = booleanPreferencesKey("developer_mode")
@@ -137,6 +156,10 @@ class SettingsRepository(private val context: Context) {
             // ROUND 9 (item 33): the default IS the fix — an unset preference
             // means empty scans are pruned.
             keepEmptyScans = prefs[Keys.KEEP_EMPTY_SCANS] ?: false,
+            // ROUND 22 (item 97): unset means SIMPLE. The default is the
+            // feature — an operator who never opens Settings gets the simple
+            // app, which is the entire point of the round.
+            advancedFeatures = prefs[Keys.ADVANCED_FEATURES] ?: false,
             // ROUND 17 (item 66): unset means locked, which is the whole point
             // of a gesture-unlocked section.
             developerMode = prefs[Keys.DEVELOPER_MODE] ?: false,
@@ -268,6 +291,11 @@ class SettingsRepository(private val context: Context) {
         context.settingsDataStore.edit { it[Keys.KEEP_EMPTY_SCANS] = keep }
     }
 
+    /** ROUND 22 (item 97): see [AppSettings.advancedFeatures]. */
+    suspend fun setAdvancedFeatures(enabled: Boolean) {
+        context.settingsDataStore.edit { it[Keys.ADVANCED_FEATURES] = enabled }
+    }
+
     /** ROUND 17 (item 66): see [AppSettings.developerMode]. */
     suspend fun setDeveloperMode(enabled: Boolean) {
         context.settingsDataStore.edit { it[Keys.DEVELOPER_MODE] = enabled }
@@ -295,18 +323,49 @@ class SettingsRepository(private val context: Context) {
     /** ROUND 19 item 76: the persisted device display block, or null before the first save. */
     suspend fun displayParams(): com.lidarscan.core.render.DisplayParams? {
         val raw = context.settingsDataStore.data.first()[Keys.DISPLAY_PARAMS] ?: return null
-        return runCatching {
+        val stored = runCatching {
             kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
                 .decodeFromString<com.lidarscan.core.render.DisplayParams>(raw)
-        }.getOrNull()
+        }.getOrNull() ?: return null
+        // ROUND 22 item 100: clamped on LOAD, not only on change. A display
+        // block travels — it is persisted device-wide and it is written into
+        // projects — so a setting made on a flagship, or an old RESEARCH
+        // profile carrying 50 000 000 points, can arrive on a modest phone and
+        // walk it straight into the out-of-memory kill item 91 just fixed.
+        // Silent and safe, but never invisible: the one line below is what a
+        // log reader needs to explain why the slider does not say what they
+        // set.
+        return clampToDeviceCeiling(stored)
+    }
+
+    /**
+     * ROUND 22 item 100 — [com.lidarscan.core.render.GpuPageBudget.clampLodPointBudget]
+     * applied to a whole display block, reporting when it bites.
+     */
+    fun clampToDeviceCeiling(
+        params: com.lidarscan.core.render.DisplayParams,
+    ): com.lidarscan.core.render.DisplayParams {
+        val clamped = com.lidarscan.core.render.GpuPageBudget
+            .clampLodPointBudget(params.lodPointBudget, deviceTier)
+        if (clamped == params.lodPointBudget) return params
+        onDiagnostic?.invoke(
+            "display LOD clamped to this device: ${params.lodPointBudget} -> $clamped points " +
+                "(tier=${deviceTier.name}, ceiling=" +
+                "${com.lidarscan.core.render.GpuPageBudget.ceilingBytesFor(deviceTier) / (1024 * 1024)}MiB)",
+        )
+        return params.copy(lodPointBudget = clamped)
     }
 
     /** ROUND 19 item 76. */
     suspend fun setDisplayParams(params: com.lidarscan.core.render.DisplayParams) {
+        // ROUND 22 item 100: clamped on the way in as well, so a device can
+        // never persist a budget it cannot honour — including via a path that
+        // did not go through a UI control.
+        val safe = clampToDeviceCeiling(params)
         context.settingsDataStore.edit { prefs ->
             prefs[Keys.DISPLAY_PARAMS] = kotlinx.serialization.json.Json.encodeToString(
                 com.lidarscan.core.render.DisplayParams.serializer(),
-                params,
+                safe,
             )
         }
     }

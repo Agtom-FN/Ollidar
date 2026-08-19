@@ -3,6 +3,7 @@ package com.lidarscan.app.ar
 import android.opengl.GLSurfaceView
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
@@ -57,6 +58,22 @@ fun ArPosePumpView(
     controller: CaptureArController,
     modifier: Modifier = Modifier,
 ) {
+    // ── ROUND 22 item 89: THIS view instance's claim ────────────────────────
+    //
+    // Navigation Compose keeps the OUTGOING destination composed through the
+    // transition, so on a trip back into the Scan tab the new pump's [factory]
+    // runs BEFORE the old pump's [onRelease]. Until this round both spoke only
+    // in terms of `RendererOwner.POSE_PUMP` — and with the AR overlay archived
+    // that is the only value there is — so the dying view's release nulled the
+    // live view's claim, `mayDrive` answered NOT_OWNER for the rest of the
+    // process, and the owner's phone reported "tracking lost until app
+    // restart". Holding the token here makes the release instance-scoped: a
+    // stale pump can only ever release its own claim.
+    //
+    // `remember` and not a local: `factory` and `onRelease` are separate
+    // lambdas invoked at different times, and this is the one piece of state
+    // they must agree about.
+    val claim = remember { java.util.concurrent.atomic.AtomicReference<ArSessionGate.Claim?>(null) }
     AndroidView(
         modifier = modifier.size(POSE_PUMP_DP.dp).testTag("arPosePump"),
         factory = { ctx ->
@@ -65,7 +82,7 @@ fun ArPosePumpView(
             // `CaptureArController.RendererOwner`'s doc for why an explicit
             // claim (rather than "whichever GL thread's factory ran") is what
             // actually prevents the black-camera race with ArOverlayView.
-            controller.claimRenderer(CaptureArController.RendererOwner.POSE_PUMP)
+            claim.set(controller.claimRenderer(CaptureArController.RendererOwner.POSE_PUMP))
             GLSurfaceView(ctx).apply {
                 preserveEGLContextOnPause = true
                 setEGLContextClientVersion(2)
@@ -75,7 +92,7 @@ fun ArPosePumpView(
                 // recorder subscribes to the controller directly
                 // (CaptureViewModel.startArPipelines) rather than through the
                 // renderer, so it is fed by this pump too.
-                setRenderer(ArCameraBackgroundRenderer(controller, CaptureArController.RendererOwner.POSE_PUMP))
+                setRenderer(ArCameraBackgroundRenderer(controller, claim.get()))
                 renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
                 controller.setDisplayGeometry(display, width.coerceAtLeast(1), height.coerceAtLeast(1))
             }
@@ -90,7 +107,7 @@ fun ArPosePumpView(
             // Only relinquishes if the pump still owns it — see
             // `releaseRenderer`'s own doc for why an out-of-order release must
             // not undo a newer claim from the overlay switching in.
-            controller.onRendererSurfaceDestroyed(CaptureArController.RendererOwner.POSE_PUMP)
+            controller.onRendererSurfaceDestroyed(claim.getAndSet(null))
         },
     )
 }

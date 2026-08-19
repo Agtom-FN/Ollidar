@@ -72,8 +72,13 @@ private val DarkColors = darkColorScheme(
 )
 
 private val LightColors = lightColorScheme(
-    primary = EmberDim,
-    onPrimary = Color.White,
+    // ROUND 22 item 93: the SAME Agtom orange as the dark theme. The light
+    // theme used to run a darkened ember (`EmberDim`) as its primary so that
+    // white could sit on it; with one brand token that split is gone, and
+    // `OnEmber`'s near-black carries about 6.9:1 against #F26A1B where white
+    // carried about 3.0:1 — better contrast AND one accent instead of two.
+    primary = Ember,
+    onPrimary = OnEmber,
     primaryContainer = EmberSoft,
     onPrimaryContainer = EmberDim,
     secondary = Color(0xFF1E8C7C),

@@ -348,5 +348,15 @@ class CaptureLog(context: Context) {
          * unreportable.
          */
         const val TAG_EXPORT = "export"
+
+        /**
+         * ROUND 22 item 87: the uncaught-exception recorder
+         * ([com.lidarscan.app.LidarScanApplication]'s `installCrashRecorder`).
+         * A tag rather than a separate file so a process death lands in
+         * `capture.log` directly beneath the `[ar]`/`[session]` lines that
+         * describe what the app was doing when it died — the owner's eight
+         * deaths on 2026-08-20 left nothing at all.
+         */
+        const val TAG_CRASH = "crash"
     }
 }

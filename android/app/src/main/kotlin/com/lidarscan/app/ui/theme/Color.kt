@@ -46,16 +46,50 @@ val InkMute = Color(0xFF94A1AD)
 val InkFaint = Color(0xFF63707C)
 
 // ── accent ──────────────────────────────────────────────────────────────────
-/** Laser ember — the one brand accent. Record, primary action, active tab. */
-val Ember = Color(0xFFFF7A52)
 
-/** Ember pressed/disabled companion. */
-val EmberDim = Color(0xFFC25334)
+/**
+ * ROUND 22 item 93 — **Agtom orange, and it is the one token.**
+ *
+ * The owner's brand orange replaces the redesign's laser ember as the app's
+ * single accent, in **both** themes. Everything else about the accent stays
+ * exactly where it was: no component changes shape, nothing moves, no control
+ * is restyled. This is a repaint of one value.
+ *
+ * It is a `val` on its own line, and every other accent token below is derived
+ * from it, so swapping the brand is one edit here rather than a hunt through
+ * a palette. That is the whole reason it exists separately from [Ember].
+ */
+val AgtomOrange = Color(0xFFF26A1B)
 
-/** The active-tab capsule wash and other ember-tinted grounds. */
-val EmberSoft = Color(0x26FF7A52)
+/**
+ * The one brand accent. Record, primary action, active tab, progress bars,
+ * active chips, sliders.
+ *
+ * Kept under its ROUND-5 name rather than renamed to `AgtomOrange` at every
+ * call site: `Ember` appears across the tab bar, the record button, the
+ * capture HUD and the theme's `primary` mapping, and a rename touching every
+ * one of those files would be a large diff that changes nothing — while
+ * burying the actual change (the hex) inside it.
+ */
+val Ember = AgtomOrange
 
-/** Ink that sits **on** ember (record button core, primary-button label). */
+/**
+ * Ember pressed/disabled companion — a darker Agtom orange, kept in the same
+ * hue family rather than reused from the old ember ramp.
+ */
+val EmberDim = Color(0xFFC0530F)
+
+/** The active-tab capsule wash and other ember-tinted grounds (15 % Agtom). */
+val EmberSoft = Color(0x26F26A1B)
+
+/**
+ * Ink that sits **on** ember (record button core, primary-button label).
+ *
+ * Deliberately a near-black rather than white, on both themes: against
+ * #F26A1B this near-black measures about 6.9:1 where white measures about
+ * 3.0:1 — and the primary button carries the one instruction on the Scan
+ * screen. See [com.lidarscan.app.ui.theme.LidarScanTheme].
+ */
 val OnEmber = Color(0xFF1A0D08)
 
 // ── point-cloud ramp ────────────────────────────────────────────────────────

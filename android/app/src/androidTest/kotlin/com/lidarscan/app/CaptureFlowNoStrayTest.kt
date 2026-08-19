@@ -6,6 +6,7 @@ import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ActivityScenario
@@ -71,7 +72,10 @@ class CaptureFlowNoStrayTest {
             awaitProjectsTab()
             val before = visibleProjectCards()
 
-            composeRule.onNodeWithText("Capture").performClick()
+            // ROUND 22 item 94: the tab is labelled "Scan" now. Driven by its
+            // stable test tag rather than its label, so the next rewording does
+            // not break the emulator suite.
+            composeRule.onNodeWithTag("tab_capture").performClick()
 
             // Fully entered: the new-scan name field is up and auto-detect is
             // running. Anything screen entry was going to create, it has created
@@ -80,13 +84,16 @@ class CaptureFlowNoStrayTest {
             composeRule.waitUntil(timeoutMillis = 20_000) {
                 composeRule.onAllNodesWithTag("scanNameField").fetchSemanticsNodes().isNotEmpty()
             }
-            composeRule.onNodeWithContentDescription("Start new scan").assertExists()
+            composeRule.onNodeWithContentDescription("Start a scan").assertExists()
             composeRule.waitUntil(timeoutMillis = 40_000) {
                 composeRule.onAllNodesWithTag("manualEntryPanel").fetchSemanticsNodes().isNotEmpty()
             }
 
             // …and out again, without ever pressing Start.
-            composeRule.onNodeWithText("Projects").performClick()
+            // ROUND 22 item 94: driven by the tab's stable test tag rather than by
+            // its visible label, like the Scan tab above — a rewording must not
+            // be able to break the emulator suite.
+            composeRule.onNodeWithTag("tab_projects").performClick()
             awaitProjectsTab()
             composeRule.waitForIdle()
 
@@ -140,7 +147,10 @@ class CaptureFlowNoStrayTest {
 
             // The replay route does not auto-navigate (that redirect is for real
             // captures), so walk to Projects the way the operator would.
-            composeRule.onNodeWithText("Projects").performClick()
+            // ROUND 22 item 94: driven by the tab's stable test tag rather than by
+            // its visible label, like the Scan tab above — a rewording must not
+            // be able to break the emulator suite.
+            composeRule.onNodeWithTag("tab_projects").performClick()
             awaitProjectsTab()
             composeRule.waitForIdle()
 

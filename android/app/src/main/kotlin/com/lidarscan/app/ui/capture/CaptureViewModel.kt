@@ -364,6 +364,24 @@ class CaptureViewModel(
     private val runAutoProcess: suspend (java.io.File, (Float) -> Boolean) -> StitchResult? =
         { _, _ -> null },
     /**
+     * ROUND 22 item 90 — **the scope the post-seal auto-process runs in, and
+     * it is deliberately NOT `viewModelScope`.**
+     *
+     * Auto-process was launched in `viewModelScope`, and the very navigation
+     * that follows a seal (`onScanSealed` → `goTab(PROJECTS)`) destroyed this
+     * ViewModel's back-stack entry and cancelled that scope — see item 88. The
+     * engine kept running to completion in its own native thread and wrote
+     * output byte-identical to a re-run, but the coroutine awaiting it was
+     * cancelled, the `runCatching` below swallowed the `CancellationException`,
+     * and the app told the owner `ran=false`. Every part of that sentence
+     * except "the engine finished" was invented.
+     *
+     * The work outlives the screen, so it belongs to a scope that does too:
+     * `AppContainer.containerScope`. Null in tests that want the old,
+     * scope-bound behaviour, in which case `viewModelScope` is used.
+     */
+    private val autoProcessScope: kotlinx.coroutines.CoroutineScope? = null,
+    /**
      * ROUND 19 item 76 — the DEVICE display block, the one source of truth the
      * live view, Review and the next walk all read. Loaded once at
      * construction as the BASE the five live controls are copied onto (so
@@ -1691,6 +1709,13 @@ class CaptureViewModel(
         val go: Boolean = false,
         /** Non-null when the stage timed out and fell back to the persisted trim. */
         val fallbackNote: String? = null,
+        /**
+         * ROUND 22 item 92: the most recent refusal, so the start panel can say
+         * "Tracking is drifting — hold on." instead of "Steady… 3.2° and
+         * improving", which is what the panel said while the owner's pose was
+         * sliding out from under a phone he was holding perfectly still.
+         */
+        val refusal: com.lidarscan.core.calib.StartHoldVerdict? = null,
     )
 
     private val _startHold = MutableStateFlow<StartHoldState?>(null)
@@ -2357,7 +2382,27 @@ class CaptureViewModel(
     private var lastStatsSampleMillis = 0L
     private var lastStatsSamplePoints = 0L
 
+    /**
+     * ROUND 22 item 89 — the engine handle THIS ViewModel armed on the shared
+     * [com.lidarscan.app.ar.CaptureArController]. Zero when it has armed none.
+     * Only this value may ever be retired by this instance; see
+     * `CaptureArController.clearEngineHandleIf` for the scan-068 story.
+     */
+    private var armedEngineHandle: Long = 0L
+
     init {
+        // ── ROUND 22 item 88: the observable the owner's log already carried ──
+        //
+        // His 2026-08-20 session printed the "mount trim restored" line below
+        // FOUR TIMES IN 37 SECONDS, which is four constructions of this class
+        // and not four captures: `goTab` popped the Scan tab's back-stack entry
+        // (and its ViewModelStore) on every seal. Counting it here turns that
+        // observation into a property an instrumented test can assert instead
+        // of a line someone has to notice in a log. Process-wide and
+        // monotonic — it is never reset, so a test reads it before and after a
+        // tab round trip and compares.
+        constructions.incrementAndGet()
+
         // ── ROUND 10 (owner item 38): a fresh Capture tab shows a fresh map ──
         //
         // "Entering Capture = a new-scan context" has been the contract since
@@ -3435,6 +3480,14 @@ class CaptureViewModel(
         val deadline = startedAt + START_HOLD_TIMEOUT_MS
         var anchorNs = controller.poseWindow().lastOrNull()?.tMonoNs ?: 0L
         var captured: com.lidarscan.core.calib.MountTrimResult.Captured? = null
+        // ── ROUND 22 item 92: what the gate refused, and why ────────────────
+        //
+        // Before this round the loop below took the FIRST `Captured` it saw and
+        // broke. The owner's 2026-08-20 log is what that cost: a 3.18° trim
+        // replacing a measured 0.29° one, silently. These two carry the last
+        // refusal so the timeout path can name it and the panel can show it.
+        var lastRefusal: com.lidarscan.core.calib.StartHoldVerdict? = null
+        var lastRefusedTrim: com.lidarscan.core.calib.MountTrim? = null
         _startHold.value = StartHoldState(progress = null)
         logEvent(LOG_TAG_AR, "start hold: waiting for a steady hold in this scan's own frame")
         while (clock() < deadline) {
@@ -3448,7 +3501,10 @@ class CaptureViewModel(
             if (!progress.gatePasses && progress.holdMillis > 250L && newest != null) {
                 anchorNs = newest
             }
-            _startHold.value = StartHoldState(progress = progress)
+            _startHold.value = StartHoldState(
+                progress = progress,
+                refusal = lastRefusal,
+            )
             if (progress.done) {
                 val result = refiner.capture(
                     samples = window,
@@ -3457,8 +3513,38 @@ class CaptureViewModel(
                     sensor = _sensor.value,
                 )
                 if (result is com.lidarscan.core.calib.MountTrimResult.Captured) {
-                    captured = result
-                    break
+                    // ROUND 22 item 92: the incumbent comparison the auto-refresh
+                    // path (`refreshMountTrimIfStale`) has had since ROUND 12,
+                    // finally applied on the path that actually runs at every
+                    // Start. Plus the drift verdict, which is not about the
+                    // mount at all — see StartHoldTrimGate.
+                    val incumbent = _mountTrimProvenance.value.trim
+                    val verdict = com.lidarscan.core.calib.StartHoldTrimGate.judge(
+                        candidate = result.trim,
+                        incumbent = incumbent,
+                    )
+                    if (verdict == com.lidarscan.core.calib.StartHoldVerdict.ACCEPT) {
+                        captured = result
+                        break
+                    }
+                    // Refused: keep sampling until the deadline. A hold that is
+                    // drifting settles as ARCore's map matures, and a hold that
+                    // is merely worse than the incumbent may still improve —
+                    // both are reasons to go on holding, not to give up.
+                    if (verdict != lastRefusal) {
+                        logEvent(
+                            LOG_TAG_AR,
+                            com.lidarscan.core.calib.StartHoldTrimGate.refusalLogLine(
+                                verdict, result.trim, incumbent,
+                            ),
+                        )
+                    }
+                    lastRefusal = verdict
+                    lastRefusedTrim = result.trim
+                    _startHold.value = StartHoldState(progress = progress, refusal = verdict)
+                    // Re-anchor so the next evaluation is a FRESH window rather
+                    // than the same refused samples judged again every tick.
+                    if (newest != null) anchorNs = newest
                 }
             }
             kotlinx.coroutines.delay(MOUNT_HOLD_TICK_MS)
@@ -3482,20 +3568,39 @@ class CaptureViewModel(
             )
         } else {
             val provenance = _mountTrimProvenance.value
-            fallbackNote = if (provenance.trim != null) {
-                "Couldn't get a steady hold in ${START_HOLD_TIMEOUT_MS / 1000} s — scanning on " +
-                    "the mount reference from ${provenance.ageLabel}."
-            } else {
-                "Couldn't get a steady hold in ${START_HOLD_TIMEOUT_MS / 1000} s and no saved " +
-                    "mount reference exists — scanning on the bracket defaults. Hold still and " +
-                    "re-zero when you can."
+            // ── ROUND 22 item 92: a fall-back is a DECISION, and it is logged ──
+            //
+            // Two different timeouts land here and they are not the same event.
+            // "Never got a steady hold" is the operator's hands; "got one and
+            // refused it" is this round's gate doing its job, and the incumbent
+            // it kept is a better trim than the one it turned down. Saying
+            // "couldn't get a steady hold" for the second case would be the app
+            // blaming the operator for its own correct decision.
+            fallbackNote = when {
+                lastRefusal == com.lidarscan.core.calib.StartHoldVerdict.REFUSE_DRIFT ->
+                    "Tracking drifted during the hold. Kept the saved mount reference."
+                lastRefusal == com.lidarscan.core.calib.StartHoldVerdict.REFUSE_WORSE ->
+                    "New reading was worse. Kept the saved mount reference."
+                provenance.trim != null ->
+                    "Couldn't get a steady hold in ${START_HOLD_TIMEOUT_MS / 1000} s — scanning on " +
+                        "the mount reference from ${provenance.ageLabel}."
+                else ->
+                    "Couldn't get a steady hold in ${START_HOLD_TIMEOUT_MS / 1000} s and no saved " +
+                        "mount reference exists — scanning on the bracket defaults. Hold still and " +
+                        "re-zero when you can."
             }
             _mountTrimNote.value = fallbackNote
             _mountTrimNoteIsWarning.value = true
             logEvent(
                 LOG_TAG_AR,
-                "start hold: TIMED OUT after ${START_HOLD_TIMEOUT_MS} ms — falling back to the " +
-                    "persisted trim (${provenance.logSuffix})",
+                if (lastRefusal != null) {
+                    "start hold: TIMED OUT after ${START_HOLD_TIMEOUT_MS} ms having REFUSED " +
+                        "${lastRefusedTrim?.let { "%.2fdeg".format(it.accuracyDeg ?: it.spreadP90Deg) }} " +
+                        "($lastRefusal) — keeping the persisted trim (${provenance.logSuffix})"
+                } else {
+                    "start hold: TIMED OUT after ${START_HOLD_TIMEOUT_MS} ms — falling back to the " +
+                        "persisted trim (${provenance.logSuffix})"
+                },
             )
         }
         // GO — start walking. Visual always; one light haptic tick when cues
@@ -3731,7 +3836,10 @@ class CaptureViewModel(
     private fun startArPipelines(project: Project) {
         val controller = arController ?: return
         val handle = engineHandleProvider()
-        controller.engineHandle = handle
+        // ROUND 22 item 89: remembered, so that only THIS ViewModel's capture
+        // can ever retire it again. See `clearEngineHandleIf`.
+        armedEngineHandle = handle
+        controller.armEngineHandle(handle)
 
         // ROUND 8 (item 30d): `applyMountExtrinsic` moved OUT of here, up into
         // `startCapture`. It never belonged behind `arController ?: return`:
@@ -3824,8 +3932,17 @@ class CaptureViewModel(
             ?: nominalMatrix
         val usingNominal = measuredMatrix == null
         val source = if (usingNominal) "nominal" else "measured"
+        // ROUND 22 item 92: `accuracyDeg=` and `warn=` on the line that says
+        // which extrinsic the scan is running on. ROUND 18 put `accuracyDeg` on
+        // the ACCEPTANCE line; this is the APPLICATION line, and it is the one
+        // a person reads when asking "what was this scan measured with" —
+        // which, on 2026-08-20, was a 3.18° trim that nothing anywhere named.
+        val trimQuality = trim?.let { t ->
+            " accuracyDeg=" + (t.accuracyDeg?.let { "%.2f".format(it) } ?: "unmeasured") +
+                " warn=" + t.accuracyIsPoor
+        }.orEmpty()
         val trimSuffix = (if (trim != null) provenance.logSuffix else "trim=none") +
-            " " + leverArm.logSuffix
+            trimQuality + " " + leverArm.logSuffix
 
         if (handle == 0L) {
             _mountIsNominal.value = usingNominal
@@ -3969,7 +4086,11 @@ class CaptureViewModel(
         detachKeyframeListener()
         keyframeRecorder?.stop()
         keyframeRecorder = null
-        arController?.engineHandle = 0L
+        // ROUND 22 item 89: compare-and-clear. This is the capture's own stop
+        // path so it will normally succeed, but "normally" is what scan-068
+        // was, and a shared field is never cleared unconditionally again.
+        arController?.clearEngineHandleIf(armedEngineHandle)
+        armedEngineHandle = 0L
 
         val handle = engineHandleProvider()
         if (handle != 0L && pushbroomEnabled) {
@@ -4529,6 +4650,25 @@ class CaptureViewModel(
     private fun autoProcessPlan(sections: Int, mountWarned: Boolean): Boolean =
         sections > 1 || mountWarned
 
+    /**
+     * ROUND 22 item 90 — **why the auto-process did not produce a result**, in
+     * words, from the three distinguishable causes.
+     *
+     * The line this replaces said `ran=false` for all three, and for the fourth
+     * — a cancelled coroutine — it said `ran=false` while the engine had in
+     * fact succeeded. `ran == false` is now only ever printed when the engine
+     * genuinely declined, and a throwable is printed with its class and its
+     * message so the next occurrence is a lookup rather than an investigation.
+     */
+    internal fun autoProcessFailureReason(failure: Throwable?, result: StitchResult?): String = when {
+        failure != null ->
+            "the reprocess call threw ${failure.javaClass.name}: ${failure.message ?: "(no message)"}"
+        result == null ->
+            "the reprocess call returned no result (see the [seal] reprocess line for what threw)"
+        else ->
+            "the engine declined to run (ran=false)"
+    }
+
     private fun startAutoProcess(projectId: String, directory: java.io.File, sections: Int) {
         _autoProcess.value = AutoProcessState(
             projectId = projectId,
@@ -4536,11 +4676,23 @@ class CaptureViewModel(
             progress = 0f,
             willStitch = sections > 1,
         )
-        // NonCancellable and on viewModelScope, the same posture the seal
-        // itself uses: an Activity recreation between Stop and Done must not
-        // abandon a half-written `processed/` directory.
-        viewModelScope.launch {
-            val result = runCatching {
+        // ── ROUND 22 item 90: the scope, and the honesty ───────────────────
+        //
+        // `NonCancellable` was already here and was never enough: it protects
+        // the BODY once it is running, and does nothing about the scope the
+        // `launch` itself belongs to being cancelled first. `viewModelScope`
+        // died with the seal's own navigation, so the awaiting coroutine was
+        // cancelled before (or during) the engine call it was waiting on.
+        // Running on the container scope is what makes "the engine finished"
+        // and "the app knows the engine finished" the same event.
+        (autoProcessScope ?: viewModelScope).launch {
+            // Three outcomes, and they are three DIFFERENT facts. Before this
+            // round they were one boolean:
+            //   * threw            — the call failed; say what threw.
+            //   * null             — no result came back at all.
+            //   * ran == false     — the engine declined, deliberately.
+            var failure: Throwable? = null
+            val result = try {
                 withContext(Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
                     runAutoProcess(directory) { f ->
                         _autoProcess.value = _autoProcess.value.copy(
@@ -4549,7 +4701,14 @@ class CaptureViewModel(
                         true
                     }
                 }
-            }.getOrNull()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                // Structured concurrency: never swallowed. If the container
+                // scope itself is going away the process is going away with it.
+                throw cancelled
+            } catch (t: Throwable) {
+                failure = t
+                null
+            }
 
             if (result == null || !result.ran) {
                 _autoProcess.value = _autoProcess.value.copy(
@@ -4557,10 +4716,11 @@ class CaptureViewModel(
                     progress = 1f,
                     failed = true,
                 )
+                val reason = autoProcessFailureReason(failure, result)
                 logEvent(
                     LOG_TAG_SEAL,
-                    "auto-process FAILED for $projectId — the scan is saved and untouched; " +
-                        "open it and tap Process",
+                    "auto-process FAILED for $projectId — $reason. The scan is saved and " +
+                        "untouched; open it and tap Process",
                 )
                 // ROUND 18 item 71: the failure is a verdict too, and the
                 // bundle's own log is where the person who exports this scan
@@ -4568,7 +4728,7 @@ class CaptureViewModel(
                 // the sink by now.
                 endDebugLogFor(
                     directory,
-                    "capture debug log closed — auto-process FAILED (ran=${result?.ran ?: false}); " +
+                    "capture debug log closed — auto-process FAILED ($reason); " +
                         "raw streams intact, Process can be retried from Review",
                 )
                 return@launch
@@ -4859,7 +5019,25 @@ class CaptureViewModel(
         detachKeyframeListener()
         keyframeRecorder?.shutdown()
         keyframeRecorder = null
-        arController?.engineHandle = 0L
+        // ── ROUND 22 item 89: scan-068's exact line ─────────────────────────
+        //
+        // This used to be `arController?.engineHandle = 0L` — a shared,
+        // process-wide field zeroed unconditionally by a ViewModel on its way
+        // out. Item 88's navigation defect rebuilt this ViewModel on every tab
+        // switch, so the OUTGOING instance's `onCleared` routinely ran after
+        // the INCOMING capture had already armed the handle: the pushbroom then
+        // decoded 194,067 points into handle 0 and recorded nothing, and
+        // scan-068 is that capture. Item 88 removes the churn; this removes the
+        // ability to do the damage at all.
+        val retired = arController?.clearEngineHandleIf(armedEngineHandle) ?: false
+        if (armedEngineHandle != 0L && !retired) {
+            logEvent(
+                LOG_TAG_SESSION,
+                "onCleared: engine handle $armedEngineHandle is no longer the controller's " +
+                    "(a newer capture owns it) — left alone",
+            )
+        }
+        armedEngineHandle = 0L
         super.onCleared()
     }
 
@@ -4872,6 +5050,15 @@ class CaptureViewModel(
     // stage budgets (item 85) and the round-21 tests pin the watchdog ceiling
     // (item 84); the constants were always the single source of those numbers.
     internal companion object {
+        /**
+         * ROUND 22 item 88 — how many times this class has been constructed in
+         * this process. See the `init` block: the defect it pins is a tab
+         * switch rebuilding the capture ViewModel, which is invisible from the
+         * outside and was visible in the owner's log only as a repeated
+         * "mount trim restored" line.
+         */
+        val constructions = java.util.concurrent.atomic.AtomicInteger(0)
+
         /** ROUND 6 log tags — mirrors `com.lidarscan.app.debug.CaptureLog`'s, without depending on it. */
         const val LOG_TAG_SESSION = "session"
         const val LOG_TAG_SEAL = "seal"

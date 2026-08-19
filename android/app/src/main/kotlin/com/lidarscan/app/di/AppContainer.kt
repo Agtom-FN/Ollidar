@@ -53,7 +53,17 @@ class AppContainer(context: Context) {
      */
     val applicationContext: Context get() = appContext
 
-    private val containerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    /**
+     * The process-lifetime scope. Public since ROUND 22 item 90: the post-seal
+     * auto-process used to run in `viewModelScope`, and item 88's navigation
+     * cancelled that scope at the exact moment the seal navigated to Projects
+     * — so the engine finished, wrote correct output, and the app reported a
+     * failure that had not happened. Work that must outlive the screen that
+     * started it belongs here, and now says so.
+     *
+     * `SupervisorJob` so one failed job never cancels the others.
+     */
+    val containerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     /**
      * `.lscan` projects live under app-specific external storage: no runtime
@@ -179,7 +189,16 @@ class AppContainer(context: Context) {
      */
     val usbAttachEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
 
-    val settingsRepository: SettingsRepository = SettingsRepository(appContext)
+    val settingsRepository: SettingsRepository = SettingsRepository(appContext).also { repo ->
+        // ROUND 22 item 100: the display block's LOD budget is clamped to what
+        // THIS device can hold, on load and on save. The tier is the one the
+        // container already probed above — one definition of "what can this
+        // phone do", not a second.
+        repo.deviceTier = deviceTier
+        repo.onDiagnostic = { line ->
+            captureLog.log(com.lidarscan.app.debug.CaptureLog.TAG_STORE, line)
+        }
+    }
 
     /**
      * B2: [RealEngineBridge] when `scanengine_jni` loaded successfully and
@@ -238,7 +257,13 @@ class AppContainer(context: Context) {
      * lazily on first submit — an app launch that never processes anything owns
      * no worker thread.
      */
-    val processingRepository = ProcessingRepository(containerScope)
+    val processingRepository = ProcessingRepository(containerScope).also { repo ->
+        // ROUND 22 item 90: a reprocess that throws now says so, in the same
+        // log as the capture it belongs to.
+        repo.onDiagnostic = { line ->
+            captureLog.log(com.lidarscan.app.debug.CaptureLog.TAG_SEAL, line)
+        }
+    }
 
     /** B12: §3.10's georeferenced auto-merge, over the same native handle. */
     val mergeRepository = MergeRepository(processingRepository)
@@ -258,7 +283,14 @@ class AppContainer(context: Context) {
      * creating their own is the classic way to get
      * `CameraNotAvailableException` when navigating between them.
      */
-    val arController = CaptureArController(appContext)
+    val arController = CaptureArController(appContext).also { controller ->
+        // ROUND 22 item 89: the AR gate's refusals land in the same log as the
+        // capture narrative. Wired here rather than inside the controller so
+        // the controller keeps knowing nothing about the logger.
+        controller.attachDiagnosticSink { line ->
+            captureLog.log(com.lidarscan.app.debug.CaptureLog.TAG_AR, line)
+        }
+    }
 
     /**
      * ROUND 11 (owner item 43): one cue player for the process, like the

@@ -163,6 +163,11 @@ class SettingsViewModel(
         }
     }
 
+    /** ROUND 22 item 97: see [com.lidarscan.app.data.AppSettings.advancedFeatures]. */
+    fun setAdvancedFeatures(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setAdvancedFeatures(enabled) }
+    }
+
     fun setKeepEmptyScans(keep: Boolean) {
         viewModelScope.launch { settingsRepository.setKeepEmptyScans(keep) }
     }

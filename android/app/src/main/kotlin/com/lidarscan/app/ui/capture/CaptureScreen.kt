@@ -329,6 +329,10 @@ fun CaptureRoute(
                             onProgress = onProgress,
                         )
                     },
+                    // ROUND 22 item 90: the auto-process outlives this screen.
+                    // Its old home, `viewModelScope`, was cancelled by the very
+                    // navigation the seal performs.
+                    autoProcessScope = container.containerScope,
                     // ROUND 19 item 76: the persisted device display block —
                     // the one source of truth Review's panel also writes.
                     loadDeviceDisplay = { container.settingsRepository.displayParams() },
@@ -633,18 +637,32 @@ fun CaptureRoute(
             captureState == CaptureState.PAUSED
         )
 
+    // ── ROUND 22 item 89: pause only what this screen still owns ───────────
+    //
+    // `container.arController` is process-wide; this effect is per screen
+    // instance. Before this round `onDispose` called `pause()` unconditionally,
+    // so a Scan screen being replaced paused the session the REPLACEMENT had
+    // already created and resumed — and with item 88's churn that replacement
+    // happened on every tab switch. `beginSessionUse`/`endSessionUse` make it a
+    // lease: a superseded screen's teardown is a no-op.
+    val sessionLease = remember { java.util.concurrent.atomic.AtomicReference<Any?>(null) }
     LaunchedEffect(needsArSession) {
         if (!needsArSession) return@LaunchedEffect
         container.arController.refreshAvailability()
         if (!container.hasCameraPermission()) {
             permissionLauncher.launch(android.Manifest.permission.CAMERA)
         } else {
+            sessionLease.set(container.arController.beginSessionUse())
             container.arController.createSession()
             container.arController.resume()
         }
     }
     DisposableEffect(needsArSession) {
-        onDispose { if (viewModel.arAvailable) container.arController.pause() }
+        onDispose {
+            if (viewModel.arAvailable) {
+                container.arController.endSessionUse(sessionLease.getAndSet(null))
+            }
+        }
     }
 
     // ROUND 5.3 (item 18): the screen stays awake while a capture is running.
@@ -1103,6 +1121,8 @@ fun CaptureScreen(
                     // read-out earns its height.
                     val body: @Composable () -> Unit = {
                         TransportRow(
+                            // ROUND 22 item 95: the one Advanced door.
+                            onOpenAdvanced = { sheet = CaptureSheet.SETTINGS },
                             captureState = captureState,
                             connected = connected,
                             liveView = liveView,
@@ -2080,6 +2100,14 @@ private fun StartProgressPanel(
             title = "Measuring the mount — hold still",
             status = when {
                 activeStage != 2 -> null
+                // ROUND 22 item 92: a refused reading is the FIRST thing this
+                // row says. The owner held his phone perfectly still while the
+                // pose slid out from under it, and this row told him
+                // "Steady… 3.2° and improving" — which is the app reading a
+                // tracking fault as a mount measurement and then congratulating
+                // him on it.
+                hold?.refusal != null ->
+                    com.lidarscan.core.calib.StartHoldTrimGate.refusalStatus(hold.refusal)
                 p == null -> "Hold the phone still in your scanning pose…"
                 !p.gatePasses && p.holdMillis < 300L -> "Hold the phone still in your scanning pose…"
                 !p.gatePasses -> "Moved a little — measuring again from now. Keep holding…"
@@ -3059,6 +3087,18 @@ private fun TransportRow(
     onPause: () -> Unit,
     onResume: () -> Unit,
     onStop: () -> Unit,
+    /**
+     * ROUND 22 item 95 — **the one ADVANCED button.**
+     *
+     * The owner asked for the power-user controls to be *gathered*, not
+     * removed: "one button opening the full existing settings sheet — Detail
+     * control, display options, New-scan reset, everything power-user —
+     * nothing deleted, just gathered behind one tap." This opens the SAME
+     * `CaptureSettingsSheet` the display icon has always opened; what changed
+     * is that there is now one obvious door to it beside the scan button
+     * instead of an icon in a strip.
+     */
+    onOpenAdvanced: () -> Unit = {},
 ) {
     val recording = captureState == CaptureState.RECORDING
     val paused = captureState == CaptureState.PAUSED
@@ -3168,11 +3208,24 @@ private fun TransportRow(
         // ROUND 5 item 9: Start creates a NEW project, and the label says so —
         // there is no state in which this button records into something that
         // already existed (bar the replay path, which says "replay").
+        // ROUND 22 item 95: the button's own word, on the button.
+        //
+        // "Start new scan" / "Stop recording" were accessibility labels on a
+        // circle that showed a dot or a square. The owner asked for ONE
+        // dominant control that says what it does, so the word is drawn: SCAN
+        // while idle, STOP while recording, CANCEL during the start sequence —
+        // which is also the first time the start sequence has been
+        // interruptible from the control that began it.
+        val recordWord = when {
+            live -> com.lidarscan.core.Wording.SCAN_BUTTON_RECORDING
+            starting -> com.lidarscan.core.Wording.SCAN_BUTTON_STARTING
+            else -> com.lidarscan.core.Wording.SCAN_BUTTON
+        }
         val recordLabel = when {
             live -> "Stop recording"
-            starting -> "Starting — waiting for tracking"
+            starting -> "Cancel this start"
             isReplaySession -> "Start replay"
-            else -> "Start new scan"
+            else -> "Start a scan"
         }
         // ROUND 17 item 64: armed = the press will start something new. While a
         // start is in flight the button is dimmed and spinning, so the operator
@@ -3186,9 +3239,16 @@ private fun TransportRow(
         // The owner pressed a silent button three times at 01:29–01:31; a
         // swallowed press must never again be indistinguishable from a dead one.
         val armed = connected && !stopping && !starting
+        // ROUND 22 item 95: ONE DOMINANT CONTROL.
+        //
+        // Deliberately the SAME component as before — the ember circle, the
+        // ember shadow, `recordButton`'s test tag, the round-21 rule that it
+        // stays tappable during a start — scaled up and given its word. The
+        // brief is explicit that this is restructuring and rewording, not a
+        // restyle: an operator who has used 0.9.6 must recognise this button.
         Box(
             Modifier
-                .size(if (live) 76.dp else 64.dp)
+                .size(if (live) 108.dp else 96.dp)
                 .alpha(if (armed || live) 1f else 0.45f)
                 .shadow(16.dp, CircleShape, ambientColor = Ember, spotColor = Ember)
                 .background(Ember, CircleShape)
@@ -3199,22 +3259,63 @@ private fun TransportRow(
                 .testTag("recordButton"),
             contentAlignment = Alignment.Center,
         ) {
-            // A filled circle while idle, a square while live — the universal
-            // record/stop pair, drawn rather than iconified so the ember ring
-            // reads as one control.
-            if (starting && !live) {
-                androidx.compose.material3.CircularProgressIndicator(
-                    modifier = Modifier.size(26.dp),
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                if (starting && !live) {
+                    androidx.compose.material3.CircularProgressIndicator(
+                        modifier = Modifier.size(22.dp),
+                        color = OnEmber,
+                        strokeWidth = 3.dp,
+                    )
+                    Spacer(Modifier.height(5.dp))
+                } else {
+                    // The universal record/stop mark is KEPT above the word: a
+                    // dot while idle, a square while live. The word says what
+                    // happens; the mark says which state you are in, and losing
+                    // it would make a glanced-at button ambiguous.
+                    Box(
+                        Modifier
+                            .size(if (live) 22.dp else 20.dp)
+                            .background(OnEmber, if (live) RoundedCornerShape(5.dp) else CircleShape),
+                    )
+                    Spacer(Modifier.height(6.dp))
+                }
+                Text(
+                    recordWord,
+                    fontFamily = com.lidarscan.app.ui.theme.UiFontFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp,
+                    letterSpacing = 0.08.em,
                     color = OnEmber,
-                    strokeWidth = 3.dp,
-                )
-            } else {
-                Box(
-                    Modifier
-                        .size(if (live) 30.dp else 26.dp)
-                        .background(OnEmber, if (live) RoundedCornerShape(7.dp) else CircleShape),
+                    modifier = Modifier.testTag("recordButtonLabel"),
                 )
             }
+        }
+
+        Spacer(Modifier.width(12.dp))
+
+        // ── ROUND 22 item 95: ADVANCED ⚙, one tap, nothing deleted ──────────
+        //
+        // The same `CaptureSettingsSheet` that has always held the display
+        // block, the Detail control and the New-scan reset — reached from one
+        // labelled door beside the scan button rather than from an icon the
+        // operator had to already know about. Deliberately the existing
+        // secondary-control shape (the pause button's circle, its ground, its
+        // hairline) so nothing about the row's visual language changes.
+        Box(
+            Modifier
+                .size(52.dp)
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh, CircleShape)
+                .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
+                .clickable(role = Role.Button, onClick = onOpenAdvanced)
+                .semantics { contentDescription = "Advanced settings" }
+                .testTag("advancedButton"),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Filled.Tune,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurface,
+            )
         }
     }
 }

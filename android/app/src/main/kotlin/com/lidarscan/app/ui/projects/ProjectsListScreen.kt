@@ -22,9 +22,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -62,6 +66,7 @@ import com.lidarscan.app.ui.theme.PoseBlue
 import com.lidarscan.app.ui.theme.ScanTeal
 import com.lidarscan.app.ui.theme.SemGood
 import com.lidarscan.app.ui.theme.SemWarn
+import com.lidarscan.core.Wording
 import com.lidarscan.core.model.SensorType
 import com.lidarscan.core.store.Project
 import kotlinx.coroutines.flow.first
@@ -84,6 +89,19 @@ fun ProjectsListRoute(
     onOpenReview: (String) -> Unit,
     onNewScan: () -> Unit,
     onSettings: () -> Unit,
+    /**
+     * ROUND 22 item 96 — the card's ⋯ › Export. Export lives on the Review
+     * screen now (the "Details, jobs & export" hub is gone from Simple mode),
+     * so this opens Review with its export row already unfolded rather than
+     * duplicating the export UI on a card.
+     */
+    onExport: (String) -> Unit = onOpenReview,
+    /**
+     * ROUND 22 item 97: with Advanced ON, the ⋯ menu gains a fourth item that
+     * opens the "Details, jobs & export" hub — the screen Simple mode removes
+     * is reachable again, exactly as it is today, the moment the switch is on.
+     */
+    advanced: Boolean = false,
 ) {
     val viewModel: ProjectsListViewModel = viewModel(
         factory = viewModelFactory {
@@ -96,6 +114,23 @@ fun ProjectsListRoute(
                     keepEmptyScans = {
                         container.settingsRepository.settings.first().keepEmptyScans
                     },
+                    // ROUND 22 item 96: "Process again" reuses the SAME
+                    // handle-less reprocess the seal's auto-process runs.
+                    reprocess = { dir, onProgress ->
+                        // The StitchResult is deliberately discarded: the card
+                        // shows progress and then re-reads the project from
+                        // disk, so the numbers come from the manifest the
+                        // reprocess just wrote rather than from a value held in
+                        // memory by a screen the operator may have left.
+                        container.processingRepository.reprocessD6(
+                            lscanDir = dir,
+                            refineSeams = true,
+                            onProgress = onProgress,
+                        )
+                    },
+                    // ROUND 22 item 90: a job the operator started must not die
+                    // because they left the tab.
+                    jobScope = container.containerScope,
                 )
             }
         },
@@ -115,6 +150,9 @@ fun ProjectsListRoute(
         onNewScan = onNewScan,
         onSettings = onSettings,
         onDeleteProject = viewModel::delete,
+        onExportProject = onExport,
+        onReprocessProject = viewModel::reprocessProject,
+        onOpenDetails = if (com.lidarscan.core.SimpleMode.showsProjectDetailHub(advanced)) onOpenProject else null,
     )
 }
 
@@ -143,6 +181,9 @@ fun ProjectsListScreen(
     onNewScan: () -> Unit,
     onSettings: () -> Unit,
     onDeleteProject: (String) -> Unit,
+    onExportProject: (String) -> Unit = {},
+    onReprocessProject: (String) -> Unit = {},
+    onOpenDetails: ((String) -> Unit)? = null,
 ) {
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
     // ROUND 8 (item 31): adopt the just-sealed scan ONCE, keyed on the id.
@@ -202,30 +243,39 @@ fun ProjectsListScreen(
                         ProjectCard(
                             project = project,
                             selected = selectedId == project.id,
+                            progress = uiState.running[project.id],
+                            // ── ROUND 22 item 96: a tap OPENS THE SCAN ───────
+                            //
+                            // ROUND 5 made a tap "select and preview in place",
+                            // which meant looking at a scan properly took a tap,
+                            // a read of two quiet text buttons, and a second tap
+                            // on the right one. The owner's simplification asks
+                            // for the obvious thing: the card is the scan, so
+                            // tapping it opens it. Selection still happens (the
+                            // seal→Projects handoff and the Jobs tab both read
+                            // it), it just no longer competes with opening.
                             onClick = {
-                                // Select (and preview) rather than navigate —
-                                // round 5 item 8. Tapping the selected card again
-                                // collapses it.
-                                selectedId = if (selectedId == project.id) null else project.id
                                 onSelectProject(project.id)
+                                onOpenReview(project.id)
                             },
-                            onOpenViewer = { onOpenReview(project.id) },
-                            onOpenDetails = { onOpenProject(project.id) },
+                            onExport = { onExportProject(project.id) },
+                            onReprocess = { onReprocessProject(project.id) },
+                            onOpenDetails = onOpenDetails?.let { open -> { open(project.id) } },
                             onDelete = { onDeleteProject(project.id) },
                         )
                     }
                     item {
                         Spacer(Modifier.height(2.dp))
                         Hint(
-                            "Tap a scan to preview it · long-press to delete · new scans start in the Capture tab." +
-                                // ROUND 9 (item 33): the quiet half of "auto-hide
-                                // with a count in settings" — one clause on a hint
-                                // that was already there, and only when there is
-                                // something to say.
+                            // ROUND 22 item 98. Was: "Tap a scan to preview it ·
+                            // long-press to delete · new scans start in the
+                            // Capture tab." — three instructions in one line,
+                            // two of which describe behaviour item 96 changed
+                            // (a tap opens now; delete is in the ⋯ menu, where
+                            // it is discovered rather than explained).
+                            Wording.PROJECTS_LIST_HINT +
                                 if (uiState.hiddenEmptyCount > 0) {
-                                    "\n${uiState.hiddenEmptyCount} empty scan" +
-                                        "${if (uiState.hiddenEmptyCount == 1) " is" else "s are"} hidden — " +
-                                        "Settings › Scans clears them."
+                                    "\n" + Wording.PROJECTS_EMPTY_HIDDEN
                                 } else {
                                     ""
                                 },
@@ -272,12 +322,17 @@ private fun aggregateLine(projects: List<Project>, hiddenEmptyCount: Int = 0): S
 private fun ProjectCard(
     project: Project,
     selected: Boolean,
+    /** ROUND 22 item 96: 0..1 while a reprocess started from this card runs; null otherwise. */
+    progress: Float? = null,
     onClick: () -> Unit,
-    onOpenViewer: () -> Unit,
-    onOpenDetails: () -> Unit,
+    onExport: () -> Unit,
+    onReprocess: () -> Unit,
+    /** ROUND 22 item 97: non-null only with Advanced on. */
+    onOpenDetails: (() -> Unit)? = null,
     onDelete: () -> Unit,
 ) {
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var menuOpen by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(ScanDims.CardRadius)
     val manifest = project.manifest
 
@@ -328,6 +383,71 @@ private fun ProjectCard(
                 tint = InkFaint,
                 modifier = Modifier.height(16.dp),
             )
+            // ── ROUND 22 item 96: the per-card ⋯ menu ────────────────────────
+            //
+            // Export, Process again and Delete — the three things Simple mode's
+            // removed "Details, jobs & export" hub was actually used for, on
+            // the card they are about. Delete was a long-press since ROUND 5,
+            // which is a gesture the list hint had to TEACH; a menu is found.
+            Box {
+                IconButton(
+                    onClick = { menuOpen = true },
+                    modifier = Modifier.testTag("projectCardMenu"),
+                ) {
+                    Icon(
+                        Icons.Filled.MoreVert,
+                        contentDescription = "More actions",
+                        tint = InkFaint,
+                    )
+                }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text(Wording.CARD_MENU_EXPORT) },
+                        onClick = { menuOpen = false; onExport() },
+                        modifier = Modifier.testTag("cardMenuExport"),
+                    )
+                    DropdownMenuItem(
+                        text = { Text(Wording.CARD_MENU_REPROCESS) },
+                        onClick = { menuOpen = false; onReprocess() },
+                        modifier = Modifier.testTag("cardMenuReprocess"),
+                    )
+                    onOpenDetails?.let { open ->
+                        DropdownMenuItem(
+                            text = { Text("Details") },
+                            onClick = { menuOpen = false; open() },
+                            modifier = Modifier.testTag("cardMenuDetails"),
+                        )
+                    }
+                    DropdownMenuItem(
+                        text = { Text(Wording.CARD_MENU_DELETE) },
+                        onClick = { menuOpen = false; showDeleteConfirm = true },
+                        modifier = Modifier.testTag("cardMenuDelete"),
+                    )
+                }
+            }
+        }
+
+        // ROUND 22 item 96: a running job is a chip on the card, because Simple
+        // mode has no Jobs screen to go and look at.
+        if (progress != null) {
+            Row(
+                Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                CircularProgressIndicator(
+                    progress = { progress },
+                    modifier = Modifier.height(14.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    strokeWidth = 2.dp,
+                )
+                Text(
+                    Wording.fixingProgress((progress * 100).toInt()),
+                    style = MonoMeta,
+                    color = InkFaint,
+                    modifier = Modifier.testTag("projectCardJobChip"),
+                )
+            }
         }
 
         Row(
@@ -366,21 +486,11 @@ private fun ProjectCard(
             modifier = Modifier.padding(start = 4.dp, end = 4.dp, top = 9.dp, bottom = 3.dp),
         )
 
-        if (selected) {
-            // The two quiet doors — see the screen's KDoc for why exactly these
-            // two and no capture action.
-            Row(
-                Modifier.fillMaxWidth().padding(top = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                TextButton(onClick = onOpenViewer, modifier = Modifier.testTag("openViewerButton")) {
-                    Text("Open in viewer")
-                }
-                TextButton(onClick = onOpenDetails, modifier = Modifier.testTag("openDetailsButton")) {
-                    Text("Details, jobs & export")
-                }
-            }
-        }
+        // ROUND 22 item 96: the two quiet doors are gone. "Open in viewer" is
+        // what a tap does now, and "Details, jobs & export" is the hub Simple
+        // mode removes — its three real uses are in the ⋯ menu above. Neither
+        // screen is deleted: with Advanced on, ProjectDetail is back in
+        // navigation exactly as it is today (see SimpleMode).
     }
 
     if (showDeleteConfirm) {
@@ -388,13 +498,13 @@ private fun ProjectCard(
             // ROUND 16 item 61: dialogs inherited the theme's pill too.
             shape = RoundedCornerShape(ScanDims.DialogRadius),
             onDismissRequest = { showDeleteConfirm = false },
-            title = { Text("Delete \"${manifest.name}\"?") },
-            text = {
-                Text(
-                    "This permanently deletes the .lscan project directory, including any captured streams. " +
-                        "This can't be undone.",
-                )
-            },
+            // ROUND 22 item 98. Was: 'Delete "<name>"?' over "This permanently
+            // deletes the .lscan project directory, including any captured
+            // streams. This can't be undone." — the on-disk format and the word
+            // "streams" are facts about the implementation, not about what the
+            // operator is about to lose.
+            title = { Text(Wording.DELETE_TITLE) },
+            text = { Text(Wording.DELETE_BODY) },
             confirmButton = {
                 TextButton(onClick = {
                     showDeleteConfirm = false
@@ -432,26 +542,22 @@ private fun EmptyProjectsState(hiddenEmptyCount: Int, onNewScan: () -> Unit) {
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
-                text = "No projects yet",
+                text = Wording.PROJECTS_EMPTY_TITLE,
                 fontFamily = DisplayFontFamily,
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 22.sp,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Spacer(Modifier.height(10.dp))
-            Hint(
-                "Scans are created in the Capture tab: plug in the COIN-D6 or the Mid-360 and it connects " +
-                    "itself, then Start records into a new project.",
-            )
+            // ROUND 22 item 98. Was 26 words naming two products and a tab.
+            Hint(Wording.PROJECTS_EMPTY_HINT)
             // ROUND 9 (item 33): "No projects yet" would be a lie on a phone
             // holding nothing BUT empty strays, so the empty state says which
             // kind of empty it is.
             if (hiddenEmptyCount > 0) {
                 Spacer(Modifier.height(10.dp))
                 Hint(
-                    "$hiddenEmptyCount scan${if (hiddenEmptyCount == 1) "" else "s"} recorded no points and " +
-                        "${if (hiddenEmptyCount == 1) "is" else "are"} hidden. Settings › Scans deletes them, " +
-                        "or shows them again.",
+                    Wording.PROJECTS_EMPTY_HIDDEN,
                     color = InkFaint,
                     modifier = Modifier.testTag("hiddenEmptyScansNote"),
                 )
@@ -462,7 +568,7 @@ private fun EmptyProjectsState(hiddenEmptyCount: Int, onNewScan: () -> Unit) {
             // end, so this is a shortcut TO the Capture tab, not a second way to
             // create a project.
             PrimaryPill(
-                text = "Go to Capture",
+                text = Wording.PROJECTS_EMPTY_ACTION,
                 icon = Icons.Filled.Add,
                 onClick = onNewScan,
                 modifier = Modifier.testTag("newScanButton"),

@@ -57,14 +57,22 @@ import javax.microedition.khronos.opengles.GL10
 class ArCameraBackgroundRenderer(
     private val controller: CaptureArController,
     /**
-     * ROUND 5 AUDIT bugfix: which of the (at most one, by design) renderers
-     * that can be alive at once this instance is — [ArPosePumpView]'s pump or
-     * [ArOverlayView]'s overlay. Every call into [controller] carries it, so a
-     * renderer whose `AndroidView` has already been superseded (see
-     * `CaptureArController.RendererOwner`'s doc) safely becomes a no-op on the
+     * ROUND 5 AUDIT bugfix, sharpened by ROUND 22 item 89: **this renderer's
+     * own claim on the session**, taken by the `AndroidView` factory that built
+     * it. Every call into [controller] carries it, so a renderer whose
+     * `AndroidView` has already been superseded safely becomes a no-op on the
      * session instead of racing the new one for it.
+     *
+     * It is the CLAIM and no longer the [CaptureArController.RendererOwner]
+     * role, because the role stopped discriminating: with the AR overlay
+     * archived every renderer in the shipping app is `POSE_PUMP`, so a stale
+     * instance and a live one were the same value and the guard was a no-op.
+     * See [ArSessionGate.Claim].
+     *
+     * Nullable only so a factory that could not claim still builds a renderer
+     * that does nothing, rather than crashing on the GL thread.
      */
-    private val owner: CaptureArController.RendererOwner,
+    private val claim: ArSessionGate.Claim?,
     /** Invoked on the GL thread after each ARCore frame, for consumers that need it (the overlay camera). */
     private val onFrame: (Frame) -> Unit = {},
 ) : GLSurfaceView.Renderer {
@@ -110,7 +118,7 @@ class ArCameraBackgroundRenderer(
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
-        controller.setCameraTextureName(textureId, owner)
+        controller.setCameraTextureName(textureId, claim)
 
         program = buildProgram()
         positionAttribute = GLES20.glGetAttribLocation(program, "a_Position")
@@ -138,12 +146,12 @@ class ArCameraBackgroundRenderer(
         // frame costs a black backdrop and an inline message.
         try {
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT or GLES20.GL_DEPTH_BUFFER_BIT)
-            if (textureId >= 0) controller.setCameraTextureName(textureId, owner)
+            if (textureId >= 0) controller.setCameraTextureName(textureId, claim)
 
             // `onFrame` is itself gated + guarded (see CaptureArController):
             // null here means "not my turn", "not resumed yet", or "already
             // degraded" — all of which are ordinary, not errors.
-            val frame = controller.onFrame(owner) ?: return
+            val frame = controller.onFrame(claim) ?: return
             if (frame.hasDisplayGeometryChanged()) updateTexCoords(frame)
             drawBackground()
             onFrame(frame)

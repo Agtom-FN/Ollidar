@@ -1,5 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- ================================================================
+     ADAPTIVE LAUNCHER ICON (round variant) - round 22, v0.9.7.
+
+     Intentionally identical to ic_launcher.xml. An adaptive icon is already
+     mask-agnostic - the launcher applies the round, squircle or teardrop
+     mask itself - so the round variant needs no separate art. It exists only
+     so launchers that explicitly request android:roundIcon resolve to a
+     real adaptive definition.
+
+     Keep this in step with ic_launcher.xml, which carries the full pipeline
+     description and the icon-swap procedure.
+     ================================================================ -->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@drawable/ic_launcher_background" />
+    <background android:drawable="@color/ic_launcher_background" />
     <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <monochrome android:drawable="@drawable/ic_launcher_monochrome" />
 </adaptive-icon>

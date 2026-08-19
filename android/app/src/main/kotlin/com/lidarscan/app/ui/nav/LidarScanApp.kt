@@ -12,6 +12,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -67,20 +68,34 @@ fun LidarScanApp(
     val currentEntry by navController.currentBackStackEntryAsState()
     val currentTab = tabForRoute(currentEntry?.destination?.route)
 
+    // ── ROUND 22 item 97: Simple mode, read once and asked everywhere ───────
+    //
+    // `SimpleMode` (in :core) is the single place that decides what each
+    // surface shows; this is the one place the SWITCH is read. Default false —
+    // and the default is the feature, because an operator who never opens
+    // Settings gets the simple app.
+    val settings by container.settingsRepository.settings
+        .collectAsStateWithLifecycle(initialValue = com.lidarscan.app.data.AppSettings())
+    val advanced = settings.advancedFeatures
+
     fun openProject(projectId: String) {
         activeProjectId = projectId
         navController.navigate(Routes.projectDetail(projectId))
     }
 
     fun goTab(route: String) {
+        val spec = tabNavSpec(startRoute = Routes.PROJECTS, target = route)
         navController.navigate(route) {
-            // Every tab is a sibling of Projects, not a child of whatever
-            // screen happened to be on top: pop back to the graph's root
-            // before landing so the back stack never grows one entry per tab
-            // tap. `inclusive` only for the Projects tab itself, which is that
-            // root.
-            popUpTo(Routes.PROJECTS) { inclusive = route == Routes.PROJECTS }
-            launchSingleTop = true
+            // ROUND 22 item 88 — see [tabNavSpec] for the whole defect. The
+            // three lines below are the standard bottom-tab contract; what was
+            // here before was the first line only, and it destroyed the Scan
+            // tab's ViewModelStore on every seal.
+            popUpTo(spec.popUpToRoute) {
+                inclusive = spec.popUpToInclusive
+                saveState = spec.saveState
+            }
+            launchSingleTop = spec.launchSingleTop
+            restoreState = spec.restoreState
         }
     }
 
@@ -98,6 +113,10 @@ fun LidarScanApp(
                     onSelectProject = { activeProjectId = it },
                     onOpenProject = ::openProject,
                     onOpenReview = { navController.navigate(Routes.review(it)) },
+                    // ROUND 22 item 96: ⋯ › Export opens the scan, where the
+                    // export row lives.
+                    onExport = { navController.navigate(Routes.review(it)) },
+                    advanced = advanced,
                     // ROUND 5 (item 8): Projects does not create scans any more —
                     // it points at the tab that does.
                     onNewScan = { goTab(Routes.CAPTURE_NEW) },
@@ -217,11 +236,30 @@ fun LidarScanApp(
                         container = container,
                         projectId = Uri.decode(backStackEntry.arguments?.getString(Routes.PROJECT_ID_ARG).orEmpty()),
                         onBack = { navController.popBackStack() },
-                        onOpenPlan = { pid -> navController.navigate(Routes.plan(pid)) },
-                        onOpenExport = { pid ->
-                            activeProjectId = pid
-                            navController.navigate(Routes.processing(pid))
+                        // ROUND 22 item 97: the floor plan is an Advanced
+                        // feature. Null hides the pill AND makes the route
+                        // unreachable from here, which is the honest pairing —
+                        // a hidden door with a live route behind it is how a
+                        // half-removed feature comes back through a deep link.
+                        onOpenPlan = if (com.lidarscan.core.SimpleMode.showsFloorPlan(advanced)) {
+                            { pid: String -> navController.navigate(Routes.plan(pid)) }
+                        } else {
+                            null
                         },
+                        // ROUND 22 item 96: with Advanced ON, Export still
+                        // opens the full Processing screen. In Simple mode
+                        // Review carries its own export row (reusing
+                        // ProcessingViewModel's paths verbatim), so there is
+                        // nowhere to send the operator.
+                        onOpenExport = if (com.lidarscan.core.SimpleMode.showsProjectDetailHub(advanced)) {
+                            { pid: String ->
+                                activeProjectId = pid
+                                navController.navigate(Routes.processing(pid))
+                            }
+                        } else {
+                            null
+                        },
+                        advanced = advanced,
                     )
                 }
             }

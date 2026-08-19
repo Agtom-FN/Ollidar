@@ -111,7 +111,16 @@ class CaptureRound21Test {
     private fun newVm(
         engine: FakeEngineBridge = FakeEngineBridge(),
         source: StartPoseSource? = FakeStartPoseSource(),
-        logs: MutableList<String> = Collections.synchronizedList(mutableListOf()),
+        // ROUND 22: a COPY-ON-WRITE list, not `Collections.synchronizedList`.
+        //
+        // `logEvent` is called from the seal, the auto-process and the start
+        // sequence — three coroutines — while the assertions below iterate the
+        // same list with `any`/`count`/`first`. Iterating a synchronized list
+        // WITHOUT holding its monitor is unsafe by contract, and it duly threw
+        // `ConcurrentModificationException` in a round-22 run. Copy-on-write
+        // gives every iteration its own snapshot, which is exactly what a test
+        // reading a growing log wants.
+        logs: MutableList<String> = java.util.concurrent.CopyOnWriteArrayList(),
         store: FileProjectStore = FileProjectStore(tempRoot(), appVersion = "test"),
         watchdogMillis: Long = CaptureViewModel.START_WATCHDOG_MS,
     ): Pair<CaptureViewModel, MutableList<String>> {

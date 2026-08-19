@@ -45,8 +45,24 @@ import com.lidarscan.app.ui.theme.UiFontFamily
  * `a-nav-tabbar` says "all reachable in one tap".
  */
 enum class ScanTab(val label: String, val icon: ImageVector) {
+    /**
+     * ROUND 22 item 94: **Projects keeps its name**, at the owner's explicit
+     * request. It was the one tab the simplification was not asked to touch.
+     */
     PROJECTS("Projects", Icons.Filled.FolderOpen),
-    CAPTURE("Capture", Icons.Filled.Radar),
+
+    /**
+     * ROUND 22 item 94 — labelled **"Scan"**, not "Capture".
+     *
+     * "Capture" is what the engine does; "Scan" is what the operator does, and
+     * it is the word the owner uses. Only the LABEL changes: the enum constant,
+     * `Routes.CAPTURE_NEW`, `tabForRoute`, every test tag (`tab_capture`) and
+     * every route string keep their names. Renaming a route mid-round is a
+     * back-stack risk (ROUND 16 named it) bought for nothing — the operator
+     * never sees a route string.
+     */
+    CAPTURE("Scan", Icons.Filled.Radar),
+
     JOBS("Jobs", Icons.Filled.Layers),
     SETTINGS("Settings", Icons.Filled.Tune),
 }

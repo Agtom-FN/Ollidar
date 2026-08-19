@@ -193,11 +193,14 @@ class CaptureArController(
     @Volatile
     private var boundTextureId: Int = -1
 
+    /**
+     * ROUND 22 item 89: the CLAIM whose renderer bound it, not just the role.
+     * [resetWorldFrame] hands the texture back to a rebuilt session, and it
+     * must only do that if the renderer that owns the texture is still the
+     * renderer that owns the session.
+     */
     @Volatile
-    private var boundTextureOwner: RendererOwner? = null
-
-    private fun ArSessionGate.Owner.legacy(): RendererOwner =
-        if (this == ArSessionGate.Owner.OVERLAY) RendererOwner.OVERLAY else RendererOwner.POSE_PUMP
+    private var boundTextureClaim: ArSessionGate.Claim? = null
 
     private fun RendererOwner.gated(): ArSessionGate.Owner =
         if (this == RendererOwner.OVERLAY) ArSessionGate.Owner.OVERLAY else ArSessionGate.Owner.POSE_PUMP
@@ -211,9 +214,62 @@ class CaptureArController(
      * ROUND 6: a claim also clears any previous AR failure, because the
      * operator toggling into the AR overlay is an explicit "try again".
      */
-    fun claimRenderer(owner: RendererOwner) {
-        gate.claim(owner.gated())
+    // ── ROUND 22 item 89: the SESSION LEASE ────────────────────────────────
+    //
+    // Ownership of *driving* the session is [ArSessionGate.Claim]'s job. This
+    // is the other, coarser ownership question, and it had the same defect:
+    // `CaptureScreen`'s `DisposableEffect(needsArSession)` called
+    // `container.arController.pause()` on dispose — a per-SCREEN effect
+    // pausing the PROCESS-WIDE controller. With item 88's navigation churn the
+    // outgoing screen's `onDispose` lands after the incoming screen has already
+    // created and resumed the session, so leaving Scan and coming straight back
+    // paused the session the new screen was about to record with. The pose
+    // stream then reported NOT_RESUMED (silently, until item 89's logging) and
+    // the capture recorded no poses.
+    //
+    // A lease is the same compare-and-set shape as the claim, one level up:
+    // taking one supersedes the previous holder, and releasing one only pauses
+    // if it is still the current lease.
+
+    private val sessionLease = java.util.concurrent.atomic.AtomicReference<Any?>(null)
+
+    /** Declares the caller the current user of the session, superseding any previous holder. */
+    fun beginSessionUse(): Any {
+        val lease = Any()
+        sessionLease.set(lease)
+        return lease
+    }
+
+    /**
+     * Pauses the session — but only if [lease] is still the current one. A
+     * superseded screen's teardown is a no-op, which is the entire point.
+     * Returns true when it actually paused.
+     */
+    fun endSessionUse(lease: Any?): Boolean {
+        if (lease == null) return false
+        if (!sessionLease.compareAndSet(lease, null)) return false
+        pause()
+        return true
+    }
+
+    /**
+     * ROUND 22 item 89 — where the gate's refusals go.
+     *
+     * `AppContainer` points this at the app's `CaptureLog`, so a stuck
+     * `NOT_OWNER` writes one line a second into the same file as the
+     * `[session]`/`[ar]` narrative instead of being a `return null` nobody can
+     * see. Injected rather than depended on: this class has an Android
+     * `Context` and no business knowing about the logger.
+     */
+    fun attachDiagnosticSink(sink: (String) -> Unit) {
+        gate.decisionSink = sink
+    }
+
+    fun claimRenderer(owner: RendererOwner): ArSessionGate.Claim {
+        val claim = gate.claim(owner.gated())
         publishArError(null)
+        Log.i(TAG, "renderer claim $claim")
+        return claim
     }
 
     /**
@@ -222,8 +278,8 @@ class CaptureArController(
      * a NEWER claim already landed, which is exactly the race this exists
      * to survive) must never undo the newer owner's claim.
      */
-    fun releaseRenderer(owner: RendererOwner) {
-        gate.release(owner.gated())
+    fun releaseRenderer(claim: ArSessionGate.Claim?) {
+        gate.release(claim)
     }
 
     /**
@@ -231,8 +287,8 @@ class CaptureArController(
      * configuration change) while it may still have held the claim. Distinct
      * call site from [releaseRenderer] on purpose — see [ArSessionGate.surfaceDestroyed].
      */
-    fun onRendererSurfaceDestroyed(owner: RendererOwner) {
-        gate.surfaceDestroyed(owner.gated())
+    fun onRendererSurfaceDestroyed(claim: ArSessionGate.Claim?) {
+        gate.surfaceDestroyed(claim)
     }
 
     /**
@@ -416,6 +472,37 @@ class CaptureArController(
     /** Set while a capture session is recording; poses are pushed into this engine handle. */
     @Volatile
     var engineHandle: Long = 0L
+
+    /**
+     * ROUND 22 item 89 — **scan-068: 194,067 points decoded, 0 recorded.**
+     *
+     * This controller is process-wide (`AppContainer.arController`); a
+     * `CaptureViewModel` is not. Before this round `CaptureViewModel.onCleared`
+     * did a bare `arController?.engineHandle = 0L`, which is a statement about
+     * a shared field made by an object that has no idea whether it still owns
+     * it. With item 88's navigation churn rebuilding the capture ViewModel on
+     * every tab switch, the outgoing VM's `onCleared` regularly landed AFTER
+     * the incoming capture had armed the handle — so the pushbroom decoded a
+     * whole scan's worth of returns into handle `0` and recorded none of it.
+     * That is scan-068 exactly.
+     *
+     * Compare-and-clear instead: a caller may only retire the handle it armed.
+     * Synchronized rather than an `AtomicLong` so the field keeps its plain
+     * `@Volatile` read on the pose hot path (three sites, 60 Hz) — the
+     * contention here is two lifecycle events, not a loop.
+     */
+    @Synchronized
+    fun clearEngineHandleIf(expected: Long): Boolean {
+        if (expected == 0L || engineHandle != expected) return false
+        engineHandle = 0L
+        return true
+    }
+
+    /** Arms [engineHandle] and remembers nothing else — the caller keeps the token. */
+    @Synchronized
+    fun armEngineHandle(handle: Long) {
+        engineHandle = handle
+    }
 
     /** The most recent frame, for consumers that need the image (B8) or the camera matrices (the overlay). */
     @Volatile
@@ -668,7 +755,33 @@ class CaptureArController(
         driveLock.lock()
         try {
             val texture = boundTextureId
-            val textureOwner = boundTextureOwner
+            // ROUND 22 item 89: a reset rebuilds the session UNDER the live
+            // renderer, which never learns about it. If the claim that bound
+            // the texture is still the current claim, the rebuild hands the
+            // texture straight back to it; if the claim has been superseded
+            // (a tab switch mid-Start, which item 88's churn made routine)
+            // there is nothing to re-bind and the NEW renderer's own
+            // `onSurfaceCreated` will bind its own texture under its own claim.
+            var textureClaim = boundTextureClaim
+            if (textureClaim != null && gate.currentClaim !== textureClaim) {
+                Log.w(
+                    TAG,
+                    "world-frame reset: the texture's claim $textureClaim is stale " +
+                        "(current=${gate.currentClaim}); not re-binding",
+                )
+                textureClaim = null
+            }
+            // A reset with NO claim at all would rebuild a session nobody may
+            // drive — mayDrive would answer NOT_OWNER forever and the capture
+            // would record no poses, which is precisely the failure mode this
+            // item exists to close. Re-take the claim on the bound renderer's
+            // behalf rather than leaving the session ownerless.
+            if (gate.currentClaim == null && boundTextureClaim != null) {
+                val revived = gate.claim(boundTextureClaim!!.owner)
+                boundTextureClaim = revived
+                textureClaim = revived
+                Log.w(TAG, "world-frame reset: session had no owner; re-claimed as $revived")
+            }
             var tries = 0
             while (tries < attempts.coerceAtLeast(1)) {
                 ++tries
@@ -682,8 +795,8 @@ class CaptureArController(
                 // is still holding the same GL texture and the same claim — so
                 // hand the texture straight back rather than waiting for a
                 // surface event that is not coming.
-                if (texture >= 0 && textureOwner != null) {
-                    setCameraTextureName(texture, textureOwner)
+                if (texture >= 0 && textureClaim != null) {
+                    setCameraTextureName(texture, textureClaim)
                 }
                 geometryDirty = true
                 if (resume().isSuccess) {
@@ -747,13 +860,18 @@ class CaptureArController(
      * the session's camera texture out from under the one Compose actually
      * wants on screen.
      */
-    fun setCameraTextureName(textureId: Int, owner: RendererOwner) {
+    fun setCameraTextureName(textureId: Int, claim: ArSessionGate.Claim?) {
         // ROUND 6: `setCameraTextureName` on a session that is merely created
         // (not resumed) is legal, so this deliberately does NOT require
         // `PROCEED` — binding the texture before resume is exactly what a
         // renderer should be doing. What it does require is ownership and a
         // session, and it must never throw onto the GL thread.
-        if (gate.currentOwner !== owner.gated()) return
+        // ROUND 22 item 89: identity, not role. With the AR overlay archived
+        // every renderer in the shipping app is POSE_PUMP, so comparing the
+        // enum let a superseded pump's GL thread keep re-binding ITS texture
+        // over the live one's — the ROUND 5 black-camera race, back again
+        // because its guard had stopped discriminating.
+        if (gate.currentClaim !== claim) return
         val s = session ?: return
         runCatching { s.setCameraTextureName(textureId) }
             .onSuccess {
@@ -763,7 +881,7 @@ class CaptureArController(
                 // binding to them that dies with it — so re-binding is a
                 // one-line hand-off rather than a renderer teardown.
                 boundTextureId = textureId
-                boundTextureOwner = owner
+                boundTextureClaim = claim
             }
             .onFailure { reportArFailure("could not bind the tracking camera texture", it) }
     }
@@ -780,7 +898,7 @@ class CaptureArController(
      * prevents `Session.update()` from ever being called by two GL threads
      * at once, which ARCore's own contract leaves undefined.
      */
-    fun onFrame(owner: RendererOwner): Frame? {
+    fun onFrame(claim: ArSessionGate.Claim?): Frame? {
         // ROUND 16 item 58: the lock FIRST, and never blocking. If a
         // [resetWorldFrame] is in flight this frame is simply skipped — the
         // session it would have driven is being replaced, so there is nothing
@@ -791,13 +909,13 @@ class CaptureArController(
             return null
         }
         try {
-            return onFrameLocked(owner)
+            return onFrameLocked(claim)
         } finally {
             driveLock.unlock()
         }
     }
 
-    private fun onFrameLocked(owner: RendererOwner): Frame? {
+    private fun onFrameLocked(claim: ArSessionGate.Claim?): Frame? {
         // ROUND 6 (owner item 19): ONE gate, checked before anything touches
         // the session. `NOT_RESUMED` is the case that used to be a crash —
         // `Session.update()` on a paused session throws `SessionPausedException`
@@ -807,7 +925,14 @@ class CaptureArController(
         // ROUND 16: still checked, and now checked INSIDE the lock, which is
         // what makes it a decision rather than a guess about the next
         // microsecond.
-        if (!gate.mayDrive(owner.gated()).mayProceed) return null
+        // ROUND 22 item 89: this used to be exactly the line above with no
+        // `else` and no log. `mayDrive` now REPORTS every refusal (rate-limited
+        // to 1 Hz inside the gate), because a permanently stuck NOT_OWNER — a
+        // stale ArPosePumpView's release nulling the live claim — is
+        // indistinguishable from a phone that stopped tracking when the only
+        // evidence is a bare `return null`. That silence is what made this bug
+        // take days.
+        if (!gate.mayDrive(claim).mayProceed) return null
         val s = session ?: return null
         val frame = try {
             if (geometryDirty) {

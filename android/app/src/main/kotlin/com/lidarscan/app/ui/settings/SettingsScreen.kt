@@ -44,6 +44,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.lidarscan.app.data.AppSettings
+import com.lidarscan.core.Wording
 import com.lidarscan.app.data.ThemeMode
 import com.lidarscan.app.data.Units
 import com.lidarscan.app.di.AppContainer
@@ -145,6 +146,7 @@ fun SettingsRoute(
         emptyScanCount = emptyScanCount,
         emptyScanNote = emptyScanNote,
         onKeepEmptyScansChange = viewModel::setKeepEmptyScans,
+        onAdvancedFeaturesChange = viewModel::setAdvancedFeatures,
         onDeveloperModeChange = viewModel::setDeveloperMode,
         onCaptureDebugLogChange = viewModel::setCaptureDebugLog,
         onOperatorCuesChange = viewModel::setOperatorCuesEnabled,
@@ -203,6 +205,8 @@ fun SettingsScreen(
     /** What the last "clean up empty scans" actually did. */
     emptyScanNote: String? = null,
     onKeepEmptyScansChange: (Boolean) -> Unit = {},
+    /** ROUND 22 item 97: the one Advanced-features switch. Default OFF. */
+    onAdvancedFeaturesChange: (Boolean) -> Unit = {},
     /** ROUND 17 item 66: the seven-tap unlock and the one thing behind it. */
     onDeveloperModeChange: (Boolean) -> Unit = {},
     onCaptureDebugLogChange: (Boolean) -> Unit = {},
@@ -276,6 +280,27 @@ fun SettingsScreen(
             if (com.lidarscan.core.FeatureFlags.COLORIZE_ENABLED) {
                 SettingsSection("Processing") {
                     ProcessingOptionsCard(settings.allowPoorSyncColorize, onAllowPoorSyncChange)
+                }
+            }
+
+            // ── ROUND 22 item 97: the one Advanced-features switch ──────────
+            //
+            // Default OFF, which means the app a fresh install opens is the
+            // simple one. Nothing behind this switch is deleted — each item
+            // returns exactly as it is today the moment it is turned on, and
+            // `SimpleMode` (in :core) is the single place that decides which
+            // surface honours it. RTK and the Mid-360 wizard are deliberately
+            // NOT here: they appear whenever a Mid-360 is the selected sensor,
+            // because the owner is testing that rig shortly.
+            SettingsSection(Wording.ADVANCED_TITLE) {
+                ScanCard {
+                    ScanSwitchRow(
+                        title = Wording.ADVANCED_TITLE,
+                        detail = Wording.ADVANCED_DETAIL,
+                        checked = settings.advancedFeatures,
+                        onCheckedChange = onAdvancedFeaturesChange,
+                        modifier = Modifier.testTag("advancedFeaturesSwitch"),
+                    )
                 }
             }
 
