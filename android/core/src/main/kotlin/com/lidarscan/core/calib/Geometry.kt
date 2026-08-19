@@ -93,6 +93,30 @@ data class Quat(val x: Double, val y: Double, val z: Double, val w: Double) {
         return atan2(worldUp dot right, worldUp dot up)
     }
 
+    /**
+     * ROUND 20 (item 79) — the **swing–twist decomposition** about [axis]
+     * (unit): `this = twist ∘ swing`, where `twist` is a rotation purely about
+     * [axis] and `swing` has **zero component along [axis]** (its quaternion's
+     * projection onto the axis is exactly zero — the standard invariant of the
+     * decomposition, and what the gravity-referenced trim asserts on).
+     *
+     * Degenerate case: when the projection `(w, q·axis)` has ~zero norm the
+     * rotation is a half-turn about an axis perpendicular to [axis] and the
+     * twist is genuinely undefined; identity is returned for it (the whole
+     * rotation is then swing), which is the conservative answer for the one
+     * caller this exists for — a scanning hold is never a half-turn from
+     * upright.
+     */
+    fun twistAbout(axis: Vec3): Quat {
+        val a = axis.normalized()
+        val proj = x * a.x + y * a.y + z * a.z
+        val t = Quat(a.x * proj, a.y * proj, a.z * proj, w)
+        return if (t.norm < 1e-9) IDENTITY else t.normalized()
+    }
+
+    /** The swing half of [twistAbout]'s decomposition: `twist⁻¹ ∘ this`. */
+    fun swingAbout(axis: Vec3): Quat = (twistAbout(axis).conjugate() * this).normalized()
+
     companion object {
         val IDENTITY = Quat(0.0, 0.0, 0.0, 1.0)
 

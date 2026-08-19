@@ -71,8 +71,13 @@ class CaptureRound8FlowTest {
     }
 
     private fun trimOf(magnitudeDeg: Double, capturedAtMillis: Long): MountTrim {
+        // ROUND 20 (item 79): about the HORIZONTAL Z axis, not Y — a pure-yaw
+        // trim is exactly what the gravity-referenced decomposition now
+        // discards on load (yaw about gravity is unobservable from a hold), so
+        // a Y-axis fixture would normalise to 0 deg and stop testing what this
+        // file is about: persistence. A Z-axis trim survives verbatim.
         val q = com.lidarscan.core.calib.Quat.fromAxisAngle(
-            com.lidarscan.core.calib.Vec3(0.0, 1.0, 0.0),
+            com.lidarscan.core.calib.Vec3(0.0, 0.0, 1.0),
             Math.toRadians(magnitudeDeg),
         )
         return MountTrim(

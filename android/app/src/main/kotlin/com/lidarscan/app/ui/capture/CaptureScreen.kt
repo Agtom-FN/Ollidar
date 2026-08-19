@@ -344,6 +344,13 @@ fun CaptureRoute(
                     coverageAdviceProvider = {
                         coverageRendererHolder.get()?.coverageAdviceLine()
                     },
+                    // ROUND 20 item 82: the per-device lever arm the extrinsic's
+                    // translation comes from — user-editable in Settings.
+                    loadMountLeverArm = { container.settingsRepository.mountLeverArm() },
+                    // ROUND 20 items 80/82: the auto-level suggestion channel.
+                    persistAutoLevelSuggestion = { s ->
+                        container.settingsRepository.setMountAutoLevelSuggestion(s)
+                    },
                 )
             }
         },
@@ -429,6 +436,10 @@ fun CaptureRoute(
     val captureState by viewModel.captureState.collectAsStateWithLifecycle()
     // ROUND 17 item 64.
     val starting by viewModel.starting.collectAsStateWithLifecycle()
+    // ROUND 20 item 78: the hold-steady stage.
+    val startHold by viewModel.startHold.collectAsStateWithLifecycle()
+    // ROUND 20 item 83: the New-capture confirm.
+    val showNewCaptureConfirm by viewModel.showNewCaptureConfirm.collectAsStateWithLifecycle()
     // ROUND 17 item 66: Developer Mode's answer, kept current on the one object
     // that acts on it. Collected here rather than passed into the ViewModel
     // because the flag has to be right at Start, and Start can happen long
@@ -674,6 +685,11 @@ fun CaptureRoute(
         brightness = brightness,
         isReplaySession = viewModel.isReplaySession,
         starting = starting,
+        startHold = startHold,
+        showNewCaptureConfirm = showNewCaptureConfirm,
+        onNewCapture = viewModel::requestNewCapture,
+        onConfirmNewCapture = viewModel::confirmNewCapture,
+        onDismissNewCaptureConfirm = viewModel::dismissNewCaptureConfirm,
         arAvailable = viewModel.arAvailable,
         arTracking = arStatus?.tracking == true,
         arSessionRunning = arStatus?.sessionRunning == true,
@@ -847,6 +863,13 @@ fun CaptureScreen(
     isReplaySession: Boolean,
     /** ROUND 17 item 64: a Start is in flight — see TransportRow's `starting`. */
     starting: Boolean = false,
+    /** ROUND 20 item 78: the Start hold-steady stage's banner state, or null. */
+    startHold: CaptureViewModel.StartHoldState? = null,
+    /** ROUND 20 item 83: the New-capture confirm dialog (a capture is live). */
+    showNewCaptureConfirm: Boolean = false,
+    onNewCapture: () -> Unit = {},
+    onConfirmNewCapture: () -> Unit = {},
+    onDismissNewCaptureConfirm: () -> Unit = {},
     arAvailable: Boolean,
     arTracking: Boolean,
     arSessionRunning: Boolean,
@@ -1141,6 +1164,12 @@ fun CaptureScreen(
                     // protect a viewport that is showing nothing worth protecting
                     // would be the wrong trade in both directions.
                     val loudBanners: @Composable () -> Unit = {
+                        // ROUND 20 item 78: the hold-steady stage. First in the
+                        // band — while it is up it IS the instruction, and the
+                        // GO cue that replaces it is the moment the walk begins.
+                        if (startHold != null) {
+                            HoldSteadyBanner(state = startHold)
+                        }
                         if (saveError != null) {
                             SaveErrorBanner(saveError, onDismissSaveError)
                         }
@@ -1320,6 +1349,7 @@ fun CaptureScreen(
                             onOpenCapture = { sheet = CaptureSheet.CAPTURE },
                             onOpenDisplay = { sheet = CaptureSheet.SETTINGS },
                             onOpenDiagnostics = { sheet = CaptureSheet.DIAGNOSTICS },
+                            onNewCapture = onNewCapture.takeUnless { isReplaySession },
                         )
                     }
 
@@ -1371,6 +1401,7 @@ fun CaptureScreen(
                             onOpenCapture = {},
                             onOpenDisplay = { sheet = CaptureSheet.SETTINGS },
                             onOpenDiagnostics = { sheet = CaptureSheet.DIAGNOSTICS },
+                            onNewCapture = onNewCapture.takeUnless { isReplaySession },
                         )
                     }
 
@@ -1436,6 +1467,35 @@ fun CaptureScreen(
     // Not part of the `when (sheet)` family below: it is not operator-opened
     // chrome, it is the intercepted Start press, and it must never be closed
     // by the same state the settings sheet uses.
+    // ── ROUND 20 item 83: New-capture's one dialog — only over a LIVE capture.
+    if (showNewCaptureConfirm) {
+        AlertDialog(
+            shape = RoundedCornerShape(ScanDims.DialogRadius),
+            onDismissRequest = onDismissNewCaptureConfirm,
+            title = { Text("A capture is running") },
+            text = {
+                Text(
+                    "Starting fresh will stop and save the current recording first — " +
+                        "nothing already captured is lost. The mount reference and other " +
+                        "device calibration are kept; scan settings go back to defaults.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = onConfirmNewCapture,
+                    modifier = Modifier.testTag("newCaptureConfirm"),
+                ) { Text("Stop and start fresh") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = onDismissNewCaptureConfirm,
+                    modifier = Modifier.testTag("newCaptureDismiss"),
+                ) { Text("Keep recording") }
+            },
+            modifier = Modifier.testTag("newCaptureConfirmDialog"),
+        )
+    }
+
     if (showPreScanChecklist) {
         PreScanChecklistSheet(
             mountTrim = mountTrim,
@@ -1751,6 +1811,8 @@ private fun CaptureChipRow(
     onOpenCapture: () -> Unit,
     onOpenDisplay: () -> Unit,
     onOpenDiagnostics: () -> Unit,
+    /** ROUND 20 item 83: non-null shows the New-capture chip (owner-requested). */
+    onNewCapture: (() -> Unit)? = null,
 ) {
     Row(
         Modifier
@@ -1771,6 +1833,18 @@ private fun CaptureChipRow(
         }
         SheetChip(label = "Display", readout = null, testTag = "displaySheetChip", onClick = onOpenDisplay)
         SheetChip(label = "Diag", readout = null, testTag = "diagnosticsSheetChip", onClick = onOpenDiagnostics)
+        // ROUND 20 item 83 — "add a new-capture button to clear all settings
+        // and refresh for a new scan with new settings". Per-scan state and
+        // per-scan choices reset; device facts (mount profile, DND, developer
+        // prefs) deliberately survive — see CaptureViewModel.performNewCapture.
+        if (onNewCapture != null) {
+            SheetChip(
+                label = "New capture",
+                readout = null,
+                testTag = "newCaptureChip",
+                onClick = onNewCapture,
+            )
+        }
         if (poseChipVisible && poseState != PoseTrackingState.NOT_REQUIRED) {
             ScanChip(
                 text = poseState.chipLabel,
@@ -1849,6 +1923,58 @@ private fun SaveErrorBanner(message: String, onDismiss: () -> Unit) =
  * are the two failures that used to be silent, and silence is what cost the
  * owner two field sessions.
  */
+/**
+ * ROUND 20 (item 78) — the hold-steady stage's banner: the instruction while
+ * the trim converges, the live steadiness read-out, and the GO moment. Not
+ * dismissible (it IS the start flow), never a modal (round 5's rule), and it
+ * clears itself — GO lingers [CaptureViewModel.START_HOLD_GO_LINGER_MS] into
+ * the walk and vanishes.
+ */
+@Composable
+private fun HoldSteadyBanner(state: CaptureViewModel.StartHoldState) {
+    val accent = if (state.go) SemGood else ScanTeal
+    val shape = RoundedCornerShape(ScanDims.TileRadius)
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 6.dp)
+            .background(accent.copy(alpha = 0.14f), shape)
+            .border(1.dp, accent, shape)
+            .padding(12.dp)
+            .testTag("holdSteadyBanner"),
+    ) {
+        Text(
+            if (state.go) "GO — START WALKING" else "HOLD STILL — SETTING MOUNT REFERENCE",
+            style = MonoLabel,
+            color = accent,
+            modifier = Modifier.testTag(if (state.go) "holdSteadyGo" else "holdSteadyHolding"),
+        )
+        Spacer(Modifier.height(4.dp))
+        val p = state.progress
+        Text(
+            when {
+                state.go && state.fallbackNote != null -> state.fallbackNote
+                state.go -> "Mount reference set in this scan's own frame — recording."
+                p == null -> "Hold the phone still in your scanning pose…"
+                !p.gatePasses && p.holdMillis < 300L -> "Hold the phone still in your scanning pose…"
+                !p.gatePasses -> "Too much movement — brace the phone and hold…"
+                p.stabilityDeg >= 0.0 -> "Steady… %.1f° and improving. Keep holding.".format(p.stabilityDeg)
+                else -> "Steady… keep holding."
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        if (!state.go && p != null) {
+            Spacer(Modifier.height(6.dp))
+            androidx.compose.material3.LinearProgressIndicator(
+                progress = { p.fraction },
+                modifier = Modifier.fillMaxWidth().testTag("holdSteadyProgress"),
+                color = accent,
+            )
+        }
+    }
+}
+
 @Composable
 private fun LoudBanner(
     title: String,

@@ -359,6 +359,92 @@ object CameraFromImu {
             why = "rear camera, SENSOR_ORIENTATION=$normalized deg -> Rz(+$normalized) about the shared +Z",
         )
     }
+
+    // ── ROUND 20 (item 81): the FACTORY calibration ──────────────────────────
+    //
+    // `CameraCharacteristics.LENS_POSE_ROTATION` is a per-unit, factory-solved
+    // 6-DoF camera pose — the real answer to the question the coarse Rz(θ)
+    // guess above approximates from SENSOR_ORIENTATION alone. Two conventions
+    // stand between it and the densifier's `camera_from_imu`:
+    //
+    //  1. **The frame flip.** Camera2's camera-aligned frame has +Y down the
+    //     image and +Z toward the scene; ARCore's physical camera frame has +Y
+    //     up the image and looks along −Z. The two differ by Rx(180 deg),
+    //     [CAMERA2_TO_ARCORE] below.
+    //  2. **The direction of the quaternion.** The platform documentation's
+    //     wording on whether LENS_POSE_ROTATION maps camera→reference or
+    //     reference→camera has been read both ways by real vendors, so this
+    //     does not gamble: both readings are computed, and the one that agrees
+    //     with the SENSOR_ORIENTATION-derived coarse rotation (which IS
+    //     trustworthy about the ~90 deg gross layout) within
+    //     [MAX_FACTORY_DISAGREEMENT_DEG] wins. The factory value then
+    //     contributes exactly what the coarse one cannot: the sub-degree
+    //     per-unit deviation from the ideal right angle.
+    //
+    // If NEITHER reading agrees (a convention this derivation does not cover),
+    // or the tag is absent (emulators), the coarse rotation is used and the
+    // `why` says so loudly — a fallback, never a silent guess.
+
+    /** Rx(180 deg): Camera2's camera-aligned frame -> ARCore's physical camera frame. */
+    val CAMERA2_TO_ARCORE = Quat(1.0, 0.0, 0.0, 0.0)
+
+    /** Past this the factory quaternion is a convention mismatch, not a calibration. */
+    const val MAX_FACTORY_DISAGREEMENT_DEG = 30.0
+
+    /**
+     * The extrinsic to push, preferring the factory LENS_POSE_ROTATION when it
+     * is present AND consistent with the coarse convention. [lensPoseRotationXyzw]
+     * is the tag verbatim, `(x, y, z, w)`, or null when the device lacks it.
+     */
+    fun resolveWithFactory(
+        lensPoseRotationXyzw: DoubleArray?,
+        sensorOrientationDeg: Int?,
+        frontFacing: Boolean,
+    ): CameraFromImuExtrinsics {
+        val coarse = resolve(sensorOrientationDeg, frontFacing)
+        if (frontFacing) return coarse
+        val raw = lensPoseRotationXyzw
+        if (raw == null || raw.size != 4 || raw.any { !it.isFinite() }) return coarse
+        val lens = Quat(raw[0], raw[1], raw[2], raw[3])
+        if (lens.norm < 1e-6) return coarse
+        val q = lens.normalized()
+        // Reading A: the tag maps camera -> reference, so reference -> camera
+        // is its conjugate. Reading B: the tag already maps reference -> camera.
+        val candidateA = (CAMERA2_TO_ARCORE * q.conjugate()).normalized()
+        val candidateB = (CAMERA2_TO_ARCORE * q).normalized()
+        if (!coarse.derived) {
+            // No SENSOR_ORIENTATION to adjudicate with — take the documented
+            // reading (A) and say the assumption out loud.
+            return CameraFromImuExtrinsics(
+                candidateA,
+                derived = true,
+                why = "factory LENS_POSE_ROTATION (camera->reference reading, unverified: " +
+                    "SENSOR_ORIENTATION unavailable to cross-check)",
+            )
+        }
+        val devA = Math.toDegrees(coarse.quat.angleTo(candidateA))
+        val devB = Math.toDegrees(coarse.quat.angleTo(candidateB))
+        val pick = when {
+            devA <= MAX_FACTORY_DISAGREEMENT_DEG && devA <= devB -> candidateA to devA
+            devB <= MAX_FACTORY_DISAGREEMENT_DEG -> candidateB to devB
+            else -> null
+        }
+        if (pick == null) {
+            return CameraFromImuExtrinsics(
+                coarse.quat,
+                derived = coarse.derived,
+                why = "factory LENS_POSE_ROTATION disagrees with the SENSOR_ORIENTATION " +
+                    "convention by %.1f/%.1f deg under both readings — convention mismatch, ".format(devA, devB) +
+                    "falling back to the coarse rotation (${coarse.why})",
+            )
+        }
+        return CameraFromImuExtrinsics(
+            pick.first,
+            derived = true,
+            why = "factory LENS_POSE_ROTATION, %.2f deg from the coarse Rz(%d) — per-unit calibration in force"
+                .format(pick.second, ((sensorOrientationDeg ?: 0) % 360 + 360) % 360),
+        )
+    }
 }
 
 /**

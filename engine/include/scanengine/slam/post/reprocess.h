@@ -33,6 +33,7 @@
 
 #include "scanengine/cloud/point_page.h"
 #include "scanengine/core/error.h"
+#include "scanengine/slam/post/auto_level.h"
 #include "scanengine/slam/post/gap_rescue.h"
 #include "scanengine/slam/post/map_consistency.h"
 #include "scanengine/slam/post/loop_end.h"
@@ -73,6 +74,16 @@ struct ReprocessOptions {
   // result per gap. The LIVE default (PushbroomConfig::exclude_flagged) is
   // untouched — this is offline-first, by design.
   bool recover_gap_points = true;
+  // ROUND 20 item 80. ON by default under the same argument as the three
+  // switches above: this is the one pipeline allowed to move points the live
+  // pass could not, residual mount tilt is now the largest measured error in
+  // the owner's archived captures (floor vs gravity 3.61 deg on scan-054,
+  // 6.30 deg on 055), and the module refuses itself on named gates — no-floor,
+  // thin-floor, already-level, tilt-too-big, no-improvement — with ROUND 12's
+  // ruler voting last exactly as it does for the rescue. Pitch/roll only; a
+  // floor cannot witness yaw and none is ever invented. See auto_level.h.
+  bool auto_level = true;
+  AutoLevelConfig level{};
   bool densify_with_phone_imu = true;
   SectionStitchConfig sections{};
   // Written even when nothing was stitched, so the sidecar always says what
@@ -127,6 +138,11 @@ struct ReprocessReport {
   // ROUND 19 item 74: per-gap recovery accounting and the admitted total.
   std::vector<GapRecovery> recoveries;
   std::uint64_t recovered_points = 0;
+  // ROUND 20 item 80: what auto-level measured and decided, ALWAYS — refusals
+  // included, each naming its gate. `auto_level_applied` is the one bit that
+  // says whether the points in the written map were moved.
+  AutoLevelReport auto_level{};
+  bool auto_level_applied = false;
   // ROUND 19: the yield audit for this run.
   YieldAudit yield{};
   // ROUND 16 item 59: `processed/trajectory.bin` was written — the corrected

@@ -123,6 +123,14 @@ data class MountTrim(
      * Negative means "not measured" (too few samples, or a pre-0.7.1 trim).
      */
     val stabilityDeg: Double = -1.0,
+    /**
+     * ROUND 20 (item 79) — true when this trim was taken through the
+     * swing–twist decomposition, i.e. its about-gravity yaw was DISCARDED
+     * rather than baked in. False for every trim persisted by 0.9.4 and
+     * earlier (`kotlinx.serialization` fills the default for the absent
+     * field), which is exactly the signal [yawNormalized] keys on.
+     */
+    val gravityReferenced: Boolean = false,
 ) {
     val rotation: Quat get() = Quat(qx, qy, qz, qw).normalized()
 
@@ -175,6 +183,32 @@ data class MountTrim(
         m[7] = t.y
         m[11] = t.z
         return Mat4(m)
+    }
+
+    /**
+     * ROUND 20 (item 79) — re-derives this trim with its about-gravity yaw
+     * discarded. A no-op (returns `this`) for a trim that is already
+     * gravity-referenced.
+     *
+     * The arithmetic is exact: the stored trim is `q_hold⁻¹`, so the hold it
+     * was taken from is `rotation.conjugate()`, and running that hold back
+     * through [fromHoldOrientation] applies the round-20 decomposition to a
+     * trim persisted by an older version. Every other field is preserved —
+     * the spread and stability describe the hold's steadiness, which the
+     * decomposition does not change.
+     */
+    fun yawNormalized(): MountTrim = if (gravityReferenced) {
+        this
+    } else {
+        fromHoldOrientation(
+            hold = rotation.conjugate(),
+            sensor = sensor,
+            capturedAtEpochMillis = capturedAtEpochMillis,
+            sampleCount = sampleCount,
+            spreadDeg = spreadDeg,
+            spreadP90Deg = spreadP90Deg,
+            stabilityDeg = stabilityDeg,
+        )
     }
 
     /** Age in milliseconds at [nowMillis]; a trim from a previous session is worth re-taking. */
@@ -351,9 +385,46 @@ data class MountTrim(
          */
         const val UNMEASURED_RANK_BASE = 100.0
 
+        /** ARCore's world up (+Y). The one axis the decomposition below is about. */
+        val WORLD_UP = Vec3(0.0, 1.0, 0.0)
+
         /**
          * The trim for a rig whose phone attitude reads [hold] while it is held
-         * in its scanning pose. See the class header for the derivation.
+         * in its scanning pose. See the class header for the derivation of the
+         * `q_hold⁻¹` form; ROUND 20 (item 79) changed WHAT of the hold is kept:
+         *
+         * ## Observable vs assumed — the item-79 decomposition
+         *
+         * A static hold against gravity observes exactly two degrees of
+         * freedom: the phone's **tilt** (pitch/roll vs the gravity vector,
+         * which ARCore's world +Y is aligned to by construction). The third —
+         * the hold's **yaw about gravity** — is not a measurement of anything:
+         * it is the angle between wherever the operator happened to face and
+         * wherever the ARCore session's yaw origin happened to be, and since
+         * every Start rebuilds the session (round 14), a trim taken before
+         * Start referenced a DEAD yaw origin. ROUND 20 measured the damage on
+         * the owner's scans 054/056: two trims 3.5 minutes apart differed by
+         * 23.19 deg, of which 51.6 and 21.1 deg respectively (vs the scan's
+         * own frame) was pure yaw junk; yaw-normalised, the same two trims are
+         * 12.5 deg apart — all of it genuine hold-tilt difference.
+         *
+         * So the hold is swing–twist decomposed about world +Y
+         * (`hold = twist ∘ swing`), the twist (yaw) is **discarded**, and the
+         * trim is `swing⁻¹`:
+         *
+         *  * **kept (measured)**: the swing — the phone's full attitude with
+         *    its about-gravity component removed. For an upright portrait hold
+         *    this contains the Rz(90 deg)-class working rotation every healthy
+         *    trim has always carried (the camera sensor sits landscape in a
+         *    portrait phone), plus the mount/hand tilt, which is the signal.
+         *  * **discarded (unobservable)**: the twist. The mount's yaw about
+         *    gravity therefore stays at the NOMINAL convention — 0-degree mark
+         *    up, cap facing the walk — which is the documented rig convention
+         *    (owner-confirmed, round 9) and the only honest default.
+         *
+         * The invariant a test can hold: a gravity-referenced trim's
+         * quaternion has **zero y-component** (the swing of a Y-decomposition
+         * has none), and re-normalising it is a no-op.
          */
         fun fromHoldOrientation(
             hold: Quat,
@@ -364,7 +435,8 @@ data class MountTrim(
             spreadP90Deg: Double = 0.0,
             stabilityDeg: Double = -1.0,
         ): MountTrim {
-            val q = (hold.normalized().conjugate() * REFERENCE_HOLD).normalized()
+            val swing = hold.normalized().swingAbout(WORLD_UP)
+            val q = (swing.conjugate() * REFERENCE_HOLD).normalized()
             return MountTrim(
                 qx = q.x, qy = q.y, qz = q.z, qw = q.w,
                 sensor = sensor,
@@ -373,6 +445,7 @@ data class MountTrim(
                 spreadDeg = spreadDeg,
                 spreadP90Deg = spreadP90Deg,
                 stabilityDeg = stabilityDeg,
+                gravityReferenced = true,
             )
         }
     }

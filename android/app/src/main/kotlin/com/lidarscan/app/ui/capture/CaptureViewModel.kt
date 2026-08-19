@@ -377,6 +377,22 @@ class CaptureViewModel(
      * says nothing, which is the round-13 cue budget applied to text.
      */
     private val coverageAdviceProvider: () -> String? = { null },
+    /**
+     * ROUND 20 (item 82) — the per-device mount lever arm the extrinsic's
+     * translation comes from, replacing the hard-coded CAD placeholder. A
+     * suspend supplier read once at construction (and re-read by Settings'
+     * own screen), defaulting to the shipped values so every existing test
+     * and rig sees the round-19 numbers unchanged.
+     */
+    private val loadMountLeverArm: suspend () -> com.lidarscan.core.calib.MountLeverArm = {
+        com.lidarscan.core.calib.MountLeverArm.DEFAULT
+    },
+    /**
+     * ROUND 20 (items 80/82) — records an auto-level SUGGESTION onto the
+     * device's mount profile, with provenance ("estimated from scan-XXX").
+     * Never applied to the trim itself; Settings shows it beside the profile.
+     */
+    private val persistAutoLevelSuggestion: suspend (String) -> Unit = {},
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<CaptureUiState>(CaptureUiState.Loading)
@@ -1507,6 +1523,16 @@ class CaptureViewModel(
      * for THIS scan, composed on top of `BracketNominals.cadNominal(COIN_D6)`.
      * Null until the operator taps "Set mount reference".
      */
+    /**
+     * ROUND 20 (item 82) — the lever arm in force. Replaces the CAD
+     * placeholder's translation for a D6; loaded at construction, refreshed by
+     * Settings through process restart (device facts change rarely).
+     */
+    private val _mountLeverArm =
+        MutableStateFlow(com.lidarscan.core.calib.MountLeverArm.DEFAULT)
+    val mountLeverArm: StateFlow<com.lidarscan.core.calib.MountLeverArm> =
+        _mountLeverArm.asStateFlow()
+
     private val _storedMountTrim = MutableStateFlow<com.lidarscan.core.calib.StoredMountTrim?>(null)
 
     /**
@@ -1632,6 +1658,36 @@ class CaptureViewModel(
     private var startGateJob: kotlinx.coroutines.Job? = null
     private var startPending = false
 
+    // ── ROUND 20 item 78: the auto re-zero at capture start ─────────────────
+    //
+    // The round-20 adjudication's root cause: a trim is `q_hold⁻¹` against the
+    // ARCore session's own yaw origin, and every Start REBUILDS that session
+    // (round 14) — so a trim taken before Start referenced a dead frame, and
+    // two trims 3.5 minutes apart differed 23.19 deg on the owner's rig. The
+    // fix is structural: take the trim AFTER the reset, inside the scan's own
+    // world frame, as a hold-steady stage between the round-12 tracking gate
+    // and the recording. The same stage absorbs the tracker's re-acquisition,
+    // which is the known cause of the every-capture start loss.
+
+    /** What the hold-steady banner renders on each tick. */
+    data class StartHoldState(
+        /** The refiner's live verdict — the same gate a manual re-zero uses. */
+        val progress: com.lidarscan.core.calib.MountTrimRefiner.Progress?,
+        /** True from the moment the capture may begin: "GO — start walking". */
+        val go: Boolean = false,
+        /** Non-null when the stage timed out and fell back to the persisted trim. */
+        val fallbackNote: String? = null,
+    )
+
+    private val _startHold = MutableStateFlow<StartHoldState?>(null)
+
+    /** Non-null while the hold-steady stage (or its GO linger) is on screen. */
+    val startHold: StateFlow<StartHoldState?> = _startHold.asStateFlow()
+
+    private var startHoldJob: kotlinx.coroutines.Job? = null
+    private var startHoldGoClearJob: kotlinx.coroutines.Job? = null
+    private var holdPending = false
+
     /**
      * ROUND 17 item 64 — **Start is one press, however many times it is
      * pressed.**
@@ -1706,8 +1762,12 @@ class CaptureViewModel(
     /** ROUND 17 item 64: released on every exit from the start sequence. */
     private fun releaseStart() {
         startPending = false
+        holdPending = false
         _starting.value = false
         _startWarmup.value = null
+        // ROUND 20 item 78: a start that failed clears its hold banner; a GO
+        // banner lingers into the walk and is cleared by its own delayed job.
+        if (_startHold.value?.go != true) _startHold.value = null
         startInFlight.set(false)
     }
 
@@ -2231,6 +2291,16 @@ class CaptureViewModel(
             _preScanChecklistEnabled.value = !preScanChecklistDismissed()
         }
 
+        // ── ROUND 20 item 82: the per-device lever arm, before any Start can
+        // reach applyMountExtrinsic (same ordering rule as the trim below).
+        viewModelScope.launch {
+            val arm = runCatching { loadMountLeverArm() }.getOrNull()
+            if (arm != null) {
+                _mountLeverArm.value = arm
+                if (!arm.isDefault) logEvent(LOG_TAG_PUSHBROOM, "lever arm loaded: ${arm.logSuffix}")
+            }
+        }
+
         // ROUND 7 (field bug 1): restore the mount re-zero FIRST, before any
         // project loads and long before a Start can reach applyMountExtrinsic.
         //
@@ -2241,7 +2311,29 @@ class CaptureViewModel(
         // tab's own NavBackStackEntry. Looking at the scan you just took was
         // enough to throw away 132 degrees of mount rotation, silently.
         viewModelScope.launch {
-            val stored = runCatching { loadStoredMountTrim() }.getOrNull()
+            val loaded = runCatching { loadStoredMountTrim() }.getOrNull()
+            // ROUND 20 (item 79): a trim persisted by 0.9.4 or earlier carries
+            // the hold's about-gravity yaw — junk against a dead session
+            // origin. Yaw-normalise it once, persist the normalised form, and
+            // say so in the log. Exact arithmetic, see MountTrim.yawNormalized.
+            val stored = if (loaded != null && !loaded.trim.gravityReferenced) {
+                val migrated = loaded.copy(trim = loaded.trim.yawNormalized())
+                logEvent(
+                    LOG_TAG_AR,
+                    ("mount trim yaw-normalised on load (round 20): a pre-0.9.5 trim carried " +
+                        "the hold's yaw against a dead session origin — %.2fdeg -> %.2fdeg, " +
+                        "yaw discarded=%.2fdeg")
+                        .format(
+                            loaded.trim.magnitudeDeg,
+                            migrated.trim.magnitudeDeg,
+                            Math.toDegrees(loaded.trim.rotation.angleTo(migrated.trim.rotation)),
+                        ),
+                )
+                runCatching { persistMountTrim(migrated) }
+                migrated
+            } else {
+                loaded
+            }
             if (stored != null) _storedMountTrim.value = stored
             refreshMountTrimProvenance()
             if (stored != null) {
@@ -2809,10 +2901,13 @@ class CaptureViewModel(
                                 "no positions and there will be no room in the file. Stop, close " +
                                 "the app and reopen it, then try again."
                         } else {
+                            // ROUND 20: reworded to the measured causes (round
+                            // 18's diet) — light is never blamed.
                             "Tracking had not settled after " +
                                 "${com.lidarscan.core.capture.TrackingWarmup.MAX_WAIT_MILLIS / 1000}s — " +
                                 "starting anyway. The first seconds of this scan may be in a " +
-                                "different frame; more light and more texture help."
+                                "different frame; point the camera at furniture and edges an " +
+                                "arm's length or more away."
                         }
                         _mountTrimNoteIsWarning.value = true
                     }
@@ -2826,6 +2921,28 @@ class CaptureViewModel(
         // The gate is behind us; the atomic stays claimed until the sequence
         // resolves (ROUND 17 item 64), but `startPending` has done its job.
         startPending = false
+
+        // ── ROUND 20 item 78: hold steady — the trim is taken HERE, in the ──
+        // scan's own world frame, after the reset and the tracking gate. Same
+        // latch pattern as the gate above: the stage's own re-entry arrives
+        // with `holdPending` set and walks straight through. Replay sessions
+        // and rigs with no AR controller skip it (there is nothing to hold),
+        // and a Mid-360 does not run a pushbroom trim at all.
+        if (!holdPending) {
+            val controller = arController
+            if (controller != null && !isReplay &&
+                _sensor.value == com.lidarscan.core.model.SensorType.COIN_D6
+            ) {
+                holdPending = true
+                startHoldJob?.cancel()
+                startHoldJob = viewModelScope.launch {
+                    runStartHoldStage(controller)
+                    startCapture(skipChecklist = true)
+                }
+                return
+            }
+        }
+        holdPending = false
 
         // ── ROUND 14 (owner item 53): do not record zero bytes. ─────────────
         //
@@ -3031,8 +3148,130 @@ class CaptureViewModel(
             // inside startArPipelines (ROUND 8 item 30d's lesson) even though
             // what it densifies is ARCore's pose stream.
             startPhoneImu()
+            // ROUND 20 (item 81): the factory camera↔IMU tags into the
+            // manifest, add-only, with the source the densifier actually ran
+            // on — so a bundle says which rotation resolved its points.
+            recordFactoryLensPose(project)
             startArPipelines(project)
             startPhoneGeorefIfNeeded(project)
+        }
+    }
+
+    /** ROUND 20 (item 81). Nothing recorded on a device with neither tag nor probe. */
+    private fun recordFactoryLensPose(project: Project) {
+        if (isReplay) return
+        val probe = arController?.status?.value?.cameraProbe ?: return
+        val extrinsics = probe.cameraFromImu
+        if (probe.lensPoseRotationXyzw == null && probe.sensorOrientationDeg == null) return
+        val pose = com.lidarscan.core.model.FactoryLensPose(
+            rotationXyzw = probe.lensPoseRotationXyzw?.toList(),
+            translationM = probe.lensPoseTranslationM?.toList(),
+            reference = probe.lensPoseReference,
+            intrinsicCalibration = probe.lensIntrinsicCalibration?.toList(),
+            sensorOrientationDeg = probe.sensorOrientationDeg,
+            densifierSource = if (extrinsics.derived && extrinsics.why.startsWith("factory")) {
+                "factory"
+            } else {
+                "coarse"
+            },
+        )
+        viewModelScope.launch(Dispatchers.IO) {
+            projectStore.updateManifest(project.id) { it.copy(factoryLensPose = pose) }
+        }
+    }
+
+    /**
+     * ROUND 20 (item 78) — the hold-steady stage's body: poll the pose window
+     * with the ROUND-11 refiner (the same gates a manual re-zero clears — ~30
+     * samples, p90 ≤ 2.5°, split-half stability against the 0.8° goal) until
+     * it converges, restarting the anchor with gentle feedback whenever the
+     * rig moves; a [START_HOLD_TIMEOUT_MS] budget falls back to the persisted
+     * trim with an honest note. NEVER fails the capture — the exit is always
+     * "GO", the only question is which trim the walk runs on.
+     */
+    private suspend fun runStartHoldStage(controller: com.lidarscan.app.ar.CaptureArController) {
+        val startedAt = clock()
+        val deadline = startedAt + START_HOLD_TIMEOUT_MS
+        var anchorNs = controller.poseWindow().lastOrNull()?.tMonoNs ?: 0L
+        var captured: com.lidarscan.core.calib.MountTrimResult.Captured? = null
+        _startHold.value = StartHoldState(progress = null)
+        logEvent(LOG_TAG_AR, "start hold: waiting for a steady hold in this scan's own frame")
+        while (clock() < deadline) {
+            val window = controller.poseWindow()
+            val newest = window.lastOrNull()?.tMonoNs
+            if (newest != null && anchorNs == 0L) anchorNs = newest
+            val progress = refiner.evaluate(window, anchorNs)
+            // Movement RESTARTS the sampling — the ring empties and refills;
+            // nothing is refused and nothing fails. Same rule as the manual
+            // hold: the operator learns "still" with their hands.
+            if (!progress.gatePasses && progress.holdMillis > 250L && newest != null) {
+                anchorNs = newest
+            }
+            _startHold.value = StartHoldState(progress = progress)
+            if (progress.done) {
+                val result = refiner.capture(
+                    samples = window,
+                    holdStartedAtMonoNs = anchorNs,
+                    nowMillis = clock(),
+                    sensor = _sensor.value,
+                )
+                if (result is com.lidarscan.core.calib.MountTrimResult.Captured) {
+                    captured = result
+                    break
+                }
+            }
+            kotlinx.coroutines.delay(MOUNT_HOLD_TICK_MS)
+        }
+        var fallbackNote: String? = null
+        if (captured != null) {
+            // Persist + apply through the one shared tail — the trim is
+            // gravity-referenced (item 79) and taken AFTER the world-frame
+            // reset, so both halves of the round-20 bug are dead here.
+            applyMountTrimResult(captured)
+            logEvent(
+                LOG_TAG_AR,
+                ("start hold: trim captured in the scan's own frame after %d ms — " +
+                    "magnitude=%.2fdeg stability=%s samples=%d")
+                    .format(
+                        clock() - startedAt,
+                        captured.trim.magnitudeDeg,
+                        captured.trim.accuracyDeg?.let { "%.2fdeg".format(it) } ?: "unmeasured",
+                        captured.trim.sampleCount,
+                    ),
+            )
+        } else {
+            val provenance = _mountTrimProvenance.value
+            fallbackNote = if (provenance.trim != null) {
+                "Couldn't get a steady hold in ${START_HOLD_TIMEOUT_MS / 1000} s — scanning on " +
+                    "the mount reference from ${provenance.ageLabel}."
+            } else {
+                "Couldn't get a steady hold in ${START_HOLD_TIMEOUT_MS / 1000} s and no saved " +
+                    "mount reference exists — scanning on the bracket defaults. Hold still and " +
+                    "re-zero when you can."
+            }
+            _mountTrimNote.value = fallbackNote
+            _mountTrimNoteIsWarning.value = true
+            logEvent(
+                LOG_TAG_AR,
+                "start hold: TIMED OUT after ${START_HOLD_TIMEOUT_MS} ms — falling back to the " +
+                    "persisted trim (${provenance.logSuffix})",
+            )
+        }
+        // GO — start walking. Visual always; one light haptic tick when cues
+        // are on (played directly, never through the scheduler — see
+        // CueKind.GO_START for why it has no debounce row).
+        _startHold.value = StartHoldState(
+            progress = _startHold.value?.progress,
+            go = true,
+            fallbackNote = fallbackNote,
+        )
+        if (runCatching { cuesEnabled() }.getOrDefault(true)) {
+            playCue(com.lidarscan.core.capture.CueKind.GO_START)
+        }
+        startHoldGoClearJob?.cancel()
+        startHoldGoClearJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(START_HOLD_GO_LINGER_MS)
+            if (_startHold.value?.go == true) _startHold.value = null
         }
     }
 
@@ -3325,7 +3564,18 @@ class CaptureViewModel(
         val measuredMatrix = measured
             ?.let { com.lidarscan.core.calib.Mat4(it.cameraFromLidar.copyOf()) }
             ?.takeIf { it.isRigid(1e-4) }
+        // ROUND 20 (item 82): the CAD placeholder's translation is replaced by
+        // the per-device lever arm for a D6 — no hard-coded mount geometry in
+        // a public app. The defaults reproduce the old placeholder exactly.
+        val leverArm = _mountLeverArm.value
         val nominalMatrix = com.lidarscan.core.calib.BracketNominals.cadNominal(sensor)
+            .let { base ->
+                if (sensor == com.lidarscan.core.model.SensorType.COIN_D6) {
+                    leverArm.appliedTo(base)
+                } else {
+                    base
+                }
+            }
         val provenance = _mountTrimProvenance.value
         val trim = provenance.trim?.takeIf { it.sensor == sensor }
         val matrix = measuredMatrix
@@ -3333,7 +3583,8 @@ class CaptureViewModel(
             ?: nominalMatrix
         val usingNominal = measuredMatrix == null
         val source = if (usingNominal) "nominal" else "measured"
-        val trimSuffix = if (trim != null) provenance.logSuffix else "trim=none"
+        val trimSuffix = (if (trim != null) provenance.logSuffix else "trim=none") +
+            " " + leverArm.logSuffix
 
         if (handle == 0L) {
             _mountIsNominal.value = usingNominal
@@ -4113,6 +4364,23 @@ class CaptureViewModel(
             com.lidarscan.app.processing.StitchSidecar.yieldLine(directory)?.let { line ->
                 logDebugFor(directory, LOG_TAG_SEAL, line)
             }
+            // ROUND 20 items 80/82: the auto-level verdict into the bundle's
+            // log, and — ONLY when a correction was actually applied — a
+            // suggestion onto the mount profile, with explicit provenance.
+            // Never silently: the profile's rotation itself is untouched (the
+            // next Start's hold re-measures it in its own frame anyway).
+            com.lidarscan.app.processing.StitchSidecar.autoLevelLine(directory)?.let { line ->
+                logDebugFor(directory, LOG_TAG_SEAL, line)
+            }
+            com.lidarscan.app.processing.StitchSidecar.readAutoLevel(directory)?.let { a ->
+                if (a.applied) {
+                    val suggestion =
+                        "Auto-level estimated %.1f° of residual mount tilt from %s (floor %.1f° → %.1f°)."
+                            .format(a.correctionDeg, directory.name, a.tiltBeforeDeg, a.tiltAfterDeg)
+                    viewModelScope.launch { runCatching { persistAutoLevelSuggestion(suggestion) } }
+                    logEvent(LOG_TAG_PUSHBROOM, "mount profile suggestion recorded: $suggestion")
+                }
+            }
             endDebugLogFor(directory, "capture debug log closed — auto-process complete")
         }
     }
@@ -4124,6 +4392,100 @@ class CaptureViewModel(
         // running, and its result is on the project when Review opens it. What
         // is cleared is only the card.
         if (!_autoProcess.value.running) _autoProcess.value = AutoProcessState()
+    }
+
+    // ── ROUND 20 item 83: the New-capture button (owner-requested) ──────────
+    //
+    // "add a new-capture button to clear all settings and refresh for a new
+    // scan with new settings." What "all settings" sensibly means, enumerated:
+    //
+    //   CLEARED (per-scan state and per-scan choices):
+    //     stats, both summary cards, verdicts, save errors, notes and
+    //     trim-age warnings, section counters, the trail, the live viewport,
+    //     the performance preset (back to this device tier's default) and the
+    //     display block (back to capture defaults — the owner's "new
+    //     settings"; the reset is persisted, exactly as if the sliders were
+    //     moved by hand).
+    //
+    //   KEPT (device facts — wiping them would un-fix items 78/79/82):
+    //     the mount trim and lever arm, sensor latency, DND choice, cue
+    //     preference, developer settings, the scan series counter.
+    //
+    // A confirm dialog appears only while a capture is live (or a Start is in
+    // flight) — otherwise nothing on this tab is unsaved, because record-
+    // always sealed everything at Stop.
+    private val _showNewCaptureConfirm = MutableStateFlow(false)
+    val showNewCaptureConfirm: StateFlow<Boolean> = _showNewCaptureConfirm.asStateFlow()
+
+    fun requestNewCapture() {
+        val state = captureState.value
+        val live = state == com.lidarscan.core.engine.CaptureState.RECORDING ||
+            state == com.lidarscan.core.engine.CaptureState.PAUSED
+        if (live || _starting.value) {
+            _showNewCaptureConfirm.value = true
+            return
+        }
+        performNewCapture()
+    }
+
+    /** The confirm dialog's "Stop and start fresh": seal the running capture first, then reset. */
+    fun confirmNewCapture() {
+        _showNewCaptureConfirm.value = false
+        viewModelScope.launch {
+            stopCapture().join()
+            performNewCapture()
+        }
+    }
+
+    fun dismissNewCaptureConfirm() {
+        _showNewCaptureConfirm.value = false
+    }
+
+    private fun performNewCapture() {
+        logEvent(LOG_TAG_SESSION, "new capture: per-scan state cleared, settings back to defaults")
+        // Per-scan verdicts and notes.
+        _sessionSummary.value = null
+        _scanSummary.value = null
+        if (!_autoProcess.value.running) _autoProcess.value = AutoProcessState()
+        _saveError.value = null
+        _lastSavedProject.value = null
+        _liveMapFullNote.value = null
+        _mountTrimNote.value = null
+        _mountTrimNoteIsWarning.value = false
+        _presetChangeNote.value = null
+        _startHold.value = null
+        // Counters and the trail.
+        lastStatsSampleMillis = 0L
+        lastStatsSamplePoints = 0L
+        _stats.value = CaptureStats()
+        trailRecorder.clear()
+        arController?.let { controller ->
+            controller.resetSections()
+            _sectionCount.value = 1
+            _unhealedSectionBreaks.value = 0
+        }
+        // Settings back to defaults: the tier's preset (which rewrites the
+        // five tuning controls) and the display block's capture defaults.
+        setPreset(com.lidarscan.core.capture.PerformancePresets.DEFAULT)
+        val defaults = com.lidarscan.core.render.DisplayParams.captureDefaults()
+        _displayBase.value = defaults
+        _colorMode.value = defaults.colorMode
+        _colormap.value = defaults.intensity.colormap
+        _pointSizePx.value = defaults.pointSize.fixedPx
+        _gamma.value = defaults.intensity.gamma
+        _brightness.value = defaults.intensity.brightness
+        // The viewport, and a fresh auto-name so the tab reads as a new scan.
+        viewModelScope.launch {
+            clearLiveViewport()
+            if (!isReplay) {
+                _uiState.value = CaptureUiState.NewScan(
+                    autoName = com.lidarscan.core.capture.ScanAutoName.format(
+                        series = runCatching { peekSeriesNumber() }.getOrDefault(1),
+                        epochMillis = clock(),
+                    ),
+                )
+            }
+        }
     }
 
     fun setLiveSlam(enabled: Boolean) {
@@ -4307,6 +4669,18 @@ class CaptureViewModel(
 
         /** How long a hold that never gets still is allowed to keep polling. */
         const val MOUNT_HOLD_GIVE_UP_MS = 30_000L
+
+        /**
+         * ROUND 20 (item 78): the Start hold-steady stage's budget. Ten
+         * seconds — the refiner's own 8 s maxHold plus tap latency — after
+         * which the capture starts anyway on the persisted trim with an honest
+         * note. A Start that can be held hostage by a shaky hand would be
+         * worse than the wrong-frame bug it replaces.
+         */
+        const val START_HOLD_TIMEOUT_MS = 10_000L
+
+        /** How long the "GO — start walking" banner lingers into the walk. */
+        const val START_HOLD_GO_LINGER_MS = 2_500L
 
         /**
          * How long after the last motion-gated skip the hint stays up. Long enough

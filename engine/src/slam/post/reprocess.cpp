@@ -312,8 +312,26 @@ void write_sidecar(const std::string& path, const ReprocessReport& r) {
                  x.self_check_before_m, x.self_check_after_m, x.reason,
                  (i + 1 == r.recoveries.size()) ? "" : ",");
   }
+  // ROUND 20 item 80 — additive, like everything since round 18: the app's
+  // kotlinx parser ignores unknown keys, and a refusal's numbers are recorded
+  // with the same care as an applied correction's.
+  {
+    const AutoLevelReport& al = r.auto_level;
+    std::fprintf(f,
+                 "  ],\n"
+                 "  \"autoLevel\": {\"decision\": \"%s\", \"reason\": \"%s\", "
+                 "\"floorFound\": %s, \"floorInliers\": %llu, \"floorCoverageM2\": %.3f, "
+                 "\"tiltBeforeDeg\": %.4f, \"tiltAfterDeg\": %.4f, "
+                 "\"correctionDeg\": %.4f, \"iterations\": %d, "
+                 "\"selfCheckBeforeM\": %.6f, \"selfCheckAfterM\": %.6f, "
+                 "\"applied\": %s},\n",
+                 to_string(al.decision), al.reason, al.floor_found ? "true" : "false",
+                 static_cast<unsigned long long>(al.floor_inliers), al.floor_coverage_m2,
+                 al.tilt_before_deg, al.tilt_after_deg, al.correction_deg, al.iterations,
+                 al.self_check_before_m, al.self_check_after_m,
+                 r.auto_level_applied ? "true" : "false");
+  }
   std::fprintf(f,
-               "  ],\n"
                "  \"recoveredPoints\": %llu,\n"
                "  \"yield\": {\"samples\": %llu, \"noReturns\": %llu, "
                "\"outOfWindow\": %llu, \"noPose\": %llu, \"flaggedExcluded\": %llu, "
@@ -424,6 +442,18 @@ Status reprocess_d6_container(const std::string& lscan_dir, const ReprocessOptio
   // the answer to "why does this scan look wrong" that stitching cannot give.
   rep.mount = check_mount_consistency(traj, Span<const PointVertex>(pts.data(), pts.size()),
                                       Span<const std::int64_t>(ptimes.data(), ptimes.size()));
+
+  // ROUND 20 item 80. AFTER every trajectory-shaped correction (stitch,
+  // rescue, loop-end — all already inside the resolve) and BEFORE the final
+  // self-check, so the number on the summary card describes the cloud that
+  // was actually written. A refusal mutates nothing, so a refused container
+  // reprocesses to a byte-identical map. See auto_level.h.
+  if (opts.auto_level && !pts.empty()) {
+    AutoLevelConfig lcfg = opts.level;
+    lcfg.consistency = opts.consistency;
+    rep.auto_level = auto_level_floor(pts, ptimes, traj, lcfg);
+    rep.auto_level_applied = rep.auto_level.decision == AutoLevelDecision::kApplied;
+  }
 
   // ROUND 15 item 57. Measured on the STITCHED cloud, deliberately: that is
   // the cloud the operator is about to look at, and on a multi-section

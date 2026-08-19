@@ -136,10 +136,10 @@ int usage() {
       "\n"
       "  engine_cli --d6-selfcheck <lscan-dir> [--window S] [--cell M]\n"
       "  engine_cli --d6-reprocess <lscan-dir> [--no-refine] [--no-densify] [--no-loopend]\n"
-      "                            [--no-rescue] [--no-recover]\n"
+      "                            [--no-rescue] [--no-recover] [--no-autolevel]\n"
       "      The phone's own Process action, from a terminal: stitch, close the loop\n"
-      "      end, measure, and write processed/map_stitched.bin + stitch.json +\n"
-      "      trajectory.bin.\n"
+      "      end, auto-level the floor, measure, and write processed/map_stitched.bin\n"
+      "      + stitch.json + trajectory.bin.\n"
       "  engine_cli --d6-loopend <lscan-dir> [--min-excursion M] [--max-correction M]\n"
       "      [--submap S] [--window S] [--cell M] [--up X|Y|Z]\n"
       "      ROUND 16 item 60: close the gap at the END of a walk with the rotation\n"
@@ -2541,6 +2541,7 @@ int main(int argc, char** argv) {
       else if (a == "--no-loopend") ro.close_loop_end = false;
       else if (a == "--no-rescue") ro.rescue_gaps = false;
       else if (a == "--no-recover") ro.recover_gap_points = false;
+      else if (a == "--no-autolevel") ro.auto_level = false;
       else if (a == "--quiet") continue;
       else return usage();
     }
@@ -2581,6 +2582,16 @@ int main(int argc, char** argv) {
                   static_cast<unsigned long long>(rc.admitted),
                   rc.ruler_vetoed ? " (RULER VETO)" : "",
                   100.0 * rc.self_check_before_m, 100.0 * rc.self_check_after_m, rc.reason);
+    }
+    // ROUND 20 item 80: the auto-level verdict, applied or refused by name.
+    {
+      const post::AutoLevelReport& al = rep.auto_level;
+      std::printf("  auto-level: %s — floor tilt %.2f -> %.2f deg (floor %zu inliers / "
+                  "%.2f m2), correction %.2f deg, self %.2f->%.2f cm%s%s\n",
+                  post::to_string(al.decision), al.tilt_before_deg, al.tilt_after_deg,
+                  al.floor_inliers, al.floor_coverage_m2, al.correction_deg,
+                  100.0 * al.self_check_before_m, 100.0 * al.self_check_after_m,
+                  al.reason[0] != '\0' ? " — " : "", al.reason);
     }
     // ROUND 19: the yield audit — where the 4,000 samples per second went.
     std::printf("  yield: %llu samples = %llu no-return + %llu out-of-window + %llu no-pose "

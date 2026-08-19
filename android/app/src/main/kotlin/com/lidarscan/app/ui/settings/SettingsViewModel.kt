@@ -186,6 +186,45 @@ class SettingsViewModel(
         viewModelScope.launch { settingsRepository.setDndDuringCapture(enabled) }
     }
 
+    // ── ROUND 20 item 82: the per-device mount profile ──────────────────────
+
+    /** The trim half of the profile, for the Settings read-out. */
+    private val _storedMountTrim =
+        MutableStateFlow<com.lidarscan.core.calib.StoredMountTrim?>(null)
+    val storedMountTrim: StateFlow<com.lidarscan.core.calib.StoredMountTrim?> =
+        _storedMountTrim.asStateFlow()
+
+    fun refreshMountProfile() {
+        viewModelScope.launch {
+            _storedMountTrim.value = runCatching { settingsRepository.storedMountTrim() }.getOrNull()
+        }
+    }
+
+    /**
+     * Persists the three lever-arm fields, clamped. Applied to the NEXT
+     * capture (the Capture tab reads it at construction — device facts change
+     * rarely, and mid-walk lever-arm edits are not a flow worth having).
+     */
+    fun setMountLeverArm(upCm: Double, behindCm: Double, rightCm: Double) {
+        viewModelScope.launch {
+            settingsRepository.setMountLeverArm(
+                com.lidarscan.core.calib.MountLeverArm.clamped(
+                    upCm = upCm,
+                    behindCm = behindCm,
+                    rightCm = rightCm,
+                    nowMillis = System.currentTimeMillis(),
+                ),
+            )
+        }
+    }
+
+    /** Back to the shipped defaults — provenance returns to "default". */
+    fun resetMountLeverArm() {
+        viewModelScope.launch {
+            settingsRepository.setMountLeverArm(com.lidarscan.core.calib.MountLeverArm.DEFAULT)
+        }
+    }
+
     /**
      * Deletes every 0-point project on the device.
      *

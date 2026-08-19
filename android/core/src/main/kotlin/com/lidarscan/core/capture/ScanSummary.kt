@@ -304,14 +304,17 @@ data class ScanSummary(
                 // stream jumped 8-13 deg — so it is the camera losing confidence
                 // in where it is, and the two things that change that are light
                 // and texture in front of the lens.
+                // ROUND 20: reworded to the MEASURED diet (round 18: close
+                // feature-poor surfaces and fast turns, in good light) — the
+                // owner's correction is on record and light is not mentioned.
                 "$sections sections — the camera re-anchored $breaks times, so the room was " +
                     "rebuilt from scratch that often. Check nothing is covering the rear camera, " +
-                    "turn more lights on, and keep the lens pointed at furniture and edges rather " +
-                    "than blank wall. Process this scan to stitch the pieces back together."
+                    "keep about an arm's length or more from blank close surfaces, and ease " +
+                    "through the turns. Process this scan to stitch the pieces back together."
             trackingDrops > MAX_DROPS_FAIR ->
                 "$trackingDrops tracking drops — the camera stopped knowing where it was, and " +
-                    "those seconds are holes in the room. More light, and keep the rear camera " +
-                    "clear and pointed at something with detail."
+                    "those seconds are holes in the room. Keep the rear camera clear, stay an " +
+                    "arm's length from blank close surfaces, and ease through the turns."
             densityValue < densityFairFloor ->
                 if (isFromTheSpot) {
                     "${densityValue.roundToInt()} points per second — the sensor was barely " +

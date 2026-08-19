@@ -94,6 +94,16 @@ class SettingsRepository(private val context: Context) {
          * writes it); a reinstall is the road back.
          */
         val PRE_SCAN_CHECKLIST_DISMISSED = booleanPreferencesKey("pre_scan_checklist_dismissed")
+
+        /**
+         * ROUND 20 item 82 — the per-device mount lever arm, JSON-serialized
+         * [com.lidarscan.core.calib.MountLeverArm]. Same unparseable-reads-as-
+         * default rule as [MOUNT_TRIM]: a bad row can never block the tab.
+         */
+        val MOUNT_LEVER_ARM = stringPreferencesKey("mount_lever_arm")
+
+        /** ROUND 20 items 80/82 — the last auto-level suggestion, with provenance. */
+        val MOUNT_AUTOLEVEL_SUGGESTION = stringPreferencesKey("mount_autolevel_suggestion")
     }
 
     val settings: Flow<AppSettings> = context.settingsDataStore.data.map { prefs ->
@@ -135,6 +145,13 @@ class SettingsRepository(private val context: Context) {
             operatorCuesEnabled = prefs[Keys.OPERATOR_CUES] ?: true,
             dndDuringCapture = prefs[Keys.DND_DURING_CAPTURE] ?: true,
             dndAccessAsked = prefs[Keys.DND_ACCESS_ASKED] ?: false,
+            mountLeverArm = prefs[Keys.MOUNT_LEVER_ARM]?.let { raw ->
+                runCatching {
+                    kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+                        .decodeFromString<com.lidarscan.core.calib.MountLeverArm>(raw)
+                }.getOrNull()
+            } ?: com.lidarscan.core.calib.MountLeverArm.DEFAULT,
+            mountAutoLevelSuggestion = prefs[Keys.MOUNT_AUTOLEVEL_SUGGESTION],
         )
     }
 
@@ -301,6 +318,36 @@ class SettingsRepository(private val context: Context) {
     /** ROUND 19 item 77 — one-way, like [setDndAccessAsked]. */
     suspend fun setPreScanChecklistDismissed() {
         context.settingsDataStore.edit { it[Keys.PRE_SCAN_CHECKLIST_DISMISSED] = true }
+    }
+
+    /** ROUND 20 item 82 — the lever arm the next capture's extrinsic runs on, or the default. */
+    suspend fun mountLeverArm(): com.lidarscan.core.calib.MountLeverArm =
+        context.settingsDataStore.data.first()[Keys.MOUNT_LEVER_ARM]?.let { raw ->
+            runCatching {
+                kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+                    .decodeFromString<com.lidarscan.core.calib.MountLeverArm>(raw)
+            }.getOrNull()
+        } ?: com.lidarscan.core.calib.MountLeverArm.DEFAULT
+
+    /** ROUND 20 items 80/82 — the auto-level suggestion line Settings shows, or null to clear it. */
+    suspend fun setMountAutoLevelSuggestion(suggestion: String?) {
+        context.settingsDataStore.edit { prefs ->
+            if (suggestion == null) {
+                prefs.remove(Keys.MOUNT_AUTOLEVEL_SUGGESTION)
+            } else {
+                prefs[Keys.MOUNT_AUTOLEVEL_SUGGESTION] = suggestion
+            }
+        }
+    }
+
+    /** ROUND 20 item 82. */
+    suspend fun setMountLeverArm(arm: com.lidarscan.core.calib.MountLeverArm) {
+        context.settingsDataStore.edit { prefs ->
+            prefs[Keys.MOUNT_LEVER_ARM] = kotlinx.serialization.json.Json.encodeToString(
+                com.lidarscan.core.calib.MountLeverArm.serializer(),
+                arm,
+            )
+        }
     }
 
     suspend fun setAllowPoorSyncColorize(allow: Boolean) {

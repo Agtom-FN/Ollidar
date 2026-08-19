@@ -58,6 +58,7 @@ import com.lidarscan.app.ui.theme.Ember
 import com.lidarscan.app.ui.theme.Ink
 import com.lidarscan.app.ui.theme.InkFaint
 import com.lidarscan.app.ui.theme.MonoLabel
+import com.lidarscan.app.ui.theme.ScanTeal
 import com.lidarscan.app.ui.theme.SemWarn
 import com.lidarscan.app.ui.theme.MonoMeta
 import com.lidarscan.core.model.CaptureDefaults
@@ -120,6 +121,9 @@ fun SettingsRoute(
     val emptyScanCount by viewModel.emptyScanCount.collectAsStateWithLifecycle()
     val emptyScanNote by viewModel.emptyScanNote.collectAsStateWithLifecycle()
     androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refreshEmptyScanCount() }
+    // ROUND 20 item 82: the trim half of the mount profile, re-read on entry.
+    val storedMountTrim by viewModel.storedMountTrim.collectAsStateWithLifecycle()
+    androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refreshMountProfile() }
 
     SettingsScreen(
         settings = settings,
@@ -152,6 +156,9 @@ fun SettingsRoute(
         onCleanUpEmptyScans = viewModel::cleanUpEmptyScans,
         onDismissEmptyScanNote = viewModel::dismissEmptyScanNote,
         onReplaySyntheticCapture = { viewModel.replaySyntheticCapture(onReplaySyntheticCapture) },
+        storedMountTrim = storedMountTrim,
+        onMountLeverArmChange = viewModel::setMountLeverArm,
+        onMountLeverArmReset = viewModel::resetMountLeverArm,
         onBack = onBack,
     )
 }
@@ -211,6 +218,10 @@ fun SettingsScreen(
     onCleanUpEmptyScans: () -> Unit = {},
     onDismissEmptyScanNote: () -> Unit = {},
     onReplaySyntheticCapture: () -> Unit = {},
+    /** ROUND 20 item 82: the mount profile — the trim in force, for the read-out. */
+    storedMountTrim: com.lidarscan.core.calib.StoredMountTrim? = null,
+    onMountLeverArmChange: (Double, Double, Double) -> Unit = { _, _, _ -> },
+    onMountLeverArmReset: () -> Unit = {},
     onBack: () -> Unit,
 ) {
     Column(
@@ -337,6 +348,18 @@ fun SettingsScreen(
                         }
                     }
                 }
+            }
+
+            // ROUND 20 item 82: the per-device mount profile — no hard-coded
+            // geometry for a public app.
+            SettingsSection("Mount profile (COIN-D6)") {
+                MountProfileCard(
+                    leverArm = settings.mountLeverArm,
+                    storedTrim = storedMountTrim,
+                    autoLevelSuggestion = settings.mountAutoLevelSuggestion,
+                    onChange = onMountLeverArmChange,
+                    onReset = onMountLeverArmReset,
+                )
             }
 
             SettingsSection("Sensor timing (advanced)") {
@@ -756,6 +779,121 @@ private fun EmptyScansCard(
  * default. The row shows what the number MEANS in centimetres, because "2 ms"
  * is not a quantity anyone can judge and "2 mm at walking pace" is.
  */
+/**
+ * ROUND 20 (item 82) — **the per-device mount profile.**
+ *
+ * The owner's mandate: the D6's position on the phone back VARIES (his sits
+ * toward the middle, not the top edge the old CAD placeholder assumed) and
+ * the app will be public — so nothing about the mount is hard-coded. The
+ * ROTATION is measured at every Start by the hold-steady stage (item 78,
+ * gravity-referenced per item 79); the LEVER ARM is these three centimetre
+ * fields; the one thing still assumed is the documented convention the
+ * schematic text states (0° mark up, cap forward). An auto-level result
+ * (item 80) appears below as a SUGGESTION with provenance — never silently
+ * applied.
+ */
+@Composable
+private fun MountProfileCard(
+    leverArm: com.lidarscan.core.calib.MountLeverArm,
+    storedTrim: com.lidarscan.core.calib.StoredMountTrim?,
+    autoLevelSuggestion: String?,
+    onChange: (Double, Double, Double) -> Unit,
+    onReset: () -> Unit,
+) {
+    ScanCard {
+        CardTitle("Where the D6 sits on this phone")
+        val trim = storedTrim?.trim
+        Text(
+            if (trim != null) {
+                "Rotation: measured — %.1f° trim, re-measured at every capture start during the hold."
+                    .format(trim.magnitudeDeg)
+            } else {
+                "Rotation: not measured yet — the hold-steady stage at your first capture start " +
+                    "will measure it."
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = Ink,
+            modifier = Modifier.testTag("mountProfileRotation"),
+        )
+        Spacer(Modifier.height(10.dp))
+        // Three centimetre fields. Local text state, committed on change when
+        // parseable; unparseable text simply does not commit (the same
+        // tolerance every free-text field in this app has).
+        var up by remember(leverArm) { mutableStateOf("%.1f".format(leverArm.upCm)) }
+        var behind by remember(leverArm) { mutableStateOf("%.1f".format(leverArm.behindCm)) }
+        var right by remember(leverArm) { mutableStateOf("%.1f".format(leverArm.rightCm)) }
+        fun commit() {
+            val u = up.toDoubleOrNull()
+            val b = behind.toDoubleOrNull()
+            val r = right.toDoubleOrNull()
+            if (u != null && b != null && r != null) onChange(u, b, r)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = up,
+                onValueChange = { up = it; commit() },
+                label = { Text("Up (cm)") },
+                singleLine = true,
+                modifier = Modifier.weight(1f).testTag("leverUpField"),
+            )
+            OutlinedTextField(
+                value = behind,
+                onValueChange = { behind = it; commit() },
+                label = { Text("Behind (cm)") },
+                singleLine = true,
+                modifier = Modifier.weight(1f).testTag("leverBehindField"),
+            )
+            OutlinedTextField(
+                value = right,
+                onValueChange = { right = it; commit() },
+                label = { Text("Right (cm)") },
+                singleLine = true,
+                modifier = Modifier.weight(1f).testTag("leverRightField"),
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Where the D6's optical centre sits relative to the REAR CAMERA, in centimetres: " +
+                "above it, behind it (away from the scene), and toward your right in the " +
+                "scanning hold. Source: ${leverArm.provenance}. At walking pace these offsets " +
+                "move the map by millimetres — rotation is what matters, and it is measured.",
+            style = MaterialTheme.typography.bodySmall,
+            color = InkFaint,
+        )
+        Spacer(Modifier.height(8.dp))
+        // The schematic: the one assumed convention, stated.
+        Text(
+            "┌──────────┐   phone back, seen from behind\n" +
+                "│  ┌─D6─┐  │   0° mark points UP\n" +
+                "│  │ ◉  │  │   cap faces FORWARD (the walk)\n" +
+                "│  └────┘  │   everything else: measured\n" +
+                "└──────────┘   or typed above",
+            style = MaterialTheme.typography.bodySmall.copy(
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+            ),
+            color = InkFaint,
+            modifier = Modifier.testTag("mountConventionSchematic"),
+        )
+        if (autoLevelSuggestion != null) {
+            Spacer(Modifier.height(8.dp))
+            Hint(
+                autoLevelSuggestion +
+                    " This is a suggestion from processing, never applied by itself — the next " +
+                    "capture's hold re-measures the rotation.",
+                color = ScanTeal,
+                modifier = Modifier.testTag("mountAutoLevelSuggestion"),
+            )
+        }
+        Spacer(Modifier.height(10.dp))
+        SecondaryPill(
+            text = "Reset offsets to defaults",
+            height = 42.dp,
+            onClick = onReset,
+            modifier = Modifier.fillMaxWidth().testTag("leverArmResetButton"),
+        )
+    }
+}
+
 @Composable
 private fun D6TimingCard(latencyMs: Int, onChange: (Int) -> Unit) {
     ScanCard {

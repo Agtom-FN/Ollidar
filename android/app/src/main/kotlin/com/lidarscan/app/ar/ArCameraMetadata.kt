@@ -142,14 +142,41 @@ data class ArCameraCharacteristicsProbe(
     val sensorOrientationDeg: Int? = null,
     /** True when `LENS_FACING` is FRONT — `camera_from_imu` is not derivable from SENSOR_ORIENTATION alone there. */
     val lensFacingFront: Boolean = false,
+    /**
+     * ROUND 20 (item 81) — the FACTORY camera↔IMU calibration, verbatim from
+     * `CameraCharacteristics`, or nulls where the device does not carry the
+     * tags (every emulator, and plenty of budget hardware):
+     *
+     *  * `LENS_POSE_ROTATION` — per-unit quaternion `(x, y, z, w)`;
+     *  * `LENS_POSE_TRANSLATION` — metres, the lever arm the rotation is
+     *    solved with (recorded for the manifest; the densifier's C ABI takes
+     *    rotation only);
+     *  * `LENS_POSE_REFERENCE` — 0 = PRIMARY_CAMERA, 1 = GYROSCOPE, 2 =
+     *    UNDEFINED; the gyroscope reference is the one the densifier wants;
+     *  * `LENS_INTRINSIC_CALIBRATION` — `[fx, fy, cx, cy, s]`, recorded so a
+     *    future colorize pass can prefer the factory intrinsics.
+     */
+    val lensPoseRotationXyzw: DoubleArray? = null,
+    val lensPoseTranslationM: DoubleArray? = null,
+    val lensPoseReference: Int? = null,
+    val lensIntrinsicCalibration: DoubleArray? = null,
 ) {
     /**
      * `camera_from_imu` for this camera, or an identity-with-a-reason. Computed
      * rather than stored so the derivation lives in exactly one place
      * ([com.lidarscan.core.capture.CameraFromImu], which is plain-JVM testable).
+     *
+     * ROUND 20 (item 81): prefers the factory LENS_POSE_ROTATION when present
+     * and convention-consistent; falls back to the coarse SENSOR_ORIENTATION
+     * rotation otherwise — the `why` names which source is in force, and
+     * `startPhoneImu`'s log line carries it into the capture log.
      */
     val cameraFromImu: com.lidarscan.core.capture.CameraFromImuExtrinsics
-        get() = com.lidarscan.core.capture.CameraFromImu.resolve(sensorOrientationDeg, lensFacingFront)
+        get() = com.lidarscan.core.capture.CameraFromImu.resolveWithFactory(
+            lensPoseRotationXyzw,
+            sensorOrientationDeg,
+            lensFacingFront,
+        )
 
     companion object {
         private const val TAG = "ArCameraProbe"
@@ -192,6 +219,29 @@ data class ArCameraCharacteristicsProbe(
                             "will be degraded (StreamId phone-imu).",
                     )
                 }
+                // ROUND 20 (item 81): the factory calibration tags, each read
+                // independently so a missing one degrades that field alone —
+                // the same posture as ArCameraMetadata.of.
+                val poseRotation = runCatching {
+                    characteristics.get(CameraCharacteristics.LENS_POSE_ROTATION)
+                }.getOrNull()
+                val poseTranslation = runCatching {
+                    characteristics.get(CameraCharacteristics.LENS_POSE_TRANSLATION)
+                }.getOrNull()
+                val poseReference = runCatching {
+                    characteristics.get(CameraCharacteristics.LENS_POSE_REFERENCE)
+                }.getOrNull()
+                val intrinsicCalibration = runCatching {
+                    characteristics.get(CameraCharacteristics.LENS_INTRINSIC_CALIBRATION)
+                }.getOrNull()
+                if (poseRotation != null) {
+                    Log.i(
+                        TAG,
+                        "Camera $cameraId carries factory LENS_POSE_ROTATION " +
+                            "(reference=${poseReference ?: "unreported"}) — the densifier " +
+                            "prefers it over the coarse SENSOR_ORIENTATION rotation.",
+                    )
+                }
                 ArCameraCharacteristicsProbe(
                     cameraId = cameraId,
                     timestampSourceIsRealtime = realtime,
@@ -200,6 +250,15 @@ data class ArCameraCharacteristicsProbe(
                     pixelArrayHeight = size?.height ?: 0,
                     sensorOrientationDeg = orientation,
                     lensFacingFront = front,
+                    lensPoseRotationXyzw = poseRotation
+                        ?.takeIf { it.size == 4 }
+                        ?.map { it.toDouble() }?.toDoubleArray(),
+                    lensPoseTranslationM = poseTranslation
+                        ?.takeIf { it.size == 3 }
+                        ?.map { it.toDouble() }?.toDoubleArray(),
+                    lensPoseReference = poseReference,
+                    lensIntrinsicCalibration = intrinsicCalibration
+                        ?.map { it.toDouble() }?.toDoubleArray(),
                 )
             } catch (e: Exception) {
                 Log.w(TAG, "camera characteristics unavailable for $cameraId: ${e.message}")

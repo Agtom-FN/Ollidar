@@ -2669,3 +2669,181 @@ maps and self-checks byte-identical to 0.9.3 (all rescues there refused);
 `stitch.json` gains `rescues[]`, `recoveries[]`, `recoveredPoints`, `yield`
 — all additive. Backlog, noted and NOT built: capture-start tracking loss is
 app-caused (start-reset re-acquisition) — its avoidance is round 20.
+
+## ROUND 20 (v0.9.5) — owner mandate: no hard-coded mount, auto re-zero at Start, new-capture button
+
+The morning's adjudication (scans 054/055/056, all v0.9.4) found the root
+cause of the owner-visible "shifted" maps: **the mount-trim procedure
+conflates operator hold attitude with mount geometry**. The trim is
+`q_hold⁻¹` of the phone's FULL ARCore attitude — so hand tilt (observable
+vs gravity) AND arbitrary yaw-vs-session-origin both get baked into
+`phone_from_lidar`. Two trims 3.5 min apart differed 23.19°; the trim yaw is
+applied in the wrong world frame because every Start rebuilds the ARCore
+session, so a trim captured pre-Start references a dead yaw origin. The swap
+experiment proved it: trim B wins on all three scans (selfCheck 1.97→1.22 /
+5.79→4.48 / 2.75→1.45 cm; floor-tilt-vs-gravity 3.61→0.96° on 054,
+8.05→1.09° on 056). Owner input on record: the D6 mounting position VARIES
+(his rig sits toward the middle of the phone back, not near the top edge the
+CAD placeholder assumes) and the app will be public — NO hard-coded mount
+geometry; cap-forward stays the documented convention. Items 78–83.
+
+**78 — AUTO RE-ZERO AT CAPTURE START (owner-requested).** On Start, after
+the world-frame reset and the round-12 tracking gate, the capture enters a
+HOLD-STEADY stage before recording begins: the UI instructs the operator to
+hold the phone still in scanning pose, and the app waits until the trim
+sampler converges (the existing gates: ~30 samples, p90 ≤ 2.5°, split-half
+stability — `MountTrimRefiner`, unchanged underneath). Then a clear
+"GO — start walking" cue (visual + haptic tick) and the capture begins. The
+trim is therefore taken IN THE SCAN'S OWN WORLD FRAME — the wrong-frame bug
+dies structurally, and the wait doubles as the cure for the known
+every-capture start loss (start-reset re-acquisition). Movement restarts the
+sampling with gentle feedback, never fails the capture; a ~10 s timeout
+falls back to the last persisted trim with an honest note in the capture
+log. Manual re-zero stays available; the round-19 checklist flows into the
+hold stage rather than stacking a second modal;
+`startCapture(skipChecklist = true)` keeps working.
+
+**79 — GRAVITY-REFERENCED TRIM (fix what the trim measures).** The hold
+attitude is decomposed about gravity (swing–twist about world +Y): only the
+TILT-observable part (the swing — phone tilt vs gravity, which for an
+upright portrait hold contains the Rz(90°)-class working rotation every
+healthy trim has carried) is kept as the trim; the about-gravity twist
+(yaw) is DISCARDED — yaw of the mount about gravity is unobservable from a
+static hold, and defaults to the nominal convention (zero-mark up +
+cap-forward). `MountTrim.fromHoldOrientation` now does exactly this, the
+observable-vs-assumed split is documented in the code, and unit tests use
+the REAL trim A/B quaternions from scans 054/056. A trim persisted by an
+older version is yaw-normalised on load, with provenance logged.
+
+**80 — OFFLINE AUTO-LEVEL IN PROCESS (the backstop that retro-fixes every
+archived scan).** In the reprocess pipeline (processed/ channel only, like
+gap rescue): measure the dominant floor plane vs gravity (+Y); if the tilt
+exceeds ~1.5° and a confident floor exists (inlier count, plane coverage),
+solve the small rotation of `phone_from_lidar` that levels the floor —
+applied exactly (per point, through its own pose's phone attitude), pitch/
+roll only, NEVER yaw (a floor cannot witness yaw) — and let
+`measure_map_consistency` vote last exactly like gap rescue: apply only if
+the selfCheck does not worsen. Verdict + before/after numbers go to
+stitch.json (`autoLevel{}`) and the debug log. Gates by name: no-floor /
+thin-floor / already-level / ruler-says-worse. Refusal leaves the processed
+output byte-identical.
+
+**81 — FACTORY CAMERA↔IMU CALIBRATION.** Next to the SENSOR_ORIENTATION
+probe, read `LENS_POSE_ROTATION`, `LENS_POSE_TRANSLATION`,
+`LENS_POSE_REFERENCE`, `LENS_INTRINSIC_CALIBRATION` when present; record
+them in the manifest (add-only), and use the factory rotation for the
+densifier's `camera_from_imu` instead of the coarse Rz(90°) guess when it is
+available and agrees with the coarse convention to within 30° (a larger
+disagreement is a convention mismatch, not a calibration, and falls back
+loudly). Emulators lack the tags; tests pass both ways; the log names which
+source was used.
+
+**82 — PER-DEVICE MOUNT PROFILE (no hard-coded geometry for a public
+app).** The CAD-placeholder mentality is replaced by a persisted per-device
+`MountProfile`: the trim rotation (items 78/79), lever-arm offsets
+user-editable in Settings (three cm fields — up / behind / right of the
+rear camera, defaulting to the previous placeholder values so nothing moves
+for existing rigs), and provenance + timestamps. Settings shows the current
+profile with a small schematic of the assumed convention (0° mark up, cap
+forward). An auto-level result (item 80) may update the profile's
+SUGGESTION line, with explicit provenance ("estimated from scan-XXX") —
+never silently applied.
+
+**83 — NEW-CAPTURE BUTTON (owner-requested).** On the capture tab: a
+clearly-placed "New capture" action that clears the per-scan state and
+per-scan choices back to defaults — stats, summaries, verdicts, section
+counts, trail, notes and trim-age warnings, capture tuning back to the
+device tier's preset, the display block back to capture defaults (the
+owner's "new settings") — and refreshes to a fresh scan setup. Device-level
+FACTS are deliberately NOT wiped: the mount profile (trim + lever arm),
+sensor latency, DND choice, cue preference and developer prefs are
+properties of the rig, not of a scan (wiping a measured trim because the
+operator wants fresh sliders would un-fix item 78). A confirm dialog
+appears only while a capture is live.
+
+### Resolution — 2026-08-19 (0.9.5, round 20)
+
+**What shipped, measured on the owner's own bundles** (engine_cli
+--d6-reprocess on copies of 054/055/056; auto-level ON is the shipping
+default):
+
+| scan | native selfCheck | floor tilt | auto-level verdict | after |
+|---|---|---|---|---|
+| **054** | 1.97 cm | 3.59° | **APPLIED** — correction 3.36° (phone frame, 4 iterations, floor 7,808 inliers / 10.5 m²) | floor **0.90°**, selfCheck **1.81 cm**, ruler consented (1.97 → 1.81) |
+| 055 | 5.79 cm | 5.75° (after stitch) | **refused: ruler-says-worse** — the leveling DID level the floor (5.75 → 0.30°) but the whole-map self-check went 5.50 → 5.83 cm: this two-section capture's error is the seam, not the tilt, and a floor cannot referee a seam. Map byte-identical | unchanged, honestly |
+| 056 | 1.45 cm | 1.07° | **refused: already-level** (below the 1.5° threshold) | unchanged; map + trajectory byte-identical with --no-autolevel — the no-op is provable |
+
+**78 — auto re-zero at Start.** `runStartHoldStage`
+(CaptureViewModel.kt): after the round-14 world reset and the round-12
+tracking gate, a hold-steady stage polls the ROUND-11 refiner (same gates:
+p90 ≤ 2.5°, split-half vs the 0.8° goal) with movement restarting the anchor,
+10 s timeout falling back to the persisted trim with an honest log line,
+then "GO — START WALKING" (banner + one light `CueKind.GO_START` tick,
+played directly, never scheduled). The trim is taken IN THE SCAN'S OWN
+FRAME — the dead-yaw-origin bug is structurally gone, and the wait absorbs
+the start-reset re-acquisition loss. `holdPending` mirrors the gate's own
+re-entry latch; replay and controller-less sessions skip the stage, which is
+what keeps every earlier round's startCapture test meaning what it meant.
+
+**79 — gravity-referenced trim.** `MountTrim.fromHoldOrientation` now
+swing–twist decomposes the hold about world +Y and DISCARDS the twist; the
+invariant (a gravity-referenced trim's quaternion has zero y-component) is
+pinned in `MountTrimRound20Test` with the OWNER'S OWN quaternions: trims A/B
+were 23.19° apart raw; yaw-normalised (51.6° and 21.1° of yaw junk removed)
+they are 12.48° apart — all genuine hold tilt, which item 80 backstops.
+Legacy persisted trims are yaw-normalised once on load, logged, re-persisted
+(`gravityReferenced` field, additive).
+
+**80 — offline auto-level.** `slam/post/auto_level.{h,cpp}`: deterministic
+floor meter (fixed-seed RANSAC + fixed-sweep Jacobi refine, upward-normal
+gate at 45°), correction applied EXACTLY per point through its own pose's
+attitude (no re-resolve), pitch/roll only by construction, iterated
+fit-correct-refit, gates by name (no-floor / thin-floor / already-level /
+tilt-too-big / no-improvement / ruler-says-worse) with ROUND 12's ruler
+voting last, verbatim gap-rescue doctrine. Wired into
+`reprocess_d6_container` (ON by default, `--no-autolevel` to A/B), verdict +
+numbers in stitch.json `autoLevel{}` and the item-66 debug log. A refusal
+mutates nothing — byte-identity proven on 055 and 056 above. ABI stays 12
+(the app reads the sidecar, same as rounds 18/19).
+
+**81 — factory camera↔IMU.** The probe now reads LENS_POSE_ROTATION /
+_TRANSLATION / _REFERENCE / LENS_INTRINSIC_CALIBRATION beside
+SENSOR_ORIENTATION; `CameraFromImu.resolveWithFactory` computes BOTH
+documented readings of the tag's direction and keeps the one that agrees
+with the coarse Rz(θ) within 30° (the factory value then contributes the
+per-unit deviation the guess cannot know); disagreement or absence falls
+back loudly to the coarse rotation. The manifest gains add-only
+`factoryLensPose{}` with `densifierSource: "factory"|"coarse"`; the capture
+log's phone-IMU line names the source. Tests pass with and without the tags
+(every emulator lacks them).
+
+**82 — per-device mount profile.** `MountLeverArm` (:core, serializable):
+three user-editable cm fields (up / behind / right of the rear camera,
+defaults = the old CAD placeholder to the millimetre, provenance +
+timestamp), persisted in Settings, applied as the D6 extrinsic's translation
+in `applyMountExtrinsic` and carried in every extrinsic log line. Settings
+gains a "Mount profile (COIN-D6)" card: measured-rotation read-out, the
+three fields, a text schematic of the one assumed convention (0° up, cap
+forward), and item 80's suggestion line ("Auto-level estimated X° … from
+scan-XXX") — recorded only when a correction was actually applied, never
+silently acted on. BracketNominals' rotation stays the derived identity; its
+translation is now a default, not a truth.
+
+**83 — new-capture button.** `newCaptureChip` on the capture chip row →
+`CaptureViewModel.requestNewCapture / performNewCapture`: per-scan state and
+choices cleared (stats, cards, verdicts, notes, trail, sections, preset back
+to the tier default, display block back to capture defaults — persisted, as
+if the sliders were moved by hand); device facts kept (trim + lever arm,
+sensor latency, DND, cues, developer prefs, series counter). Confirm dialog
+only over a live capture ("Stop and start fresh" seals first — record-always
+means nothing is ever discarded).
+
+**Numbers.** Engine 637 cases / 2,527,492 asserts (was 629), ctest 7/7; ABI
+12 unchanged. `:core` 580 (+7, incl. the real-quaternion round-20 suite),
+`:app` 125 (+6). The round-19 "light"-advice guard still passes — and round
+20 purged the two summary strings and one start-gate string that still
+blamed light, replacing them with the measured diet. VERSION 0.9.5,
+versionCode 905 verified in the built APK. Two pre-round-20 tests
+(round 7/8) had SYNTHETIC pure-yaw trim fixtures — exactly what item 79
+discards — and were re-pointed at a horizontal axis so they keep testing
+what they were about (persistence).

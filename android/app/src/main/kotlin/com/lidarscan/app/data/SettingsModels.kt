@@ -172,4 +172,21 @@ data class AppSettings(
     val dndDuringCapture: Boolean = true,
     /** ROUND 14 — the DND explainer has been offered once. See `CaptureFocus.shouldAsk`. */
     val dndAccessAsked: Boolean = false,
+    /**
+     * ROUND 20 (item 82) — the per-device mount lever arm: where the D6 sits
+     * relative to the rear camera, in centimetres, user-editable. Device-level
+     * like [d6SensorLatencyMs] (it describes the rig, not a project); the
+     * rotation half of the mount profile is the persisted trim, measured at
+     * every Start by the hold-steady stage. See
+     * [com.lidarscan.core.calib.MountLeverArm] for the frame and the defaults
+     * (the previous CAD placeholder, so an existing rig sees no change).
+     */
+    val mountLeverArm: com.lidarscan.core.calib.MountLeverArm =
+        com.lidarscan.core.calib.MountLeverArm.DEFAULT,
+    /**
+     * ROUND 20 (items 80/82) — the last auto-level suggestion, with explicit
+     * provenance ("estimated from scan-XXX"), or null when no processed scan
+     * has ever applied one. Display-only: it never changes the trim.
+     */
+    val mountAutoLevelSuggestion: String? = null,
 )

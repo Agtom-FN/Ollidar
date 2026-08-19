@@ -66,6 +66,46 @@ object StitchSidecar {
         return attempted to applied
     }
 
+    // ── ROUND 20 item 80: the auto-level block ───────────────────────────────
+
+    data class AutoLevel(
+        val decision: String,
+        val tiltBeforeDeg: Double,
+        val tiltAfterDeg: Double,
+        val correctionDeg: Double,
+        val applied: Boolean,
+    )
+
+    private fun doubleField(json: String, key: String): Double? =
+        Regex("\"$key\"\\s*:\\s*(-?\\d+(?:\\.\\d+)?)").find(json)?.groupValues?.get(1)?.toDoubleOrNull()
+
+    /** The `autoLevel` object, or null when the sidecar predates round 20. */
+    fun readAutoLevel(projectDir: File): AutoLevel? {
+        val f = sidecar(projectDir)
+        if (!f.isFile) return null
+        val json = runCatching { f.readText() }.getOrNull() ?: return null
+        val start = json.indexOf("\"autoLevel\"")
+        if (start < 0) return null
+        val end = json.indexOf('}', start).let { if (it < 0) json.length else it }
+        val block = json.substring(start, end)
+        val decision = Regex("\"decision\"\\s*:\\s*\"([^\"]*)\"").find(block)
+            ?.groupValues?.get(1) ?: return null
+        return AutoLevel(
+            decision = decision,
+            tiltBeforeDeg = doubleField(block, "tiltBeforeDeg") ?: 0.0,
+            tiltAfterDeg = doubleField(block, "tiltAfterDeg") ?: 0.0,
+            correctionDeg = doubleField(block, "correctionDeg") ?: 0.0,
+            applied = block.contains(Regex("\"applied\"\\s*:\\s*true")),
+        )
+    }
+
+    /** One debug-log line for the auto-level verdict, or null when unrecorded. */
+    fun autoLevelLine(projectDir: File): String? {
+        val a = readAutoLevel(projectDir) ?: return null
+        return "auto-level: ${a.decision} — floor tilt %.2f -> %.2f deg, correction %.2f deg"
+            .format(a.tiltBeforeDeg, a.tiltAfterDeg, a.correctionDeg)
+    }
+
     /**
      * The one debug-log line item 66's file gets after auto-process: every
      * decoded sample accounted for by name, plus the rescue tally. Null when

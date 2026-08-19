@@ -85,6 +85,17 @@ enum class CueKind {
      * almost exactly isotropic sampling. It is "keep walking while you sweep".
      */
     PARALLAX_STARVED,
+
+    /**
+     * ROUND 20 (item 78) — "GO, start walking": the Start hold-steady stage
+     * has converged (or honestly timed out onto the persisted trim) and the
+     * capture has begun. Played ONCE, directly, never through the scheduler —
+     * it is a confirmation, not a condition, so it has no debounce row and no
+     * priority slot. One short, light tick: the operator is holding the rig
+     * still at that exact moment, and round 13 measured what a heavy buzz does
+     * to a tracker that has just settled.
+     */
+    GO_START,
 }
 
 /**
@@ -198,11 +209,26 @@ object CuePatterns {
         toneRepeats = 2,
     )
 
+    /**
+     * ROUND 20 (item 78). One short tick at the PARALLAX amplitude, one bright
+     * tone — deliberately the lightest pattern in the table, because it fires
+     * with the rig held still and a settled tracker (see CueKind.GO_START).
+     */
+    val GO_START = CuePattern(
+        kind = CueKind.GO_START,
+        pattern = longArrayOf(0, 60),
+        amplitudes = intArrayOf(0, 130),
+        toneHz = 990,
+        toneMillis = 80,
+        toneRepeats = 1,
+    )
+
     fun of(kind: CueKind): CuePattern = when (kind) {
         CueKind.TRACKING_DEGRADED -> TRACKING_DEGRADED
         CueKind.SECTION_BREAK -> SECTION_BREAK
         CueKind.TOO_FAST -> TOO_FAST
         CueKind.PARALLAX_STARVED -> PARALLAX_STARVED
+        CueKind.GO_START -> GO_START
     }
 }
 

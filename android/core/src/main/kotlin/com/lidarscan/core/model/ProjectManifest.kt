@@ -129,6 +129,15 @@ data class ProjectManifest(
      * See [com.lidarscan.core.capture.PoseSectionBreak].
      */
     val sectionBreaks: List<com.lidarscan.core.capture.PoseSectionBreak> = emptyList(),
+    /**
+     * ROUND 20 (item 81): the FACTORY camera↔IMU calibration the capture ran
+     * with, verbatim from `CameraCharacteristics`, or null on a device that
+     * does not carry the tags (every emulator). Additive and nullable like
+     * everything since B5; in the manifest for the same reason
+     * [mountCalibration] is — a `.lscan` opened on a desktop that has never
+     * seen this phone still has to know the rig it was recorded on.
+     */
+    val factoryLensPose: FactoryLensPose? = null,
 ) {
     /**
      * ROUND 9 (owner item 33): **this project has no capture in it.**
@@ -166,3 +175,27 @@ data class ProjectManifest(
         const val CURRENT_SCHEMA_VERSION = 1
     }
 }
+
+/**
+ * ROUND 20 (item 81) — the per-unit factory calibration tags, as recorded.
+ * Plain lists (not typed matrices) on purpose: this is a RECORD of what the
+ * device reported, and the interpretation — including the two possible
+ * readings of the rotation's direction — lives in
+ * [com.lidarscan.core.capture.CameraFromImu.resolveWithFactory], next to its
+ * tests.
+ */
+@Serializable
+data class FactoryLensPose(
+    /** `LENS_POSE_ROTATION`, `(x, y, z, w)`, or null when absent. */
+    val rotationXyzw: List<Double>? = null,
+    /** `LENS_POSE_TRANSLATION`, metres, or null when absent. */
+    val translationM: List<Double>? = null,
+    /** `LENS_POSE_REFERENCE`: 0 = PRIMARY_CAMERA, 1 = GYROSCOPE, 2 = UNDEFINED, null when unreported. */
+    val reference: Int? = null,
+    /** `LENS_INTRINSIC_CALIBRATION`, `[fx, fy, cx, cy, s]`, or null when absent. */
+    val intrinsicCalibration: List<Double>? = null,
+    /** `SENSOR_ORIENTATION`, degrees, recorded beside the tags it adjudicates. */
+    val sensorOrientationDeg: Int? = null,
+    /** Which rotation source the densifier actually ran with, e.g. "factory" / "coarse". */
+    val densifierSource: String? = null,
+)
