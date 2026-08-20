@@ -1,6 +1,7 @@
 package com.lidarscan.app
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
@@ -57,15 +58,26 @@ class Round23ScanTabTest {
     fun theScanTabIsLabelledScan() {
         ActivityScenario.launch(MainActivity::class.java).use {
             awaitProjectsTab()
-            composeRule.onNode(hasTestTag("tab_capture") and hasText("Scan")).assertIsDisplayed()
-            // …and nothing in the tab bar still says "Capture". Asserted
-            // through the tab's own tag rather than by scraping semantics
-            // config: a node that is BOTH the capture tab AND labelled
-            // "Capture" is exactly the failure, and there must be none.
+            // ── ROUND 24 item 107 ───────────────────────────────────────────
+            //
+            // The visible label is gone — the bar is icons only now — so the
+            // claim this test exists to make moved to where the name lives:
+            // the tab's `contentDescription`, which is the SAME `ScanTab.label`
+            // string it used to draw. The rename stays checkable, and it is now
+            // also what a screen reader announces.
+            composeRule.onNode(hasTestTag("tab_capture") and hasContentDescription("Scan"))
+                .assertExists()
             assertEquals(
-                "the Scan tab must not still be labelled \"Capture\"",
+                "the Scan tab must not still be named \"Capture\"",
                 0,
-                composeRule.onAllNodes(hasTestTag("tab_capture") and hasText("Capture"))
+                composeRule.onAllNodes(hasTestTag("tab_capture") and hasContentDescription("Capture"))
+                    .fetchSemanticsNodes().size,
+            )
+            // …and no tab draws a text label at all any more.
+            assertEquals(
+                "ROUND 24 item 107: the tab bar carries icons, not words",
+                0,
+                composeRule.onAllNodes(hasTestTag("tab_capture") and hasText("Scan"))
                     .fetchSemanticsNodes().size,
             )
         }

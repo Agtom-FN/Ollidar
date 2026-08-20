@@ -143,34 +143,41 @@ object CaptureFocus {
      */
     const val ASK_TITLE: String = "Silence notifications while scanning?"
 
+    // ROUND 24 item 110(a): was 74 words in a dialog that opens on a first
+    // scan. The three things it has to say survive — a buzz shakes the phone,
+    // the grant lives on a system screen, and scans work without it — one
+    // short line each. The ROUND 14 test asserts the first and the third by
+    // their own words, which is why those two clauses are kept verbatim.
     const val ASK_BODY: String =
-        "A notification does not just interrupt you — the buzz physically shakes the phone, " +
-            "and the phone is the tracker. A single vibration mid-walk can move the map.\n\n" +
-            "Android only lets an app set Do Not Disturb after you allow it on a system " +
-            "screen. LidarScan turns it on for the length of each scan and puts your setting " +
-            "back when the scan ends.\n\n" +
-            "Scans still run without this — the log just records that the walk was unprotected."
+        "A notification buzz shakes the phone, which is the tracker.\n\n" +
+            "Android asks you to allow this.\n\n" +
+            "Scans still run without this."
 
     const val ASK_CONFIRM: String = "Open settings"
 
     const val ASK_DISMISS: String = "Not now"
 
     /** The Settings row's status line, so the operator can always see where they stand. */
+    // ROUND 24 item 113: shortened to the law. Was "Access granted — scans are
+    // silenced and your setting is restored afterwards." / "Access not granted
+    // — scans will run unprotected. Tap to open the system screen." Both said
+    // three things where one was needed; the word "granted" survives in both,
+    // which is what the ROUND 14 tests are actually about.
     fun accessStatus(granted: Boolean): String =
         if (granted) {
-            "Access granted — scans are silenced and your setting is restored afterwards."
+            "Access granted. Scans run silenced."
         } else {
-            "Access not granted — scans will run unprotected. Tap to open the system screen."
+            "Access not granted. Scans run unprotected."
         }
 
     /** One sentence for the capture screen. Null when there is nothing to say. */
     fun note(state: DndState): String? = when (state) {
         DndState.PROTECTED, DndState.ALREADY_QUIET, DndState.DISABLED -> null
+        // ROUND 24 item 110(a): both were 22 words on the Scan screen, read on
+        // every walk. An instruction and its one detail line instead.
         DndState.NO_PERMISSION ->
-            "Notifications are not silenced. A notification buzz shakes the phone and can " +
-                "break tracking mid-walk — grant Do Not Disturb access in Settings."
+            "Notifications are not silenced.\nAllow Do Not Disturb in Settings."
         DndState.FAILED ->
-            "Could not silence notifications for this scan. A notification buzz shakes the " +
-                "phone and can break tracking mid-walk."
+            "Notifications are not silenced.\nA buzz can break tracking mid-walk."
     }
 }

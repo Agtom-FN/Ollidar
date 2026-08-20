@@ -224,8 +224,15 @@ class CaptureAutoConnectController(
     }
 
     companion object {
-        const val NOTHING_FOUND: String =
-            "No sensor found. Plug the COIN-D6 into USB-C (or attach the Mid-360's Ethernet adapter) and tap Retry."
+        /**
+         * ROUND 24 item 110(a). Was: "No sensor found. Plug the COIN-D6 into
+         * USB-C (or attach the Mid-360's Ethernet adapter) and tap Retry." —
+         * eighteen words naming two products and a connector, on the screen a
+         * first-run operator meets. The manual panel directly underneath it
+         * already says how to plug in each sensor, so this line only has to
+         * report and point.
+         */
+        const val NOTHING_FOUND: String = "No scanner found. Plug it in, then Retry."
     }
 }
 

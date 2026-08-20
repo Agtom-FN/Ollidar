@@ -3471,3 +3471,226 @@ switch to find first. (d) The Survey and Research profile chips are gated by
 **727** (was 672), `:app` **168** (was 155), emulator **25/25** (was 22/22), 0
 failures anywhere. VERSION 0.9.8; **versionCode 908 / versionName 0.9.8
 verified in the built APK** (aapt2 badging).
+
+---
+
+## ROUND 24 (v0.9.9) — the owner's 0.9.8 UI/UX round
+
+He tested 0.9.8 and the verdict on the thing rounds 17–23 were all about is
+**"The scan is better."** So this round is not a defect round: it is the first
+one in eight that is entirely about the surface the operator touches. Seven
+owner items, and one instruction that governs all of them — build them cleanly
+enough that the UIUX designer's annotations, when they arrive, are cheap.
+
+**107 — TAB BAR: ICONS ONLY, CENTERED.** The four labels go; the icons centre
+in their capsules. Accessibility does not go with them: each tab carries its
+name as a `contentDescription` ("Scan", "Projects", "Jobs", "Settings") and
+every `tab_*` test tag stays, because the emulator suite drives the app through
+them. Selected is the Agtom orange icon plus a small dot under it — a colour
+change alone is not a state on a monochrome-glance bar. The label-reading
+assertions in `Round23ScanTabTest` become semantics assertions, and the
+Projects avatar stops calling itself "Settings" (item 109 gives it a better
+name), which is what keeps `onNodeWithContentDescription` unambiguous.
+
+**108 — PROJECTS: GALLERY/LIST TOGGLE + SORT.** (a) Two layouts — a 2-column
+**gallery** of thumbnail-first cards and the current **list** row — with the
+choice persisted. (b) A sort control: **Newest** (default), **A–Z**, **Z–A**,
+persisted. (c) One compact control row above the list, and everything round 23
+built keeps working in BOTH layouts: selection mode, the ⋯ menus, tap-opens-
+viewer, the per-card progress chip. The round-23 tests extend over the grid.
+
+**109 — PROFILE PAGE (new).** The avatar on Projects opens Settings today,
+which is a second door to a tab that already has one. It becomes a **Profile**
+page, and Settings gains a Profile row into it. It carries (a) the device/app
+card — version + code, device model, Android version, engine ABI, storage used
+by scans, scan count; (b) **SEND LOGS**, which zips the capture log (including
+its `[crash]` entries) with the app/device info and sends it; (c) **FEEDBACK**,
+a text box plus the same bundle.
+
+**No server endpoint is confirmed**, so the delivery is two paths behind one
+`FeedbackSender`: if a server URL and token are configured (the existing cloud
+fields, plus a distinct `/feedback` path constant) it POSTs the zip as
+multipart; otherwise it falls back to the Android share sheet. It never blocks
+on the network, it runs as a job with visible progress, and it is honest —
+"Sent." or "Could not send. Saved to Downloads." — with the zip left in
+`Downloads/LidarScan` on every failure. Nothing personal beyond what is already
+in the log, and one line on screen saying so.
+
+**110 — SCAN PAGE WORDING + TUTORIAL MODE.** (a) A sweep of the Scan page for
+the long wording round 22's law never reached — status chips, panel notes,
+banners — with the detail moved into (b) a **tutorial**: a guided spotlight
+walkthrough of each visible control. A small **?** on the Scan page opens it,
+and a first launch after install offers it once ("New here? Take the tour.",
+dismissible, never repeated, persisted). Six steps, each dimming the screen,
+ringing one control and explaining it in twelve words or fewer: the SCAN
+button, the status chips, the Advanced gear, the start hold, the tracking-lost
+popup, and where the scans land. Pure Compose, no library. A **Tutorial** row
+in Settings replays it. The step machine and the seen-flag are tested.
+
+**111 — THE SCAN TAB ALWAYS OPENS A NEW SCAN.** Owner, verbatim: *"When ever
+the user click the scan tab its a new scan."* A fresh entry into the tab
+performs the round-20 New-capture reset by itself. Three things it must not
+do: reset under a RECORDING/PAUSED capture or an in-flight start (the operator
+checking Projects mid-walk is a normal thing to do), reset on a configuration
+change or rotation, or disturb a running auto-process (that lives on
+`containerScope` since item 90). Folded into round 23's
+`onScanScreenEntered()`.
+
+**112 — THE TRACKING-LOST WARNING BECOMES A CENTERED POPUP.** The round-23
+amber banner was a band at the top of a screen the operator is not looking at.
+While recording it becomes a **centered modal-style popup**: a dimmed scrim, a
+big amber card mid-screen — "Tracking lost. Stop. Hold still." with the live
+seconds — that stays until tracking returns (then the green "OK — keep
+walking." for two seconds) or the scan is stopped. **The STOP button stays
+visible and tappable**, because a user may want to abandon. No other dismissal;
+the strong haptic on appear and the light tick on recovery are unchanged; it
+can never appear outside recording. `TrackingLossBanners` is untouched — this
+is presentation only.
+
+**113 — SETTINGS SIMPLIFICATION.** Twelve headings become five, grouped the
+way an operator would look for them: **Profile** at the top, **Scanning**
+(mount profile, sounds & haptics, detail), **Storage** (cleanup, keep-empty,
+location), the **Advanced features** switch, and **About** (version footer with
+its seven-tap unlock, tutorial replay, the camera sentence). Everything
+developer-only moves behind the existing dev mode rather than being deleted,
+and every label and summary is shortened to the wording law. The report carries
+the relocation map, because the owner has to be able to find what moved.
+
+### Resolution — 2026-08-20 (0.9.9, round 24)
+
+**107 — icons only, and the name moved rather than vanished.** `ScanTabBar`'s
+four `Text` labels are gone and the icons centre in their capsules at 23 dp.
+The accessible name is now each icon's `contentDescription`, and it is the
+**same** `ScanTab.label` string it used to draw, so a rename can never
+desynchronise what is seen from what is announced. Selection is the Agtom
+orange **plus a 4 dp ember dot** (`tabSelectedDot`), with a transparent dot of
+the same height on the other three so the icons never hop as the selection
+moves — a colour change alone was survivable under a bold label and is not on a
+bar of four glyphs. One collision had to be resolved rather than discovered:
+the Projects hero's avatar described itself as "Settings", and
+`ReplayCaptureSmokeTest` asserts that node is unambiguous. Item 109 gave the
+avatar a better destination, so it is **"Profile"** now — one name, one node,
+one door each. `Round23ScanTabTest.theScanTabIsLabelledScan` asserts the
+`tab_capture` node's *content description* instead of its text, and adds the
+converse (no tab draws a text label at all).
+
+**108 — one card, one or two columns.** `ProjectsLayout` /
+`ProjectSort` / `ProjectsView` are pure `:core`, persisted through
+`SettingsRepository` as enum **names** (an ordinal is a number whose meaning
+changes the day someone reorders the enum, and this store outlives builds);
+unknown values read as the default. The grid is a `LazyVerticalGrid` with
+`GridCells.Fixed(ProjectsView.columns(layout))` — one column IS the list — so
+the gallery is the **same `ProjectCard`** with a shorter thumbnail (96 dp), a
+14 sp title and the sensor chip only. That is what makes item 108(c) free:
+selection mode, the ⋯ menu, tap-opens-viewer and the per-card progress chip all
+work in the gallery because there is no second card to keep in step. Sorting is
+memoised on `(projects, sort)` rather than done in the `items {}` lambda, and
+the batch's `listOrder` is the SORTED order — exporting a list in a different
+order from the one on screen is a group export nobody can check. `ProjectsView`
+is tested for the three properties that matter: stable across ties (two scans
+in the same millisecond must not shuffle under the thumb), case-insensitive by
+name, and total (no sort may drop a scan).
+
+**109 — Profile, and a sender that works before the endpoint exists.** The
+avatar opens `Routes.PROFILE`; Settings' new Profile row opens the same page.
+It carries version + code, device, Android release, engine ABI, scan count and
+computed storage — on the AVD: `0.9.9 (909)`, `ABI 12`, and the same six lines
+that go into the bundle, which is the point (what the operator can see is
+exactly what gets sent). Delivery is `FeedbackSender` over a `FeedbackConfig`
+whose `route` is `SERVER` only when a URL **and** a token are set (a URL with no
+token is a request that will 401, and offering Send for it is the app promising
+a failure); otherwise `SHARE`. The order of operations is the design: **zip →
+copy into `Downloads/LidarScan` → try to send**, never the reverse, because the
+share sheet has no result callback and an absent server fails after a timeout
+the operator has walked away from — so the one thing the app can guarantee is
+guaranteed first. On the emulator: `Downloads/LidarScan/lidarscan-logs-2026-08-
+20-1829.zip`, the chooser up with the zip attached, and
+`[export] feedback: route=SHARE sent=true bytes=435 downloads=…` in the app's
+own log. The multipart body is built in `:core` and **byte-asserted** on a bare
+JVM — CRLF everywhere, a terminated final boundary, text parts before the
+archive, the zip bytes verbatim — because nobody will notice a malformed body
+until the day a server exists to reject it. The privacy claim is a test: the
+summary is six known lines and contains no identifier.
+
+**110 — the wording, and where the words went instead.** (a) Fourteen Scan-page
+strings shortened, each recording what it replaced: the D6 mount hint (33 words
+including "6-DoF"), the mount-reference hint and its 69-word sheet paragraph
+(no more "CAD nominal", no more "pushbroom"), the no-tracking warning, the
+AR-degraded line, the New-capture dialog (30 words over a live recording), the
+swallowed-press answer, the start instruction, the manual-entry panel, the
+auto-detect failure ("No scanner found. Plug it in, then Retry." — the first
+sentence a new operator reads anywhere in the app), and the Do Not Disturb
+explainer, which was **74 words in a dialog that opens on a first scan**. Every
+one is in `Wording.INSTRUCTIONS`/`DETAILS` or is guarded by name in
+`Round24WordingTest` — a string outside those lists is not guarded at all,
+which is precisely how the Scan screen escaped round 22.
+
+(b) The tour is six steps, pure Compose, no library. `ScanTutorial` in `:core`
+is the machine (start / next / skip / the Done-on-the-last-step label / the
+offered-exactly-once rule) and the overlay owns no rules. The spotlight is one
+`Canvas` with `CompositingStrategy.Offscreen` and a `BlendMode.Clear` round
+rect — offscreen is the part that matters, because without its own layer
+`Clear` erases the app instead of the scrim. Controls register their bounds
+through a `CompositionLocal` **only while the tour runs**, so the ordinary path
+measures nothing; a control that is not composed simply has no bounds and the
+card centres, which is what makes the tour work on the disconnected ready
+screen a first-run operator actually sees. The card moves to whichever half of
+the screen the spotlight is not in. The Projects step needs no special case at
+all: the overlay is drawn inside the Scan destination and `LidarScanApp` draws
+the tab bar over it, so on the last step the one bright thing on a dark screen
+is the tab the step is about. Verified end to end on the AVD — ? → "1 of 6 ·
+Tap SCAN to start." with the SCAN button ringed, through to "6 of 6 · Finished
+scans land in Projects." and **Done** — and the first-run offer appears once on
+a cleared install and is gone after a tab round-trip and after a process
+restart. Settings › About › **Tutorial** replays it through a container-level
+one-shot (an intent, not a preference — persisting it would re-fire the tour
+after a crash).
+
+**111 — a fresh entry is a new scan; a rotation is not.** Folded into round
+23's `onScanScreenEntered()`, which now performs the ROUND 20 `performNewCapture`
+reset and logs `scan tab entered: fresh entry — starting a new scan`. The hard
+part was the discriminator: since item 88 made the ViewModel survive both, a tab
+switch and a configuration change produce the **identical** Compose sequence, so
+neither `remember`, `rememberSaveable` nor a nav-entry lifecycle observer can
+tell them apart — the Activity can, and `onScanScreenLeaving(isChangingConfigurations)`
+carries it. The flag is consumed by the entry that reads it (a sticky one would
+suppress every later entry for the life of the ViewModel — a bug that
+reproduces once and then hides). A live capture, a start in flight and the
+`containerScope` auto-process are all left strictly alone. `CaptureRound24Test`
+records, seals, and asserts the clean ready screen; asserts a mid-recording tab
+switch changes nothing; asserts a rotation changes nothing; and asserts the
+flag is spent.
+
+**112 — the popup, and the STOP button through it.** `TrackingLossBanners` is
+untouched — this is presentation only. The band at the top of the loud stack is
+now a **centered card over a dimmed screen**, 26 sp (it is read at hip height by
+someone who has just looked down), with the live seconds under it, no dismiss
+of any kind, and the round-23 test tags kept so the assertions that pin it still
+mean what they meant. The scrim is a `Box` with a background and **no
+pointer-input modifier**, which is what keeps **STOP tappable underneath** —
+item 112 requires it outright, and a `Dialog` would have failed it, being its
+own window that eats every touch in the app. That property is invisible in a
+screenshot, so `Round24TrackingPopupTest` clicks a stand-in STOP *through* the
+scrim and asserts the card's centre lands in the middle third of the screen.
+
+**113 — twelve headings became five.** The relocation map is in the report;
+nothing was deleted. Profile · Scanning (mount profile, sounds & haptics,
+detail) · Storage (cleanup, keep-empty, location) · Display (units, theme) ·
+Advanced features (with the cloud server folded in behind its own switch) ·
+About (tutorial, camera sentence, version footer with its seven-tap unlock).
+The simulated engine, the synthetic replay, the capture-log card, the D6
+sensor-latency slider and the workflow-profile reference all moved **behind the
+existing dev mode** — and the ordinary operator got a better door to the log
+than any of them: Profile › Send logs. Roughly 340 words of switch summaries
+became about 40; the mount card's 47-word paragraph became one line that keeps
+the provenance; `CaptureFocus.accessStatus` and the empty-scans explanation
+went the same way. `Round24UiTest` asserts the five sections, asserts the
+developer tags are **absent**, then unlocks with seven taps and asserts they are
+all back — and establishes its own precondition first, because developer mode
+is a persisted device fact and this suite shares an AVD with whoever used it
+last.
+
+**Numbers.** Engine untouched, **ABI stays 12**, engine ctest **7/7**. `:core`
+**785** (was 727), `:app` **174** (was 168), emulator **37/37** (was 25/25), 0
+failures anywhere. VERSION 0.9.9; **versionCode 909 / versionName 0.9.9
+verified in the built APK** (aapt2 badging).

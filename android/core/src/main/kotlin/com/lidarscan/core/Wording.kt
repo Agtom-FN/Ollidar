@@ -198,6 +198,90 @@ object Wording {
     const val MID360_SETUP = "Mid-360 setup"
     const val RTK_SETUP = "RTK position"
 
+    // ── ROUND 24 item 110(a): the Scan page's remaining long wording ───────
+    //
+    // Round 22 wrote the law and applied it to the Projects tab, Review and
+    // the export flow. The Scan screen kept a dozen sentences it did not
+    // reach — mostly ROUND 5/6 explanations that were correct, useful once,
+    // and then read on every single walk. Each of them is shortened here and
+    // its content moved into the tutorial (item 110b), which is the place a
+    // twenty-word explanation now belongs.
+
+    /**
+     * was: "Mount the D6 flat on the BACK of the phone with its scan fan
+     * VERTICAL, then walk forward — the phone's camera + IMU supply the 6-DoF
+     * path and the engine sweeps the fan into 3D." (33 words, and "6-DoF" is
+     * the design document talking.)
+     */
+    const val D6_MOUNT_HINT = "Mount flat. Keep the fan vertical."
+
+    /** The one detail line under it. The rest is [com.lidarscan.core.capture.TutorialStep]. */
+    const val D6_MOUNT_DETAIL = "The camera tracks where you walk."
+
+    /**
+     * was: "Hold the rig still in the pose you will walk with, then tap — the
+     * D6's angle on the phone is measured from the phone's own attitude and
+     * applied to this scan." (30 words.)
+     */
+    const val MOUNT_REF_HINT = "Hold still, then tap."
+    const val MOUNT_REF_DETAIL = "It measures the D6's angle on your phone."
+
+    /** was: "No mount reference — the pushbroom is running on the bracket's CAD nominal." */
+    const val MOUNT_REF_MISSING = "No mount reference yet."
+
+    /**
+     * was: "The D6 is clamped on by hand and comes off between scans, so its
+     * real angle on the phone differs from the bracket's CAD nominal every
+     * session — and that angle lands in every resolved point. Hold the rig in
+     * the pose you will walk with, keep it still for about a second, and tap
+     * Set mount ref on the capture screen. It measures attitude only; the
+     * lever arm still needs the calibration wizard." (69 words, in a sheet.)
+     */
+    const val MOUNT_REF_WHY = "The D6 comes off between scans, so its angle changes each time."
+
+    /**
+     * was: "Without phone tracking the D6 can only record flat fan slices —
+     * grant the camera permission (or install ARCore) for a 3D scan."
+     */
+    const val NO_TRACKING_HINT = "No tracking. Scans would be flat."
+    const val NO_TRACKING_DETAIL = "Grant the camera permission for 3D."
+
+    /**
+     * was: "Phone tracking degraded — <error>. The recording is unaffected; a
+     * COIN-D6 needs tracking to build 3D, so stop and start again if this
+     * persists." (24 words plus an error string.)
+     */
+    const val AR_DEGRADED = "Phone tracking degraded."
+    const val AR_DEGRADED_DETAIL = "Recording continues. Stop and start again if it lasts."
+
+    /**
+     * was: "Starting fresh will stop and save the current recording first —
+     * nothing already captured is lost. The mount reference and other device
+     * calibration are kept; scan settings go back to defaults." (30 words in a
+     * dialog.)
+     */
+    const val NEW_CAPTURE_TITLE = "A scan is running."
+    const val NEW_CAPTURE_BODY = "It stops and saves first. Settings return to defaults."
+    const val NEW_CAPTURE_CONFIRM = "Stop and start fresh"
+    const val NEW_CAPTURE_DISMISS = "Keep recording"
+
+    /** was: "Heard you — this start is already running, no need to press again." */
+    const val START_HEARD_YOU = "Heard you. Already starting…"
+
+    /**
+     * was: "Hold the phone in your scanning pose and keep the camera pointed at
+     * the room — furniture and edges an arm's length or more away." (24 words,
+     * shown during the one stage the operator is watching the screen.)
+     */
+    const val START_LOOK_AT = "Point at furniture, an arm away."
+
+    /** was: "No serial device attached. Plug the D6 into USB-C OTG — it appears here as soon as it does." */
+    const val NO_USB_DEVICE = "Plug the D6 into USB-C."
+    const val NO_USB_DEVICE_DETAIL = "It appears here as soon as it does."
+
+    /** was: "No self-test step: the live view above is the proof. If points appear, the device works." */
+    const val LIVE_VIEW_IS_THE_PROOF = "Points on screen mean it works."
+
     /**
      * Every sentence above that is an INSTRUCTION (six words or fewer). The
      * guard walks this list; a new instruction that is not in it is not
@@ -238,6 +322,21 @@ object Wording {
         MID360_SETUP,
         RTK_SETUP,
         trackingLostFor(12),
+        // ── ROUND 24 item 110(a) ──
+        D6_MOUNT_HINT,
+        MOUNT_REF_HINT,
+        MOUNT_REF_MISSING,
+        NO_TRACKING_HINT,
+        NO_TRACKING_DETAIL,
+        AR_DEGRADED,
+        NEW_CAPTURE_TITLE,
+        NEW_CAPTURE_CONFIRM,
+        NEW_CAPTURE_DISMISS,
+        START_HEARD_YOU,
+        START_LOOK_AT,
+        NO_USB_DEVICE,
+        LIVE_VIEW_IS_THE_PROOF,
+        D6_MOUNT_DETAIL,
     )
 
     /** Every sentence above that is a DETAIL line (twelve words or fewer). */
@@ -251,6 +350,12 @@ object Wording {
         scanInPieces(4),
         fixingProgress(62),
         exportDone("scan-068.ply"),
+        // ── ROUND 24 item 110(a) ──
+        MOUNT_REF_DETAIL,
+        MOUNT_REF_WHY,
+        AR_DEGRADED_DETAIL,
+        NEW_CAPTURE_BODY,
+        NO_USB_DEVICE_DETAIL,
     )
 
     /** Every sentence above that is an ERROR: what happened + what to do. */

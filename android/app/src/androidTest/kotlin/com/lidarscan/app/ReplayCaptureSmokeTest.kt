@@ -62,16 +62,17 @@ class ReplayCaptureSmokeTest {
     @Test
     fun launchReachesProjectsListWithoutCrashing() {
         ActivityScenario.launch(MainActivity::class.java).use {
-            // The redesign's Projects hero carries the avatar/Settings button
-            // with this exact content description, and it is deliberately the
-            // ONLY node that does: the capsule tab bar's Settings tab labels
-            // itself with visible text and gives its icon `contentDescription =
-            // null` (see ScanTabBar), precisely so this assertion stays
-            // unambiguous. The tag below pins the same node structurally in
-            // case the description is ever re-worded.
+            // ROUND 24 items 107 + 109: this button used to describe itself as
+            // "Settings", and it was deliberately the only node that did — the
+            // tab bar labelled its Settings tab with visible text and gave the
+            // icon no description at all. Item 107 removed the labels, so the
+            // tab needs its name as a description; item 109 gave the avatar a
+            // better destination and therefore a better name. One node each,
+            // and both are asserted so the pair can never collide again.
             composeRule.waitUntil(timeoutMillis = 15_000) {
                 composeRule.onAllNodesWithTag("projectsAvatar").fetchSemanticsNodes().isNotEmpty()
             }
+            composeRule.onNodeWithContentDescription("Profile").assertIsDisplayed()
             composeRule.onNodeWithContentDescription("Settings").assertIsDisplayed()
 
             // The tab bar itself is new and is on every screen — if it failed

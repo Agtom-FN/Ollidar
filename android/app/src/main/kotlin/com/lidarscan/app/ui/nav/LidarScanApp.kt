@@ -28,6 +28,7 @@ import com.lidarscan.app.ui.connect.Mid360ConnectRoute
 import com.lidarscan.app.ui.detail.ProjectDetailRoute
 import com.lidarscan.app.ui.merge.MergeRoute
 import com.lidarscan.app.ui.pick.PickPurpose
+import com.lidarscan.app.ui.profile.ProfileRoute
 import com.lidarscan.app.ui.pick.ProjectPickerRoute
 import com.lidarscan.app.ui.plan.PlanRoute
 import com.lidarscan.app.ui.processing.ProcessingRoute
@@ -120,7 +121,11 @@ fun LidarScanApp(
                     // ROUND 5 (item 8): Projects does not create scans any more —
                     // it points at the tab that does.
                     onNewScan = { goTab(Routes.CAPTURE_NEW) },
-                    onSettings = { goTab(Routes.SETTINGS) },
+                    // ROUND 24 item 109: the avatar opens PROFILE now. It used
+                    // to open Settings — which is a tab, three centimetres
+                    // below it, with its own icon in the bar. Two doors to one
+                    // room, and the room was not the one the avatar implied.
+                    onSettings = { navController.navigate(Routes.PROFILE) },
                 )
             }
 
@@ -358,10 +363,30 @@ fun LidarScanApp(
                 }
             }
 
+            // ROUND 24 item 109: the Profile page — device/app facts, Send
+            // logs and Feedback. Wrapped like every other secondary screen so
+            // its last control does not sit under the floating tab bar.
+            composable(Routes.PROFILE) {
+                UnderTabBar {
+                    ProfileRoute(container = container, onBack = { navController.popBackStack() })
+                }
+            }
+
             composable(Routes.SETTINGS) {
                 SettingsRoute(
                     container = container,
                     onBack = { goTab(Routes.PROJECTS) },
+                    // ROUND 24 items 109 + 113: Settings' own Profile row, at
+                    // the top, so the page is reachable from the tab as well
+                    // as from the avatar.
+                    onOpenProfile = { navController.navigate(Routes.PROFILE) },
+                    // ROUND 24 item 110(b): a tour of the Scan screen has to
+                    // run on the Scan screen. Settings arms the one-shot and
+                    // hops to the tab; CaptureRoute honours it and clears it.
+                    onReplayTutorial = {
+                        container.tutorialReplayRequest.value = true
+                        goTab(Routes.CAPTURE_NEW)
+                    },
                     onReplaySyntheticCapture = { projectId ->
                         activeProjectId = projectId
                         navController.navigate(Routes.replayCapture(projectId))

@@ -1,6 +1,7 @@
 package com.lidarscan.app.ui.projects
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -18,16 +19,22 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material3.AlertDialog
@@ -77,8 +84,12 @@ import com.lidarscan.core.model.SensorType
 import com.lidarscan.core.projects.BatchAction
 import com.lidarscan.core.projects.ProjectActionWording
 import com.lidarscan.core.projects.ProjectSelection
+import com.lidarscan.core.projects.ProjectSort
+import com.lidarscan.core.projects.ProjectsLayout
+import com.lidarscan.core.projects.ProjectsView
 import com.lidarscan.core.store.Project
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 @Composable
 fun ProjectsListRoute(
@@ -182,6 +193,17 @@ fun ProjectsListRoute(
     )
     val batchState by batchViewModel.uiState.collectAsStateWithLifecycle()
 
+    // ── ROUND 24 item 108: the layout and the order, persisted ─────────────
+    //
+    // Read from the SAME settings flow every other surface reads (there is one
+    // repository and one store), and written through it, so the preference is
+    // remembered across a cold start rather than only across a rotation. A
+    // preference that survives rotation but not a restart reads as the app
+    // forgetting, which is worse than not offering it.
+    val settings by container.settingsRepository.settings
+        .collectAsStateWithLifecycle(initialValue = com.lidarscan.app.data.AppSettings())
+    val prefsScope = androidx.compose.runtime.rememberCoroutineScope()
+
     // ROUND 5: the tab is a list + a preview, so the list has to be fresh when
     // the Capture tab has just created a project behind it.
     LaunchedEffect(Unit) { viewModel.refresh() }
@@ -222,9 +244,17 @@ fun ProjectsListRoute(
             batchViewModel.runOnSelection(
                 context = batchContext,
                 action = action,
-                listOrder = uiState.projects.map { it.id },
+                // ROUND 24 item 108: the batch runs in the order the operator
+                // is LOOKING at, not the store's. Sorting the list and then
+                // exporting it in a different order is the kind of detail that
+                // makes a group export impossible to check.
+                listOrder = ProjectsView.sorted(uiState.projects, settings.projectsSort).map { it.id },
             )
         },
+        layout = settings.projectsLayout,
+        sort = settings.projectsSort,
+        onLayoutChange = { next -> prefsScope.launch { container.settingsRepository.setProjectsLayout(next) } },
+        onSortChange = { next -> prefsScope.launch { container.settingsRepository.setProjectsSort(next) } },
     )
 }
 
@@ -271,6 +301,13 @@ fun ProjectsListScreen(
     onToggleSelection: (String) -> Unit = {},
     onExitSelection: () -> Unit = {},
     onBatchAction: (BatchAction) -> Unit = {},
+    // ── ROUND 24 item 108: gallery/list + sort ──────────────────────────────
+    /** Which layout to draw. Persisted — see [ProjectsLayout]. */
+    layout: ProjectsLayout = ProjectsLayout.DEFAULT,
+    /** Which order to draw it in. Persisted — see [ProjectSort]. */
+    sort: ProjectSort = ProjectSort.DEFAULT,
+    onLayoutChange: (ProjectsLayout) -> Unit = {},
+    onSortChange: (ProjectSort) -> Unit = {},
 ) {
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
     // The group Delete confirm. ROUND 23 item 104c is explicit that moving
@@ -287,6 +324,9 @@ fun ProjectsListScreen(
     LaunchedEffect(initialSelectedId) {
         if (initialSelectedId != null) selectedId = initialSelectedId
     }
+    // ROUND 24 item 108: one sort, memoised on the two things it depends on.
+    // Sorting inside the `items {}` lambda would re-sort on every scroll frame.
+    val shown = remember(uiState.projects, sort) { ProjectsView.sorted(uiState.projects, sort) }
     Column(
         Modifier
             .fillMaxSize()
@@ -300,10 +340,13 @@ fun ProjectsListScreen(
             trailing = {
                 AvatarButton(
                     icon = Icons.Filled.Person,
-                    // The smoke test's cold-launch check looks for exactly one
-                    // node with this description; the tab bar's Settings tab
-                    // deliberately carries none (see ScanTabBar).
-                    contentDescription = "Settings",
+                    // ROUND 24 items 107 + 109: this used to say "Settings",
+                    // which was a person-shaped button opening a tab that was
+                    // already in the bar below it — and which collided the
+                    // moment item 107 gave the Settings TAB its name back as a
+                    // content description. It opens the Profile page now, so
+                    // it is called Profile: one name, one node, one door.
+                    contentDescription = "Profile",
                     onClick = onSettings,
                     modifier = Modifier.testTag("projectsAvatar"),
                 )
@@ -336,6 +379,20 @@ fun ProjectsListScreen(
             )
         }
 
+        // ── ROUND 24 item 108: one compact control row ─────────────────────
+        //
+        // Above the list, below the hero, and only when there is a list to
+        // control: a sort menu over an empty tab is a control for nothing, and
+        // the empty state has one job (point at the Scan tab).
+        if (!uiState.loading && uiState.projects.isNotEmpty()) {
+            ProjectsControlRow(
+                layout = layout,
+                sort = sort,
+                onLayoutChange = onLayoutChange,
+                onSortChange = onSortChange,
+            )
+        }
+
         // Weighted so the list gets the height LEFT OVER under the hero,
         // not the full screen height (which would run the last card under the
         // floating tab bar).
@@ -347,8 +404,19 @@ fun ProjectsListScreen(
 
                 uiState.projects.isEmpty() -> EmptyProjectsState(uiState.hiddenEmptyCount, onNewScan)
 
-                else -> LazyColumn(
-                    modifier = Modifier.fillMaxSize().testTag("projectsList"),
+                // ── ROUND 24 item 108: the SAME card, in one or two columns ──
+                //
+                // `LazyVerticalGrid` with `GridCells.Fixed(1)` is a LazyColumn
+                // with extra words, so the two layouts are one call site and
+                // one card: everything round 23 built — selection, the ⋯ menu,
+                // the progress chip, tap-opens-viewer — works in the gallery
+                // because it is not a second implementation of a card, it is
+                // the same one with a shorter thumbnail.
+                else -> LazyVerticalGrid(
+                    columns = GridCells.Fixed(ProjectsView.columns(layout)),
+                    modifier = Modifier.fillMaxSize().testTag(
+                        if (layout == ProjectsLayout.GALLERY) "projectsGallery" else "projectsList",
+                    ),
                     contentPadding = PaddingValues(
                         start = 16.dp,
                         end = 16.dp,
@@ -356,9 +424,11 @@ fun ProjectsListScreen(
                         bottom = ScanDims.TabBarClearance,
                     ),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    items(uiState.projects, key = { it.id }) { project ->
+                    items(shown, key = { it.id }) { project ->
                         ProjectCard(
+                            gallery = layout == ProjectsLayout.GALLERY,
                             project = project,
                             selected = selectedId == project.id,
                             // ROUND 23 item 104c: a reprocess chip and an export
@@ -412,7 +482,7 @@ fun ProjectsListScreen(
                             onDelete = { onDeleteProject(project.id) },
                         )
                     }
-                    item {
+                    item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
                         Spacer(Modifier.height(2.dp))
                         Hint(
                             // ROUND 22 item 98. Was: "Tap a scan to preview it ·
@@ -531,6 +601,87 @@ private fun SelectionBar(
     }
 }
 
+/**
+ * ROUND 24 item 108 — **one row, two controls, no menu bar.**
+ *
+ * A layout toggle on the left and a sort menu on the right, in 40 dp, above a
+ * list the operator came here to read. Two deliberate choices:
+ *
+ *  * **The layout is a toggle, not a menu.** There are two layouts. A menu for
+ *    a binary is a tap and a read where a tap would do, and the icon shows the
+ *    layout you would GET rather than the one you are in — which is what a
+ *    toggle's icon means everywhere else on a phone.
+ *  * **The sort is a menu showing its current value.** Three options with real
+ *    names ("Newest", "A–Z", "Z–A"), and the current one is on the row, because
+ *    "why is this scan at the top" must be answerable without opening anything.
+ */
+@Composable
+private fun ProjectsControlRow(
+    layout: ProjectsLayout,
+    sort: ProjectSort,
+    onLayoutChange: (ProjectsLayout) -> Unit,
+    onSortChange: (ProjectSort) -> Unit,
+) {
+    var sortMenuOpen by remember { mutableStateOf(false) }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 18.dp, vertical = 2.dp)
+            .testTag("projectsControlRow"),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(
+            onClick = { onLayoutChange(ProjectsView.toggled(layout)) },
+            modifier = Modifier.testTag("projectsLayoutToggle"),
+        ) {
+            Icon(
+                // The icon of the layout a tap would GIVE you, which is what a
+                // toggle means: in the list, offer the grid.
+                if (layout == ProjectsLayout.GALLERY) {
+                    Icons.AutoMirrored.Filled.ViewList
+                } else {
+                    Icons.Filled.GridView
+                },
+                contentDescription = ProjectsView.layoutActionLabel(layout),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(Modifier.weight(1f))
+        Box {
+            Row(
+                Modifier
+                    .clickable(onClick = { sortMenuOpen = true })
+                    .padding(horizontal = 8.dp, vertical = 8.dp)
+                    .testTag("projectsSortButton"),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Filled.Sort,
+                    contentDescription = ProjectsView.SORT_LABEL,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.height(18.dp),
+                )
+                Spacer(Modifier.padding(horizontal = 3.dp))
+                Text(
+                    sort.label,
+                    style = MonoMeta,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("projectsSortValue"),
+                )
+            }
+            DropdownMenu(expanded = sortMenuOpen, onDismissRequest = { sortMenuOpen = false }) {
+                ProjectSort.entries.forEach { option ->
+                    DropdownMenuItem(
+                        text = { Text(option.label) },
+                        onClick = { sortMenuOpen = false; onSortChange(option) },
+                        modifier = Modifier.testTag("projectsSort_${option.name}"),
+                    )
+                }
+            }
+        }
+    }
+}
+
 private fun aggregateLine(projects: List<Project>, hiddenEmptyCount: Int = 0): String {
     // ROUND 9 (item 33): the hidden strays are named here rather than left to be
     // discovered — "2 projects" on a phone with five directories on it would be
@@ -567,6 +718,16 @@ private fun aggregateLine(projects: List<Project>, hiddenEmptyCount: Int = 0): S
 private fun ProjectCard(
     project: Project,
     selected: Boolean,
+    /**
+     * ROUND 24 item 108 — **drawn in the 2-column gallery.**
+     *
+     * Three differences and no fourth: a shorter thumbnail (a 2-column card is
+     * half as wide, so the same 108 dp would be a letterbox), the chip row
+     * trimmed to the sensor badge, and a smaller title. Everything that is a
+     * BEHAVIOUR — the tap, the long-press, the ⋯ menu, the selection tick, the
+     * progress chip — is identical, because it is the same composable.
+     */
+    gallery: Boolean = false,
     /** ROUND 22 item 96: 0..1 while a job started from this card runs; null otherwise. */
     progress: Float? = null,
     /** ROUND 23 item 104c: what the progress chip says — a reprocess and an export differ. */
@@ -624,7 +785,13 @@ private fun ProjectCard(
         // a scan — instead of opening another screen to do it.
         ProjectThumbnail(
             project = project,
-            modifier = Modifier.fillMaxWidth().height(if (selected) 260.dp else 108.dp),
+            modifier = Modifier.fillMaxWidth().height(
+                when {
+                    selected -> if (gallery) 180.dp else 260.dp
+                    gallery -> 96.dp
+                    else -> 108.dp
+                },
+            ),
         )
 
         Row(
@@ -647,7 +814,7 @@ private fun ProjectCard(
                 text = manifest.name,
                 fontFamily = DisplayFontFamily,
                 fontWeight = FontWeight.SemiBold,
-                fontSize = 17.sp,
+                fontSize = if (gallery) 14.sp else 17.sp,
                 letterSpacing = (-0.015).em,
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
@@ -655,12 +822,14 @@ private fun ProjectCard(
                 modifier = Modifier.weight(1f, fill = false),
             )
             Spacer(Modifier.padding(horizontal = 3.dp))
-            Icon(
-                Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                contentDescription = null,
-                tint = InkFaint,
-                modifier = Modifier.height(16.dp),
-            )
+            if (!gallery) {
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = null,
+                    tint = InkFaint,
+                    modifier = Modifier.height(16.dp),
+                )
+            }
             // ── ROUND 22 item 96: the per-card ⋯ menu ────────────────────────
             //
             // Export, Process again and Delete — the three things Simple mode's
@@ -746,10 +915,12 @@ private fun ProjectCard(
                 color = if (manifest.sensor == SensorType.MID360) PoseBlue else ScanTeal,
                 showDot = true,
             )
-            ScanChip(
-                text = manifest.profile.displayName.uppercase(),
-                showDot = true,
-            )
+            if (!gallery) {
+                ScanChip(
+                    text = manifest.profile.displayName.uppercase(),
+                    showDot = true,
+                )
+            }
             // ROUND 6 (owner item 20): a capture whose app-side metadata was
             // destroyed by the pre-0.3.0 `manifest.json` collision with the
             // engine's own container manifest, and which `FileProjectStore`

@@ -220,4 +220,44 @@ data class AppSettings(
      * has ever applied one. Display-only: it never changes the trim.
      */
     val mountAutoLevelSuggestion: String? = null,
+
+    /**
+     * ROUND 24 item 108 — **how the Projects tab draws itself, remembered.**
+     *
+     * Device-level rather than per-project for the obvious reason (it is a
+     * property of the list, not of anything in it) and persisted rather than
+     * `rememberSaveable` for the less obvious one: a preference that survives
+     * rotation but not a cold start is a preference the operator re-sets every
+     * morning, which reads as the app forgetting.
+     *
+     * See [com.lidarscan.core.projects.ProjectsLayout] for why the default is
+     * LIST.
+     */
+    val projectsLayout: com.lidarscan.core.projects.ProjectsLayout =
+        com.lidarscan.core.projects.ProjectsLayout.DEFAULT,
+
+    /** ROUND 24 item 108 — newest first, until the operator says otherwise. */
+    val projectsSort: com.lidarscan.core.projects.ProjectSort =
+        com.lidarscan.core.projects.ProjectSort.DEFAULT,
+
+    /**
+     * ROUND 24 item 110(b) — **the tour has been seen.**
+     *
+     * Set by finishing it, by skipping it, and by the Settings replay row (a
+     * replay is by definition a second viewing). It retires the first-run
+     * offer for good; the ? button on the Scan screen and the Settings row are
+     * how it comes back, both deliberately explicit.
+     */
+    val tutorialSeen: Boolean = false,
+
+    /**
+     * ROUND 24 item 110(b) — **the offer has been made.**
+     *
+     * A separate flag from [tutorialSeen] because "he dismissed the offer" and
+     * "he watched the tour" are different facts, and only the pair of them can
+     * express the rule item 110 actually asks for: offered exactly once,
+     * whichever way it ended. See
+     * [com.lidarscan.core.capture.ScanTutorial.shouldOffer].
+     */
+    val tutorialOffered: Boolean = false,
 )

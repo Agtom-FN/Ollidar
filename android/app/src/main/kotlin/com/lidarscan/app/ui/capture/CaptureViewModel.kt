@@ -2042,12 +2042,59 @@ class CaptureViewModel(
      * being fixed. So this only acts when there is demonstrably nothing
      * running, and everything it does is logged.
      */
+    /**
+     * ROUND 24 item 111 — **the screen is going away because the DEVICE
+     * rotated, not because the operator left.**
+     *
+     * Set by `CaptureRoute`'s teardown from `Activity.isChangingConfigurations`,
+     * and consumed by the very next [onScanScreenEntered]. It is the one
+     * discriminator that actually distinguishes the two cases: a rotation and a
+     * tab switch produce the identical Compose sequence (dispose, then compose
+     * again with the same ViewModel, since item 88 made the ViewModel survive
+     * both), so neither `remember`, `rememberSaveable`, nor a nav-entry
+     * lifecycle observer can tell them apart. The Activity can.
+     */
+    private var pendingConfigurationChange = false
+
+    /**
+     * ROUND 24 item 111 — called from the screen's teardown.
+     *
+     * @param configurationChange the Activity's own `isChangingConfigurations`.
+     */
+    fun onScanScreenLeaving(configurationChange: Boolean) {
+        pendingConfigurationChange = configurationChange
+    }
+
     fun onScanScreenEntered() {
         val state = captureState.value
         val live = state == com.lidarscan.core.engine.CaptureState.RECORDING ||
             state == com.lidarscan.core.engine.CaptureState.PAUSED ||
             state == com.lidarscan.core.engine.CaptureState.STOPPING
+        // ── ROUND 24 item 111 (owner: "When ever the user click the scan tab
+        // its a new scan") ──────────────────────────────────────────────────
+        //
+        // A FRESH entry into the tab is a new scan, so it performs the ROUND
+        // 20 New-capture reset by itself. Three exclusions, and each of them is
+        // a bug if it is missed:
+        //
+        //  * **a live capture** — checking Projects mid-walk is a normal thing
+        //    to do, and wiping the stats under a running recording would be a
+        //    far worse defect than the one this fixes. Handled by the `live ||
+        //    starting` return below, which item 101(a) already had.
+        //  * **a rotation** — same Compose sequence, entirely different intent.
+        //    That is what `pendingConfigurationChange` is for, and it is spent
+        //    here whether or not it fires.
+        //  * **a running auto-process** — `performNewCapture` leaves an
+        //    in-flight one alone (it only clears the CARD), and the job itself
+        //    lives on `containerScope` since ROUND 22 item 90, so it is not
+        //    this screen's to cancel.
+        val afterConfigurationChange = pendingConfigurationChange
+        pendingConfigurationChange = false
         if (live || _starting.value) return
+        if (!afterConfigurationChange && !isReplay) {
+            logEvent(LOG_TAG_SESSION, "scan tab entered: fresh entry — starting a new scan")
+            performNewCapture()
+        }
         // A latch with no sequence behind it is exactly the "Start is dead
         // until the app is killed" failure of ROUND 21, arriving by a
         // different road: the sequence's owner was disposed, not released.

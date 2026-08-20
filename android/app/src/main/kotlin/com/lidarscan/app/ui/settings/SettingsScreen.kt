@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -71,6 +72,10 @@ fun SettingsRoute(
     container: AppContainer,
     onBack: () -> Unit,
     onReplaySyntheticCapture: (projectId: String) -> Unit = {},
+    /** ROUND 24 item 109/113: the Profile row at the top of the page. */
+    onOpenProfile: () -> Unit = {},
+    /** ROUND 24 item 110(b): the About section's Tutorial row. */
+    onReplayTutorial: () -> Unit = {},
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     // ROUND 14: the grant is made on a system screen with no result callback,
@@ -125,6 +130,11 @@ fun SettingsRoute(
     // ROUND 20 item 82: the trim half of the mount profile, re-read on entry.
     val storedMountTrim by viewModel.storedMountTrim.collectAsStateWithLifecycle()
     androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refreshMountProfile() }
+    // ROUND 24 item 113: the Detail row shares the persisted display block, so
+    // it is re-read on entry rather than held — the Advanced sheet may have
+    // moved it since the last visit.
+    val detailLevel by viewModel.detailLevel.collectAsStateWithLifecycle()
+    androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refreshDetailLevel() }
 
     SettingsScreen(
         settings = settings,
@@ -161,6 +171,18 @@ fun SettingsRoute(
         storedMountTrim = storedMountTrim,
         onMountLeverArmChange = viewModel::setMountLeverArm,
         onMountLeverArmReset = viewModel::resetMountLeverArm,
+        onOpenProfile = onOpenProfile,
+        detailLevels = viewModel.detailLevels,
+        detailLevel = detailLevel,
+        detailCeilingNote = viewModel.detailCeilingNote,
+        onDetailChange = viewModel::setDetailLevel,
+        onReplayTutorial = {
+            // Seeing it again is still seeing it: replaying retires the
+            // first-run offer, so a tour watched from here on day one cannot
+            // be followed by "New here?" on day two.
+            viewModel.markTutorialSeen()
+            onReplayTutorial()
+        },
         onBack = onBack,
     )
 }
@@ -226,6 +248,17 @@ fun SettingsScreen(
     storedMountTrim: com.lidarscan.core.calib.StoredMountTrim? = null,
     onMountLeverArmChange: (Double, Double, Double) -> Unit = { _, _, _ -> },
     onMountLeverArmReset: () -> Unit = {},
+    /** ROUND 24 item 109: the Profile row. */
+    onOpenProfile: () -> Unit = {},
+    /** ROUND 24 item 113: DETAIL, clamped to this device by item 100's ceiling. */
+    detailLevels: List<com.lidarscan.core.capture.DetailLevel> =
+        com.lidarscan.core.capture.DetailLevel.entries,
+    detailLevel: com.lidarscan.core.capture.DetailLevel =
+        com.lidarscan.core.capture.DetailLevels.DEFAULT,
+    detailCeilingNote: String? = null,
+    onDetailChange: (com.lidarscan.core.capture.DetailLevel) -> Unit = {},
+    /** ROUND 24 item 110(b): replays the Scan-screen tour. */
+    onReplayTutorial: () -> Unit = {},
     onBack: () -> Unit,
 ) {
     Column(
@@ -237,61 +270,126 @@ fun SettingsScreen(
             .verticalScroll(rememberScrollState())
             .testTag("settingsScreen"),
     ) {
-        HeroHeader(title = "Settings", subtitle = "device-level · applies to every project")
+        HeroHeader(title = "Settings", subtitle = "this device")
 
         Column(
             Modifier.padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(22.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            SettingsSection("Workflow profiles") { WorkflowProfilesCard() }
+            // ── ROUND 24 item 109: PROFILE, first ───────────────────────────
+            //
+            // The version number, the storage figure and Send logs used to be
+            // three separate cards in three separate sections of this page.
+            // They are one page now, and this is its door — at the top,
+            // because "what version am I on" is the most common reason anyone
+            // opens Settings at all.
+            SettingsSection("Profile") {
+                ScanCard(onClick = onOpenProfile, modifier = Modifier.testTag("settingsProfileRow")) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            CardTitle("Profile")
+                            Spacer(Modifier.height(4.dp))
+                            Hint("Version, storage, send logs.", color = InkFaint)
+                        }
+                        Icon(
+                            Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = null,
+                            tint = InkFaint,
+                        )
+                    }
+                }
+            }
 
-            SettingsSection("Units") {
-                SegmentedPill(
-                    options = Units.entries.map { it to it.displayName },
-                    selected = settings.units,
-                    onSelect = onUnitsChange,
-                    height = 44.dp,
+            // ── SCANNING: the mount, the cues, the detail ───────────────────
+            SettingsSection("Scanning") {
+                MountProfileCard(
+                    leverArm = settings.mountLeverArm,
+                    storedTrim = storedMountTrim,
+                    autoLevelSuggestion = settings.mountAutoLevelSuggestion,
+                    onChange = onMountLeverArmChange,
+                    onReset = onMountLeverArmReset,
+                )
+                Spacer(Modifier.height(12.dp))
+                SoundsAndHapticsCard(
+                    operatorCues = settings.operatorCuesEnabled,
+                    dndDuringCapture = settings.dndDuringCapture,
+                    dndAccessGranted = dndAccessGranted,
+                    onOperatorCuesChange = onOperatorCuesChange,
+                    onDndDuringCaptureChange = onDndDuringCaptureChange,
+                    onGrantDndAccess = onGrantDndAccess,
+                )
+                Spacer(Modifier.height(12.dp))
+                DetailCard(
+                    levels = detailLevels,
+                    selected = detailLevel,
+                    ceilingNote = detailCeilingNote,
+                    onChange = onDetailChange,
                 )
             }
 
-            SettingsSection("Theme") {
-                SegmentedPill(
-                    options = ThemeMode.entries.map { it to it.displayName },
-                    selected = settings.themeMode,
-                    onSelect = onThemeModeChange,
-                    height = 44.dp,
+            // ── STORAGE ─────────────────────────────────────────────────────
+            SettingsSection("Storage") {
+                EmptyScansCard(
+                    keepEmptyScans = settings.keepEmptyScans,
+                    emptyScanCount = emptyScanCount,
+                    note = emptyScanNote,
+                    onKeepEmptyScansChange = onKeepEmptyScansChange,
+                    onCleanUp = onCleanUpEmptyScans,
+                    onDismissNote = onDismissEmptyScanNote,
                 )
-                Spacer(Modifier.height(8.dp))
-                Hint(
-                    "The redesign is a dark cockpit by intent; Light is a faithful inversion of the same " +
-                        "tokens, not a second design.",
-                    color = InkFaint,
-                )
+                Spacer(Modifier.height(12.dp))
+                ScanCard {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Folder, contentDescription = null, tint = Ember)
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                storageLocation,
+                                style = MonoMeta,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.testTag("storageLocationPath"),
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            // was: "Where .lscan projects are stored on this
+                            // device. A location picker is a future addition."
+                            Hint("Where your scans are kept.", color = InkFaint)
+                        }
+                    }
+                }
             }
 
-            SettingsSection("Cloud processing") {
-                CloudCard(settings.cloudBaseUrl, settings.cloudToken, onCloudChange)
-            }
-
-            // ROUND 10 (owner item 39): the only setting in this section is a
-            // colorize policy, so with colorization paused the section itself
-            // has nothing to say. Hidden whole rather than left as an empty
-            // heading — "owner hates clutter" (ROUND 9).
-            if (com.lidarscan.core.FeatureFlags.COLORIZE_ENABLED) {
-                SettingsSection("Processing") {
-                    ProcessingOptionsCard(settings.allowPoorSyncColorize, onAllowPoorSyncChange)
+            // ── DISPLAY: the two preferences that are genuinely preferences ──
+            //
+            // Units and Theme are neither developer settings nor advanced
+            // features — they are what a person wants their app to look like,
+            // and hiding them would be the simplification overshooting. Two
+            // segmented pills in one card, where they were two sections.
+            SettingsSection("Display") {
+                ScanCard {
+                    CardTitle("Units")
+                    Spacer(Modifier.height(8.dp))
+                    SegmentedPill(
+                        options = Units.entries.map { it to it.displayName },
+                        selected = settings.units,
+                        onSelect = onUnitsChange,
+                        height = 44.dp,
+                    )
+                    Spacer(Modifier.height(14.dp))
+                    CardTitle("Theme")
+                    Spacer(Modifier.height(8.dp))
+                    SegmentedPill(
+                        options = ThemeMode.entries.map { it to it.displayName },
+                        selected = settings.themeMode,
+                        onSelect = onThemeModeChange,
+                        height = 44.dp,
+                    )
                 }
             }
 
             // ── ROUND 22 item 97: the one Advanced-features switch ──────────
             //
             // Default OFF, which means the app a fresh install opens is the
-            // simple one. Nothing behind this switch is deleted — each item
-            // returns exactly as it is today the moment it is turned on, and
-            // `SimpleMode` (in :core) is the single place that decides which
-            // surface honours it. RTK and the Mid-360 wizard are deliberately
-            // NOT here: they appear whenever a Mid-360 is the selected sensor,
-            // because the owner is testing that rig shortly.
+            // simple one. Nothing behind this switch is deleted.
             SettingsSection(Wording.ADVANCED_TITLE) {
                 ScanCard {
                     ScanSwitchRow(
@@ -302,234 +400,110 @@ fun SettingsScreen(
                         modifier = Modifier.testTag("advancedFeaturesSwitch"),
                     )
                 }
-            }
-
-            // ROUND 9 (owner item 33): "owner hates clutter". One switch and one
-            // button — the switch decides what Stop does with a scan that
-            // recorded nothing, the button gets rid of the ones already there.
-            SettingsSection("Scans") {
-                EmptyScansCard(
-                    keepEmptyScans = settings.keepEmptyScans,
-                    emptyScanCount = emptyScanCount,
-                    note = emptyScanNote,
-                    onKeepEmptyScansChange = onKeepEmptyScansChange,
-                    onCleanUp = onCleanUpEmptyScans,
-                    onDismissNote = onDismissEmptyScanNote,
-                )
-            }
-
-            // ROUND 11 (owner item 43): the phone is the sensor mount and faces
-            // away from the operator, so the app has to be able to speak.
-            SettingsSection("Operator cues") {
-                ScanCard {
-                    ScanSwitchRow(
-                        title = "Vibrate and beep during a scan",
-                        detail = "On (the default). Two buzzes when phone tracking degrades, three short " +
-                            "buzzes when the scan breaks into a new section, one long soft buzz when you " +
-                            "are moving too fast for the returns to keep up. The phone faces away from you " +
-                            "while you walk, so these are the only hints you can actually receive. Turn " +
-                            "them off for a scan somewhere quiet — everything they say is on screen too.",
-                        checked = settings.operatorCuesEnabled,
-                        onCheckedChange = onOperatorCuesChange,
-                        modifier = Modifier.testTag("operatorCuesRow"),
-                    )
+                // ROUND 24 item 113: the cloud server lives WITH the switch
+                // that turns cloud processing on, instead of being a section
+                // of its own above the settings people actually use. It is
+                // also the pair of fields ROUND 24 item 109's feedback sender
+                // reads, which is why it is behind Advanced rather than behind
+                // developer mode.
+                if (settings.advancedFeatures) {
+                    Spacer(Modifier.height(12.dp))
+                    CloudCard(settings.cloudBaseUrl, settings.cloudToken, onCloudChange)
                 }
-                ScanCard {
-                    ScanSwitchRow(
-                        title = "Silence notifications while scanning",
-                        detail = "On (the default). A notification does not just distract you — the " +
-                            "buzz fires the vibration motor, and this phone IS the scan's inertial " +
-                            "sensor, so a 200 ms buzz shakes the IMU and smears the camera mid-" +
-                            "measurement. Your own scan cues still buzz. Needs Do Not Disturb " +
-                            "access; without it the scan runs anyway and the log records that it " +
-                            "was unprotected. Your previous setting is restored when the scan ends.",
-                        checked = settings.dndDuringCapture,
-                        onCheckedChange = onDndDuringCaptureChange,
-                        modifier = Modifier.testTag("dndDuringCaptureRow"),
-                    )
-                    // ── ROUND 14 (owner item 52) ────────────────────────────
-                    //
-                    // The switch above shipped in 0.8.0 stating a prerequisite
-                    // ("Needs Do Not Disturb access") that nothing in the app
-                    // could satisfy and nothing in the app could report. Every
-                    // session in the owner's field log recorded
-                    // `dnd=unprotected-no-permission` and he never saw a prompt.
-                    // This row is both halves: where you stand, and the way in.
-                    if (settings.dndDuringCapture) {
-                        Spacer(Modifier.height(10.dp))
-                        Hint(
-                            com.lidarscan.core.capture.CaptureFocus.accessStatus(dndAccessGranted),
-                            color = if (dndAccessGranted) InkFaint else SemWarn,
-                            modifier = Modifier.testTag("dndAccessStatus"),
-                        )
-                        if (!dndAccessGranted) {
-                            Spacer(Modifier.height(10.dp))
-                            SecondaryPill(
-                                text = "Grant Do Not Disturb access",
-                                height = 46.dp,
-                                onClick = onGrantDndAccess,
-                                modifier = Modifier.fillMaxWidth().testTag("dndGrantButton"),
-                            )
-                        }
-                    }
+                // ROUND 10 (owner item 39): with colorization paused this
+                // renders nothing at all, and a heading with nothing under it
+                // is the clutter the owner keeps asking us to remove.
+                if (com.lidarscan.core.FeatureFlags.COLORIZE_ENABLED && settings.advancedFeatures) {
+                    Spacer(Modifier.height(12.dp))
+                    ProcessingOptionsCard(settings.allowPoorSyncColorize, onAllowPoorSyncChange)
                 }
             }
 
-            // ROUND 20 item 82: the per-device mount profile — no hard-coded
-            // geometry for a public app.
-            SettingsSection("Mount profile (COIN-D6)") {
-                MountProfileCard(
-                    leverArm = settings.mountLeverArm,
-                    storedTrim = storedMountTrim,
-                    autoLevelSuggestion = settings.mountAutoLevelSuggestion,
-                    onChange = onMountLeverArmChange,
-                    onReset = onMountLeverArmReset,
-                )
-            }
-
-            SettingsSection("Sensor timing (advanced)") {
-                D6TimingCard(settings.d6SensorLatencyMs, onD6SensorLatencyChange)
-            }
-
-            SettingsSection("Engine (developer)") {
-                EngineCard(
-                    useFakeEngine = settings.useFakeEngine,
-                    nativeEngineAvailable = nativeEngineAvailable,
-                    onUseFakeEngineChange = onUseFakeEngineChange,
-                    onReplaySyntheticCapture = onReplaySyntheticCapture,
-                )
-            }
-
-            // ROUND 6 (owner item 20): the field-evidence section. The last
-            // capture failure arrived with no stack trace and no logcat,
-            // because logcat on a phone in the field is gone by the time
-            // anyone asks. This is the persistent copy, its path, and a share
-            // button — so the NEXT report can carry the trace with it.
-            SettingsSection("Capture log") {
-                ScanCard {
+            // ── ABOUT: the tour, the camera sentence, the version ───────────
+            SettingsSection("About") {
+                // ROUND 24 item 110(b): replay the Scan-screen tour. Opens the
+                // Scan tab and starts it there, because a tour of a screen has
+                // to happen ON the screen.
+                ScanCard(
+                    onClick = onReplayTutorial,
+                    modifier = Modifier.testTag("settingsTutorialRow"),
+                ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.Folder, contentDescription = null, tint = Ember)
-                        Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(
-                                captureLogPath,
-                                style = MonoMeta,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.testTag("captureLogPath"),
-                            )
-                            Spacer(Modifier.height(6.dp))
+                            CardTitle(com.lidarscan.core.capture.ScanTutorial.SETTINGS_ROW)
+                            Spacer(Modifier.height(4.dp))
                             Hint(
-                                "Project creation, session start/stop, pushbroom, and every seal — written " +
-                                    "here and kept across restarts (${captureLogSizeBytes / 1024} KB, rolling). " +
-                                    "Attach it to a bug report.",
-                                color = InkFaint,
-                            )
-                            if (captureLogLastLine != null) {
-                                Spacer(Modifier.height(6.dp))
-                                Text(
-                                    captureLogLastLine,
-                                    style = MonoLabel,
-                                    color = InkFaint,
-                                    maxLines = 2,
-                                    modifier = Modifier.testTag("captureLogLastLine"),
-                                )
-                            }
-                        }
-                    }
-                    Spacer(Modifier.height(10.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        SecondaryPill(
-                            text = "Export log",
-                            height = 46.dp,
-                            onClick = onShareCaptureLog,
-                            modifier = Modifier.weight(1f).testTag("exportCaptureLogButton"),
-                        )
-                        SecondaryPill(
-                            text = "Clear",
-                            height = 46.dp,
-                            onClick = onClearCaptureLog,
-                            modifier = Modifier.weight(1f).testTag("clearCaptureLogButton"),
-                        )
-                    }
-                    // ROUND 7: no user-triggered file operation ends silently.
-                    if (exportNote != null) {
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            exportNote,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Ink,
-                            modifier = Modifier
-                                .clickable(onClick = onDismissExportNote)
-                                .testTag("captureLogExportNote"),
-                        )
-                    }
-                }
-            }
-
-            SettingsSection("Storage location") {
-                ScanCard {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.Folder, contentDescription = null, tint = Ember)
-                        Spacer(Modifier.width(12.dp))
-                        Column {
-                            Text(storageLocation, style = MonoMeta, color = MaterialTheme.colorScheme.onSurface)
-                            Spacer(Modifier.height(6.dp))
-                            Hint(
-                                "Where .lscan projects are stored on this device. A location picker is a " +
-                                    "future addition.",
+                                com.lidarscan.core.capture.ScanTutorial.SETTINGS_DETAIL,
                                 color = InkFaint,
                             )
                         }
+                        Icon(
+                            Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = null,
+                            tint = InkFaint,
+                        )
                     }
                 }
-            }
-        }
-
-        // ── ROUND 17 item 67: the camera sentence ───────────────────────────
-        //
-        // The app holds the rear camera open for every second of every walk,
-        // because ARCore's visual-inertial odometry is what places each lidar
-        // return. Nothing anywhere told the operator that, and the one place
-        // the camera WAS mentioned — the profile reference card — said "no
-        // camera", which is true about storage and false about the lens.
-        //
-        // Audited in ROUND 17 across every path that can touch an ARCore image
-        // (KeyframeRecorder, the calibration wizard, the GL background
-        // renderer, the C++ colorizer and the container's chunk types). With
-        // colorization off, no frame is acquired, encoded or written by any of
-        // them, and KeyframeRecorder now refuses at the source rather than
-        // relying on its callers.
-        SettingsSection("Camera") {
-            ScanCard {
-                CardTitle("Camera is used for position tracking only")
-                Hint(
-                    "No images are saved. The rear camera runs for the whole of a scan because " +
-                        "that is what tells the app where the sensor is — every lidar return is " +
-                        "placed using it. The frames go to the tracker and nowhere else: nothing " +
-                        "is written to the scan file, nothing is kept in the app, and nothing " +
-                        "leaves the phone.",
-                    modifier = Modifier.testTag("cameraHonestyCard"),
-                )
-            }
-        }
-
-        // ── ROUND 17 item 66: Developer Mode ────────────────────────────────
-        if (settings.developerMode) {
-            SettingsSection("Developer") {
+                Spacer(Modifier.height(12.dp))
+                // ── ROUND 17 item 67: the camera sentence ────────────────────
+                //
+                // The app holds the rear camera open for every second of every
+                // walk, because that is what places each lidar return. It is
+                // kept — an honesty statement is not clutter — and shortened
+                // to the two facts that matter: it runs, and nothing is saved.
                 ScanCard {
-                    ScanSwitchRow(
-                        title = "Per-capture debug log",
-                        detail = "Writes debug/capture-debug.log inside each scan's own .lscan " +
-                            "bundle: session lifecycle, pose acceptance, re-anchor decisions " +
-                            "with their numbers, watchdog transitions, cues and preset changes. " +
-                            "It travels with the scan, so a bundle you send is the whole story. " +
-                            "Capped at 5 MB; not a recorded stream and not part of the replay " +
-                            "guarantee.",
-                        checked = settings.captureDebugLog,
-                        onCheckedChange = onCaptureDebugLogChange,
-                        modifier = Modifier.testTag("captureDebugLogRow"),
+                    CardTitle("Camera is used for tracking")
+                    Spacer(Modifier.height(4.dp))
+                    Hint(
+                        "No images are saved. Nothing leaves your phone.",
+                        modifier = Modifier.testTag("cameraHonestyCard"),
                     )
-                    Hint("Tap the version line below seven times again to lock this away.")
+                }
+            }
+
+            // ── ROUND 17 item 66 / ROUND 24 item 113: DEVELOPER ─────────────
+            //
+            // Everything below is developer-only and now lives behind the
+            // seven-tap unlock rather than in front of it: the simulated
+            // engine and the synthetic replay, the capture log's path/export/
+            // clear, the D6 sensor-latency slider, and the read-only workflow
+            // profile reference. None of them is deleted, none of them changed,
+            // and each returns exactly as it is the moment the version line is
+            // tapped seven times.
+            if (settings.developerMode) {
+                SettingsSection("Developer") {
+                    ScanCard {
+                        ScanSwitchRow(
+                            title = "Per-capture debug log",
+                            detail = "Writes a debug log inside each scan's own bundle.",
+                            checked = settings.captureDebugLog,
+                            onCheckedChange = onCaptureDebugLogChange,
+                            modifier = Modifier.testTag("captureDebugLogRow"),
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Hint("Tap the version line seven times to lock this away.")
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    CaptureLogCard(
+                        captureLogPath = captureLogPath,
+                        captureLogSizeBytes = captureLogSizeBytes,
+                        captureLogLastLine = captureLogLastLine,
+                        exportNote = exportNote,
+                        onShareCaptureLog = onShareCaptureLog,
+                        onClearCaptureLog = onClearCaptureLog,
+                        onDismissExportNote = onDismissExportNote,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    D6TimingCard(settings.d6SensorLatencyMs, onD6SensorLatencyChange)
+                    Spacer(Modifier.height(12.dp))
+                    EngineCard(
+                        useFakeEngine = settings.useFakeEngine,
+                        nativeEngineAvailable = nativeEngineAvailable,
+                        onUseFakeEngineChange = onUseFakeEngineChange,
+                        onReplaySyntheticCapture = onReplaySyntheticCapture,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    WorkflowProfilesCard()
                 }
             }
         }
@@ -548,6 +522,7 @@ fun SettingsScreen(
             style = MonoLabel,
             color = MaterialTheme.colorScheme.outline,
             modifier = Modifier
+                .padding(horizontal = 16.dp)
                 .testTag("app_version_footer")
                 .clickable {
                     versionTaps += 1
@@ -564,6 +539,182 @@ fun SettingsScreen(
 
 /** ROUND 17 item 66: Android's own number, for Android's own reason. */
 private const val DEVELOPER_UNLOCK_TAPS = 7
+
+/**
+ * ROUND 24 item 113 — **sounds & haptics, one card instead of a section.**
+ *
+ * Two switches that were 340 words of explanation between them. What survives
+ * is what an operator needs at the moment they are deciding: the cues buzz
+ * while you walk (and the phone faces away from you, which is why they exist),
+ * and silencing notifications protects the measurement rather than your
+ * concentration. The ROUND 14 grant row is unchanged — it is the one part of
+ * the old block that was not prose but a working control.
+ */
+@Composable
+private fun SoundsAndHapticsCard(
+    operatorCues: Boolean,
+    dndDuringCapture: Boolean,
+    dndAccessGranted: Boolean,
+    onOperatorCuesChange: (Boolean) -> Unit,
+    onDndDuringCaptureChange: (Boolean) -> Unit,
+    onGrantDndAccess: () -> Unit,
+) {
+    ScanCard {
+        ScanSwitchRow(
+            // was: "Vibrate and beep during a scan" over 78 words.
+            title = "Vibrate and beep",
+            detail = "The phone faces away while you walk. These are the hints.",
+            checked = operatorCues,
+            onCheckedChange = onOperatorCuesChange,
+            modifier = Modifier.testTag("operatorCuesRow"),
+        )
+        Spacer(Modifier.height(14.dp))
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        Spacer(Modifier.height(14.dp))
+        ScanSwitchRow(
+            // was: "Silence notifications while scanning" over 84 words.
+            // ROUND 13's finding survives in one clause: a buzz shakes the
+            // IMU, so this protects the measurement, not your attention.
+            title = "Silence notifications",
+            detail = "A buzz shakes the sensor and blurs the scan.",
+            checked = dndDuringCapture,
+            onCheckedChange = onDndDuringCaptureChange,
+            modifier = Modifier.testTag("dndDuringCaptureRow"),
+        )
+        // ROUND 14 (owner item 52): where you stand, and the way in. The
+        // switch shipped in 0.8.0 stating a prerequisite nothing in the app
+        // could satisfy or report.
+        if (dndDuringCapture) {
+            Spacer(Modifier.height(10.dp))
+            Hint(
+                com.lidarscan.core.capture.CaptureFocus.accessStatus(dndAccessGranted),
+                color = if (dndAccessGranted) InkFaint else SemWarn,
+                modifier = Modifier.testTag("dndAccessStatus"),
+            )
+            if (!dndAccessGranted) {
+                Spacer(Modifier.height(10.dp))
+                SecondaryPill(
+                    text = "Allow Do Not Disturb",
+                    height = 46.dp,
+                    onClick = onGrantDndAccess,
+                    modifier = Modifier.fillMaxWidth().testTag("dndGrantButton"),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * ROUND 24 item 113 — **DETAIL, where the owner said to put it.**
+ *
+ * The same three rungs the Scan screen's Advanced sheet draws
+ * ([com.lidarscan.core.capture.DetailLevels]), reading and writing the same
+ * persisted display block, clamped by the same ROUND 22 item 100 ceiling: a
+ * rung this device cannot hold is ABSENT, not disabled, and the note underneath
+ * says why there are two chips instead of three. There is no override, which is
+ * the owner's own instruction from item 100.
+ */
+@Composable
+private fun DetailCard(
+    levels: List<com.lidarscan.core.capture.DetailLevel>,
+    selected: com.lidarscan.core.capture.DetailLevel,
+    ceilingNote: String?,
+    onChange: (com.lidarscan.core.capture.DetailLevel) -> Unit,
+) {
+    ScanCard {
+        CardTitle(Wording.DETAIL_LABEL)
+        Spacer(Modifier.height(4.dp))
+        Hint(Wording.DETAIL_BUDGET_HINT, color = InkFaint)
+        Spacer(Modifier.height(10.dp))
+        SegmentedPill(
+            options = levels.map { it to it.displayName },
+            selected = if (selected in levels) selected else levels.first(),
+            onSelect = onChange,
+            height = 44.dp,
+            modifier = Modifier.testTag("settingsDetailRow"),
+        )
+        if (ceilingNote != null) {
+            Spacer(Modifier.height(8.dp))
+            Hint(ceilingNote, color = InkFaint, modifier = Modifier.testTag("settingsDetailCeilingNote"))
+        }
+    }
+}
+
+/**
+ * ROUND 6 (owner item 20) — the field-evidence card, unchanged in function and
+ * moved (ROUND 24 item 113) behind developer mode.
+ *
+ * It is not gone and it is not weaker: the log is still written on every run,
+ * it is still the file ROUND 22 item 87's `[crash]` entries land in, and the
+ * ordinary operator now has a better door to it than this one — Profile ›
+ * **Send logs**, which packages it, names what is in it, and delivers it. This
+ * card is the developer's version of the same thing: a path, a size, a live
+ * tail, and Clear.
+ */
+@Composable
+private fun CaptureLogCard(
+    captureLogPath: String,
+    captureLogSizeBytes: Long,
+    captureLogLastLine: String?,
+    exportNote: String?,
+    onShareCaptureLog: () -> Unit,
+    onClearCaptureLog: () -> Unit,
+    onDismissExportNote: () -> Unit,
+) {
+    ScanCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.Folder, contentDescription = null, tint = Ember)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    captureLogPath,
+                    style = MonoMeta,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.testTag("captureLogPath"),
+                )
+                Spacer(Modifier.height(6.dp))
+                Hint("${captureLogSizeBytes / 1024} KB, rolling.", color = InkFaint)
+                if (captureLogLastLine != null) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        captureLogLastLine,
+                        style = MonoLabel,
+                        color = InkFaint,
+                        maxLines = 2,
+                        modifier = Modifier.testTag("captureLogLastLine"),
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SecondaryPill(
+                text = "Export log",
+                height = 46.dp,
+                onClick = onShareCaptureLog,
+                modifier = Modifier.weight(1f).testTag("exportCaptureLogButton"),
+            )
+            SecondaryPill(
+                text = "Clear",
+                height = 46.dp,
+                onClick = onClearCaptureLog,
+                modifier = Modifier.weight(1f).testTag("clearCaptureLogButton"),
+            )
+        }
+        // ROUND 7: no user-triggered file operation ends silently.
+        if (exportNote != null) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                exportNote,
+                style = MaterialTheme.typography.bodySmall,
+                color = Ink,
+                modifier = Modifier
+                    .clickable(onClick = onDismissExportNote)
+                    .testTag("captureLogExportNote"),
+            )
+        }
+    }
+}
 
 /** A mono, uppercase, ember-tinted section rule + its content. */
 @Composable
@@ -697,10 +848,13 @@ private fun CloudCard(baseUrl: String, token: String, onChange: (String, String)
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(8.dp))
+        // ROUND 24 item 113: was 42 words carrying a design-document section
+        // number onto a screen. The limitation it states is real and stays;
+        // the citation does not. This pair also feeds ROUND 24 item 109's
+        // feedback sender, which is why the second line says so.
         Hint(
-            "Single-tenant, token auth, one worker — the MVP boundaries §3.8 makes contractual. The token is " +
-                "stored in app-private preferences, not the Android Keystore; that is a stated limitation, and " +
-                "it is why the service is meant to sit behind TLS.",
+            "Used for cloud processing and for sending logs.\n" +
+                "The token is stored unencrypted on this phone.",
             color = InkFaint,
         )
         Spacer(Modifier.height(10.dp))
@@ -748,11 +902,12 @@ private fun EmptyScansCard(
     onDismissNote: () -> Unit,
 ) {
     ScanCard {
+        // ROUND 24 item 113: was 48 words. The switch is a yes/no about
+        // scans that recorded nothing; the essay about when to turn it on
+        // belongs to whoever is chasing a dead sensor, not to this row.
         ScanSwitchRow(
             title = "Keep empty scans",
-            detail = "Off (the default): a scan that records 0 points is deleted when you press Stop, and " +
-                "0-point projects already on the phone stay out of the Projects list. On: every attempt is " +
-                "kept as evidence — the right setting while chasing a sensor that produces nothing.",
+            detail = "Off: a scan with no points is deleted at Stop.",
             checked = keepEmptyScans,
             onCheckedChange = onKeepEmptyScansChange,
             modifier = Modifier.testTag("keepEmptyScansRow"),
@@ -762,16 +917,15 @@ private fun EmptyScansCard(
             if (emptyScanCount == 0) {
                 "No empty scans on this device."
             } else {
-                "$emptyScanCount scan${if (emptyScanCount == 1) "" else "s"} on this device recorded no " +
-                    "points. Deleting them removes the .lscan directories permanently; there is nothing in " +
-                    "them but a manifest."
+                "$emptyScanCount scan${if (emptyScanCount == 1) "" else "s"} recorded no points. " +
+                    "Deleting cannot be undone."
             },
             color = InkFaint,
             modifier = Modifier.testTag("emptyScanCount"),
         )
         Spacer(Modifier.height(10.dp))
         SecondaryPill(
-            text = if (emptyScanCount == 0) "Clean up empty scans" else "Clean up $emptyScanCount empty scans",
+            text = if (emptyScanCount == 0) "Clean up" else "Clean up $emptyScanCount",
             height = 46.dp,
             onClick = onCleanUp,
             modifier = Modifier.fillMaxWidth().testTag("cleanUpEmptyScansButton"),
@@ -826,15 +980,15 @@ private fun MountProfileCard(
     onReset: () -> Unit,
 ) {
     ScanCard {
-        CardTitle("Where the D6 sits on this phone")
+        CardTitle("Where the D6 sits")
         val trim = storedTrim?.trim
+        // ROUND 24 item 113: was 15 words of process description. What the
+        // operator needs is whether it is measured, and the number if it is.
         Text(
             if (trim != null) {
-                "Rotation: measured — %.1f° trim, re-measured at every capture start during the hold."
-                    .format(trim.magnitudeDeg)
+                "Rotation measured: %.1f°.".format(trim.magnitudeDeg)
             } else {
-                "Rotation: not measured yet — the hold-steady stage at your first capture start " +
-                    "will measure it."
+                "Rotation not measured yet."
             },
             style = MaterialTheme.typography.bodyMedium,
             color = Ink,
@@ -877,11 +1031,11 @@ private fun MountProfileCard(
             )
         }
         Spacer(Modifier.height(6.dp))
+        // ROUND 24 item 113: was 47 words. The provenance stays — it is a
+        // fact about THIS phone's numbers — and the essay does not.
         Text(
-            "Where the D6's optical centre sits relative to the REAR CAMERA, in centimetres: " +
-                "above it, behind it (away from the scene), and toward your right in the " +
-                "scanning hold. Source: ${leverArm.provenance}. At walking pace these offsets " +
-                "move the map by millimetres — rotation is what matters, and it is measured.",
+            "Distance from the rear camera, in centimetres. " +
+                "Source: ${leverArm.provenance}.",
             style = MaterialTheme.typography.bodySmall,
             color = InkFaint,
         )
@@ -902,16 +1056,14 @@ private fun MountProfileCard(
         if (autoLevelSuggestion != null) {
             Spacer(Modifier.height(8.dp))
             Hint(
-                autoLevelSuggestion +
-                    " This is a suggestion from processing, never applied by itself — the next " +
-                    "capture's hold re-measures the rotation.",
+                autoLevelSuggestion + " A suggestion only, never applied by itself.",
                 color = ScanTeal,
                 modifier = Modifier.testTag("mountAutoLevelSuggestion"),
             )
         }
         Spacer(Modifier.height(10.dp))
         SecondaryPill(
-            text = "Reset offsets to defaults",
+            text = "Reset offsets",
             height = 42.dp,
             onClick = onReset,
             modifier = Modifier.fillMaxWidth().testTag("leverArmResetButton"),

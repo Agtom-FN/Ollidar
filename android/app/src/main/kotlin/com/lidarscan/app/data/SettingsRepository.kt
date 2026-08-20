@@ -123,6 +123,22 @@ class SettingsRepository(private val context: Context) {
 
         /** ROUND 20 items 80/82 — the last auto-level suggestion, with provenance. */
         val MOUNT_AUTOLEVEL_SUGGESTION = stringPreferencesKey("mount_autolevel_suggestion")
+
+        /**
+         * ROUND 24 item 108 — the Projects tab's layout and order. Stored as
+         * the enum NAME rather than an ordinal: an ordinal is a number whose
+         * meaning changes the day someone reorders the enum, and this store
+         * outlives builds. Unknown values read as the default (see
+         * [com.lidarscan.core.projects.ProjectsLayout.parse]).
+         */
+        val PROJECTS_LAYOUT = stringPreferencesKey("projects_layout")
+        val PROJECTS_SORT = stringPreferencesKey("projects_sort")
+
+        /** ROUND 24 item 110(b) — the tour has been seen, by any road. */
+        val TUTORIAL_SEEN = booleanPreferencesKey("tutorial_seen")
+
+        /** ROUND 24 item 110(b) — the first-run offer has been made, once, ever. */
+        val TUTORIAL_OFFERED = booleanPreferencesKey("tutorial_offered")
     }
 
     val settings: Flow<AppSettings> = context.settingsDataStore.data.map { prefs ->
@@ -175,6 +191,18 @@ class SettingsRepository(private val context: Context) {
                 }.getOrNull()
             } ?: com.lidarscan.core.calib.MountLeverArm.DEFAULT,
             mountAutoLevelSuggestion = prefs[Keys.MOUNT_AUTOLEVEL_SUGGESTION],
+            // ROUND 24 item 108: unset (and unparseable) read as the default,
+            // which is the list, newest first — i.e. exactly what the tab did
+            // before this round, so turning the preference on changes nothing
+            // until it is used.
+            projectsLayout = com.lidarscan.core.projects.ProjectsLayout
+                .parse(prefs[Keys.PROJECTS_LAYOUT]),
+            projectsSort = com.lidarscan.core.projects.ProjectSort
+                .parse(prefs[Keys.PROJECTS_SORT]),
+            // ROUND 24 item 110(b): unset means a fresh install, which is
+            // exactly the install that gets offered the tour.
+            tutorialSeen = prefs[Keys.TUTORIAL_SEEN] ?: false,
+            tutorialOffered = prefs[Keys.TUTORIAL_OFFERED] ?: false,
         )
     }
 
@@ -294,6 +322,37 @@ class SettingsRepository(private val context: Context) {
     /** ROUND 22 (item 97): see [AppSettings.advancedFeatures]. */
     suspend fun setAdvancedFeatures(enabled: Boolean) {
         context.settingsDataStore.edit { it[Keys.ADVANCED_FEATURES] = enabled }
+    }
+
+    /** ROUND 24 (item 108): see [AppSettings.projectsLayout]. */
+    suspend fun setProjectsLayout(layout: com.lidarscan.core.projects.ProjectsLayout) {
+        context.settingsDataStore.edit { it[Keys.PROJECTS_LAYOUT] = layout.name }
+    }
+
+    /** ROUND 24 (item 108): see [AppSettings.projectsSort]. */
+    suspend fun setProjectsSort(sort: com.lidarscan.core.projects.ProjectSort) {
+        context.settingsDataStore.edit { it[Keys.PROJECTS_SORT] = sort.name }
+    }
+
+    /**
+     * ROUND 24 (item 110b) — the tour has been seen.
+     *
+     * One-way, like [setDndAccessAsked] and for the same reason: "seen" is a
+     * fact about the operator, not a preference, and the road back is the ?
+     * button and the Settings row rather than a switch that un-remembers.
+     * Setting it also spends the offer, so a tour opened from the ? button on
+     * day one cannot be followed by a first-run prompt on day two.
+     */
+    suspend fun setTutorialSeen() {
+        context.settingsDataStore.edit {
+            it[Keys.TUTORIAL_SEEN] = true
+            it[Keys.TUTORIAL_OFFERED] = true
+        }
+    }
+
+    /** ROUND 24 (item 110b) — the first-run offer has been made and declined. */
+    suspend fun setTutorialOffered() {
+        context.settingsDataStore.edit { it[Keys.TUTORIAL_OFFERED] = true }
     }
 
     /** ROUND 17 (item 66): see [AppSettings.developerMode]. */

@@ -49,6 +49,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -453,6 +454,53 @@ fun CaptureRoute(
         )
     }
 
+    // ── ROUND 24 item 110(b): the tour ──────────────────────────────────────
+    //
+    // The state lives here rather than in `CaptureViewModel` on purpose: it is
+    // pure screen chrome with no bearing on a capture, and the ViewModel is
+    // 5,000 lines about recording. `rememberSaveable` is enough — a rotation
+    // mid-tour keeps your place, and the persisted half (seen / offered) is in
+    // `SettingsRepository` where every other device fact lives.
+    val tutorialScope = androidx.compose.runtime.rememberCoroutineScope()
+    var tutorialStepOrdinal by rememberSaveable { mutableStateOf(-1) }
+    val tutorialState = com.lidarscan.core.capture.TutorialState(
+        com.lidarscan.core.capture.TutorialStep.entries.getOrNull(tutorialStepOrdinal),
+    )
+    val tutorialSettings by container.settingsRepository.settings
+        .collectAsStateWithLifecycle(initialValue = com.lidarscan.app.data.AppSettings())
+    // Offered exactly once ever, on the screen it is about — and never over a
+    // replay session, which is a developer's errand.
+    var offerDismissed by rememberSaveable { mutableStateOf(false) }
+    val offerTutorial = !isReplay && !offerDismissed && !tutorialState.running &&
+        com.lidarscan.core.capture.ScanTutorial.shouldOffer(
+            tutorialSeen = tutorialSettings.tutorialSeen,
+            offerMade = tutorialSettings.tutorialOffered,
+        )
+
+    fun startTutorial() {
+        tutorialStepOrdinal = 0
+    }
+
+    fun endTutorial() {
+        tutorialStepOrdinal = -1
+        // Skipping counts: item 110 says the offer never auto-repeats, and a
+        // tour the operator started and abandoned is a tour they have met.
+        tutorialScope.launch { container.settingsRepository.setTutorialSeen() }
+    }
+
+    // ROUND 24 item 110(b): Settings › About › Tutorial asks for a replay, and
+    // the replay has to happen HERE because it is a tour of this screen. The
+    // request is a one-shot on the container (it survives the tab hop that
+    // carries it) and is spent the moment it is honoured.
+    LaunchedEffect(Unit) {
+        container.tutorialReplayRequest.collect { requested ->
+            if (requested && !isReplay) {
+                container.tutorialReplayRequest.value = false
+                startTutorial()
+            }
+        }
+    }
+
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val connectionState by viewModel.connectionState.collectAsStateWithLifecycle()
     val captureState by viewModel.captureState.collectAsStateWithLifecycle()
@@ -622,6 +670,20 @@ fun CaptureRoute(
     // [CaptureViewModel.onScanScreenEntered].
     LaunchedEffect(viewModel) { viewModel.onScanScreenEntered() }
 
+    // ── ROUND 24 item 111: and the teardown says WHY it is tearing down ─────
+    //
+    // A rotation and a tab switch are the same Compose sequence — dispose,
+    // then compose again against the same (item-88-preserved) ViewModel — so
+    // the screen cannot tell them apart and the Activity can. Read at dispose
+    // time rather than captured earlier: `isChangingConfigurations` is only
+    // true once the system has decided, which is exactly when this runs.
+    val captureActivity = androidx.compose.ui.platform.LocalContext.current.findActivity()
+    DisposableEffect(viewModel) {
+        onDispose {
+            viewModel.onScanScreenLeaving(captureActivity?.isChangingConfigurations == true)
+        }
+    }
+
     // ROUND 6 (owner item 19): the AR path degraded. Fall back to the 3D-orbit
     // view rather than leaving the operator staring at a black overlay — the
     // inline message below says what happened, and every other capture function
@@ -770,6 +832,20 @@ fun CaptureRoute(
             ?.takeIf { com.lidarscan.core.SimpleMode.showsMid360Connect(advanced, sensor) },
         onOpenRtk = onOpenRtk
             ?.takeIf { com.lidarscan.core.SimpleMode.showsRtk(advanced, sensor) },
+        // ── ROUND 24 item 110(b) ────────────────────────────────────────
+        tutorialState = tutorialState,
+        onStartTutorial = { startTutorial() },
+        onTutorialNext = {
+            val next = com.lidarscan.core.capture.ScanTutorial.next(tutorialState)
+            if (next.running) tutorialStepOrdinal = next.step!!.ordinal else endTutorial()
+        },
+        onTutorialSkip = { endTutorial() },
+        offerTutorial = offerTutorial,
+        onAcceptTutorialOffer = { startTutorial() },
+        onDismissTutorialOffer = {
+            offerDismissed = true
+            tutorialScope.launch { container.settingsRepository.setTutorialOffered() }
+        },
         startTapRefusal = startTapRefusal,
         onDismissStartTapRefusal = viewModel::dismissStartTapRefusal,
         onStartRefused = viewModel::reportStartTapRefused,
@@ -970,6 +1046,18 @@ fun CaptureScreen(
     onOpenMid360Setup: (() -> Unit)? = null,
     /** ROUND 23 item 106(c): non-null shows the RTK chip on the Scan tab. */
     onOpenRtk: (() -> Unit)? = null,
+    // ── ROUND 24 item 110(b): the guided tour ───────────────────────────────
+    /** Which step is showing, or none. See [com.lidarscan.core.capture.ScanTutorial]. */
+    tutorialState: com.lidarscan.core.capture.TutorialState =
+        com.lidarscan.core.capture.TutorialState(),
+    /** The ? button. */
+    onStartTutorial: () -> Unit = {},
+    onTutorialNext: () -> Unit = {},
+    onTutorialSkip: () -> Unit = {},
+    /** The one-time first-run offer. */
+    offerTutorial: Boolean = false,
+    onAcceptTutorialOffer: () -> Unit = {},
+    onDismissTutorialOffer: () -> Unit = {},
     /** ROUND 23 item 101(b): the reason the last press could not start anything. */
     startTapRefusal: String? = null,
     onDismissStartTapRefusal: () -> Unit = {},
@@ -1156,6 +1244,17 @@ fun CaptureScreen(
     // project-scoped entry into this screen left (see Routes.kt).
     val showAppBar = isReplaySession || !compact
 
+    // ── ROUND 24 item 112: a Box, so one thing can sit OVER the screen ─────
+    //
+    // The whole screen is unchanged inside this Box. What the Box buys is a
+    // sibling drawn on top of all of it — the tracking-loss popup — rather
+    // than a band competing for height inside the column, which is what the
+    // round-23 banner was.
+    Box(Modifier.fillMaxSize()) {
+    // ROUND 24 item 110(b): while (and only while) the tour is running, the
+    // controls it rings report their bounds into a registry the overlay reads.
+    // Off-tour this provides nothing and the anchor modifiers are `Modifier`.
+    TutorialAnchorScope(enabled = tutorialState.running) {
     Column(
         Modifier
             .fillMaxSize()
@@ -1242,7 +1341,10 @@ fun CaptureScreen(
 
                     val viewport: @Composable (Modifier) -> Unit = { modifier ->
                         CaptureViewport(
-                            modifier = modifier,
+                            // ROUND 24 item 110(b): the tracking-lost step
+                            // rings the viewport, because that is where the
+                            // popup lands and what the operator is watching.
+                            modifier = modifier.then(rememberTutorialAnchor(com.lidarscan.core.capture.TutorialAnchor.VIEWPORT)),
                             connected = connected,
                             isReplaySession = isReplaySession,
                             source = pointCloudSource.takeIf { liveView },
@@ -1296,14 +1398,26 @@ fun CaptureScreen(
                     // protect a viewport that is showing nothing worth protecting
                     // would be the wrong trade in both directions.
                     val loudBanners: @Composable () -> Unit = {
-                        // ── ROUND 23 item 105 (owner request) ───────────────
+                        // ── ROUND 24 item 110(b): the one-time offer ────────
                         //
-                        // "a warning need to tell user stop walking while
-                        // tracking lost until the tracking back." FIRST in the
-                        // band, above even the start panel, because it is the
-                        // only message on this screen that is about what the
-                        // operator's FEET should be doing in the next second.
-                        TrackingLossBanner(trackingBanner)
+                        // A card, not a dialog: round 5's rule is that a modal
+                        // is the worst possible interruption on this tab, and
+                        // that applies most of all to the first time it opens.
+                        if (offerTutorial) {
+                            TutorialOffer(
+                                onAccept = onAcceptTutorialOffer,
+                                onDismiss = onDismissTutorialOffer,
+                            )
+                        }
+                        // ── ROUND 24 item 112 ───────────────────────────────
+                        //
+                        // The round-23 tracking-loss banner used to be FIRST
+                        // in this band. It is not in the band at all any more:
+                        // the owner's point is that a band at the top of a
+                        // screen he is not looking at is not a warning, so it
+                        // is a centered popup over the whole screen now. See
+                        // `TrackingLossPopup` at the bottom of this file — the
+                        // state machine behind it is untouched.
                         // ROUND 21 item 85 (owner request, verbatim: "i dont
                         // know what is the app loading with, show me the
                         // progress and tell me what i am waiting for and how
@@ -1447,10 +1561,13 @@ fun CaptureScreen(
                                 // view has already fallen back to 3D orbit — the
                                 // app does not die and the capture keeps running.
                                 if (arErrorMessage != null) {
+                                    // ROUND 24 item 110(a). Was 24 words plus
+                                    // an error string, read on every degrade.
+                                    // The error itself is still shown — it is
+                                    // the only part that is not generic.
                                     Hint(
-                                        "Phone tracking degraded — $arErrorMessage. The recording is " +
-                                            "unaffected; a COIN-D6 needs tracking to build 3D, so stop and " +
-                                            "start again if this persists.",
+                                        com.lidarscan.core.Wording.AR_DEGRADED + " " + arErrorMessage + "\n" +
+                                            com.lidarscan.core.Wording.AR_DEGRADED_DETAIL,
                                         color = SemWarn,
                                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
                                             .testTag("arUnavailableNote"),
@@ -1514,6 +1631,7 @@ fun CaptureScreen(
                             )
                         }
                         CaptureChipRow(
+                            onOpenTutorial = onStartTutorial,
                             preset = preset,
                             scanName = scanName.ifBlank { newScan?.autoName ?: project?.manifest?.name ?: "New scan" },
                             poseState = poseState,
@@ -1567,6 +1685,7 @@ fun CaptureScreen(
                         // well would put a second `scanNameField` and a second
                         // `manualLidarIpField` in the tree at the same time.
                         CaptureChipRow(
+                            onOpenTutorial = onStartTutorial,
                             preset = preset,
                             scanName = scanName,
                             poseState = poseState,
@@ -1637,6 +1756,32 @@ fun CaptureScreen(
         }
     }
 
+    // ── ROUND 24 item 112 (owner request): the CENTERED popup ──────────────
+    //
+    // Last child of the Box, so it is drawn over the viewport, the chrome and
+    // the transport row — including the STOP button, which is deliberately
+    // still reachable THROUGH it. See `TrackingLossPopup`.
+        TrackingLossPopup(trackingBanner)
+
+        // ── ROUND 24 item 110(b): the tour, over everything ─────────────────
+        //
+        // Last, so it dims the whole Scan screen — but NOT the floating tab
+        // bar, which `LidarScanApp` draws over this destination. That is what
+        // makes the Projects step work without reaching into another
+        // composable: on the last step the one bright thing left on a dark
+        // screen is the tab bar the step is about.
+        val tutorialAnchors = LocalTutorialAnchors.current
+        if (tutorialState.running) {
+            ScanTutorialOverlay(
+                state = tutorialState,
+                anchors = tutorialAnchors ?: emptyMap(),
+                onNext = onTutorialNext,
+                onSkip = onTutorialSkip,
+            )
+        }
+    }
+    }
+
     // ── ROUND 19 item 77: the pre-scan checklist, over everything ───────────
     //
     // Not part of the `when (sheet)` family below: it is not operator-opened
@@ -1647,25 +1792,21 @@ fun CaptureScreen(
         AlertDialog(
             shape = RoundedCornerShape(ScanDims.DialogRadius),
             onDismissRequest = onDismissNewCaptureConfirm,
-            title = { Text("A capture is running") },
-            text = {
-                Text(
-                    "Starting fresh will stop and save the current recording first — " +
-                        "nothing already captured is lost. The mount reference and other " +
-                        "device calibration are kept; scan settings go back to defaults.",
-                )
-            },
+            title = { Text(com.lidarscan.core.Wording.NEW_CAPTURE_TITLE) },
+            // ROUND 24 item 110(a): was 30 words in a dialog over a live
+            // recording, which is the worst possible place for a paragraph.
+            text = { Text(com.lidarscan.core.Wording.NEW_CAPTURE_BODY) },
             confirmButton = {
                 TextButton(
                     onClick = onConfirmNewCapture,
                     modifier = Modifier.testTag("newCaptureConfirm"),
-                ) { Text("Stop and start fresh") }
+                ) { Text(com.lidarscan.core.Wording.NEW_CAPTURE_CONFIRM) }
             },
             dismissButton = {
                 TextButton(
                     onClick = onDismissNewCaptureConfirm,
                     modifier = Modifier.testTag("newCaptureDismiss"),
-                ) { Text("Keep recording") }
+                ) { Text(com.lidarscan.core.Wording.NEW_CAPTURE_DISMISS) }
             },
             modifier = Modifier.testTag("newCaptureConfirmDialog"),
         )
@@ -1983,6 +2124,8 @@ private fun MountStateRow(
  */
 @Composable
 private fun CaptureChipRow(
+    /** ROUND 24 item 110(b): the ? that opens the tour. */
+    onOpenTutorial: () -> Unit = {},
     preset: com.lidarscan.core.capture.PerformancePreset,
     scanName: String,
     poseState: PoseTrackingState,
@@ -2001,11 +2144,38 @@ private fun CaptureChipRow(
         Modifier
             .fillMaxWidth()
             .height(CaptureLayout.CHIP_ROW_DP.dp)
+            // ROUND 24 item 110(b): the tour's "these chips show your state"
+            // step rings this row.
+            .then(rememberTutorialAnchor(com.lidarscan.core.capture.TutorialAnchor.CHIP_ROW))
             .horizontalScroll(rememberScrollState())
             .padding(horizontal = 14.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(7.dp),
     ) {
+        // ── ROUND 24 item 110(b): the ? ─────────────────────────────────────
+        //
+        // First in the row and deliberately small: it is a door for someone
+        // who is lost, not a control anyone uses twice. A circle rather than a
+        // chip because every chip in this row opens a sheet ABOUT the scan and
+        // this one does not.
+        Box(
+            Modifier
+                .size(34.dp)
+                .background(MaterialTheme.colorScheme.surfaceContainer, CircleShape)
+                .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
+                .clickable(role = Role.Button, onClick = onOpenTutorial)
+                .semantics { contentDescription = com.lidarscan.core.capture.ScanTutorial.HELP_LABEL }
+                .testTag("tutorialButton"),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                "?",
+                fontFamily = DisplayFontFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 15.sp,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+        }
         if (showCaptureChip) {
             SheetChip(
                 label = scanName.takeIf { it.isNotBlank() } ?: "Capture",
@@ -2138,37 +2308,68 @@ private fun SaveErrorBanner(message: String, onDismiss: () -> Unit) =
  * owner two field sessions.
  */
 /**
- * ROUND 23 (item 105, owner request) — **STOP WALKING.**
+ * ROUND 24 item 111 — the `Activity` behind a Compose `Context`, or null.
  *
- * The owner's words: *"a warning need to tell user stop walking while tracking
- * lost until the tracking back."*
+ * `ContextWrapper` chains are why this is a loop rather than a cast: a themed
+ * context, a `ContextThemeWrapper` from an AppCompat host or a decor-view
+ * context are all wrappers around the Activity, and a bare `as? Activity`
+ * returns null for every one of them. Null is a real answer (a preview, a test
+ * harness) and it reads as "not a configuration change", which is the safe
+ * default: the worst it can do is start a new scan on a screen that had none.
+ */
+private tailrec fun android.content.Context.findActivity(): android.app.Activity? = when (this) {
+    is android.app.Activity -> this
+    is android.content.ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
+/**
+ * ROUND 23 item 105 / **ROUND 24 item 112 — STOP WALKING, in the middle of the
+ * screen.**
  *
- * The measurement behind it is his own scan-070. The 4.1 s gap at 12:02:22 was
- * refused by the ROUND 19 gyro gate with `gyro=73.34deg` against a reported
- * `12.70deg` — seventy-three degrees of turn while ARCore had no idea where
- * the phone was. Nothing that runs afterwards can heal a gap that big, because
- * the two sides of it no longer share any geometry to agree about. Standing
- * still keeps the gap closeable; walking through it does not. The app knew
- * this was happening (the tracking chip went amber, the cue buzzed) and never
- * once said what to DO.
+ * The owner's original request: *"a warning need to tell user stop walking
+ * while tracking lost until the tracking back."* Round 23 shipped it as a
+ * full-width amber banner at the top of the loud band, and his verdict on 0.9.8
+ * is the correction: a band at the top of a screen he is not looking at, while
+ * walking with the phone at hip height, is not a warning. So it becomes what a
+ * warning of this weight has to be — the screen dims and one amber card sits in
+ * the middle of it.
  *
- * So: full width, amber, at the very top of the loud band, and it does not go
- * away by itself — [com.lidarscan.core.capture.TrackingLossBanners] holds it
- * until the tracker actually returns, then flips it green for two seconds so
- * the operator knows they may walk again. The strong haptic and the tone are
- * the existing `CueKind.TRACKING_DEGRADED` channel (see
- * `CaptureViewModel.updateTrackingBanner` for why a second buzzer here would
- * make both patterns unreadable); the green edge plays the light GO tick.
+ * The measurement is unchanged and is still the reason this exists: scan-070's
+ * 4.1 s gap carried **73.34°** of gyro turn against a reported 12.70°. Nothing
+ * that runs afterwards can heal a gap that big, because the two sides of it no
+ * longer share any geometry to agree about. Standing still keeps the gap
+ * closeable; walking through it does not.
+ *
+ * ## Four properties, and each one is a decision
+ *
+ *  * **The scrim does not eat touches.** It is a `Box` with a background and
+ *    no pointer-input modifier, so it draws over the transport row and
+ *    consumes nothing: the **STOP button underneath stays tappable**, which
+ *    item 112 requires outright — an operator may want to abandon the scan,
+ *    and a modal that traps them in a bad capture is worse than the bad
+ *    capture.
+ *  * **It has no dismiss.** No X, no tap-to-close, no timeout. It goes when
+ *    tracking returns or when the recording stops, and nothing else.
+ *  * **It cannot appear outside a recording.** That gate is in
+ *    [com.lidarscan.core.capture.TrackingLossBanners.next] — `!recording`
+ *    returns the empty state — and it is where it belongs, because it is a
+ *    rule rather than a rendering.
+ *  * **The presentation is ALL that changed.** The state machine, its two-
+ *    second green linger, the strong haptic on the lost edge (the existing
+ *    `CueKind.TRACKING_DEGRADED` channel) and the light GO tick on recovery are
+ *    exactly what round 23 shipped. The test tags are kept too, so the
+ *    round-23 assertions still mean what they meant.
  */
 @Composable
-private fun TrackingLossBanner(state: com.lidarscan.core.capture.TrackingBannerState) {
+internal fun TrackingLossPopup(state: com.lidarscan.core.capture.TrackingBannerState) {
     if (state.banner == com.lidarscan.core.capture.TrackingBanner.NONE) return
     val lost = state.banner == com.lidarscan.core.capture.TrackingBanner.LOST
     val accent = if (lost) SemWarn else SemGood
-    val shape = RoundedCornerShape(ScanDims.TileRadius)
+    val shape = RoundedCornerShape(ScanDims.CardRadius)
 
-    // The amber banner counts up, at 250 ms like the start panel's own tick,
-    // so "how long have I been standing here" is answered without arithmetic.
+    // The amber card counts up at 250 ms, like the start panel's own tick, so
+    // "how long have I been standing here" is answered without arithmetic.
     var tick by remember { mutableStateOf(System.currentTimeMillis()) }
     LaunchedEffect(state.banner, state.sinceMillis) {
         while (lost) {
@@ -2178,35 +2379,55 @@ private fun TrackingLossBanner(state: com.lidarscan.core.capture.TrackingBannerS
     }
     val elapsed = (tick - state.sinceMillis).coerceAtLeast(0L)
 
-    Column(
+    Box(
         Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 6.dp)
-            .background(accent.copy(alpha = 0.22f), shape)
-            .border(2.dp, accent, shape)
-            .padding(horizontal = 12.dp, vertical = 10.dp)
-            .testTag(if (lost) "trackingLostBanner" else "trackingBackBanner"),
+            .fillMaxSize()
+            // A scrim with NO pointer-input modifier. Compose only routes a
+            // touch to a node that handles pointer input, so this darkens the
+            // screen without stealing a single tap — which is what keeps STOP
+            // live underneath. Deliberately not a `Dialog`: a Dialog is its own
+            // window and would swallow every touch in the app.
+            .background(Color.Black.copy(alpha = 0.62f))
+            .testTag("trackingPopupScrim"),
+        contentAlignment = Alignment.Center,
     ) {
-        Text(
-            if (lost) {
-                com.lidarscan.core.capture.TrackingLossBanners.LOST_TEXT
-            } else {
-                com.lidarscan.core.capture.TrackingLossBanners.REGAINED_TEXT
-            },
-            fontFamily = DisplayFontFamily,
-            fontWeight = FontWeight.Bold,
-            fontSize = 19.sp,
-            color = accent,
-            modifier = Modifier.testTag("trackingBannerText"),
-        )
-        if (lost) {
-            Spacer(Modifier.height(2.dp))
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 26.dp)
+                .background(MaterialTheme.colorScheme.surfaceContainer, shape)
+                .border(3.dp, accent, shape)
+                .padding(horizontal = 20.dp, vertical = 22.dp)
+                // The round-23 tags, kept: the presentation moved, the meaning
+                // did not, and a renamed tag would silently retire the
+                // assertions that pin it.
+                .testTag(if (lost) "trackingLostBanner" else "trackingBackBanner"),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
             Text(
-                com.lidarscan.core.capture.TrackingLossBanners.lostDetail(elapsed),
-                style = MonoLabel,
+                if (lost) {
+                    com.lidarscan.core.capture.TrackingLossBanners.LOST_TEXT
+                } else {
+                    com.lidarscan.core.capture.TrackingLossBanners.REGAINED_TEXT
+                },
+                fontFamily = DisplayFontFamily,
+                fontWeight = FontWeight.Bold,
+                // Bigger than the banner's 19 sp: this is read at arm's length,
+                // at hip height, by someone who has just looked down.
+                fontSize = 26.sp,
                 color = accent,
-                modifier = Modifier.testTag("trackingLostElapsed"),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier.testTag("trackingBannerText"),
             )
+            if (lost) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    com.lidarscan.core.capture.TrackingLossBanners.lostDetail(elapsed),
+                    style = MonoLabel.copy(fontSize = 15.sp),
+                    color = accent,
+                    modifier = Modifier.testTag("trackingLostElapsed"),
+                )
+            }
         }
     }
 }
@@ -2326,7 +2547,7 @@ private fun StartProgressPanel(
         if (pulseFlash) {
             Spacer(Modifier.height(4.dp))
             Text(
-                "Heard you — this start is already running, no need to press again.",
+                com.lidarscan.core.Wording.START_HEARD_YOU,
                 style = MaterialTheme.typography.bodySmall,
                 color = accent,
                 modifier = Modifier.testTag("startProgressPulseNote"),
@@ -2357,8 +2578,10 @@ private fun StartProgressPanel(
                     "Tracking not locked yet…"
                 else -> "Steady %.1f s of the 2 s needed".format(warmup.stableMillis / 1000.0)
             }?.plus("  (waits up to $gateCapS s)"),
-            instruction = "Hold the phone in your scanning pose and keep the camera pointed " +
-                "at the room — furniture and edges an arm's length or more away.",
+            // ROUND 24 item 110(a): was 24 words, shown during the one stage
+            // the operator IS watching the screen. The round-19 rule holds —
+            // it names furniture, never the light.
+            instruction = com.lidarscan.core.Wording.START_LOOK_AT,
             accent = accent,
             fraction = if (activeStage == 1) warmup?.fraction else null,
         )
@@ -2591,9 +2814,10 @@ private fun PreCaptureStrip(
         // applies to — the D6's geometry is the whole reason the capture is 3D.
         if (poseTrackingRequired && sensor == SensorType.COIN_D6) {
             Spacer(Modifier.height(4.dp))
+            // ROUND 24 item 110(a): was 33 words including "6-DoF". The rest
+            // of the explanation is now TutorialStep.SCAN_BUTTON / START_HOLD.
             Hint(
-                "Mount the D6 flat on the BACK of the phone with its scan fan VERTICAL, then walk forward — " +
-                    "the phone's camera + IMU supply the 6-DoF path and the engine sweeps the fan into 3D.",
+                com.lidarscan.core.Wording.D6_MOUNT_HINT + "\n" + com.lidarscan.core.Wording.D6_MOUNT_DETAIL,
                 color = InkFaint,
                 modifier = Modifier.testTag("d6MountHint"),
             )
@@ -2623,8 +2847,7 @@ private fun PreCaptureStrip(
             }
             Hint(
                 if (mountTrim == null) {
-                    "Hold the rig still in the pose you will walk with, then tap — the D6's angle on the " +
-                        "phone is measured from the phone's own attitude and applied to this scan."
+                    com.lidarscan.core.Wording.MOUNT_REF_HINT + "\n" + com.lidarscan.core.Wording.MOUNT_REF_DETAIL
                 } else {
                     // ROUND 7: age AND provenance. A trim restored across an app
                     // restart is still applied — losing it silently is the bug
@@ -2661,8 +2884,7 @@ private fun PreCaptureStrip(
                 }
                 if (poseState == PoseTrackingState.UNAVAILABLE) {
                     Hint(
-                        "Without phone tracking the D6 can only record flat fan slices — grant the camera " +
-                            "permission (or install ARCore) for a 3D scan.",
+                        com.lidarscan.core.Wording.NO_TRACKING_HINT + "\n" + com.lidarscan.core.Wording.NO_TRACKING_DETAIL,
                         color = SemWarn,
                     )
                 }
@@ -2697,7 +2919,7 @@ private fun MountReferenceDetail(
     Hint(
         mountTrimProvenance?.label
             ?: if (mountTrim == null) {
-                "No mount reference — the pushbroom is running on the bracket's CAD nominal."
+                com.lidarscan.core.Wording.MOUNT_REF_MISSING
             } else {
                 "Mount trim %.1f° · set %s · travels with the project."
                     .format(mountTrim.magnitudeDeg, mountTrim.ageLabel(nowMillis))
@@ -2710,14 +2932,9 @@ private fun MountReferenceDetail(
         modifier = Modifier.testTag("mountTrimDetail"),
     )
     Spacer(Modifier.height(6.dp))
-    Hint(
-        "The D6 is clamped on by hand and comes off between scans, so its real angle on the phone differs " +
-            "from the bracket's CAD nominal every session — and that angle lands in every resolved point. " +
-            "Hold the rig in the pose you will walk with, keep it still for about a second, and tap " +
-            "Set mount ref on the capture screen. It measures attitude only; the lever arm still needs the " +
-            "calibration wizard.",
-        color = InkFaint,
-    )
+    // ROUND 24 item 110(a): was 69 words. The instruction half is on the
+    // capture screen where the hold actually happens; this is the why.
+    Hint(com.lidarscan.core.Wording.MOUNT_REF_WHY + " " + com.lidarscan.core.Wording.MOUNT_REF_HINT, color = InkFaint)
     Row(verticalAlignment = Alignment.CenterVertically) {
         if (mountTrim != null) {
             TextButton(
@@ -2814,7 +3031,7 @@ private fun ManualEntryPanel(
         Text("COIN-D6 · USB", style = MonoLabel, color = Ember)
         Spacer(Modifier.height(6.dp))
         if (devices.isEmpty()) {
-            Hint("No serial device attached. Plug the D6 into USB-C OTG — it appears here as soon as it does.")
+            Hint(com.lidarscan.core.Wording.NO_USB_DEVICE + "\n" + com.lidarscan.core.Wording.NO_USB_DEVICE_DETAIL)
         } else {
             devices.forEach { device ->
                 Row(
@@ -2868,7 +3085,7 @@ private fun ManualEntryPanel(
         )
         Spacer(Modifier.height(2.dp))
         Hint(
-            "No self-test step: the live view above is the proof. If points appear, the device works.",
+            com.lidarscan.core.Wording.LIVE_VIEW_IS_THE_PROOF,
             color = InkFaint,
         )
     }
@@ -3549,6 +3766,8 @@ private fun TransportRow(
         Box(
             Modifier
                 .size(if (live) 108.dp else 96.dp)
+                // ROUND 24 item 110(b): the tour's first two steps ring this.
+                .then(rememberTutorialAnchor(com.lidarscan.core.capture.TutorialAnchor.SCAN_BUTTON))
                 .alpha(if (armed || live) 1f else 0.45f)
                 .shadow(16.dp, CircleShape, ambientColor = Ember, spotColor = Ember)
                 .background(Ember, CircleShape)
@@ -3617,6 +3836,7 @@ private fun TransportRow(
         Box(
             Modifier
                 .size(52.dp)
+                .then(rememberTutorialAnchor(com.lidarscan.core.capture.TutorialAnchor.ADVANCED))
                 .background(MaterialTheme.colorScheme.surfaceContainerHigh, CircleShape)
                 .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
                 .clickable(role = Role.Button, onClick = onOpenAdvanced)

@@ -21,7 +21,6 @@ import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -29,14 +28,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.lidarscan.app.ui.components.ScanDims
 import com.lidarscan.app.ui.theme.Ember
 import com.lidarscan.app.ui.theme.EmberSoft
 import com.lidarscan.app.ui.theme.InkFaint
-import com.lidarscan.app.ui.theme.UiFontFamily
 
 /**
  * The four top-level sections. `Capture` and `Jobs` are top-level in the
@@ -95,10 +91,28 @@ fun tabForRoute(route: String?): ScanTab = when {
  * hairline border and a shadow so it reads as floating *over* the content
  * rather than as a docked bar.
  *
- * The active tab is an ember-washed capsule with ember ink. Each button's icon
- * carries **no** content description on purpose: the visible label is the
- * accessible name, and duplicating it as a description would put a second
- * "Settings" node on the Projects screen next to the hero's avatar button.
+ * The active tab is an ember-washed capsule with ember ink.
+ *
+ * ## ROUND 24 item 107 — **icons only, centred**
+ *
+ * The four labels are gone at the owner's request and the icons centre in
+ * their capsules. Two consequences were handled rather than discovered:
+ *
+ *  * **The accessible name moved.** It used to be the visible `Text`; it is now
+ *    each icon's `contentDescription` ("Scan", "Projects", "Jobs",
+ *    "Settings"), which is the same string from the same enum. A bar of four
+ *    undescribed glyphs is not a simplification, it is an app a screen reader
+ *    cannot use.
+ *  * **"Settings" was already taken.** The Projects hero's avatar carried
+ *    `contentDescription = "Settings"`, and the smoke test asserts that node is
+ *    unambiguous. Item 109 turns that button into the door to the **Profile**
+ *    page, so it is described as "Profile" now and the collision resolves
+ *    itself — one name, one node, one destination.
+ *
+ * Selection is the Agtom orange **plus a 4 dp dot** under the icon. Colour
+ * alone was survivable while a bold label sat beneath it; on a bar that is now
+ * four glyphs, one of them tinted, it is not — the dot is the state, and the
+ * tint is the emphasis.
  */
 @Composable
 fun ScanTabBar(
@@ -160,17 +174,27 @@ private fun TabButton(
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(
                 tab.icon,
-                contentDescription = null,
-                modifier = Modifier.size(21.dp),
+                // ROUND 24 item 107: the label WAS the accessible name. With
+                // the label gone this is the accessible name, and it is the
+                // same string — `ScanTab.label` — so a rename can never
+                // desynchronise what is seen from what is announced.
+                contentDescription = tab.label,
+                modifier = Modifier.size(23.dp),
                 tint = if (selected) Ember else InkFaint,
             )
-            Spacer(Modifier.height(3.dp))
-            Text(
-                tab.label,
-                fontFamily = UiFontFamily,
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                fontSize = 11.sp,
-                color = if (selected) Ember else InkFaint,
+            // The selected dot. 4 dp, ember, 4 dp below the glyph; an
+            // invisible spacer of the same height on the unselected tabs so
+            // the icons stay on one baseline instead of hopping 8 dp as the
+            // selection moves.
+            Spacer(Modifier.height(4.dp))
+            Box(
+                Modifier
+                    .size(4.dp)
+                    .background(
+                        if (selected) Ember else Color.Transparent,
+                        RoundedCornerShape(2.dp),
+                    )
+                    .testTag(if (selected) "tabSelectedDot" else "tabUnselectedDot"),
             )
         }
     }

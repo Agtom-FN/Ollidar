@@ -42,6 +42,60 @@ class SettingsViewModel(
     private val downloadsContext: android.content.Context? = null,
 ) : ViewModel() {
 
+    // ── ROUND 24 item 113: DETAIL, in Settings ─────────────────────────────
+    //
+    // The owner's grouping puts "detail" under Scanning, and this is that row.
+    // It is deliberately NOT a fourth detail model: it reads and writes the
+    // SAME persisted display block the Scan screen's Advanced sheet and
+    // Review's panel already share (`SettingsRepository.displayParams`), and it
+    // is clamped by the same ROUND 22 item 100 ceiling on the way in and out.
+    // A device that can only hold Auto is offered only Auto, here as
+    // everywhere.
+
+    /** The rungs this device may be offered — item 100's ceiling, applied. */
+    val detailLevels: List<com.lidarscan.core.capture.DetailLevel>
+        get() = com.lidarscan.core.capture.DetailLevels.selectableOn(settingsRepository.deviceTier)
+
+    /** "Limited by this device", or null when nothing is being limited. */
+    val detailCeilingNote: String?
+        get() = com.lidarscan.core.capture.DetailLevels.ceilingNote(settingsRepository.deviceTier)
+
+    private val _detailLevel = MutableStateFlow(com.lidarscan.core.capture.DetailLevels.DEFAULT)
+    val detailLevel: StateFlow<com.lidarscan.core.capture.DetailLevel> = _detailLevel.asStateFlow()
+
+    /** Re-read on entry: the Advanced sheet may have changed it since the last visit. */
+    fun refreshDetailLevel() {
+        viewModelScope.launch {
+            val params = settingsRepository.displayParams()
+                ?: com.lidarscan.core.render.DisplayParams.captureDefaults()
+            _detailLevel.value = com.lidarscan.core.capture.DetailLevels.levelForBudget(
+                params.lodPointBudget,
+                settingsRepository.deviceTier,
+            )
+        }
+    }
+
+    fun setDetailLevel(level: com.lidarscan.core.capture.DetailLevel) {
+        _detailLevel.value = level
+        viewModelScope.launch {
+            val current = settingsRepository.displayParams()
+                ?: com.lidarscan.core.render.DisplayParams.captureDefaults()
+            settingsRepository.setDisplayParams(
+                current.copy(
+                    lodPointBudget = com.lidarscan.core.capture.DetailLevels.budgetPointsFor(
+                        level,
+                        settingsRepository.deviceTier,
+                    ),
+                ),
+            )
+        }
+    }
+
+    /** ROUND 24 item 110(b): the Settings row that replays the tour. */
+    fun markTutorialSeen() {
+        viewModelScope.launch { settingsRepository.setTutorialSeen() }
+    }
+
     val captureLogPath: String get() = captureLog?.path ?: "(capture log unavailable)"
 
     val captureLogLastLine: StateFlow<String?> =

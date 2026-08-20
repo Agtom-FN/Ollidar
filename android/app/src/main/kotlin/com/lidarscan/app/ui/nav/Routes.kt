@@ -105,6 +105,16 @@ object Routes {
      */
     const val MID360_SETUP = "mid360_setup"
 
+    /**
+     * ROUND 24 item 109 — **Profile**, device-level like [SETTINGS] and
+     * reached from two doors: the Projects hero's avatar (which used to open
+     * Settings, a second door to a tab already in the bar) and a Settings row.
+     *
+     * Not a tab: it is a page you visit when something has gone wrong or you
+     * want the version number, not one of the four things the app is for.
+     */
+    const val PROFILE = "profile"
+
     /** B12: georeferenced auto-merge — inherently multi-project, so also global. */
     const val MERGE = "merge"
 }

@@ -140,6 +140,22 @@ class AppContainer(context: Context) {
      * restarted inside one boot (exactly what a walkthrough with the screen off
      * invites), and that is a restart the operator should hear about.
      */
+    /**
+     * ROUND 24 item 110(b) — **"replay the tutorial", asked for in Settings and
+     * honoured on the Scan screen.**
+     *
+     * A tour of the Scan screen has to run ON the Scan screen, and Settings is
+     * a different tab. This is the one-shot that carries the request across the
+     * hop: Settings sets it and navigates; `CaptureRoute` collects it, starts
+     * the tour and immediately clears it.
+     *
+     * On the container rather than in `SettingsRepository` because it is an
+     * intent, not a preference — persisting it would mean a request made before
+     * a crash re-fires the tour on the next launch, which is the sort of ghost
+     * that takes a round to diagnose.
+     */
+    val tutorialReplayRequest = kotlinx.coroutines.flow.MutableStateFlow(false)
+
     val appRunId: String = java.util.UUID.randomUUID().toString()
 
     /** D6 USB device discovery, permission flow and open-connection registry (B2). */
