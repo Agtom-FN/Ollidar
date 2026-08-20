@@ -61,6 +61,28 @@ At a glance — what plugs into which app, and how ready it is. ✅ Working ·
 
 ---
 
+## Requirements
+
+### Phone app (Android)
+
+| | Minimum | Notes |
+| --- | --- | --- |
+| Android version | Android 10 (API 29) | Built for Android 16 (API 36). The app installs without ARCore, but a sensor-position scan needs it — full 3D scanning needs Google's AR tracking (ARCore), which needs roughly Android 14+ on a supported device |
+| Required hardware | USB host (OTG), OpenGL ES 3.0 GPU | The serial lidars plug in over USB-C; required by the manifest |
+| Optional hardware | — | ARCore-capable camera (needed for real scanning), gyroscope (motion witness during tracking loss — strongly recommended), Ethernet adapter support (Mid-360 only), Bluetooth (RTK rover only), GPS (outdoor georeferencing only) — the app runs without these, feature-gated |
+| RAM | Any (auto-tiered) | The app auto-tiers its rendering to the device — roughly modest phones get a 96 MB point budget, standard 256 MB, flagships 512 MB; runs on modest hardware with reduced live detail. Field-validated device: Google Pixel 8 Pro |
+| Storage | ~150 MB | APK ~100 MB; a typical scan is 5–50 MB |
+
+### Desktop app (macOS)
+
+| | Minimum | Notes |
+| --- | --- | --- |
+| OS | macOS 14, Apple silicon (arm64) | Validated on macOS 26; the COIN-D6 USB-serial path is unverified below macOS 26 (Qt serial library constraint) |
+| GPU | Metal (any Apple silicon) | Validated on Apple M4 |
+| Storage | ~96 MB | Expanded app size |
+
+---
+
 ## Tested hardware and results
 
 What's actually been run, on what, with what numbers — not marketing claims.
