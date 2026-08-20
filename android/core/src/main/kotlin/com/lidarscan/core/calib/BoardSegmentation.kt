@@ -86,7 +86,12 @@ enum class LidarProfile(
     val scanIs2d: Boolean,
     val recommendedPoses: Int,
 ) {
-    /** COIN-D6: a 2-D scanner. Its plane returns a LINE, not a patch — see [BoardSegmenter]. */
+    /**
+     * The **2-D class**: a scanner whose plane returns a LINE across the board,
+     * not a patch — see [BoardSegmenter]. Named for the COIN-D6 because it was
+     * the only member when it was written; ROUND 25 item 119's STL-27L is the
+     * second (see [of]).
+     */
     D6(sigmaM = 0.030, minReturnsPerPose = 20, scanIs2d = true, recommendedPoses = 12),
 
     /** Livox Mid-360: a 3-D scanner; 8 poses are enough (S6 §1). */
@@ -94,8 +99,31 @@ enum class LidarProfile(
     ;
 
     companion object {
+        /**
+         * ROUND 25 item 119 — why the STL-27L maps onto [D6] rather than
+         * getting a value of its own.
+         *
+         * A [LidarProfile] is a *class of geometry and noise*, and every one of
+         * its four numbers is decided by facts the STL-27L shares with the D6:
+         * it scans in a single plane (`scanIs2d`, and therefore RANSAC must fit
+         * a LINE — fitting a plane to it is rank-deficient by construction),
+         * it returns a line's worth of points per pose rather than a patch
+         * (`minReturnsPerPose`), and 2 constraints per pose is why it needs the
+         * D6's 12 poses instead of the Mid-360's 8 (`recommendedPoses`).
+         * `sigmaM` is the only number that is a datasheet property rather than
+         * a geometric one, and the LD-series' published ±30 mm sits in the same
+         * band the D6's 0.030 already encodes.
+         *
+         * Giving the STL-27L its own enum value with the same four numbers
+         * copied across would look more careful and be less honest: it would
+         * present as a measured characterisation of hardware nobody on this
+         * project has. When an STL-27L is finally on a bench and its residuals
+         * disagree with the D6's, THAT is the moment to split the value — and
+         * the split will then carry a number somebody measured.
+         */
         fun of(sensor: SensorType): LidarProfile = when (sensor) {
             SensorType.COIN_D6 -> D6
+            SensorType.STL27L -> D6
             SensorType.MID360 -> MID360
         }
     }

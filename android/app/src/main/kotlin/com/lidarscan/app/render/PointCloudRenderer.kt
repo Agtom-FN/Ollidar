@@ -22,7 +22,6 @@ import com.google.android.filament.VertexBuffer
 import com.google.android.filament.Viewport
 import com.google.android.filament.android.DisplayHelper
 import com.google.android.filament.android.UiHelper
-import com.google.android.filament.utils.Manipulator
 import com.lidarscan.app.engine.ScanEngineNative
 import com.lidarscan.core.render.ColorMode
 import com.lidarscan.core.render.Colormap
@@ -266,7 +265,19 @@ class PointCloudRenderer(
         synchronized(trailLock) { trailDirty = true }
     }
 
-    private var manipulator: Manipulator? = null
+    /**
+     * ROUND 25 item 117 — the viewer's camera, replacing filament-utils'
+     * `Manipulator`.
+     *
+     * `@Volatile` because it is written on the touch (main) thread and read on
+     * the Choreographer's render thread. It is an immutable value type, so a
+     * torn read is impossible: the render thread either sees the old camera or
+     * the new one, never half of each. That is the entire reason it is a
+     * `data class` of floats rather than six mutable fields.
+     */
+    @Volatile
+    private var orbitCamera: com.lidarscan.core.render.OrbitCamera =
+        com.lidarscan.core.render.OrbitCamera.HOME
     private var viewportWidth = 1
     private var viewportHeight = 1
 
@@ -395,12 +406,13 @@ class PointCloudRenderer(
         buildColormapTexture()
         applyStaticMaterialParams()
 
-        manipulator = Manipulator.Builder()
-            .targetPosition(0f, 0f, 0f)
-            .orbitHomePosition(4f, 3f, 8f)
-            .upVector(0f, 1f, 0f)
-            .zoomSpeed(0.02f)
-            .build(Manipulator.Mode.ORBIT)
+        // ROUND 25 item 117: no `Manipulator.Builder()` here any more. Its
+        // framing survives verbatim as `OrbitCamera.HOME` (target 0,0,0, eye
+        // 4,3,8, Y up) so the viewer opens on exactly the view it always has —
+        // adopting a new camera must not also be a silent change of default
+        // framing. The JNI-load ordering note at the top of this file no longer
+        // applies to the camera, and is kept because `Utils.init()` is still
+        // what loads the rest of filament-utils.
 
         uiHelper = UiHelper(UiHelper.ContextErrorPolicy.DONT_CHECK)
         uiHelper.renderCallback = SurfaceCallback()
@@ -833,22 +845,118 @@ class PointCloudRenderer(
 
     fun stats(): PointCloudRenderStats = lastStats
 
-    /** Forwarded from the Compose `AndroidView`'s touch listener — orbit-drag/pinch-zoom via [Manipulator]. */
+    // ── ROUND 25 item 117: the viewer's gestures ────────────────────────────
+    //
+    // Owner: *"Add pan and zoom in out function for lidar scan review."* What
+    // was here drove filament-utils' `Manipulator`: one finger orbited, a pinch
+    // dollied, and **pan did not exist** — `grabBegin`'s `strafe` flag was never
+    // passed `true`, so a two-finger drag fed the FIRST pointer's coordinates
+    // into the orbit path and spun the cloud instead of sliding it. On a scan of
+    // a corridor, whose geometry sits thirty metres from the origin the
+    // Manipulator's target is nailed to (it has no runtime retarget — see
+    // [updateCamera]), that is the difference between a viewer and a turntable.
+    //
+    // The camera is now [com.lidarscan.core.render.OrbitCamera]: pure `:core`
+    // arithmetic, unit-tested on a bare JVM, opening on exactly the framing the
+    // `Manipulator` did. This class keeps the touch plumbing and the Filament
+    // call, which is all it should ever have had.
+    //
+    // Arbitration is by pointer COUNT and it is deliberate: two fingers pan and
+    // pinch AT THE SAME TIME (the `ScaleGestureDetector` reads the spread while
+    // this reads the centroid), which is what makes a two-finger gesture feel
+    // like one gesture rather than a mode.
+
+    /** Where the last touch was, so a move can be a delta. Touch thread only. */
+    private var lastTouchX = 0f
+    private var lastTouchY = 0f
+    private var lastPointerCount = 0
+
+    /** Forwarded from the Compose `AndroidView`'s touch listener. */
     fun onTouch(event: MotionEvent): Boolean {
         if (cameraMode != CameraMode.ORBIT) return false
-        val m = manipulator ?: return false
+        val count = event.pointerCount
+        // The centroid, not pointer 0: with two fingers down, tracking one of
+        // them makes the pan lurch whenever the OTHER one is the one that moved.
+        var cx = 0f
+        var cy = 0f
+        for (i in 0 until count) { cx += event.getX(i); cy += event.getY(i) }
+        cx /= count.coerceAtLeast(1)
+        cy /= count.coerceAtLeast(1)
+
         when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> m.grabBegin(event.x.toInt(), event.y.toInt(), false)
-            MotionEvent.ACTION_MOVE -> m.grabUpdate(event.x.toInt(), event.y.toInt())
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> m.grabEnd()
+            MotionEvent.ACTION_DOWN,
+            MotionEvent.ACTION_POINTER_DOWN,
+            MotionEvent.ACTION_POINTER_UP,
+            -> {
+                // A finger arriving or leaving moves the centroid by a large
+                // jump that is not a drag. Re-anchor instead of integrating it,
+                // or lifting one of two fingers throws the camera across the
+                // room.
+                lastTouchX = cx
+                lastTouchY = cy
+                lastPointerCount = count
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                val dx = cx - lastTouchX
+                val dy = cy - lastTouchY
+                lastTouchX = cx
+                lastTouchY = cy
+                if (count != lastPointerCount) {
+                    // The pointer count changed between events without an
+                    // up/down we saw. Treat this frame as the anchor.
+                    lastPointerCount = count
+                    return true
+                }
+                orbitCamera = if (count >= 2) {
+                    orbitCamera.pan(dx, dy, viewportHeight, ORBIT_FOV_Y_RAD)
+                } else {
+                    orbitCamera.orbit(dx, dy, viewportWidth, viewportHeight)
+                }
+            }
+
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> lastPointerCount = 0
         }
         return true
     }
 
-    /** Two-finger pinch delta (positive == zoom in), forwarded from a `ScaleGestureDetector` in `PointCloudView`. */
-    fun onScale(focusX: Float, focusY: Float, scaleDelta: Float) {
-        manipulator?.scroll(focusX.toInt(), focusY.toInt(), -scaleDelta)
+    /**
+     * Pinch, forwarded from the `ScaleGestureDetector` in `PointCloudView`.
+     *
+     * [scaleFactor] is the detector's own: >1 when the fingers move apart.
+     * Passed through unchanged rather than converted to a delta — the clamping
+     * and the sign live in `OrbitCamera.dolly`, where a test can see them.
+     */
+    fun onScale(scaleFactor: Float) {
+        if (cameraMode != CameraMode.ORBIT) return
+        orbitCamera = orbitCamera.dolly(scaleFactor)
     }
+
+    /**
+     * Double tap: **reset the framing** to the whole cloud.
+     *
+     * Frames the combined page bounds when there are any, so a scan whose
+     * geometry sits forty metres from the session origin is reset to a view OF
+     * IT — resetting to the origin would lose the cloud, and this gesture is
+     * what an operator reaches for when they have already lost it. With no
+     * bounds yet, the home framing, which is the same thing for a cloud at the
+     * origin.
+     */
+    fun resetCameraFraming() {
+        if (cameraMode != CameraMode.ORBIT) return
+        orbitCamera = if (haveBounds) {
+            com.lidarscan.core.render.OrbitCamera.framing(
+                combinedBoundsMin[0], combinedBoundsMin[1], combinedBoundsMin[2],
+                combinedBoundsMax[0], combinedBoundsMax[1], combinedBoundsMax[2],
+                ORBIT_FOV_Y_RAD,
+            )
+        } else {
+            com.lidarscan.core.render.OrbitCamera.HOME
+        }
+    }
+
+    /** For tests and diagnostics: where the orbit camera currently is. */
+    fun orbitCameraState(): com.lidarscan.core.render.OrbitCamera = orbitCamera
 
     // --- setup helpers -----------------------------------------------------
 
@@ -1905,23 +2013,29 @@ class PointCloudRenderer(
                 lastEye = floatArrayOf(model[12], model[13], model[14])
             }
             CameraMode.ORBIT -> {
-                // filament-utils' Manipulator has no runtime "retarget"
-                // setter (its target is fixed at Builder.build() time) — so
-                // orbit is anchored at the session's local-frame origin
-                // (0,0,0, PointVertex's own coordinate origin — point_page.h:
-                // "session's local metric frame"), not a moving centroid.
-                // That is also the more usable behaviour while a capture is
-                // growing: a target that silently drifts as new pages arrive
-                // would fight the user's own drag/pinch input.
-                val m = manipulator ?: return
-                val eye = FloatArray(3); val target = FloatArray(3); val up = FloatArray(3)
-                m.getLookAt(eye, target, up)
+                // ROUND 25 item 117. The old note here said the orbit target
+                // was "anchored at the session's local-frame origin ... not a
+                // moving centroid", which was true and was a limitation
+                // dressed as a decision: filament-utils' Manipulator has no
+                // runtime retarget, its target being fixed at
+                // `Builder.build()` time, so the target COULD not move. Item
+                // 117 asks for pan, which is precisely "move the target", so
+                // the camera is ours now.
+                //
+                // The half of that note that was a real design point still
+                // holds and is now enforced rather than incidental: the target
+                // never drifts BY ITSELF as pages arrive — it moves only when
+                // the operator's fingers move it (`pan`) or asks for a reset
+                // (`resetCameraFraming`). A camera that re-centres under a
+                // growing cloud fights the gesture the operator is mid-way
+                // through.
+                val c = orbitCamera
                 camera.lookAt(
-                    eye[0].toDouble(), eye[1].toDouble(), eye[2].toDouble(),
-                    target[0].toDouble(), target[1].toDouble(), target[2].toDouble(),
-                    up[0].toDouble(), up[1].toDouble(), up[2].toDouble(),
+                    c.eyeX.toDouble(), c.eyeY.toDouble(), c.eyeZ.toDouble(),
+                    c.targetX.toDouble(), c.targetY.toDouble(), c.targetZ.toDouble(),
+                    c.upX.toDouble(), c.upY.toDouble(), c.upZ.toDouble(),
                 )
-                lastEye = eye
+                lastEye = floatArrayOf(c.eyeX, c.eyeY, c.eyeZ)
             }
             CameraMode.FOLLOW -> {
                 // ROUND 8. Third person: behind and above the rig, along the
@@ -2039,12 +2153,11 @@ class PointCloudRenderer(
             // and re-setting a 45° perspective on a resize would silently
             // un-register the overlay until the next AR frame arrived.
             if (cameraMode != CameraMode.AR) {
-                camera.setProjection(45.0, aspect, 0.05, 2000.0, Camera.Fov.VERTICAL)
+                camera.setProjection(ORBIT_FOV_Y_DEG, aspect, 0.05, 2000.0, Camera.Fov.VERTICAL)
             }
             view.viewport = Viewport(0, 0, width, height)
-            manipulator?.setViewport(width, height)
             // px per metre at 1m depth = viewportHeightPx / (2 * tan(fovY/2)) — points.mat's comment.
-            val fovYRad = Math.toRadians(45.0)
+            val fovYRad = ORBIT_FOV_Y_RAD.toDouble()
             val pxPerMeterAt1m = (height / (2.0 * Math.tan(fovYRad / 2.0))).toFloat()
             materialInstance?.setParameter("pxPerMeterAt1m", pxPerMeterAt1m)
         }
@@ -2117,6 +2230,21 @@ class PointCloudRenderer(
         // or the depth range differs from the camera image's implied one.
         const val AR_NEAR_M = 0.05
         const val AR_FAR_M = 100.0
+
+        /**
+         * ROUND 25 item 117 — the ORBIT/FOLLOW projection's vertical field of
+         * view, in radians, as the ONE name the pan arithmetic and
+         * `setProjection` both read.
+         *
+         * 45°, unchanged. It is a constant here rather than a literal in three
+         * places because `OrbitCamera.pan` derives metres-per-pixel from it: if
+         * the projection's FoV were ever changed without this moving with it,
+         * pan would drift out from under the operator's fingers by exactly the
+         * ratio of the two tangents — a bug that looks like "the pan feels
+         * wrong" and reads like nothing at all in a diff.
+         */
+        const val ORBIT_FOV_Y_RAD = 0.7853982f
+        const val ORBIT_FOV_Y_DEG = 45.0
 
         /** `PointVertex`: float3 position + RGBA8 = 16 bytes. */
         const val POINT_STRIDE_BYTES = 16

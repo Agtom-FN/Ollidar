@@ -36,6 +36,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
@@ -44,6 +45,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
@@ -239,20 +241,42 @@ fun BackBar(
 
 // ── surfaces ────────────────────────────────────────────────────────────────
 
-/** The redesign's panel card: 20 dp radius, panel ground, soft border. */
+/**
+ * The redesign's panel card: 20 dp radius, panel ground, soft border.
+ *
+ * **ROUND 25 item 116** gave it three optional parameters, all defaulting to
+ * exactly what it drew before. The tracking-lost popup needed a card with a
+ * semantic ground and a shadow, and it had two ways to get one: hand-roll a
+ * `Column` with its own background, border and radius — which is what round 24
+ * did, and is why the owner's note is *"align the style"* — or teach the app's
+ * one card component the two things it could not yet express. A component that
+ * cannot say "this card carries a warning" is a component every warning has to
+ * work around, and every work-around is a card that drifts.
+ *
+ * @param container the card's ground. Defaults to the neutral `surfaceContainer`.
+ * @param borderColor the hairline. Defaults to `outlineVariant`.
+ * @param elevation the drop shadow. Defaults to 0 dp — a card in a list sits
+ *   ON the page; only a card that floats over a scrim casts anything.
+ */
 @Composable
 fun ScanCard(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
     contentPadding: androidx.compose.foundation.layout.PaddingValues =
         androidx.compose.foundation.layout.PaddingValues(14.dp),
+    container: Color? = null,
+    borderColor: Color? = null,
+    elevation: Dp = 0.dp,
     content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
 ) {
     val shape = RoundedCornerShape(ScanDims.CardRadius)
     val base = modifier
         .fillMaxWidth()
-        .background(MaterialTheme.colorScheme.surfaceContainer, shape)
-        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
+        // The shadow goes on FIRST and carries the same shape, so the card's
+        // corners and its shadow's corners are one radius rather than two.
+        .then(if (elevation > 0.dp) Modifier.shadow(elevation, shape) else Modifier)
+        .background(container ?: MaterialTheme.colorScheme.surfaceContainer, shape)
+        .border(1.dp, borderColor ?: MaterialTheme.colorScheme.outlineVariant, shape)
     Column(
         modifier = (if (onClick != null) base.clickable(onClick = onClick) else base).padding(contentPadding),
         content = content,

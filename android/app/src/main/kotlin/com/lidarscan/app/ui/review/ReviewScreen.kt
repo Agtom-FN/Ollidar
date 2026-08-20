@@ -21,7 +21,6 @@ import com.lidarscan.app.ui.theme.Ember
 import com.lidarscan.app.ui.theme.ScanTeal
 import com.lidarscan.app.ui.theme.SemWarn
 import com.lidarscan.app.ui.theme.ViewportGround
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -63,7 +62,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -226,18 +224,29 @@ fun ReviewScreen(
                     cameraMode = CameraMode.ORBIT,
                     displayParams = state.display,
                     onRendererReady = vm::onRendererReady,
+                    // ── ROUND 25 item 117: the measure tap, and what it replaced ──
+                    //
+                    // This used to be a transparent `Box` with
+                    // `detectTapGestures` laid OVER the SurfaceView, on the
+                    // reasoning that "a pick never fights the orbit gesture".
+                    // It did not fight it; it removed it. A pointer-input node
+                    // above the view takes the tap AND the drag AND the pinch,
+                    // so with measure mode on the viewer could not be moved at
+                    // all — which is the state the owner would have found the
+                    // moment he tried the new pan on a scan he was measuring.
+                    //
+                    // The tap now goes through the SAME gesture arbiter as the
+                    // navigation, which is the only arrangement in which "a tap
+                    // measures, a drag orbits, two fingers pan, a pinch zooms"
+                    // is a set of rules rather than a set of hopes.
+                    onTapPick = if (state.measureMode) {
+                        { x, y -> vm.onTap(x, y) }
+                    } else {
+                        null
+                    },
                     modifier = Modifier.fillMaxSize(),
                 )
                 if (state.measureMode) {
-                    // A transparent overlay above the SurfaceView takes the tap
-                    // for measuring, so a pick never fights the orbit gesture.
-                    Box(
-                        Modifier
-                            .fillMaxSize()
-                            .pointerInput(Unit) {
-                                detectTapGestures { offset -> vm.onTap(offset.x, offset.y) }
-                            },
-                    )
                     ScanChip(
                         text = if (state.measurement == null) "MEASURE ON · TAP A POINT" else "MEASURE ON",
                         color = Ember,

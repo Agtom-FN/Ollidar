@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -102,6 +103,11 @@ fun SettingsRoute(
                     shareCacheDir = java.io.File(context.cacheDir, "shared"),
                     onSensorLatencyApplied = container.d6UsbConnectionRegistry::setSensorLatencyMillis,
                     downloadsContext = container.applicationContext,
+                    // ROUND 25 item 118 (owner amendment): the container's one
+                    // sweeper — same instance, and therefore same rate limiter,
+                    // as the Mid-360 wizard's poll and the Capture tab's
+                    // auto-detect.
+                    connectionDebug = container.connectionDebugSweeper,
                     shareFile = { file ->
                         com.lidarscan.app.share.ShareTargets.shareFile(
                             context,
@@ -135,6 +141,9 @@ fun SettingsRoute(
     // moved it since the last visit.
     val detailLevel by viewModel.detailLevel.collectAsStateWithLifecycle()
     androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refreshDetailLevel() }
+    // ROUND 25 item 118 (owner amendment): the on-demand connection sweep.
+    val connectionDebugOutput by viewModel.connectionDebugOutput.collectAsStateWithLifecycle()
+    val connectionDebugRunning by viewModel.connectionDebugRunning.collectAsStateWithLifecycle()
 
     SettingsScreen(
         settings = settings,
@@ -159,6 +168,9 @@ fun SettingsRoute(
         onAdvancedFeaturesChange = viewModel::setAdvancedFeatures,
         onDeveloperModeChange = viewModel::setDeveloperMode,
         onCaptureDebugLogChange = viewModel::setCaptureDebugLog,
+        connectionDebugOutput = connectionDebugOutput,
+        connectionDebugRunning = connectionDebugRunning,
+        onRunConnectionDebug = viewModel::runConnectionDebugSweep,
         onOperatorCuesChange = viewModel::setOperatorCuesEnabled,
         onDndDuringCaptureChange = viewModel::setDndDuringCapture,
         dndAccessGranted = dndAccessGranted,
@@ -232,6 +244,13 @@ fun SettingsScreen(
     /** ROUND 17 item 66: the seven-tap unlock and the one thing behind it. */
     onDeveloperModeChange: (Boolean) -> Unit = {},
     onCaptureDebugLogChange: (Boolean) -> Unit = {},
+    /**
+     * ROUND 25 item 118 (owner amendment): the last connection-detection sweep,
+     * rendered. Null until one has been run.
+     */
+    connectionDebugOutput: String? = null,
+    connectionDebugRunning: Boolean = false,
+    onRunConnectionDebug: () -> Unit = {},
     onOperatorCuesChange: (Boolean) -> Unit = {},
     onDndDuringCaptureChange: (Boolean) -> Unit = {},
     /**
@@ -494,6 +513,12 @@ fun SettingsScreen(
                         onDismissExportNote = onDismissExportNote,
                     )
                     Spacer(Modifier.height(12.dp))
+                    ConnectionDebugCard(
+                        output = connectionDebugOutput,
+                        running = connectionDebugRunning,
+                        onRun = onRunConnectionDebug,
+                    )
+                    Spacer(Modifier.height(12.dp))
                     D6TimingCard(settings.d6SensorLatencyMs, onD6SensorLatencyChange)
                     Spacer(Modifier.height(12.dp))
                     EngineCard(
@@ -712,6 +737,94 @@ private fun CaptureLogCard(
                     .clickable(onClick = onDismissExportNote)
                     .testTag("captureLogExportNote"),
             )
+        }
+    }
+}
+
+/**
+ * ROUND 25 item 118, **owner amendment** — the "Connection debug" row.
+ *
+ * ## Why a screen and not only a log line
+ *
+ * The periodic `[net-debug]` sweeps answer the question "why did this fail?"
+ * for whoever reads the capture log afterwards. This answers it for the person
+ * standing there **with the hub in their hand**, which is a different problem
+ * with a different deadline: the owner's Acer HY41-T9 was in front of him, and
+ * the only thing the app would tell him was "No Ethernet adapter found." One
+ * button, one full sweep, on screen.
+ *
+ * Copy is not a nicety. A sweep is a twenty-line block full of hex; nobody
+ * transcribes that off a phone screen, and a diagnostic that cannot leave the
+ * device it diagnoses is a diagnostic nobody sends you.
+ *
+ * ## Wording law
+ *
+ * The block in [output] is **exempt** from [com.lidarscan.core.WordingLaw] and
+ * this is deliberate, not an oversight. It is developer-mode diagnostic output
+ * — reachable only after seven taps on the version line, never shown to an
+ * operator — and it is supposed to be dense with numbers, in the same way
+ * `StartHoldTrimGate.refusalLogLine` is. Do NOT rewrite it into six-word
+ * instructions; the six-word law governs the Mid-360 wizard
+ * ([com.lidarscan.core.net.Mid360Diagnosis]'s strings), which is a different
+ * surface read by a different person. The three chrome strings on this card
+ * ("Connection debug", "Run sweep", "Copy") happen to satisfy the law anyway.
+ *
+ * The output box has a **fixed height and its own scroll**: an unbounded
+ * `Text` here would make the whole Settings page as long as the USB device
+ * list, and the page above it is what the operator came for.
+ */
+@Composable
+private fun ConnectionDebugCard(
+    output: String?,
+    running: Boolean,
+    onRun: () -> Unit,
+) {
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    ScanCard(modifier = Modifier.testTag("connectionDebugRow")) {
+        CardTitle("Connection debug")
+        Spacer(Modifier.height(4.dp))
+        Hint("USB, interfaces and discovery, in one sweep.", color = InkFaint)
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SecondaryPill(
+                text = if (running) "Sweeping…" else "Run sweep",
+                height = 46.dp,
+                onClick = onRun,
+                modifier = Modifier.weight(1f).testTag("connectionDebugSweep"),
+            )
+            SecondaryPill(
+                text = "Copy",
+                height = 46.dp,
+                onClick = {
+                    // No-op with nothing to copy, rather than putting an empty
+                    // clipboard in front of someone who is about to paste it
+                    // into a bug report.
+                    output?.let { clipboard.setText(androidx.compose.ui.text.AnnotatedString(it)) }
+                },
+                modifier = Modifier.weight(1f).testTag("connectionDebugCopy"),
+            )
+        }
+        if (output != null) {
+            Spacer(Modifier.height(10.dp))
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .height(220.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                Text(
+                    output,
+                    style = MonoLabel,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    // Horizontal scroll as well: a USB descriptor line with
+                    // four interfaces on it is long, and wrapping hex at the
+                    // screen edge is how a readable dump becomes an unreadable
+                    // one.
+                    modifier = Modifier
+                        .horizontalScroll(rememberScrollState())
+                        .testTag("connectionDebugOutput"),
+                )
+            }
         }
     }
 }

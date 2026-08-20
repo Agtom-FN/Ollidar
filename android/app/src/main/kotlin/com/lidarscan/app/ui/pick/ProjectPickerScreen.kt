@@ -45,6 +45,7 @@ import com.lidarscan.app.ui.components.ScanChip
 import com.lidarscan.app.ui.components.ScanDims
 import com.lidarscan.app.ui.projects.ProjectThumbnail
 import com.lidarscan.app.ui.projects.ProjectsListViewModel
+import com.lidarscan.app.ui.theme.sensorBadgeColor
 import com.lidarscan.app.ui.theme.DisplayFontFamily
 import com.lidarscan.app.ui.theme.InkFaint
 import com.lidarscan.app.ui.theme.MonoMeta
@@ -173,7 +174,8 @@ private fun PickerRow(project: Project, onClick: () -> Unit) {
             Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                 ScanChip(
                     text = project.manifest.sensor.badgeLabel.uppercase(),
-                    color = if (project.manifest.sensor == SensorType.MID360) PoseBlue else ScanTeal,
+                    // ROUND 25 item 119: exhaustive, see `sensorBadgeColor`.
+                    color = sensorBadgeColor(project.manifest.sensor),
                     showDot = true,
                 )
                 ScanChip(text = project.manifest.profile.displayName.uppercase())

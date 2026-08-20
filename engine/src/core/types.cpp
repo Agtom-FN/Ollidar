@@ -6,6 +6,7 @@ const char* to_string(DeviceKind k) noexcept {
   switch (k) {
     case DeviceKind::kUnknown: return "unknown";
     case DeviceKind::kD6: return "coin-d6";
+    case DeviceKind::kStl27l: return "stl-27l";
     case DeviceKind::kMid360: return "livox-mid360";
     case DeviceKind::kRtkRover: return "rtk-rover";
   }
@@ -25,6 +26,7 @@ const char* to_string(StreamId s) noexcept {
     case StreamId::kSlamMap: return "slam-map";
     case StreamId::kPoseLio: return "pose-lio";
     case StreamId::kImuPhone: return "imu-phone";
+    case StreamId::kLidarStl27l: return "lidar-stl27l";
   }
   return "?";
 }

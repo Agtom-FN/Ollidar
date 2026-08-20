@@ -5,9 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -109,10 +107,18 @@ fun tabForRoute(route: String?): ScanTab = when {
  *    page, so it is described as "Profile" now and the collision resolves
  *    itself — one name, one node, one destination.
  *
- * Selection is the Agtom orange **plus a 4 dp dot** under the icon. Colour
- * alone was survivable while a bold label sat beneath it; on a bar that is now
- * four glyphs, one of them tinted, it is not — the dot is the state, and the
- * tint is the emphasis.
+ * Selection is the Agtom orange icon inside the soft ember capsule.
+ *
+ * **ROUND 25 item 120 — the dot is gone, and so is its space.** Round 24 put a
+ * 4 dp dot under the selected glyph and an invisible spacer of the same height
+ * under the other three, which pushed every icon 8 dp off the bar's centre so
+ * the dot had somewhere to live. The owner's instruction is to remove it, and
+ * removing it properly means removing the reserved space too — otherwise the
+ * icons stay pinned high above a gap nothing draws in. The capsule survives as
+ * the state: `EmberSoft` behind the selected tab, an ember tint on its glyph,
+ * `InkFaint` on the other three. The `tabSelectedDot`/`tabUnselectedDot` tags
+ * go with the dot; every `tab_*` tag stays, because the emulator suite drives
+ * the whole app through them.
  */
 @Composable
 fun ScanTabBar(
@@ -171,31 +177,19 @@ private fun TabButton(
             .testTag("tab_${tab.name.lowercase()}"),
         contentAlignment = Alignment.Center,
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(
-                tab.icon,
-                // ROUND 24 item 107: the label WAS the accessible name. With
-                // the label gone this is the accessible name, and it is the
-                // same string — `ScanTab.label` — so a rename can never
-                // desynchronise what is seen from what is announced.
-                contentDescription = tab.label,
-                modifier = Modifier.size(23.dp),
-                tint = if (selected) Ember else InkFaint,
-            )
-            // The selected dot. 4 dp, ember, 4 dp below the glyph; an
-            // invisible spacer of the same height on the unselected tabs so
-            // the icons stay on one baseline instead of hopping 8 dp as the
-            // selection moves.
-            Spacer(Modifier.height(4.dp))
-            Box(
-                Modifier
-                    .size(4.dp)
-                    .background(
-                        if (selected) Ember else Color.Transparent,
-                        RoundedCornerShape(2.dp),
-                    )
-                    .testTag(if (selected) "tabSelectedDot" else "tabUnselectedDot"),
-            )
-        }
+        // ROUND 25 item 120: one icon, centred in the capsule. No Column, no
+        // spacer, no dot — a Column with a single child would still be the
+        // round-24 layout with its bottom half hidden, and the icon would sit
+        // wherever that layout left it rather than in the middle.
+        Icon(
+            tab.icon,
+            // ROUND 24 item 107: the label WAS the accessible name. With
+            // the label gone this is the accessible name, and it is the
+            // same string — `ScanTab.label` — so a rename can never
+            // desynchronise what is seen from what is announced.
+            contentDescription = tab.label,
+            modifier = Modifier.size(23.dp),
+            tint = if (selected) Ember else InkFaint,
+        )
     }
 }

@@ -161,7 +161,8 @@ class CaptureRound10LiveWindowTest {
 
     /**
      * Feed the engine REAL COIN-D6 UART bytes, through the same seam
-     * `D6SerialConnection` uses (`nativeAddD6Device` + `nativePushSerialBytes`),
+     * `D6SerialConnection` uses (`nativeAddSerialLidarDevice` +
+     * `nativePushSerialBytes`),
      * so the points in the live window are produced by the production driver
      * and not by a test-only hook. The bytes come from the bundled synthetic
      * capture the replay smoke test already ships
@@ -181,10 +182,13 @@ class CaptureRound10LiveWindowTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val raw = context.assets.open("replay/synth.lscan/streams/lidar.bin").use { it.readBytes() }
 
-        val deviceId = ScanEngineNative.nativeAddD6Device(
+        val deviceId = ScanEngineNative.nativeAddSerialLidarDevice(
             engineHandle,
+            // ROUND 25 item 119: `kind` became a parameter of the shim. This
+            // test feeds real COIN-D6 UART bytes, so it names the D6.
+            ScanEngineNative.DeviceKind.D6,
             "round10-fake-$tag",
-            230_400,
+            com.lidarscan.core.engine.SerialLidarBaud.COIN_D6,
             /* sendStartStop = */ false,
             /* writer = */ null,
         )

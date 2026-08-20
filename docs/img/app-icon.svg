@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108"
+     role="img" aria-label="LidarScan app icon">
+  <title>LidarScan</title>
+  <!--
+    LidarScan launcher icon — "4g · Slice-scan A", the variant the owner chose
+    in ROUND 22 (v0.9.7). Transcribed from the shipped Android drawables so the
+    README mark and the launcher mark are the same design:
+
+      android/app/src/main/res/values/ic_launcher_background.xml   #1C2430
+      android/app/src/main/res/drawable/ic_launcher_foreground.xml  rings + A
+
+    THIS IS THE FULL-BLEED VERSION. On a phone, Android's adaptive-icon mask
+    crops the outer 18 units of the 108-unit canvas, and the pulse rings are
+    drawn to BE cropped — that crop is what makes them read as an expanding
+    sweep rather than as two complete circles. A README has no launcher mask,
+    so the rounded rectangle below stands in for one: the rings are clipped by
+    it at exactly the place a squircle mask would take them, and the icon reads
+    the way it does on a home screen instead of as two floating rings.
+
+    WHY THE SCAN LINES ARE EXPLICIT SEGMENTS AND NOT AN SVG <mask>.
+    SVG has a mask element and VectorDrawable does not, so the obvious move is
+    to draw eight full-width lines and mask them to the A. The shipped icon
+    does something better and it is worth keeping: each line is pre-clipped to
+    the A silhouette AND THEN INSET BY 1.3 at both ends — half the 2.6 stroke —
+    so that the ROUND cap lands exactly on the silhouette boundary. A mask
+    would instead slice every cap off square. The numbers below are that
+    computation's output (android/.../ic_launcher_foreground.xml documents the
+    silhouette as the stroke outline of M34,86 L54,32 L74,86 plus a crossbar
+    M43,66 L65,66 at width 12, round caps and joins), copied rather than
+    re-derived so the two files cannot drift apart by arithmetic.
+  -->
+  <defs>
+    <clipPath id="plate">
+      <rect x="0" y="0" width="108" height="108" rx="24" ry="24"/>
+    </clipPath>
+  </defs>
+
+  <rect x="0" y="0" width="108" height="108" rx="24" ry="24" fill="#1C2430"/>
+
+  <!-- (a) Pulse rings, centred (54,58). #F26A1B is the Agtom orange the app
+       theme adopted in round 22; keep the two in step if it is ever revised. -->
+  <g clip-path="url(#plate)" fill="none" stroke="#F26A1B">
+    <circle cx="54" cy="58" r="40" stroke-width="2.5" stroke-opacity="0.30"/>
+    <circle cx="54" cy="58" r="28" stroke-width="3"   stroke-opacity="0.50"/>
+  </g>
+
+  <!-- (b) The A-mark: eight scan lines, white fading through #F9B27C into the
+       Agtom orange at the feet. Scaled 0.847 about the icon centre, which is
+       the launcher's safe-circle fit — kept here so the two marks are the same
+       size relative to the plate. -->
+  <g transform="translate(54,54) scale(0.847) translate(-54,-54)"
+     stroke-width="2.6" stroke-linecap="round" fill="none">
+    <path stroke="#FFFFFF" stroke-opacity="1.00" d="M48.16,34 L59.84,34"/>
+    <path stroke="#FFFFFF" stroke-opacity="0.95" d="M45.57,41 L62.43,41"/>
+    <path stroke="#FFFFFF" stroke-opacity="0.90" d="M42.98,48 L65.02,48"/>
+    <!-- y=55 is above the crossbar, so it splits across the two legs -->
+    <path stroke="#FFFFFF" stroke-opacity="0.85" d="M40.38,55 L50.58,55"/>
+    <path stroke="#FFFFFF" stroke-opacity="0.85" d="M57.42,55 L67.62,55"/>
+    <!-- y=62 is the crossbar itself, so it bridges the legs -->
+    <path stroke="#FFFFFF" stroke-opacity="0.80" d="M37.79,62 L70.21,62"/>
+    <path stroke="#F9B27C" stroke-opacity="0.75" d="M35.2,69 L72.8,69"/>
+    <!-- y=76 is below the crossbar, so it splits again -->
+    <path stroke="#F9B27C" stroke-opacity="0.70" d="M32.61,76 L42.8,76"/>
+    <path stroke="#F9B27C" stroke-opacity="0.70" d="M65.2,76 L75.39,76"/>
+    <!-- y=83, the feet -->
+    <path stroke="#F26A1B" stroke-opacity="0.65" d="M30.01,83 L40.21,83"/>
+    <path stroke="#F26A1B" stroke-opacity="0.65" d="M67.79,83 L77.99,83"/>
+  </g>
+</svg>

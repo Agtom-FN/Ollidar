@@ -39,6 +39,7 @@
 #include "scanengine/core/types.h"
 #include "scanengine/drivers/d6/d6_driver.h"
 #include "scanengine/drivers/mid360/mid360_driver.h"
+#include "scanengine/drivers/stl27l/stl27l_driver.h"
 #include "scanengine/gnss/georef.h"
 #include "scanengine/gnss/gnss_source.h"
 #include "scanengine/gnss/ntrip_client.h"
@@ -209,10 +210,18 @@ struct SessionConfig {
   TrajectorySource trajectory = TrajectorySource::kExternal;
 };
 
+// ITEM 119 note on the C ABI: adding the STL-27L did NOT bump it. The app
+// selects the sensor with scan_device_config::kind = SCAN_DEVICE_STL27L (4),
+// a new value of an existing field; see the ABI block in capi/scanengine_c.h
+// for the full argument and for the one thing that was deferred rather than
+// added (scan_probe_stl27l).
 struct DeviceConfig {
   DeviceKind kind = DeviceKind::kUnknown;
   D6Config d6{};
   Mid360Config mid360{};
+  // ITEM 119. Additive: a per-kind config block beside the other two, read
+  // only when `kind == DeviceKind::kStl27l`. Nothing existing moves.
+  Stl27lConfig stl27l{};
 };
 
 class Engine {

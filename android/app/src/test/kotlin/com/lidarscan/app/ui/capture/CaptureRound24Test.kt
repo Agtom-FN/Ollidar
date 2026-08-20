@@ -131,34 +131,40 @@ class CaptureRound24Test {
     }
 
     /**
-     * The case that must never regress: a tab switch DURING a recording leaves
-     * the capture completely alone. The operator checks the list and comes back
-     * to a scan that is still running and still counting.
+     * **Overturned by ROUND 25 item 115, and kept as the record of it.**
+     *
+     * Round 24 asserted that a tab switch mid-recording left the capture
+     * completely alone, on the reasoning that checking the Projects list
+     * mid-walk is a normal thing to do. The owner's instruction for 0.9.10 is
+     * the opposite and is the better rule: *"when the user click to other tab
+     * just stop and exit the scan and tracking."* A recording that continues
+     * with the camera on while the screen shows something else is how a scan
+     * gets walked through a tracking loss nobody is watching.
+     *
+     * So the assertion is inverted rather than deleted — a rule that changed
+     * needs a test that says which way it changed, or the next round restores
+     * the old behaviour thinking it is fixing something. What round 24's case
+     * was really protecting (a rotation must not disturb a live capture) is
+     * still protected, by `a rotation mid-recording leaves the capture alone`
+     * in `CaptureRound25Test`.
      */
     @Test
-    fun `a tab switch mid-recording does not touch the capture`() = runBlocking {
+    fun `a tab switch mid-recording stops and seals the scan`() = runBlocking {
         val (vm, _) = newVm()
         withTimeout(15_000) { vm.autoConnectState!!.first { it.isPreviewing } }
         vm.startCapture(skipChecklist = true)
         withTimeout(15_000) { vm.captureState.first { it == CaptureState.RECORDING } }
         kotlinx.coroutines.delay(700)
-        val pointsBefore = vm.stats.value.pointsCaptured
 
-        // Off to Projects and back, mid-walk.
+        // Off to another tab, mid-walk. Item 115: this IS a Stop.
         vm.onScanScreenLeaving(configurationChange = false)
-        vm.onScanScreenEntered()
+        withTimeout(15_000) { vm.captureState.first { it == CaptureState.IDLE } }
 
         assertEquals(
-            "the capture must still be recording",
-            CaptureState.RECORDING,
+            "leaving the Scan tab must stop the capture",
+            CaptureState.IDLE,
             vm.captureState.value,
         )
-        assertTrue(
-            "the points counter must not be reset under a live capture",
-            vm.stats.value.pointsCaptured >= pointsBefore,
-        )
-        vm.stopCapture()
-        withTimeout(15_000) { vm.captureState.first { it == CaptureState.IDLE } }
         Unit
     }
 

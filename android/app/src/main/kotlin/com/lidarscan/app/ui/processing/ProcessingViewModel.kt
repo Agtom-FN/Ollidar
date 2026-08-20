@@ -120,7 +120,10 @@ class ProcessingViewModel(
             // Mid-360's) and the bundle is the only route off the phone, so
             // landing the operator on a mode that cannot run and then on a
             // refusal that mentions the cloud is how `scan-008` got stuck.
-            val defaultMode = if (project?.manifest?.sensor == com.lidarscan.core.model.SensorType.COIN_D6) {
+            // ROUND 25 item 119: an STL-27L container lands here too — its
+            // Process path is refused for the same reason the D6's is, so it
+            // must open on the mode that actually works.
+            val defaultMode = if (project?.manifest?.sensor?.isPhoneTrackedPushbroom == true) {
                 ProcessingMode.EXTRACT_FOR_TRANSFER
             } else {
                 _uiState.value.mode
@@ -213,6 +216,24 @@ class ProcessingViewModel(
         // Now every D6 "Process" is reprocessD6: same per-container lock,
         // same derived files, same verdicts. The queue remains what it always
         // was for a Mid-360, whose pipeline genuinely is a queued LIO re-run.
+        //
+        // ROUND 25 item 119: this test stays `== COIN_D6` on purpose, and it is
+        // one of the few that does. `reprocessD6` runs the engine's OFFLINE D6
+        // pipeline, which identifies a container by its lidar stream id — an
+        // STL-27L container carries `SCAN_STREAM_LIDAR_STL27L` and there is no
+        // offline pipeline for it yet. Handing one to `reprocessD6` because
+        // "the STL-27L behaves like a D6" would be the one place that phrase is
+        // false. An STL-27L is refused below, by name, rather than falling
+        // through to the Mid-360's LIO queue, which would be worse still.
+        if (p.manifest.sensor == com.lidarscan.core.model.SensorType.STL27L) {
+            _uiState.value = _uiState.value.copy(
+                message = ProcessingPolicy.postProcess(
+                    hasRawStreams = true,
+                    sensor = p.manifest.sensor,
+                ).reason,
+            )
+            return
+        }
         if (p.manifest.sensor == com.lidarscan.core.model.SensorType.COIN_D6) {
             if (_uiState.value.d6Processing) return
             _uiState.value = _uiState.value.copy(d6Processing = true, message = "Processing…")

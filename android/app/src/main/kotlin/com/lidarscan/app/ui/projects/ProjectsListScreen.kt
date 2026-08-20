@@ -72,6 +72,7 @@ import com.lidarscan.app.ui.components.Hint
 import com.lidarscan.app.ui.components.PrimaryPill
 import com.lidarscan.app.ui.components.ScanChip
 import com.lidarscan.app.ui.components.ScanDims
+import com.lidarscan.app.ui.theme.sensorBadgeColor
 import com.lidarscan.app.ui.theme.DisplayFontFamily
 import com.lidarscan.app.ui.theme.InkFaint
 import com.lidarscan.app.ui.theme.MonoMeta
@@ -217,6 +218,26 @@ fun ProjectsListRoute(
 
     val batchContext = androidx.compose.ui.platform.LocalContext.current
 
+    // ── ROUND 25 item 115: "Scan saved.", for a scan nobody pressed Stop on ──
+    //
+    // Leaving the Scan tab now seals whatever was recording, and that seal
+    // deliberately does not navigate. So the report lands here, the first time
+    // Projects is looked at afterwards, and is spent on the way in: an event,
+    // not a state — leaving it set would put a stale "Scan saved." over the
+    // list for the rest of the session. The refresh is deliberate too: the
+    // sealed scan may have landed after this screen's own `refresh()` ran.
+    var savedNotice by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf<String?>(null)
+    }
+    LaunchedEffect(Unit) {
+        container.scanSavedNotice.collect { sealedId ->
+            if (sealedId == null) return@collect
+            container.scanSavedNotice.value = null
+            savedNotice = sealedId
+            viewModel.refresh()
+        }
+    }
+
     ProjectsListScreen(
         uiState = uiState,
         initialSelectedId = initialSelectedId,
@@ -255,6 +276,14 @@ fun ProjectsListRoute(
         sort = settings.projectsSort,
         onLayoutChange = { next -> prefsScope.launch { container.settingsRepository.setProjectsLayout(next) } },
         onSortChange = { next -> prefsScope.launch { container.settingsRepository.setProjectsSort(next) } },
+        savedNotice = savedNotice?.let { id ->
+            uiState.projects.firstOrNull { it.id == id }?.manifest?.name
+                // The id is a fallback, not a display name: if the scan is not
+                // in the list yet, saying "Scan saved." with no name is still
+                // true, and inventing one would not be.
+                ?.let { name -> "${'$'}{Wording.SCAN_SAVED} ${'$'}name" }
+                ?: Wording.SCAN_SAVED
+        },
     )
 }
 
@@ -297,6 +326,11 @@ fun ProjectsListScreen(
     batchBusy: Boolean = false,
     /** [com.lidarscan.core.projects.BatchReport.summary] once a run finishes. */
     batchMessage: String? = null,
+    /**
+     * ROUND 25 item 115 — a scan that sealed because the operator left the
+     * Scan tab. Null the rest of the time, which is nearly always.
+     */
+    savedNotice: String? = null,
     onEnterSelection: (String) -> Unit = {},
     onToggleSelection: (String) -> Unit = {},
     onExitSelection: () -> Unit = {},
@@ -367,6 +401,21 @@ fun ProjectsListScreen(
                 onDelete = { showBatchDeleteConfirm = true },
             )
         }
+        // ROUND 25 item 115. Above the batch's line and below the hero: this
+        // is the app finishing a sentence the operator started on another tab,
+        // so it belongs where they will look first. Drawn in the semantic green
+        // rather than the neutral hint colour — "your walk was saved" is good
+        // news and the only good news on this screen.
+        savedNotice?.let { notice ->
+            Hint(
+                notice,
+                color = SemGood,
+                modifier = Modifier
+                    .padding(horizontal = 20.dp, vertical = 4.dp)
+                    .testTag("scanSavedNotice"),
+            )
+        }
+
         // The batch's own last word. ROUND 7's rule over a set: a run of three
         // that produced two files says so, out loud, and says what to tap.
         batchMessage?.let { message ->
@@ -749,6 +798,11 @@ private fun ProjectCard(
     var menuOpen by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(ScanDims.CardRadius)
     val manifest = project.manifest
+    // ROUND 25 item 114. The card asks `:core` rather than deciding: one
+    // layout fact, one place, one unit test.
+    val showThumbnail = ProjectsView.showsThumbnail(
+        if (gallery) ProjectsLayout.GALLERY else ProjectsLayout.LIST,
+    )
 
     Column(
         Modifier
@@ -781,21 +835,39 @@ private fun ProjectCard(
             ),
     ) {
         // ROUND 5 (item 8): the preview IS the selection. A selected card gives
-        // its cloud two and a half times the height — enough to read the shape of
-        // a scan — instead of opening another screen to do it.
-        ProjectThumbnail(
-            project = project,
-            modifier = Modifier.fillMaxWidth().height(
-                when {
-                    selected -> if (gallery) 180.dp else 260.dp
-                    gallery -> 96.dp
-                    else -> 108.dp
-                },
-            ),
-        )
+        // its cloud twice the height — enough to read the shape of a scan —
+        // instead of opening another screen to do it.
+        //
+        // ROUND 25 item 114: **only in the gallery.** The list row draws no
+        // preview at all — see `ProjectsView.showsThumbnail`. The round-5
+        // selection-expands-the-preview behaviour therefore only exists where
+        // there is a preview to expand; in the list, selection is the 2 dp
+        // primary border and nothing else, which is all it has needed since
+        // round 22 made a tap open the viewer directly.
+        if (showThumbnail) {
+            ProjectThumbnail(
+                project = project,
+                // Tagged so item 114 is assertable on the emulator: the list
+                // must draw ZERO of these and the gallery at least one. An
+                // absence with no name is not something a test can check.
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(if (selected) 180.dp else 96.dp)
+                    .testTag("projectPreview"),
+            )
+        }
 
         Row(
-            Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 11.dp),
+            // With no preview above it the title row IS the top of the card, so
+            // its 11 dp gap from the thumbnail becomes 1 dp of breathing room
+            // from the card's own padding. This is the "tighter rows" half of
+            // item 114 — dropping the image and keeping the spacing it needed
+            // would leave a list of tall empty cards.
+            Modifier.fillMaxWidth().padding(
+                start = 4.dp,
+                end = 4.dp,
+                top = if (showThumbnail) 11.dp else 1.dp,
+            ),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (selecting) {
@@ -907,12 +979,18 @@ private fun ProjectCard(
         }
 
         Row(
-            Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 8.dp),
+            Modifier.fillMaxWidth().padding(
+                start = 4.dp,
+                end = 4.dp,
+                top = if (showThumbnail) 8.dp else 6.dp,
+            ),
             horizontalArrangement = Arrangement.spacedBy(5.dp),
         ) {
             ScanChip(
                 text = manifest.sensor.badgeLabel.uppercase(),
-                color = if (manifest.sensor == SensorType.MID360) PoseBlue else ScanTeal,
+                // ROUND 25 item 119: an exhaustive lookup, not an `else`.
+                // The `else` painted the new STL-27L in the D6's teal.
+                color = sensorBadgeColor(manifest.sensor),
                 showDot = true,
             )
             if (!gallery) {
@@ -941,7 +1019,12 @@ private fun ProjectCard(
             color = InkFaint,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(start = 4.dp, end = 4.dp, top = 9.dp, bottom = 3.dp),
+            modifier = Modifier.padding(
+                start = 4.dp,
+                end = 4.dp,
+                top = if (showThumbnail) 9.dp else 6.dp,
+                bottom = if (showThumbnail) 3.dp else 1.dp,
+            ),
         )
 
         // ROUND 22 item 96: the two quiet doors are gone. "Open in viewer" is

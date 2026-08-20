@@ -42,11 +42,13 @@
 #include <vector>
 
 #include "packet_builder.h"
+#include "stl27l_packet_builder.h"
 #include "scanengine/color/colorizer.h"
 #include "scanengine/color/frames_idx.h"
 #include "scanengine/core/engine.h"
 #include "scanengine/discovery/discovery.h"
 #include "scanengine/drivers/mid360/mid360_packets.h"
+#include "scanengine/drivers/stl27l/stl27l_parser.h"
 #include "scanengine/jobs/colorize_wiring.h"
 #include "scanengine/jobs/job_runner_adapter.h"
 #include "scanengine/poses/se3.h"
@@ -74,9 +76,9 @@ int usage() {
   std::printf(
       "engine_cli — LidarScan engine command line\n"
       "\n"
-      "  engine_cli --selftest [--quiet]\n"
-      "  engine_cli --synth <out.bin> [seconds] [--noise]\n"
-      "  engine_cli --replay <capture.bin> [--chunk N]\n"
+      "  engine_cli --selftest [--quiet] [--sensor d6|stl27l]\n"
+      "  engine_cli --synth <out.bin> [seconds] [--noise] [--sensor d6|stl27l]\n"
+      "  engine_cli --replay <capture.bin> [--chunk N] [--sensor d6|stl27l]\n"
       "  engine_cli --post <lscan-dir> [--out <dir>] [--no-loops] [--no-outlier]\n"
       "                                [--dedup <metres>] [--quiet]\n"
       "                                [--colorize --sync-quality good|gated|poor\n"
@@ -85,6 +87,14 @@ int usage() {
       "  engine_cli --post-selftest [--quiet]\n"
       "  engine_cli --discover [seconds] [--no-serial] [--no-lidar]\n"
       "  engine_cli --version\n"
+      "\n"
+      "--sensor selects which SERIAL lidar --selftest/--synth/--replay speak:\n"
+      "  d6      COIN-D6, 230400 8N1, AA-55 framing            (the default)\n"
+      "  stl27l  LDROBOT STL-27L, 921600 8N1, 0x54 0x2C framing (ITEM 119)\n"
+      "It is the CLI face of scan_device_config::kind — SCAN_DEVICE_D6 (1) and\n"
+      "SCAN_DEVICE_STL27L (4) — so a synthetic capture made with one is decoded by\n"
+      "the same driver the app would run. NO STL-27L HARDWARE HAS BEEN SEEN: the\n"
+      "stl27l bytes are protocol-derived fixtures, not a recording.\n"
       "\n"
       "--sync-quality is MANDATORY with --colorize and has no default: it is A4's\n"
       "verdict on the capture's camera/lidar time sync, only the capture side knows\n"
@@ -219,6 +229,72 @@ std::vector<std::uint8_t> synth_capture(double seconds, bool noise) {
   return out;
 }
 
+// --- ITEM 119: which serial lidar are we speaking? -------------------------
+//
+// The CLI face of scan_device_config::kind. Everything below that used to say
+// "D6" now takes one of these; `d6` is the default everywhere, so every
+// existing invocation (and every existing ctest entry) behaves exactly as it
+// did.
+enum class Sensor { kD6, kStl27l };
+
+bool parse_sensor(const char* s, Sensor* out) {
+  if (std::strcmp(s, "d6") == 0 || std::strcmp(s, "D6") == 0) { *out = Sensor::kD6; return true; }
+  if (std::strcmp(s, "stl27l") == 0 || std::strcmp(s, "STL27L") == 0 ||
+      std::strcmp(s, "stl-27l") == 0) {
+    *out = Sensor::kStl27l;
+    return true;
+  }
+  return false;
+}
+
+const char* sensor_name(Sensor s) { return s == Sensor::kD6 ? "COIN-D6" : "LDROBOT STL-27L"; }
+
+// The SAME synthetic room as synth_capture(), in LD-series frames: 4 x 3 m
+// with a reflective post, ray-cast at the STL-27L's own rate (2160 returns per
+// revolution in 180 packets of 12). PROTOCOL-DERIVED bytes — see
+// tests/stl27l_packet_builder.h; nothing here has been seen on a wire.
+std::vector<std::uint8_t> synth_capture_stl27l(double seconds, bool noise) {
+  const int revolutions = static_cast<int>(seconds * 10.0);
+  const int packets_per_rev = 180;
+  const int per_packet = 12;
+  const double step = 360.0 / (packets_per_rev * per_packet);
+  const double packet_ms = 1000.0 / (10.0 * packets_per_rev);
+  std::vector<std::uint8_t> out;
+  double t_ms = 0.0;
+  unsigned rng = 12345;
+  auto rand8 = [&]() {
+    rng = rng * 1103515245u + 12345u;
+    return static_cast<std::uint8_t>((rng >> 16) & 0xFF);
+  };
+
+  for (int r = 0; r < revolutions; ++r) {
+    if (noise && (r % 7) == 3) {
+      // The STL-27L has no speed-adjustment filler to imitate, so the noise
+      // arm is plain line garbage: what a bad cable or a wrong baud gives.
+      for (int i = 0; i < 9; ++i) out.push_back(rand8());
+    }
+    for (int k = 0; k < packets_per_rev; ++k) {
+      stl27ltest::PacketSpec s;
+      s.speed_dps = 3600;
+      const double a0 = step * (k * per_packet);
+      s.first_angle_deg = a0;
+      s.last_angle_deg = a0 + step * (per_packet - 1);
+      t_ms += packet_ms;
+      s.timestamp_ms = static_cast<std::uint16_t>(std::fmod(t_ms, 30000.0));
+      for (int i = 0; i < per_packet; ++i) {
+        const double a = a0 + step * i;
+        const std::uint16_t d = range_at(a);
+        const bool hi = (a > 100.0 && a < 104.0);
+        const std::uint8_t inten = static_cast<std::uint8_t>(
+            hi ? 255 : std::fmin(250.0, 40000.0 / static_cast<double>(d ? d : 1)));
+        s.samples.push_back(stl27ltest::Sample{d, inten});
+      }
+      stl27ltest::append(&out, stl27ltest::build(s));
+    }
+  }
+  return out;
+}
+
 struct RunResult {
   DeviceHealth health{};
   std::uint64_t points = 0;
@@ -232,7 +308,7 @@ struct RunResult {
 
 // Feed a byte stream through a real Engine exactly as an app would.
 bool run_capture(const std::vector<std::uint8_t>& bytes, std::size_t chunk, RunResult* out,
-                 bool quiet) {
+                 bool quiet, Sensor sensor = Sensor::kD6) {
   EngineConfig cfg;
   cfg.app_name = "engine_cli";
   cfg.log_level = quiet ? LogLevel::kWarn : LogLevel::kInfo;
@@ -246,8 +322,13 @@ bool run_capture(const std::vector<std::uint8_t>& bytes, std::size_t chunk, RunR
   Engine& e = *engine.value();
 
   DeviceConfig dc;
-  dc.kind = DeviceKind::kD6;
-  dc.d6.serial.port_name = "replay";
+  if (sensor == Sensor::kStl27l) {
+    dc.kind = DeviceKind::kStl27l;
+    dc.stl27l.serial.port_name = "replay";
+  } else {
+    dc.kind = DeviceKind::kD6;
+    dc.d6.serial.port_name = "replay";
+  }
   auto id = e.add_device(dc);
   if (!id.ok()) {
     std::fprintf(stderr, "add_device failed: %s\n", last_error_message());
@@ -313,13 +394,15 @@ void print_result(const RunResult& r, std::size_t bytes_in) {
               r.bounds_max[2]);
 }
 
-int cmd_selftest(bool quiet) {
+int cmd_selftest(bool quiet, Sensor sensor = Sensor::kD6) {
   std::printf("%s\n", engine_version_string());
-  std::printf("selftest: 2 s synthetic COIN-D6 capture through the full engine path\n");
+  std::printf("selftest: 2 s synthetic %s capture through the full engine path\n",
+              sensor_name(sensor));
 
-  const auto bytes = synth_capture(2.0, /*noise=*/true);
+  const auto bytes = sensor == Sensor::kStl27l ? synth_capture_stl27l(2.0, /*noise=*/true)
+                                               : synth_capture(2.0, /*noise=*/true);
   RunResult r;
-  if (!run_capture(bytes, 512, &r, quiet)) return 1;
+  if (!run_capture(bytes, 512, &r, quiet, sensor)) return 1;
   print_result(r, bytes.size());
 
   // 2 s at 10 Hz x 401 points = 8020 points; the noise injection costs none
@@ -331,6 +414,18 @@ int cmd_selftest(bool quiet) {
       ++failures;
     }
   };
+  if (sensor == Sensor::kStl27l) {
+    // 20 revolutions x 180 packets x 12 returns. The room ray-cast never
+    // returns 0 mm, so nothing is dropped as a no-return, and the injected
+    // line garbage costs no packets (it is discarded during the header hunt).
+    expect(r.points == 43200, "point count == 43200");
+    expect(r.health.checksum_pass_rate >= 0.995, "CRC pass rate >= 0.995");
+    expect(r.health.state == DeviceState::kStreaming, "device reached kStreaming");
+    expect(r.health.drops == 0, "no dropped points");
+    expect(r.bounds_max[0] > 0.5f && r.bounds_min[0] < -0.5f, "room bounds look like a room");
+    std::printf("selftest: %s\n", failures == 0 ? "PASS" : "FAIL");
+    return failures == 0 ? 0 : 1;
+  }
   expect(r.points == 8020, "point count == 8020");
   expect(r.health.checksum_pass_rate >= 0.995, "checksum pass rate >= 0.995 (S1 exit criterion)");
   expect(r.health.state == DeviceState::kStreaming, "device reached kStreaming");
@@ -342,8 +437,9 @@ int cmd_selftest(bool quiet) {
   return failures == 0 ? 0 : 1;
 }
 
-int cmd_synth(const char* path, double seconds, bool noise) {
-  const auto bytes = synth_capture(seconds, noise);
+int cmd_synth(const char* path, double seconds, bool noise, Sensor sensor = Sensor::kD6) {
+  const auto bytes =
+      sensor == Sensor::kStl27l ? synth_capture_stl27l(seconds, noise) : synth_capture(seconds, noise);
   FILE* f = std::fopen(path, "wb");
   if (f == nullptr) {
     std::perror("fopen");
@@ -351,12 +447,12 @@ int cmd_synth(const char* path, double seconds, bool noise) {
   }
   std::fwrite(bytes.data(), 1, bytes.size(), f);
   std::fclose(f);
-  std::printf("wrote %zu bytes (%.1f s%s) to %s\n", bytes.size(), seconds,
-              noise ? ", with noise" : "", path);
+  std::printf("wrote %zu bytes (%.1f s of %s%s) to %s\n", bytes.size(), seconds,
+              sensor_name(sensor), noise ? ", with noise" : "", path);
   return 0;
 }
 
-int cmd_replay(const char* path, std::size_t chunk) {
+int cmd_replay(const char* path, std::size_t chunk, Sensor sensor = Sensor::kD6) {
   FILE* f = std::fopen(path, "rb");
   if (f == nullptr) {
     std::perror("fopen");
@@ -368,9 +464,10 @@ int cmd_replay(const char* path, std::size_t chunk) {
   while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) bytes.insert(bytes.end(), buf, buf + n);
   std::fclose(f);
 
-  std::printf("replay: %s (%zu bytes, %zu-byte chunks)\n", path, bytes.size(), chunk);
+  std::printf("replay: %s (%zu bytes, %zu-byte chunks, %s)\n", path, bytes.size(), chunk,
+              sensor_name(sensor));
   RunResult r;
-  if (!run_capture(bytes, chunk, &r, /*quiet=*/true)) return 1;
+  if (!run_capture(bytes, chunk, &r, /*quiet=*/true, sensor)) return 1;
   print_result(r, bytes.size());
   return r.health.packets_ok > 0 ? 0 : 1;
 }
@@ -2295,6 +2392,25 @@ int cmd_discover(double seconds, bool do_lidar, bool do_serial) {
       for (const std::string& p : ports) {
         if (!d6.has_value() || p != d6->port) rest.push_back(p);
       }
+      // ITEM 119. The STL-27L probe runs SECOND and only on what the D6 left,
+      // which is the ordering contract in discovery.h: a D6 identified
+      // passively never reaches it, so the two can never fight over a port.
+      // It is also passive — the LD-series has no command channel, so unlike
+      // the D6 probe there is no stage 2 and nothing is ever written.
+      std::optional<discovery::Stl27lProbe> stl = discovery::ProbeSerialStl27l(rest, 1200);
+      if (stl.has_value()) {
+        ++found;
+        std::printf("  STL-27L on %s @ %u (%u packets, %u bad CRC, %u deg/s)\n",
+                    stl->port.c_str(), stl->baud, stl->packets_ok, stl->packets_bad_crc,
+                    static_cast<unsigned>(stl->speed_dps));
+      } else {
+        std::printf("  no STL-27L found\n");
+      }
+      std::vector<std::string> rest2;
+      for (const std::string& p : rest) {
+        if (!stl.has_value() || p != stl->port) rest2.push_back(p);
+      }
+      rest = rest2;
       std::optional<discovery::Um982Probe> um = discovery::ProbeSerialUm982(rest, 1500);
       if (um.has_value()) {
         ++found;
@@ -2317,20 +2433,27 @@ int main(int argc, char** argv) {
   const std::string cmd = argv[1];
 
   bool quiet = false, noise = false;
+  Sensor sensor = Sensor::kD6;  // ITEM 119: --sensor stl27l picks the other one
   for (int i = 2; i < argc; ++i) {
     if (std::strcmp(argv[i], "--quiet") == 0) quiet = true;
     if (std::strcmp(argv[i], "--noise") == 0) noise = true;
+    if (std::strcmp(argv[i], "--sensor") == 0 && i + 1 < argc) {
+      if (!parse_sensor(argv[i + 1], &sensor)) {
+        std::fprintf(stderr, "--sensor '%s' is not d6|stl27l\n", argv[i + 1]);
+        return kExitUsage;
+      }
+    }
   }
 
   if (cmd == "--version" || cmd == "-v") {
     std::printf("%s (ABI %u)\n", engine_version_string(), kEngineAbiVersion);
     return 0;
   }
-  if (cmd == "--selftest") return cmd_selftest(quiet);
+  if (cmd == "--selftest") return cmd_selftest(quiet, sensor);
   if (cmd == "--synth") {
     if (argc < 3) return usage();
     const double seconds = (argc > 3 && argv[3][0] != '-') ? std::atof(argv[3]) : 2.0;
-    return cmd_synth(argv[2], seconds, noise);
+    return cmd_synth(argv[2], seconds, noise, sensor);
   }
   if (cmd == "--replay") {
     if (argc < 3) return usage();
@@ -2339,7 +2462,7 @@ int main(int argc, char** argv) {
       if (std::strcmp(argv[i], "--chunk") == 0) chunk = static_cast<std::size_t>(std::atoi(argv[i + 1]));
     }
     if (chunk == 0) chunk = 512;
-    return cmd_replay(argv[2], chunk);
+    return cmd_replay(argv[2], chunk, sensor);
   }
   if (cmd == "--post") {
     if (argc < 3 || argv[2][0] == '-') return usage();

@@ -158,6 +158,38 @@ class CaptureViewModel(
      */
     private val startPoseSource: com.lidarscan.app.ar.StartPoseSource? = arController,
     /**
+     * ROUND 25 item 115 — **shut the tracking camera down when the operator
+     * leaves the Scan tab.**
+     *
+     * Owner, verbatim: *"when the user click to other tab just stop and exit
+     * the scan and tracking."* Pausing is what the screen's own
+     * `DisposableEffect` already did; item 115 asks for the stronger thing, and
+     * the reason is battery: a paused ARCore session still holds the camera
+     * open. [com.lidarscan.app.ar.CaptureArController.close] releases it AND
+     * shuts the gate (`onSessionClosed`), so a pose pump that somehow outlives
+     * its view cannot drive a frame afterwards — which is the property item 115
+     * actually wants and the one a test can assert.
+     *
+     * Defaulted to the controller this ViewModel already holds, so production
+     * gets the real behaviour with no wiring; a JVM test injects a counter and
+     * can then prove the shutdown happened exactly once on a tab switch and
+     * never on a rotation. Every other Android capability in this class arrives
+     * the same way, for the same reason.
+     */
+    private val shutDownTracking: () -> Unit = { arController?.close() },
+    /**
+     * ROUND 25 item 115 — the seal that happened because the operator walked
+     * away, reported where the operator went.
+     *
+     * A scan sealed by leaving the tab must NOT drag the app back to Projects
+     * (that is round 23's item 101 defect wearing a new hat: the operator asked
+     * for Settings and would get Projects), so the usual `sealedProjectId`
+     * navigation is suppressed for it. The scan still saved, and saying nothing
+     * about it would be the app quietly discarding a walk. So the Projects tab
+     * carries a short notice instead — see `AppContainer.scanSavedNotice`.
+     */
+    private val onScanSavedInBackground: (String) -> Unit = {},
+    /**
      * ROUND 9 (owner item 35): the phone's own gyro + accelerometer, pushed into
      * the engine's IMU-densified pose interpolator for the whole of a capture.
      *
@@ -199,12 +231,19 @@ class CaptureViewModel(
      */
     private val attachedSerialDevices: () -> List<ManualSerialDevice> = { emptyList() },
     /**
-     * Opens (and permissions) a serial port so the engine can be pointed at it —
-     * `RealEngineBridge.connect` refuses a path the registry has no open
-     * connection for, which is why the manual D6 path needs this step and the
-     * auto-detect path does not (its probe already left the port open).
+     * Opens (and permissions) a serial port **at the given baud** so the engine
+     * can be pointed at it — `RealEngineBridge.connect` refuses a path the
+     * registry has no open connection for, which is why the manual serial path
+     * needs this step and the auto-detect path does not (its probe already left
+     * the port open, at the baud that identified the device).
+     *
+     * ROUND 25 item 119 added the second parameter. It is not optional here on
+     * purpose: this lambda is the only place the manual path sets the CH340's
+     * divisor, and a default would let a future caller open an STL-27L at the
+     * D6's rate and get a silent stream of framing garbage instead of an error.
      */
-    private val openSerialPort: suspend (String) -> Result<Unit> = { Result.failure(IllegalStateException("no USB")) },
+    private val openSerialPort: suspend (String, Int) -> Result<Unit> =
+        { _, _ -> Result.failure(IllegalStateException("no USB")) },
     /**
      * Addresses the manual Mid-360 fields open with — the last auto-detected pair
      * (AUTO-DETECT §3's DataStore keys), else the factory defaults. Suspend and
@@ -869,17 +908,22 @@ class CaptureViewModel(
      *
      * True for a D6 session, because the D6 has no IMU: the phone's ARCore VIO
      * *is* the trajectory and A8's pushbroom is what turns the vertical fan into
-     * a cloud. A Mid-360 carries its own IMU and runs A6 LIO, so poses are
-     * optional there (they still help colorization, which is why keyframes stay
-     * available). False for a replay session, which has neither camera nor live
-     * engine.
+     * a cloud. ROUND 25 item 119: true for an STL-27L session for exactly the
+     * same reason — it is the second 2-D lidar with no IMU of its own. A
+     * Mid-360 carries its own IMU and runs A6 LIO, so poses are optional there
+     * (they still help colorization, which is why keyframes stay available).
+     * False for a replay session, which has neither camera nor live engine.
      *
      * The Capture screen uses this to decide two things: whether to run the
      * headless pose pump ([com.lidarscan.app.ar.ArPosePumpView]) alongside the
      * 3D-orbit view, and whether to surface tracking quality inline.
      */
+    // ROUND 25 item 119: asked by NAME rather than by product. The STL-27L is
+    // the second 2-D lidar with no IMU of its own, and this flag is what mounts
+    // the pose pump — an STL-27L session that answered `false` here would
+    // record a fan of points with no trajectory under it and look fine doing it.
     val poseTrackingRequired: Boolean
-        get() = !isReplay && _sensor.value == com.lidarscan.core.model.SensorType.COIN_D6
+        get() = !isReplay && _sensor.value.isPhoneTrackedPushbroom
 
     /**
      * ROUND 5: the auto-detect → connect → live-preview state machine (item 7).
@@ -944,34 +988,62 @@ class CaptureViewModel(
     }
 
     /**
-     * Manual D6: open the port the operator picked, then hand it to the engine.
-     * A refused permission or a port that will not open surfaces in the same
-     * status line an auto-detect failure does, rather than in a dialog.
+     * Manual serial lidar: open the port the operator picked **at that
+     * sensor's baud**, then hand it to the engine. A refused permission or a
+     * port that will not open surfaces in the same status line an auto-detect
+     * failure does, rather than in a dialog.
+     *
+     * ROUND 25 item 119 — was `connectManualD6(device)`, which could only ever
+     * mean a COIN-D6. Two lidars now share the connector, the driver class and
+     * the cable, so the port cannot say which is attached and the operator
+     * must: [sensor] is the Advanced sheet's sensor-row choice, carried
+     * straight through. It is also the deliberate override for an auto-detect
+     * that guessed wrong — see `SerialLidarAutoDetector`'s doc.
+     *
+     * The baud matters twice and is read from one place both times: it decides
+     * the divisor [openSerialPort] sets on the CH340 here, and the
+     * `serial_baud` `RealEngineBridge` hands the engine on the far side of the
+     * connect. A mismatch does not fail — it streams framing garbage — which is
+     * exactly why neither number is typed at a call site.
      */
-    fun connectManualD6(device: ManualSerialDevice) {
+    fun connectManualSerialLidar(
+        device: ManualSerialDevice,
+        sensor: com.lidarscan.core.model.SensorType = com.lidarscan.core.model.SensorType.COIN_D6,
+    ) {
         val controller = autoConnect ?: return
+        val baud = com.lidarscan.core.engine.SerialLidarBaud.forSensorOrNull(sensor) ?: return
+        val label = "${sensor.displayName} · ${device.label}"
         viewModelScope.launch {
-            val opened = runCatching { openSerialPort(device.path) }.getOrElse { Result.failure(it) }
+            val opened = runCatching { openSerialPort(device.path, baud) }.getOrElse { Result.failure(it) }
             if (opened.isFailure) {
                 controller.connectManually(
                     com.lidarscan.core.capture.AutoDetection(
-                        sensor = com.lidarscan.core.model.SensorType.COIN_D6,
+                        sensor = sensor,
                         transportHint = null, // makes the engine refuse, carrying the reason to the UI
-                        label = "COIN-D6 · ${device.label}",
+                        label = label,
                     ),
                 )
                 return@launch
             }
             controller.connectManually(
                 com.lidarscan.core.capture.AutoDetection(
-                    sensor = com.lidarscan.core.model.SensorType.COIN_D6,
+                    sensor = sensor,
                     transportHint = device.path,
-                    label = "COIN-D6 · ${device.label}",
+                    label = label,
+                    // Neither serial lidar has an IMU: the phone IS the trajectory.
                     detail = "3D scan · phone-tracked (ARCore VIO supplies the pose)",
                 ),
             )
         }
     }
+
+    /**
+     * The pre-item-119 spelling, kept because it is the one every existing
+     * caller and test knows and because "connect the D6 on this port" is still
+     * a sentence this app means. It is a thin alias, not a second code path.
+     */
+    fun connectManualD6(device: ManualSerialDevice) =
+        connectManualSerialLidar(device, com.lidarscan.core.model.SensorType.COIN_D6)
 
     /** Manual Mid-360: the two addresses, straight to the engine — no self-test gate (round 5 item 7). */
     fun connectManualMid360() {
@@ -2057,12 +2129,109 @@ class CaptureViewModel(
     private var pendingConfigurationChange = false
 
     /**
-     * ROUND 24 item 111 — called from the screen's teardown.
+     * ROUND 25 item 115 — set while a seal is running BECAUSE the operator
+     * left the tab, so the seal knows not to navigate. Cleared by the seal that
+     * reads it.
+     */
+    private var sealTriggeredByLeaving = false
+
+    /**
+     * ROUND 24 item 111 / ROUND 25 item 115 — called from the screen's teardown.
      *
      * @param configurationChange the Activity's own `isChangingConfigurations`.
      */
     fun onScanScreenLeaving(configurationChange: Boolean) {
         pendingConfigurationChange = configurationChange
+        // ROUND 24 item 111's discriminator, doing the second job it was built
+        // for. A rotation is not leaving: the operator has not gone anywhere,
+        // the screen is being rebuilt around them, and stopping their scan
+        // because they turned the phone sideways would be the worst bug in the
+        // app. Everything below happens on a REAL exit only.
+        if (configurationChange) return
+        leaveScanTab()
+    }
+
+    /**
+     * ROUND 25 item 115 — **leaving the Scan tab stops everything.**
+     *
+     * Owner, verbatim: *"when the user click to other tab just stop and exit
+     * the scan and tracking."* This deliberately overturns half of round 24's
+     * item 111, which left a live capture strictly alone on the reasoning that
+     * "the operator checking Projects mid-walk is a normal thing to do". The
+     * owner's instruction says it is not — and it is the better rule, because
+     * the alternative is a recording that continues with the camera on and the
+     * screen showing something else, which is exactly how a scan gets walked
+     * through a tracking loss nobody is watching.
+     *
+     * Three things, in this order, and the order is the design:
+     *
+     *  1. **A start sequence in flight is cancelled and its latch released.**
+     *     Before the seal, because a half-built start has a project on disk and
+     *     no recording behind it; letting it race the shutdown is how round 21's
+     *     "Start is dead until the app is killed" happened. The cancellation is
+     *     the watchdog's, verbatim — same jobs, same [releaseStart] — because
+     *     there is exactly one correct way to unwind this sequence and a second
+     *     one would drift from it.
+     *  2. **A RECORDING/PAUSED capture is sealed by the NORMAL path.** Not a
+     *     special quick-stop: [stopCapture] is the seal that prunes an empty
+     *     scan, writes the manifest, closes the debug log and hands the
+     *     container to auto-process on `containerScope` — all of which must
+     *     still happen, and none of which is this method's business to
+     *     reimplement. It runs inside `NonCancellable` on `viewModelScope`,
+     *     which item 88 keeps alive across the tab switch, so the seal finishes
+     *     after the screen is gone. What IS different is the ending: see
+     *     [sealTriggeredByLeaving].
+     *  3. **Tracking is shut down.** [shutDownTracking] closes the ARCore
+     *     session rather than pausing it, so the camera is released and the
+     *     gate is shut. Called unconditionally — an idle Scan tab that was
+     *     merely previewing a connected D6 also had a session open, and item
+     *     115's "no background camera/battery use" is about that case just as
+     *     much as about a recording.
+     */
+    private fun leaveScanTab() {
+        val state = captureState.value
+        val recording = state == com.lidarscan.core.engine.CaptureState.RECORDING ||
+            state == com.lidarscan.core.engine.CaptureState.PAUSED
+
+        if (startInFlight.get() || _starting.value) {
+            logEvent(
+                LOG_TAG_SESSION,
+                "scan tab left mid-start: cancelling the start sequence and releasing the latch " +
+                    "(gateActive=${startGateJob?.isActive == true} " +
+                    "holdActive=${startHoldJob?.isActive == true} " +
+                    "recordActive=${startRecordJob?.isActive == true})",
+            )
+            startGateJob?.cancel()
+            startGateJob = null
+            startHoldJob?.cancel()
+            startHoldJob = null
+            startRecordJob?.cancel()
+            startRecordJob = null
+            releaseStart()
+        }
+
+        if (recording) {
+            logEvent(
+                LOG_TAG_SESSION,
+                "scan tab left while $state: stopping and sealing the scan (owner item 115) — " +
+                    "auto-process continues on the container scope",
+            )
+            sealTriggeredByLeaving = true
+            stopCapture()
+        }
+
+        // Unconditional: see the KDoc's point 3. `close()` is safe on a
+        // controller with no session — it is the same call every Start already
+        // makes through `resetWorldFrame`.
+        runCatching { shutDownTracking() }
+            .onFailure {
+                logEvent(
+                    LOG_TAG_AR,
+                    "tracking shutdown on tab exit threw ${it.javaClass.simpleName}: ${it.message} — " +
+                        "the tab still left; the session is treated as closed",
+                )
+            }
+        logEvent(LOG_TAG_AR, "scan tab left: tracking session closed and the pose pump released")
     }
 
     fun onScanScreenEntered() {
@@ -3384,9 +3553,9 @@ class CaptureViewModel(
         // gate's: no outcome may end the job without resuming the sequence.
         if (resume != StartResume.AFTER_HOLD) {
             val controller = startPoseSource
-            if (controller != null && !isReplay &&
-                _sensor.value == com.lidarscan.core.model.SensorType.COIN_D6
-            ) {
+            // ROUND 25 item 119: the hold-still stage is for any lidar whose
+            // pose comes from ARCore, which is both serial sensors.
+            if (controller != null && !isReplay && _sensor.value.isPhoneTrackedPushbroom) {
                 holdPending = true
                 setStartStage(StartStage.HOLD)
                 startHoldJob?.cancel()
@@ -4193,7 +4362,10 @@ class CaptureViewModel(
         val leverArm = _mountLeverArm.value
         val nominalMatrix = com.lidarscan.core.calib.BracketNominals.cadNominal(sensor)
             .let { base ->
-                if (sensor == com.lidarscan.core.model.SensorType.COIN_D6) {
+                // ROUND 25 item 119: both serial lidars sit in the same
+                // bracket seat (see BracketNominals.cadNominal), so both take
+                // the operator's measured lever arm over the CAD placeholder.
+                if (sensor.isPhoneTrackedPushbroom) {
                     leverArm.appliedTo(base)
                 } else {
                     base
@@ -4864,14 +5036,40 @@ class CaptureViewModel(
                 startAutoProcess(activeId, verified.directory, 1)
                 _autoProcess.value = _autoProcess.value.copy(skipped = true)
             }
-            _sealedProjectId.tryEmit(activeId)
-            // ROUND 10 (owner item 38): the navigation intent is LOGGED, so the
-            // next field log answers "did the app try to navigate and the shell
-            // ignore it, or did it never try?" without anyone guessing. The
-            // absence of this line beside a `sealed OK` line is now itself the
-            // diagnosis.
-            logEvent(LOG_TAG_SEAL, "navigate -> Projects id=$activeId")
+            // ── ROUND 25 item 115: a seal the operator did not press Stop for ──
+            //
+            // The scan was sealed because the Scan tab was left. Navigating to
+            // Projects now would be round 23's item 101 defect arriving by a
+            // new road: the operator asked for Settings (or Jobs) and the app
+            // would drag them somewhere else — and worse, `replay = 1` means
+            // the id would still be buffered when the Scan tab is next entered,
+            // which is the exact bounce that cost three rounds. So the event is
+            // never emitted at all, and the scan announces itself where the
+            // operator can see it instead.
+            if (sealTriggeredByLeaving) {
+                sealTriggeredByLeaving = false
+                runCatching { onScanSavedInBackground(activeId) }
+                logEvent(
+                    LOG_TAG_SEAL,
+                    "sealed after leaving the Scan tab id=$activeId — NOT navigating " +
+                        "(item 115); Projects carries the notice",
+                )
+            } else {
+                _sealedProjectId.tryEmit(activeId)
+                // ROUND 10 (owner item 38): the navigation intent is LOGGED, so
+                // the next field log answers "did the app try to navigate and
+                // the shell ignore it, or did it never try?" without anyone
+                // guessing. The absence of this line beside a `sealed OK` line
+                // is now itself the diagnosis.
+                logEvent(LOG_TAG_SEAL, "navigate -> Projects id=$activeId")
+            }
         } else {
+            // ROUND 25 item 115: spend the flag on EVERY exit from the seal, not
+            // only the navigating one. A pruned empty scan that left it set
+            // would suppress the navigation of the NEXT ordinary Stop — a bug
+            // that needs two captures to reproduce and would look like item 101
+            // coming back.
+            sealTriggeredByLeaving = false
             logEvent(
                 LOG_TAG_SEAL,
                 "staying on Capture (no navigation): verified=${verified != null} " +

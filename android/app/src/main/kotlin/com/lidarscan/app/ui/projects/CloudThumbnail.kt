@@ -25,6 +25,7 @@ import com.lidarscan.app.render.PointCloudSource
 import com.lidarscan.app.render.samplePoints
 import com.lidarscan.app.render.streamsPresent
 import com.lidarscan.core.render.PreviewSanity
+import com.lidarscan.app.ui.theme.sensorBadgeColor
 import com.lidarscan.app.ui.theme.Ember
 import com.lidarscan.app.ui.theme.PoseBlue
 import com.lidarscan.app.ui.theme.ScanSand
@@ -271,7 +272,8 @@ fun ProjectThumbnail(
 
     val seed = remember(project.id) { project.id.hashCode().toLong() }
     val placeholder = remember(seed) { seededScatter(seed) }
-    val sensorTint = if (project.manifest.sensor == com.lidarscan.core.model.SensorType.MID360) PoseBlue else ScanTeal
+    // ROUND 25 item 119: exhaustive, see `sensorBadgeColor`.
+    val sensorTint = sensorBadgeColor(project.manifest.sensor)
 
     Canvas(
         modifier = modifier

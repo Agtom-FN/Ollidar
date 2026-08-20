@@ -27,6 +27,10 @@ enum class DeviceKind : std::uint8_t {
   kD6 = 1,       // COIN-D6 2D lidar over UART (drivers/d6)   — A2
   kMid360 = 2,   // Livox Mid-360 over UDP     (drivers/mid360) — A3
   kRtkRover = 3, // NMEA/RTCM3 GNSS rover      (gnss/)          — A10
+  // ITEM 119 (additive): LDROBOT STL-27L 2D lidar over UART (drivers/stl27l).
+  // A second serial pushbroom sensor alongside the D6, not a replacement — the
+  // two are selected independently and may coexist on one rig.
+  kStl27l = 4,
 };
 
 const char* to_string(DeviceKind k) noexcept;
@@ -51,6 +55,12 @@ enum class StreamId : std::uint8_t {
   // misroute the offline pipeline. Same argument record/lscan.h makes for
   // kSlamMap. Stamps are CLOCK_BOOTTIME, i.e. already engine time.
   kImuPhone = 10,
+  // ITEM 119 (additive): raw STL-27L UART bytes. Deliberately NOT kLidarD6:
+  // the two protocols share nothing on the wire, and slam/post/d6_resolve.cpp
+  // reads a non-empty kLidarD6 summary as "this container is a COIN-D6
+  // project" and would hand the D6 parser 47-byte LD frames. Same argument
+  // that put kImuPhone beside kImu rather than inside it.
+  kLidarStl27l = 11,
 };
 
 const char* to_string(StreamId s) noexcept;

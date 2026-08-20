@@ -120,6 +120,41 @@ val CoverageAmber = Color(0xFFFFB030)
 /** Single / fault / failed. */
 val SemBad = Color(0xFFE05252)
 
+// ── semantic CONTAINERS (ROUND 25 item 116) ────────────────────────────────
+//
+// Owner, on the round-24 tracking-lost popup: *"revise the warning align the
+// style."* The popup was an amber-bordered `surfaceContainer` card with amber
+// text — legible, and in its own dialect: nowhere else in the app does a card
+// state its severity with a 3 dp ring. Material's own answer to "a surface
+// that carries a meaning" is a **container** pair (a tinted ground plus the
+// on-colour that is legible against it), and the app had semantic FOREGROUNDS
+// only, which is exactly why the popup had to invent something.
+//
+// These are **derived**, not new hex. Each container is its own semantic
+// colour at low alpha composited over the dark ground, so a token change to
+// `SemWarn` moves its container with it and the two can never drift apart —
+// the same single-token discipline round 22 applied to the Agtom orange. The
+// `on` colours stay the pure semantic hue, which is what keeps the contrast:
+// against a 14 %-amber ground, full-strength amber reads far better than the
+// near-black `onSurface` a Material container would pair.
+private fun Color.over(ground: Color, alpha: Float): Color = Color(
+    red = red * alpha + ground.red * (1f - alpha),
+    green = green * alpha + ground.green * (1f - alpha),
+    blue = blue * alpha + ground.blue * (1f - alpha),
+)
+
+/** Warning ground: amber at 14 % over the panel. Pairs with [OnSemWarnContainer]. */
+val SemWarnContainer = SemWarn.over(Panel, 0.14f)
+
+/** The legible foreground on [SemWarnContainer]. */
+val OnSemWarnContainer = SemWarn
+
+/** Success ground: green at 14 % over the panel. Pairs with [OnSemGoodContainer]. */
+val SemGoodContainer = SemGood.over(Panel, 0.14f)
+
+/** The legible foreground on [SemGoodContainer]. */
+val OnSemGoodContainer = SemGood
+
 /**
  * Sensor badge colours. Fixed regardless of theme so the D6-vs-Mid-360 badge
  * stays recognisable at a glance across projects — the same reasoning this
@@ -128,6 +163,40 @@ val SemBad = Color(0xFFE05252)
  */
 val SensorD6Badge = ScanTeal
 val SensorMid360Badge = PoseBlue
+
+/**
+ * ROUND 25 item 119 — the STL-27L's badge.
+ *
+ * A THIRD colour rather than a reuse of [SensorD6Badge], even though the
+ * STL-27L behaves like the D6 nearly everywhere else in this app. The badge's
+ * entire job is telling an operator scrolling the Projects list which box was
+ * on the bracket for a given scan; two 2-D serial lidars sharing one teal pill
+ * would make the badge stop answering the only question it is asked. Sand is
+ * the ramp's remaining unclaimed colour and is distinguishable from both teal
+ * and blue for the common colour-vision deficiencies, where a second green or
+ * a second blue would not be.
+ */
+val SensorStl27lBadge = ScanSand
+
+/**
+ * ROUND 25 item 119 — **the one place a `SensorType` becomes a badge colour.**
+ *
+ * Four draw sites (the Projects card, the card thumbnail, the picker, the
+ * detail screen) each spelled this as `if (sensor == MID360) PoseBlue else
+ * ScanTeal`. That `else` is what painted a brand new STL-27L in the COIN-D6's
+ * teal the moment the enum grew — the label said "STL-27L" and the colour said
+ * D6, and on a card read at arm's length the colour is what is read first.
+ *
+ * The exhaustive decision lives in `:core` (`SensorType.badgeTint`), so a
+ * fourth sensor breaks the build there; this is only the palette lookup, which
+ * is the half that genuinely belongs to the theme.
+ */
+fun sensorBadgeColor(sensor: com.lidarscan.core.model.SensorType): Color =
+    when (sensor.badgeTint) {
+        com.lidarscan.core.model.SensorType.BadgeTint.D6 -> SensorD6Badge
+        com.lidarscan.core.model.SensorType.BadgeTint.MID360 -> SensorMid360Badge
+        com.lidarscan.core.model.SensorType.BadgeTint.STL27L -> SensorStl27lBadge
+    }
 
 // ── light-theme companions ──────────────────────────────────────────────────
 //

@@ -238,6 +238,18 @@ struct D6Probe {
   bool used_start_command = false;  // stage 2 was needed (see below)
 };
 
+// The STL-27L's wire signature (ITEM 119): 921600 8N1, 0x54 0x2C framing, a
+// valid CRC8 and a plausible header. Nothing is ever written to the port — the
+// LD-series free-runs from power-on, so there is no command to send and no
+// reason to risk speaking into somebody else's device.
+struct Stl27lProbe {
+  std::string port;
+  std::uint32_t baud = 921600;
+  std::uint32_t packets_ok = 0;
+  std::uint32_t packets_bad_crc = 0;
+  std::uint16_t speed_dps = 0;  // the last packet's reported spin rate
+};
+
 // Unicore UM982: NMEA 0183 at an unknown baud — 230400 on the real unit, NOT
 // the documented 115200 — plus Unicore's own "#UNI..." lines. `has_heading`
 // means a dual-antenna heading sentence (GPTHS/xxHDT/#UNIHEADING) was seen,
@@ -276,6 +288,17 @@ inline constexpr std::size_t kUm982BaudSweepCount =
 //   * ProbeSerialUm982 NEVER writes. A UM982 talks unprompted at 1 Hz.
 std::optional<D6Probe> ProbeSerialD6(const std::vector<std::string>& port_paths,
                                      int per_port_ms);
+// ITEM 119. PASSIVE ONLY — there is no stage 2 and no write, ever.
+//
+// ORDERING CONTRACT. Run this AFTER ProbeSerialD6 and on the ports it did not
+// claim, which is what discovery's own caller (engine_cli --discover) does.
+// The two probes open at different rates (230400 vs 921600) so neither can
+// read the other's device as anything but noise, but the ordering is what
+// makes that a guarantee rather than a probability: a D6 identified passively
+// in stage 1 never reaches this function at all. Stl27lSniffer::LooksLikeD6()
+// closes the remaining direction — see below.
+std::optional<Stl27lProbe> ProbeSerialStl27l(const std::vector<std::string>& port_paths,
+                                             int per_port_ms);
 std::optional<Um982Probe> ProbeSerialUm982(const std::vector<std::string>& port_paths,
                                            int per_port_ms);
 
@@ -307,6 +330,49 @@ class D6Sniffer {
   // "These bytes are somebody's text protocol." Latches on the first
   // credible ASCII line and gates stage 2 forever after.
   bool LooksLikeText() const;
+
+  void Reset();
+
+ private:
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
+};
+
+class Stl27lSniffer {
+ public:
+  Stl27lSniffer();
+  ~Stl27lSniffer();
+  Stl27lSniffer(const Stl27lSniffer&) = delete;
+  Stl27lSniffer& operator=(const Stl27lSniffer&) = delete;
+
+  void Feed(const std::uint8_t* data, std::size_t n);
+
+  // FOUR good packets, not the D6 probe's two. The LD frame's sync is only two
+  // bytes wide and its CRC is only eight bits, so a single accepted packet is
+  // a 1-in-16-million coincidence per byte offset rather than the D6's
+  // 1-in-4-billion — over a second of a 921600 link that is not negligible.
+  // Four, each also passing the header sanity band (see LooksSane below),
+  // is.
+  static constexpr std::uint32_t kPacketsToIdentify = 4;
+  bool Identified() const;
+
+  std::uint32_t packets_ok() const;
+  std::uint32_t packets_bad_crc() const;
+  // The last accepted packet's `speed` field, degrees/second.
+  std::uint16_t speed_dps() const;
+
+  // "These bytes are somebody's text protocol" — same latch and the same
+  // purpose as D6Sniffer::LooksLikeText(): a GNSS receiver or a console must
+  // never be mistaken for a lidar.
+  bool LooksLikeText() const;
+
+  // "These bytes are a COIN-D6." Latches when two checksum-valid AA-55
+  // packets go past. This is the half of the mutual-exclusion guarantee that
+  // can be tested off-hardware: feed a D6 revolution in and Identified()
+  // stays false FOR A REASON, not by luck. It also covers the one case the
+  // baud difference does not — a caller that opened the port at 230400 and
+  // pointed this sniffer at it anyway.
+  bool LooksLikeD6() const;
 
   void Reset();
 

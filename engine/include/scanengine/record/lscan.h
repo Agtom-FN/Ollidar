@@ -98,6 +98,10 @@ enum class ChunkType : std::uint16_t {
   kSessionNote = 10,     // free text (mode changes, warnings)
   kPointsXyzRgba = 11,   // engine-frame PointVertex array (processed output)
   kPhoneImu = 12,        // one decoded PHONE gyro+accel sample (ROUND 9)
+  kStl27lRaw = 13,       // raw LDROBOT STL-27L UART bytes (ITEM 119), exactly
+                         // as received — the kD6Raw contract for a second
+                         // serial lidar, on its own type so an offline reader
+                         // never hands 47-byte LD frames to the D6 parser.
 };
 
 // Chunk flags.

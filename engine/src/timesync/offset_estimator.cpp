@@ -77,6 +77,11 @@ bool TimeSync::stream_has_device_clock(StreamId stream) noexcept {
     case StreamId::kImu:          // same clock as the Mid-360 points
     case StreamId::kGnss:         // NMEA UTC time, arrival-correlated (§3.2)
       return true;
+    // ITEM 119: the STL-27L DOES carry a device clock (a 16-bit millisecond
+    // counter that wraps every 30 s), but it is free-running, unsynchronised
+    // and unrelatable to the host — nothing anchors it, so it is a drift
+    // diagnostic and never a time base. Arrival stamps, same as the D6.
+    case StreamId::kLidarStl27l:
     case StreamId::kLidarD6:      // no device clock at all — arrival stamps
     case StreamId::kPoseAr:       // ARCore is already CLOCK_BOOTTIME
     case StreamId::kCameraFrames: // ARCore frame timestamps, same domain

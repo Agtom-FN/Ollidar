@@ -74,9 +74,33 @@ object ScanEngineNative {
     external fun nativeSetPoseTimeOffsetNs(handle: Long, offsetNs: Long): Int
 
     // --- devices ---------------------------------------------------------------
-    /** Returns the device id (>= 0), or -1 on failure (see [nativeLastError]). */
-    external fun nativeAddD6Device(
+    /**
+     * Adds a lidar that arrives as **bytes on a serial port**. Returns the
+     * device id (>= 0), or -1 on failure (see [nativeLastError]).
+     *
+     * ROUND 25 item 119 — was `nativeAddD6Device`, which hardcoded
+     * `cfg.kind = SCAN_DEVICE_D6` in the JNI shim. The STL-27L reaches the
+     * engine through the *same* `scan_device_config` serial fields and the same
+     * [nativePushSerialBytes], differing only in [kind] and [baud], so the
+     * honest generalisation was to stop pretending the shim was D6-specific
+     * rather than to add a near-identical second shim. Renamed rather than
+     * overloaded because a JNI symbol name is part of the contract and a stale
+     * `nativeAddD6Device` left behind would be a live trap.
+     *
+     * @param kind a [DeviceKind] value — [DeviceKind.D6] or [DeviceKind.STL27L].
+     *   Anything the engine does not recognise comes back as -1 with
+     *   `SCAN_ERR_INVALID_ARGUMENT` in [nativeLastError], never as a wrong
+     *   device.
+     * @param baud must match the rate the host UART was actually opened at.
+     *   See `com.lidarscan.core.engine.SerialLidarBaud` for why both sides read
+     *   that from one place.
+     * @param sendStartStop ignored by the engine for the STL-27L: the LD-series
+     *   has no command channel.
+     * @param writer may be null (receive-only); the LD-series never needs one.
+     */
+    external fun nativeAddSerialLidarDevice(
         handle: Long,
+        kind: Int,
         serialPortName: String?,
         baud: Int,
         sendStartStop: Boolean,
@@ -808,6 +832,22 @@ object ScanEngineNative {
         const val D6 = 1
         const val MID360 = 2
         const val RTK_ROVER = 3
+
+        /**
+         * ROUND 25 item 119: `SCAN_DEVICE_STL27L`. A LDROBOT STL-27L on the
+         * same USB-serial transport the D6 uses — it reuses
+         * `scan_device_config`'s serial fields verbatim and its bytes go in
+         * through the same [nativePushSerialBytes].
+         *
+         * A new VALUE of an existing enum field, which is why **the C ABI is
+         * still 12** and `scan_engine_abi_version()` still answers 12. The
+         * corollary, spelled out in `scanengine_c.h`'s item-119 block: an app
+         * cannot feature-detect this over the ABI. That is safe *here* only
+         * because the JNI `.so` is built from this same tree, so the app and
+         * the engine are never skewed; an engine that did not know kind=4 would
+         * answer `SCAN_ERR_INVALID_ARGUMENT` rather than misbehave.
+         */
+        const val STL27L = 4
     }
 
     /** Mirrors `SCAN_DEV_*` device state (`scanengine_c.h`) — what the health panel's "state" label reads. */
@@ -871,6 +911,17 @@ object ScanEngineNative {
          */
         const val SLAM_MAP = 8
         const val POSE_LIO = 9
+
+        /** ROUND 9: the PHONE's gyro/accel, distinct from [IMU] (the Mid-360's). */
+        const val IMU_PHONE = 10
+
+        /**
+         * ROUND 25 item 119: raw STL-27L UART bytes and the points decoded from
+         * them. Deliberately NOT [LIDAR_D6] even though both are 2-D pushbroom
+         * profiles on a serial port — the two wire protocols share nothing, and
+         * the offline D6 pipeline identifies a container by its lidar stream id.
+         */
+        const val LIDAR_STL27L = 11
     }
 
     /** Mirrors `kKeyframeFlag*` (`engine/include/scanengine/color/colorize.h`). */

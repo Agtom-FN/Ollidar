@@ -405,6 +405,50 @@ class ArSessionGateTest {
         assertEquals(ArSessionGate.Decision.NO_SESSION, gate.mayDrive(claim))
     }
 
+    /**
+     * ROUND 25 item 115 — **the battery property, stated at the gate.**
+     *
+     * Leaving the Scan tab closes the tracking session outright rather than
+     * pausing it, and the reason that is the stronger thing is here rather than
+     * in the ViewModel: `onSessionClosed` drops `sessionCreated` as well as
+     * `resumed`, so a pose pump that outlives its view — the exact class of bug
+     * round 22 item 89 spent days on — cannot drive a single frame afterwards,
+     * whatever claim it is still holding. A `pause()` alone leaves
+     * `sessionCreated` true, which is a weaker guarantee AND holds the camera
+     * open.
+     *
+     * Asserted with `peekDrive` so the check does not itself write to the
+     * diagnostic sink; the difference between the two decisions is the point,
+     * and both are refusals, so a test that only asked "is it refused" would
+     * pass on the weaker one.
+     */
+    @Test
+    fun `a closed session refuses harder than a paused one`() {
+        val gate = ArSessionGate()
+        val claim = gate.claim(pump)
+        gate.onSessionCreated()
+        gate.onResumed()
+        assertEquals(ArSessionGate.Decision.PROCEED, gate.peekDrive(claim))
+
+        gate.onPaused()
+        assertEquals(
+            "a pause stops the driving and keeps the session",
+            ArSessionGate.Decision.NOT_RESUMED,
+            gate.peekDrive(claim),
+        )
+
+        gate.onSessionClosed()
+        assertEquals(
+            "item 115: leaving the tab must leave NO session to drive",
+            ArSessionGate.Decision.NO_SESSION,
+            gate.peekDrive(claim),
+        )
+        // And it stays refused: nothing short of a new session may revive it,
+        // so a stray `onResumed` from a torn-down view cannot re-open the pump.
+        gate.onResumed()
+        assertEquals(ArSessionGate.Decision.NO_SESSION, gate.peekDrive(claim))
+    }
+
     private companion object {
         /**
          * The session is created and resumed for the whole of the contention

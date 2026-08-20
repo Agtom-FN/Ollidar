@@ -2,6 +2,8 @@ package com.lidarscan.app.render
 
 import android.content.Context
 import android.os.Build
+import android.view.GestureDetector
+import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.SurfaceView
 import android.view.WindowManager
@@ -83,10 +85,30 @@ fun PointCloudView(
      */
     deviceTier: com.lidarscan.core.capture.DeviceTier =
         com.lidarscan.core.capture.DeviceTier.STANDARD,
+    /**
+     * ROUND 25 item 117 — **a confirmed single tap, in view coordinates.**
+     *
+     * Non-null only while Review's measure mode is on. It exists because of the
+     * half of item 117 that is not a gesture: *"no gesture may fight the
+     * measure tool"*. Review used to put a transparent `Box` with
+     * `detectTapGestures` OVER the SurfaceView, which took the tap for
+     * measuring and, being a pointer-input node above the view, took every
+     * OTHER touch with it — so in measure mode the viewer could not be orbited,
+     * panned or zoomed at all. One gesture arbiter over one view is the only
+     * arrangement in which a tap and a drag can both mean what they should.
+     *
+     * `onSingleTapConfirmed`, not `onSingleTapUp`: a double tap (which resets
+     * the framing) must not also drop a measurement point where it landed.
+     */
+    onTapPick: ((Float, Float) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val renderer = remember { PointCloudRenderer(context) }
+    // The listeners below are built ONCE, inside `AndroidView`'s factory, and
+    // would otherwise capture the lambda that existed at that moment — so
+    // turning measure mode on after the view was created would do nothing.
+    val currentTapPick = androidx.compose.runtime.rememberUpdatedState(onTapPick)
     renderer.setDeviceTier(deviceTier)
 
     val resolvedCeiling = if (deviceRefreshCeilingHz > 0) {
@@ -126,17 +148,50 @@ fun PointCloudView(
         factory = { ctx ->
             SurfaceView(ctx).also { sv ->
                 renderer.attach(sv)
+                // ── ROUND 25 item 117: one arbiter, three gestures, one tap ──
+                //
+                // Every touch goes to all three, in this order, and each takes
+                // only what it recognises:
+                //
+                //  * the `ScaleGestureDetector` reads the SPREAD of two
+                //    fingers and dollies;
+                //  * the `GestureDetector` reads taps — single (confirmed, so a
+                //    double tap does not also measure) and double;
+                //  * the renderer reads the CENTROID and orbits on one finger,
+                //    pans on two.
+                //
+                // The spread and the centroid are independent, which is what
+                // lets a two-finger gesture pan and zoom at the same time
+                // instead of the operator having to pick one.
                 val scaleDetector = ScaleGestureDetector(
                     ctx,
                     object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
                         override fun onScale(detector: ScaleGestureDetector): Boolean {
-                            renderer.onScale(detector.focusX, detector.focusY, detector.scaleFactor - 1f)
+                            renderer.onScale(detector.scaleFactor)
+                            return true
+                        }
+                    },
+                )
+                val tapDetector = GestureDetector(
+                    ctx,
+                    object : GestureDetector.SimpleOnGestureListener() {
+                        override fun onDown(e: MotionEvent): Boolean = true
+
+                        override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                            val pick = currentTapPick.value ?: return false
+                            pick(e.x, e.y)
+                            return true
+                        }
+
+                        override fun onDoubleTap(e: MotionEvent): Boolean {
+                            renderer.resetCameraFraming()
                             return true
                         }
                     },
                 )
                 sv.setOnTouchListener { _, event ->
                     scaleDetector.onTouchEvent(event)
+                    tapDetector.onTouchEvent(event)
                     renderer.onTouch(event)
                 }
             }

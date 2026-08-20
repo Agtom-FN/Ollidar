@@ -12,6 +12,7 @@ import com.lidarscan.core.engine.EngineEvent
 import com.lidarscan.core.capture.PointCountTally
 import com.lidarscan.core.capture.PointStreamRole
 import com.lidarscan.core.engine.EngineTarget
+import com.lidarscan.core.engine.SerialLidarBaud
 import com.lidarscan.core.model.SensorType
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -101,14 +102,23 @@ class RealEngineBridge(
     override suspend fun connect(target: EngineTarget): Result<Unit> = withContext(Dispatchers.IO) {
         when (target.sensor) {
             SensorType.MID360 -> return@withContext connectMid360(target)
-            SensorType.COIN_D6 -> Unit // falls through to the D6 path below
+            SensorType.COIN_D6 -> Unit // falls through to the serial path below
+            // ROUND 25 item 119: the STL-27L is the same transport, the same
+            // push-bytes loop and the same phone-tracked pose as the D6. The
+            // only two things that differ — the engine's device kind and the
+            // baud — are parameters of that path, not a second path, so it
+            // takes this one deliberately rather than by omission.
+            SensorType.STL27L -> Unit
         }
         if (!ScanEngineNative.isAvailable) {
             _connectionState.value = ConnectionState.ERROR
             return@withContext Result.failure(IllegalStateException("scanengine_jni native library not loaded"))
         }
+        val sensorName = target.sensor.displayName
         val devicePath = target.transportHint
-            ?: return@withContext Result.failure(IllegalArgumentException("D6 connect needs a device path"))
+            ?: return@withContext Result.failure(
+                IllegalArgumentException("$sensorName connect needs a device path"),
+            )
         val conn = connectionRegistry.get(devicePath)
             ?: return@withContext Result.failure(
                 IllegalStateException(
@@ -117,7 +127,7 @@ class RealEngineBridge(
             )
 
         _connectionState.value = ConnectionState.CONNECTING
-        _events.emit(EngineEvent.StatusMessage("Connecting to D6 on $devicePath…"))
+        _events.emit(EngineEvent.StatusMessage("Connecting to $sensorName on $devicePath…"))
 
         if (engineHandle == 0L) {
             engineHandle = createEngineHandle()
@@ -129,8 +139,35 @@ class RealEngineBridge(
             }
         }
 
-        val writer = ScanEngineNative.SerialWriter { data -> conn.write(data) }
-        val id = ScanEngineNative.nativeAddD6Device(engineHandle, devicePath, DEFAULT_BAUD, true, writer)
+        // ROUND 25 item 119 — the three things that differ between the two
+        // serial lidars, each read from a named source rather than typed here:
+        //
+        //  * `kind`   — SCAN_DEVICE_D6 vs SCAN_DEVICE_STL27L. A new VALUE of an
+        //               existing enum field, so the C ABI is still 12.
+        //  * `baud`   — 230400 vs 921600, from `SerialLidarBaud`, which is the
+        //               SAME object `D6UsbConnectionRegistry.open` reads. They
+        //               must agree: the engine derives per-point timing from
+        //               this number, so a wrong one does not fail, it silently
+        //               mis-times every return.
+        //  * `writer` — the LD-series free-runs on power and has no command
+        //               channel, so the STL-27L gets a null writer and
+        //               sendStartStop=false. Building a trampoline it would
+        //               never use would only leave a JVM global ref alive.
+        val kind = deviceKindOf(target.sensor)
+        val baud = SerialLidarBaud.forSensorOrNull(target.sensor)
+            ?: return@withContext Result.failure(
+                IllegalStateException("$sensorName is not a serial sensor"),
+            )
+        val hasCommandChannel = target.sensor == SensorType.COIN_D6
+        val writer = if (hasCommandChannel) ScanEngineNative.SerialWriter { data -> conn.write(data) } else null
+        val id = ScanEngineNative.nativeAddSerialLidarDevice(
+            engineHandle,
+            kind,
+            devicePath,
+            baud,
+            hasCommandChannel,
+            writer,
+        )
         if (id < 0) {
             _connectionState.value = ConnectionState.ERROR
             val message = "scan_engine_add_device failed: ${ScanEngineNative.nativeLastError()}"
@@ -154,8 +191,23 @@ class RealEngineBridge(
         }
 
         _connectionState.value = ConnectionState.CONNECTED
-        _events.emit(EngineEvent.StatusMessage("Connected to D6 on $devicePath"))
+        _events.emit(EngineEvent.StatusMessage("Connected to $sensorName on $devicePath"))
         Result.success(Unit)
+    }
+
+    /**
+     * ROUND 25 item 119: [SensorType] → [ScanEngineNative.DeviceKind].
+     *
+     * Written out rather than derived from an ordinal, because the two enums
+     * are maintained in different languages and their orders are not a
+     * contract. The Mid-360 branch exists so this `when` stays exhaustive and
+     * the next sensor breaks the build here — it is never reached, because
+     * `connect` has already routed a Mid-360 to [connectMid360] by this point.
+     */
+    private fun deviceKindOf(sensor: SensorType): Int = when (sensor) {
+        SensorType.COIN_D6 -> ScanEngineNative.DeviceKind.D6
+        SensorType.STL27L -> ScanEngineNative.DeviceKind.STL27L
+        SensorType.MID360 -> ScanEngineNative.DeviceKind.MID360
     }
 
     /**
@@ -545,7 +597,6 @@ class RealEngineBridge(
     }
 
     private companion object {
-        const val DEFAULT_BAUD = 230_400
         const val DEFAULT_PROFILE = "quickscan"
         const val LOG_LEVEL_INFO = 2
         const val HEALTH_POLL_INTERVAL_MS = 500L

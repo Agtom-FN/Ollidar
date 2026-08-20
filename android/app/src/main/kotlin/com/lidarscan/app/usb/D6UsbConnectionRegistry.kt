@@ -87,13 +87,30 @@ class D6UsbConnectionRegistry(context: Context) {
         receiverRegistered = true
     }
 
-    /** Opens the D6's serial port at 230400 8N1 with DTR cleared. Requires permission already granted. */
-    fun open(driver: UsbSerialDriver): D6SerialConnection {
+    /**
+     * Opens a serial lidar's port 8N1 with DTR cleared. Requires permission
+     * already granted.
+     *
+     * ROUND 25 item 119 — [baud] became a parameter, defaulting to
+     * [BAUD_RATE] (the COIN-D6's 230 400) so that **every existing caller
+     * keeps its exact previous behaviour**: this is the code path every
+     * recorded scan in `captures/` came through and it was not going to be
+     * disturbed by a second sensor.
+     *
+     * The STL-27L needs 921 600 here, and this is the *host UART divisor* —
+     * distinct from, and required to agree with, the `serial_baud` that
+     * `RealEngineBridge` hands the engine. Both read
+     * `com.lidarscan.core.engine.SerialLidarBaud` for exactly that reason: at
+     * the wrong divisor the port still opens and the reader thread still
+     * delivers bytes, they are simply framing garbage, so the failure looks
+     * like a sensor that is present and silent rather than like an error.
+     */
+    fun open(driver: UsbSerialDriver, baud: Int = BAUD_RATE): D6SerialConnection {
         val connection = usbManager.openDevice(driver.device)
             ?: error("UsbManager.openDevice returned null for ${driver.device.deviceName}")
         val port = driver.ports.first()
         port.open(connection)
-        port.setParameters(BAUD_RATE, UsbSerialPort.DATABITS_8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
+        port.setParameters(baud, UsbSerialPort.DATABITS_8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
         port.setDTR(false)
 
         val wrapped = D6SerialConnection(driver.device.deviceName, port)
@@ -124,7 +141,14 @@ class D6UsbConnectionRegistry(context: Context) {
         openConnections.remove(devicePath)?.close()
     }
 
-    private companion object {
-        const val BAUD_RATE = 230_400
+    companion object {
+        /**
+         * The COIN-D6's 230 400, and therefore [open]'s default — the value
+         * this registry has always used. Aliased to
+         * `com.lidarscan.core.engine.SerialLidarBaud.COIN_D6` rather than
+         * re-typed so that the host divisor and the `serial_baud` the engine is
+         * told can never drift apart.
+         */
+        const val BAUD_RATE = com.lidarscan.core.engine.SerialLidarBaud.COIN_D6
     }
 }

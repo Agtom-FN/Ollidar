@@ -184,11 +184,17 @@ object ProcessingPolicy {
         !hasRawStreams -> ActionGate.blocked(
             "Nothing recorded yet — capture first. Post-processing runs from the raw streams on disk, not from a live session.",
         )
-        sensor == SensorType.COIN_D6 -> ActionGate.blocked(
-            "Post-processing is the Mid-360 LIO pipeline, and this is a COIN-D6 scan. A D6 cloud is built live " +
-                "by the pushbroom from the phone's own trajectory — what you saw while walking IS the registered " +
-                "result, and it is what Export writes. An offline re-run needs the ARCore pose stream saved " +
-                "inside the .lscan, which the engine cannot write yet.",
+        // ROUND 25 item 119: the STL-27L falls in here too, and for exactly the
+        // reason the sentence already gives — it is a 2-D pushbroom whose cloud
+        // is assembled live from the phone's trajectory, and that trajectory is
+        // still not written to the `.lscan`. The sensor's own name is
+        // interpolated so the operator is told about the scan they actually
+        // took; the pipeline fact underneath it is unchanged.
+        sensor != null && sensor.isPhoneTrackedPushbroom -> ActionGate.blocked(
+            "Post-processing is the Mid-360 LIO pipeline, and this is a ${sensor.displayName} scan. Its cloud is " +
+                "built live by the pushbroom from the phone's own trajectory — what you saw while walking IS the " +
+                "registered result, and it is what Export writes. An offline re-run needs the ARCore pose stream " +
+                "saved inside the .lscan, which the engine cannot write yet.",
         )
         else -> ActionGate.allowed
     }

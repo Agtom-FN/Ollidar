@@ -102,6 +102,24 @@ object ProjectsView {
     /** How many columns [layout] draws. The grid's only geometric fact. */
     fun columns(layout: ProjectsLayout): Int = if (layout == ProjectsLayout.GALLERY) 2 else 1
 
+    /**
+     * ROUND 25 item 114 — **does this layout draw the lidar preview?**
+     *
+     * Owner: the LIST row loses its preview image; the GALLERY keeps it. That
+     * is not an arbitrary split, it is what the two layouts are FOR. A gallery
+     * is thumbnail-first — remove the thumbnail and it is a list with fewer
+     * words per card. A list is name-first, and a 108 dp preview above every
+     * row means four scans fill a phone screen and finding the one you want is
+     * scrolling, not reading.
+     *
+     * It lives here rather than as an `if (gallery)` in the composable for the
+     * same reason [columns] does: round 24's property is that there is exactly
+     * ONE `ProjectCard` and the layout supplies its differences, so each
+     * difference has to be a named, testable fact rather than a condition
+     * spelled out at the draw site.
+     */
+    fun showsThumbnail(layout: ProjectsLayout): Boolean = layout == ProjectsLayout.GALLERY
+
     /** The layout the toggle switches TO — one control, two states, no menu. */
     fun toggled(layout: ProjectsLayout): ProjectsLayout =
         if (layout == ProjectsLayout.GALLERY) ProjectsLayout.LIST else ProjectsLayout.GALLERY

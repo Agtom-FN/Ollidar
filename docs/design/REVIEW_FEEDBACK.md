@@ -3694,3 +3694,361 @@ last.
 **785** (was 727), `:app` **174** (was 168), emulator **37/37** (was 25/25), 0
 failures anywhere. VERSION 0.9.9; **versionCode 909 / versionName 0.9.9
 verified in the built APK** (aapt2 badging).
+
+---
+
+## ROUND 25 (v0.9.10) — the owner's 0.9.9 field session + UI/UX wave
+
+0.9.9 in the field: **"scans better"**, and the round-24 Send-logs bundle
+arrived as a well-formed zip — the first time the owner's evidence came back
+without a manual copy off the phone. The Mid-360 did **not** come up: the
+preflight wrote `[net] mid360 preflight: no-ethernet — No Ethernet adapter` at
+18:53 and 18:55 (`captures/lidarscan-capture-log-2026-08-20-1927.txt`), which
+is the OS never enumerating an Ethernet interface at all — adapter
+incompatibility, bus power, or single-port contention. Item 118 turns that one
+dead-end string into a wizard that says which of those it is. Eight items,
+114–121, and one of them (119) puts a second serial lidar in the engine.
+
+**114 — PROJECTS LIST: NO PREVIEW IMAGE.** In LIST layout the lidar preview
+thumbnail leaves the row: text + chips + grade only, and the row tightens now
+that nothing sets its height. GALLERY keeps its thumbnail — it is
+thumbnail-first by design and that is the whole reason the toggle exists.
+Round-24's "one card, two column counts" property has to survive this: the
+thumbnail is dropped by layout, not by a second card.
+
+**115 — LEAVING THE SCAN TAB STOPS EVERYTHING.** Owner, verbatim: *"when the
+user click to other tab just stop and exit the scan and tracking."* This
+changes round 24's item 111 guard, which deliberately left a live capture
+alone. New behaviour when the Scan tab is **left** (a real tab switch — the
+`isChangingConfigurations` discriminator built in item 111 keeps a rotation out
+of this): a RECORDING/PAUSED capture is **stopped and sealed** by the normal
+seal path (auto-process continues on `containerScope`, and Projects gets a
+short "Scan saved." notice); a start sequence in flight is **cancelled
+cleanly** and its latch released; and then tracking is **shut down fully** —
+AR session closed, pose pump released — so a backgrounded Scan tab costs no
+camera and no battery. Re-entering the tab is a fresh scan, exactly as item 111
+already says.
+
+**116 — TRACKING-LOST POPUP RESTYLE.** Owner: *"revise the warning align the
+style."* Round 24's centered popup works but it is drawn in its own dialect.
+It takes the app's component language: the `ScanCard` shape, radius and
+elevation, the app typography scale, the amber from the **semantic warning
+tokens** rather than a raw hex, the live seconds in **tabular figures** so the
+card does not twitch each second, and status iconography consistent with the
+rest of the app. The green recovery card gets the same geometry. The state
+machine, the test tags and the scrim's tap-through to STOP are untouched.
+
+**117 — REVIEW VIEWER: PAN + ZOOM.** Owner: *"Add pan and zoom in out function
+for lidar scan review."* Standard 3D-viewer gestures in the point-cloud view:
+one finger = orbit, two fingers = pan (translate the camera target in the view
+plane), pinch = dolly toward/away from the target with near/far clamps, double
+tap = reset framing. Measure mode keeps its tap semantics — a gesture still
+navigates, and no gesture may consume a measure tap. The camera arithmetic
+moves into pure `:core` and is unit-tested (orbit wrap and pitch clamp, pan
+basis, dolly clamps, reset); the view keeps the touch plumbing.
+
+**118 — MID-360 ETHERNET DIAGNOSTIC WIZARD.** The preflight already knows
+`no-ethernet`; that is one string for four different problems. The Mid-360
+setup wizard (`Routes.MID360_SETUP`, round 23) gets a stepwise diagnosis with a
+distinct state and instruction per case, all under the wording law: (1)
+**no-adapter** — "No Ethernet adapter found." / "Use a powered USB-C hub.",
+listing the USB devices the OS *does* enumerate so "nothing plugged in" and
+"adapter unsupported" are distinguishable; (2) **adapter, no link** — cable and
+power; (3) **link, no IP / wrong subnet** — the Mid-360 expects host
+**192.168.1.5/24**, with the current interface addresses shown and a deep link
+to Android's Ethernet settings when the intent resolves; (4) **IP ok, no
+lidar** — run the existing heartbeat discovery (UDP 56201) with live progress
+and report what was heard. Every state has Retry, and the wizard polls while
+open so plugging a hub in updates the screen. The classifier is pure and tested
+against synthetic interface lists.
+
+**118a — AMENDED MID-ROUND: a CONNECTION-DETECTION DEBUG LOG behind developer
+mode.** The owner's hub — an **Acer HY41-T9** — did not work, and item 118 as
+written would still only have said *"No Ethernet adapter found."* That sentence
+covers three different faults and nobody reading a field log can tell which:
+the hub was **never enumerated on USB at all**, or it **enumerated but no
+network interface appeared** (unsupported chipset, or not enough bus power), or
+**an interface came up on the wrong subnet**. So, gated on the existing
+seven-tap developer mode: a `[net-debug]` channel into the same capture log
+that records, on every wizard poll and every auto-detect run, (a) the full USB
+enumeration — VID:PID, names, class/subclass, interface count and per-interface
+class, which is the thing that makes "USB device present, no network function"
+visible; (b) every network interface with its up/down state and addresses, plus
+`ConnectivityManager`'s Ethernet view; (c) discovery activity — the UDP 56201
+listen state, every datagram heard with source and byte count (summarised,
+never dumped) and every serial probe attempt with its outcome. A **Connection
+debug** row in the developer section runs one sweep on demand and shows it on
+screen in monospace with a Copy button. The periodic logging is rate-limited to
+≤1 line/s per category with suppressed-counts, in the shape of the round-22
+gate logging, so a long wizard session cannot bloat the log. The wording law
+applies to any non-developer surface; the diagnostic text itself is exempt, and
+says so. The sweep leads with a **one-line verdict** naming which of the three
+cases it is — a wall of undifferentiated dump is what the owner effectively has
+already.
+
+**119 — STL-27L (LDROBOT) DRIVER.** Owner: *"add support the STL27L
+connection."* A second serial lidar beside the COIN-D6: LDROBOT **STL-27L**,
+360° DTOF, UART **921600 8N1** over the same USB-serial path the D6 uses,
+LD-series packet — header `0x54`, VerLen `0x2C` (12 points), u16 speed (deg/s),
+u16 start angle (0.01°), 12 × (u16 distance mm + u8 intensity), u16 end angle,
+u16 timestamp (ms), **CRC8 poly 0x4D** table. ~21,600 points/s at ~10 Hz, ~25 m
+range. It lands as `drivers/stl27l/` mirroring the d6 structure (framer,
+checksum, angle→fan mapping on the **same** `d6_fan.h` geometry convention —
+zero-mark up, spin axis out of the base — and per-point time interpolation
+between the two angle stamps, which is what the existing densification
+expects), byte-exact synthetic fixtures including CRC, an auto-detect probe in
+the existing discovery, and engine_cli support. App side: `SensorType.STL27L`,
+selectable in the Advanced sheet's sensor row, auto-detect wired, and the
+capture pipeline reused verbatim — it is a 2D pushbroom sensor exactly like the
+D6, so it is the same trim and hold flow. **No hardware is present**: this
+ships code-complete against the published protocol with fixture tests and a
+bench-test-pending note in the report and in the manual.
+
+**120 — TAB BAR: REMOVE THE DOT.** Round 24's selected-state dot goes
+entirely, including its reserved space; the icons stay centred and selection is
+the orange icon (plus whatever pill container Material already draws). The tab
+tests follow.
+
+**121 — USER MANUAL + QUICK START IN THE REPO.** `docs/USER_MANUAL.md` and
+`docs/QUICK_START.md`, plain English, matching the 0.9.10 UI exactly: icon-only
+tabs, the Scan flow with hold-still and GO, the tracking-lost popup including
+"leaving the tab stops the scan", Projects gallery/list/sort/selection/group
+export and share, the new viewer gestures, Profile / Send logs / Feedback, the
+tutorial replay, a Settings map, Detail and the device ceiling, the Mid-360
+walkthrough (powered hub, static 192.168.1.5/24, the item-118 troubleshooting
+states), an STL-27L section marked *supported — bench validation pending*, and
+D6 mounting basics (cap forward, zero up) with what re-zero does. Linked from
+README.md. No marketing claims; the real limits are stated.
+
+### Resolution — 2026-08-21 (0.9.10, round 25)
+
+**114 — the list row lost its picture, and the gallery kept its.** The split is
+one named fact in `:core` (`ProjectsView.showsThumbnail`) rather than an
+`if (gallery)` at the draw site, for the reason round 24's one-card property
+demands: there is still exactly ONE `ProjectCard`, and every difference between
+the two layouts has to be a testable statement rather than a condition spelled
+out in a composable. The row then tightens where the thumbnail used to set its
+height — 11 dp → 1 dp above the title, 9/3 → 6/1 around the meta line — because
+dropping the image and keeping the spacing it needed would have produced a list
+of tall empty cards. Round 5's "the preview IS the selection" behaviour
+survives where there is a preview to expand (gallery, 96 → 180 dp) and is
+simply absent in the list, which is all selection has needed since round 22
+made a tap open the viewer. Three `:core` cases, including the one that matters
+structurally — `columns(l) == 2` and `showsThumbnail(l)` must agree for every
+layout, or a one-column gallery becomes expressible. On the AVD: the list row
+is title · chips · meta with no image, the gallery card still draws its cloud.
+
+**115 — leaving the Scan tab stops everything, and the seal does not drag you
+back.** `onScanScreenLeaving(configurationChange = false)` now calls
+`leaveScanTab()`, which does three things in an order that is itself the
+design: a start sequence in flight is cancelled with the WATCHDOG's own unwind
+(same jobs, same `releaseStart`, because there is exactly one correct way to
+undo that sequence); a RECORDING/PAUSED capture is sealed by the **normal**
+`stopCapture` path, so pruning, the manifest, the debug log and the
+`containerScope` auto-process all still happen; and `shutDownTracking()` CLOSES
+the ARCore session rather than pausing it. That last distinction is the battery
+half and it is asserted at the gate, not described: `onPaused` leaves
+`sessionCreated` true, `onSessionClosed` does not, so after leaving, a pose pump
+that outlives its view gets `NO_SESSION` and cannot drive a frame whatever claim
+it still holds — `ArSessionGateTest` walks PROCEED → NOT_RESUMED → NO_SESSION
+and proves a stray `onResumed` cannot revive it.
+
+The seal it triggers deliberately does **not** navigate. Emitting
+`sealedProjectId` would drag an operator who asked for Settings into Projects,
+and `replay = 1` means the id would still be buffered on the next entry into
+the Scan tab — round 23's item 101 bounce, arriving by a new road. So the event
+is never emitted, the flag is spent on every exit from the seal (including the
+pruned-empty-scan one, or one stale flag would suppress the NEXT ordinary
+Stop), and Projects carries `Wording.SCAN_SAVED` plus the scan's name the first
+time it is looked at. `CaptureRound25Test` (8 cases) proves: sealed exactly
+once, auto-process still ran, nothing buffered, the suppression is spent so the
+next Stop navigates normally, the latch is released on a leave-mid-start and
+the button works afterwards, tracking is closed on BOTH the recording and the
+idle exit — and that a **rotation** still stops nothing and closes nothing.
+Round 24's `a tab switch mid-recording does not touch the capture` was
+overturned rather than deleted: it now asserts the opposite, with the reason
+written next to it, because a rule that reversed needs a test that says which
+way or the next round restores the old behaviour thinking it is a fix.
+
+**116 — the popup is the app's own card now.** The owner's note was about
+dialect, and the fix was to stop hand-rolling. `ScanCard` gained three optional
+parameters (`container`, `borderColor`, `elevation`), all defaulting to exactly
+what it drew before, and the popup calls it — so the radius, the hairline
+weight and the padding are the app's rather than a `Column` that reproduced two
+of the three. The amber is a **semantic container pair**
+(`SemWarnContainer`/`OnSemWarnContainer`, derived from `SemWarn` at 14 % over
+`Panel`, so a token change moves both and they cannot drift), the headline is
+`headlineSmall` scaled to 26 sp rather than a hand-set size/weight pair, the
+glyph is `Icons.Filled.Warning`/`CheckCircle` — the same `CheckCircle` the rest
+of the app already means "fine" with — and the live seconds are `MonoTabular`
+(`tnum`, zero tracking) because the count is CENTRED and changes once a second
+under a card telling the operator to hold still. Both states are ONE call site,
+which is how "the green card has the same geometry" is guaranteed rather than
+maintained; `Round25PopupStyleTest` asserts the shared edges and width and
+writes both cards to `/sdcard/Download` for the round's screenshots. Round
+24's tags, its state machine and its scrim tap-through to STOP are untouched.
+
+**117 — the viewer got a camera.** The old one was filament-utils'
+`Manipulator`: native, unconstructible on a JVM, and — its own comment in the
+renderer said so — **unable to retarget**, its target fixed at
+`Builder.build()`. Pan is precisely "move the target", so the camera physically
+could not do what the owner asked; a two-finger drag fed pointer 0 into the
+orbit path and spun the cloud instead of sliding it. `core/render/OrbitCamera.kt`
+replaces it: an immutable spherical camera whose `HOME` reproduces
+`orbitHomePosition(4, 3, 8)` to the digit, so adopting it is not also a silent
+change of default framing. 22 `:core` cases cover the properties that actually
+break a viewer — an orthonormal basis at every pitch, a full-width swipe being
+half a turn on any viewport, orbit being a rotation and pan a translation, the
+pole clamped SHORT of vertical (at 90° the `lookAt` basis is degenerate), pan
+scaled to `2·d·tan(fov/2)/h` so the geometry stays under the fingers, pan not
+accelerating near the pole, the dolly clamped at both ends and refusing NaN,
+and reset framing **what is there** rather than the origin (a corridor forty
+metres out would otherwise "reset" to empty space).
+
+The gestures are one arbiter over one view: a `ScaleGestureDetector` reads the
+spread, a `GestureDetector` reads taps, and the renderer reads the CENTROID —
+one finger orbits, two pan, and the spread and centroid being independent is
+what lets a two-finger gesture pan and zoom at once. Measure mode is the half
+that was quietly broken: Review laid a `pointerInput` Box OVER the SurfaceView
+"so a pick never fights the orbit gesture", which did not fight it, it removed
+it — with measure on, the viewer could not be moved at all. The tap now goes
+through the same arbiter (`onSingleTapConfirmed`, so a double tap resets the
+framing without also dropping a measurement point).
+
+**118 — four states, and the USB list that separates two of them.**
+`Mid360Diagnosis` is a pure ladder in physical order (NO_ADAPTER →
+ADAPTER_NO_LINK → LINK_NO_IP → WRONG_SUBNET → WRONG_HOST_IP → IP_OK_NO_LIDAR →
+OK) with real /24 arithmetic, not a string prefix, and a `Step` that carries its
+own `showsUsbDevices`/`showsAddresses`/`runsDiscovery` flags so the draw site
+has no `when` in it. 31 cases, including the boundary item 118 exists for — no
+USB devices at all versus USB devices present with no Ethernet — and a wording
+pass over every rendered string. The wizard polls at 1 Hz while open and stops
+with the composition. One deviation from the spec's verbatim text, reported
+rather than smuggled: the no-adapter detail is *"Try a powered USB-C hub"*, not
+"Use…", because `WordingLaw.ACTION_WORDS` contains `try` and not `use` and the
+specced phrasing fails the law's own actionability half.
+
+**118a — and then the sweep, because the owner's hub still failed.** The Acer
+HY41-T9 would have produced *"No Ethernet adapter found."* and nothing else.
+`ConnectionSweep` + `ConnectionSweepFormat` (`:core`) turn one detection pass
+into a block that **leads with a verdict** naming which of the three cases it
+is — `nothing-on-usb`, `usb-present-no-ethernet` (with a sharper
+`ethernet-function-no-interface` when a device DOES announce a CDC/RNDIS
+function and still produced no `eth*`, which is a driver or power problem
+rather than "this is not an adapter"), or `wrong-subnet` — then USB, then
+interfaces, then connectivity, then discovery, then serial probes, in physical
+order. The verdict is not a second opinion: it feeds the sweep's evidence into
+`Mid360Diagnosis.classify` and names the rung, splitting only where item 118's
+single rung covers two physically different faults. Datagrams are **summarised,
+never dumped**. `ConnectionDebugRateLimiter` is `ArSessionGate.noteRefusal`'s
+shape, verbatim down to the `(+N more since the last line)` suffix, keyed per
+category so a 1 Hz wizard poll cannot starve auto-detect, and admission is
+checked BEFORE collection so a suppressed tick costs zero binder calls. 29
+cases. Everything is behind the seven-tap unlock and off by default; the
+diagnostic text is exempt from the wording law and says so in four places so
+nobody later "fixes" it. Verified on the AVD: Settings › Developer ›
+**Connection debug** › Run sweep printed `sweep verdict=wrong-subnet
+trigger=settings-row` over the emulator's own `eth0`/`dummy0` — a correct
+verdict for that machine.
+
+**119 — a second serial lidar, and the ABI did not move.** Engine:
+`drivers/stl27l/` mirrors the d6 structure, **calls `d6::fan_point()`** rather
+than restating the fan formula (ROUND 9 item 34 was a whole round spent finding
+a mirrored cloud caused by exactly that second copy), and matches the D6's
+per-point time convention exactly so a rig swapping sensors needs no different
+pose-time offset. 32 fixture cases build every packet byte by byte with a CRC
+computed by an INDEPENDENT bitwise routine — the tests cross-check two
+implementations of the specification rather than one implementation against
+itself — and pin the vendor's published first sixteen table entries. Recording
+lands as its own `kStl27lRaw`/`kLidarStl27l` so `lscan_is_d6_project()` cannot
+answer yes and feed LD frames to the D6 parser. Hardening found on the way: an
+out-of-range `DeviceConfig::kind` used to fall out of `Engine::add_device`'s
+switch with a null driver and be inserted into the device map; it is
+`SCAN_ERR_INVALID_ARGUMENT` now.
+
+**The C ABI stays at 12**, and that is the honest answer rather than a
+convenient one: the delta is two new VALUES of existing enum fields
+(`SCAN_DEVICE_STL27L = 4`, `SCAN_STREAM_LIDAR_STL27L = 11`). No struct gained,
+lost or reordered a field; no function was added or re-signatured; an ABI-12
+consumer relinks unmodified and behaves byte for byte as before. What was
+deliberately NOT added, because it would have been a new exported symbol and
+therefore ABI 13, is `scan_probe_stl27l()` — so the STL-27L's auto-detect lives
+in Kotlin, which is where the D6's already lives (`D6AutoProbe`, never
+`scan_probe_d6`), so nothing was actually given up.
+
+App: `SensorType.STL27L`, and the part that was a real latent bug —
+`sensor == COIN_D6` appeared at a dozen sites and **most of them were never
+about the D6**, they were about "2-D lidar, no IMU, the phone's pose IS the
+trajectory". Left alone, an STL-27L capture would have compiled cleanly and
+recorded a fan of points with no trajectory under it. `isPhoneTrackedPushbroom`
+names that question and the sites ask it by name; the ones that genuinely mean
+the D6 (`reprocessD6`, keyed by the engine to `SCAN_STREAM_LIDAR_D6`)
+deliberately still say `== COIN_D6`, and an STL-27L container is refused there
+by name rather than falling through to the Mid-360's LIO queue. The same class
+of `else` was painting the new sensor in the D6's teal at four draw sites;
+`SensorType.badgeTint` + `sensorBadgeColor` make it exhaustive, so a fourth
+sensor breaks the build instead of inheriting a colour. Auto-detect is ONE
+serial detector walking D6 @ 230 400 then STL-27L @ 921 600 — two racing
+detectors would call `setParameters` at two divisors on the same CH340 and the
+loser would report garbage — and the baud lives in one `:core` object both the
+host UART and the engine's `serial_baud` read, because a mismatch there does
+not error, it streams framing garbage.
+
+**And the ordering's weakness is written down rather than hidden:** a D6 cannot
+be claimed as an STL-27L (the STL probe needs `54 2C` AND a matching CRC8, four
+times), but the reverse is NOT proven — the D6 probe accepts any adjacent
+`AA 55`, ~1 in 65 536 per byte offset. That was not "fixed" by reordering (which
+only moves the risk onto the sensor with field history) or by strengthening the
+D6 probe (the one detection path known to work in the field, in the same round
+that adds hardware nobody has held). The mitigation that ships is the manual
+sensor row: `USB SCANNER` with a **D6 / STL-27L** picker.
+
+**BENCH TEST PENDING. No STL-27L hardware exists on this project.** The frame
+layout, the CRC parameters, the 921 600 baud, the 30 000 ms timestamp wrap and
+— the one that will bite — **which way the reported angle sweeps** are all
+protocol-derived. If it sweeps the other way the scan comes out MIRRORED, which
+looks entirely plausible until you find an asymmetric feature. The fix is one
+line (`Stl27lConfig::invert_angle`), not a second fan formula, and the first
+bench test is stated in the manual: scan a room with a door on one side and
+check it against reality before trusting any measurement.
+
+**120 — the dot is gone, and so is its space.** Round 24 reserved 4 dp under
+every glyph so the selected one had somewhere to live, which pushed all four
+icons off the bar's centre; removing the dot without removing the reservation
+would have left the icons pinned high above a gap nothing draws in. The
+`Column` and its spacer went with it and the icon centres in the capsule.
+Selection is the `EmberSoft` capsule plus the ember tint. The tag assertions
+became their converse rather than being deleted — a removed affordance that is
+merely un-tested is one somebody restores — and are read on the **unmerged**
+tree, because a tab button is `clickable` and a merged-tree check for anything
+inside it would pass whether the dot were there or not.
+
+**121 — the manual.** `docs/USER_MANUAL.md` (14 sections) and
+`docs/QUICK_START.md` (10 steps), written against the code rather than the
+spec, quoting the app's real strings. It states the limits: that walking
+through a tracking loss usually makes a gap unrepairable, that a green Ethernet
+check does not guarantee data (the Wi-Fi routing gap is still real), that the
+Detail ceiling has no override and why, and that the STL-27L is *supported —
+bench validation pending*. Linked from `README.md`, which now also carries the
+app mark: `docs/img/app-icon.svg`, transcribed from the shipped launcher
+drawables. The scan lines are the drawable's pre-clipped segments rather than an
+SVG `<mask>` even though SVG has one — the shipped geometry insets each line by
+1.3 so its ROUND cap lands ON the A's silhouette, and a mask would slice every
+cap off square.
+
+**Numbers.** Engine **ABI stays 12**; ctest **8/8** (was 7/7 — the new
+`engine_cli_selftest_stl27l`), doctest **668 cases / 2,528,874 assertions** (was
+637). `:core` **887** (was 785), `:app` **195** (was 174), emulator **42/42**
+(was 37/37), 0 failures anywhere. VERSION 0.9.10; **versionCode 910 /
+versionName 0.9.10 verified in the built APK** (aapt2 badging).
+
+**One fix that was not on the list.** `Round24UiTest.settingsIsSimplifiedWith
+DeveloperThingsHidden` failed during this round's manual verification and was a
+latent round-24 bug, not a round-25 regression: re-locking developer mode needs
+the version footer, the footer is the last thing on a long scrolling page, so
+establishing the precondition left Settings scrolled to the bottom where the
+Profile row is off-screen. It failed **only** on a device that arrived with
+developer mode already on — green on CI, green on a second run, red for the one
+person who had just used the same AVD by hand. Fixed by scrolling back to the
+row, not by weakening the assertion to `assertExists`: "Profile is the top row"
+is the claim item 113 actually makes.

@@ -219,6 +219,33 @@ extern "C" {
  *     ROUND 12 self-consistency ruler over the cloud the run just produced.
  *   * scan_lscan_floor_plan() — A12's floor-plan extractor over a sealed
  *     container, writing DXF + PDF + a rendered PNG. */
+/* --- ITEM 119: the STL-27L arrives and the ABI STAYS AT 12 ----------------
+ *
+ * A second serial lidar (LDROBOT STL-27L) is selectable through the EXISTING
+ * add_device surface. What changed in this header:
+ *
+ *   * SCAN_DEVICE_STL27L = 4 — a new VALUE of scan_device_config::kind.
+ *   * SCAN_STREAM_LIDAR_STL27L = 11 — a new VALUE of the SCAN_STREAM_* mirror.
+ *
+ * That is the whole ABI delta. No struct gained, lost or reordered a field; no
+ * function was added, removed or re-signatured; no existing call's default
+ * behaviour moved. An ABI-12 consumer compiled against the PREVIOUS revision
+ * of this header relinks against this one unmodified and, never passing kind=4,
+ * behaves byte for byte as it did — which is the actual test for "did the ABI
+ * change", and it is why the number did not move.
+ *
+ * The one thing an app CANNOT do at ABI 12 is feature-detect the new value:
+ * scan_engine_abi_version() reports 12 either way. In this project the engine
+ * ships inside the app (the JNI .so is built from this tree), so the app and
+ * the engine are never skewed. An engine that does not know kind=4 answers
+ * SCAN_ERR_INVALID_ARGUMENT rather than misbehaving.
+ *
+ * DELIBERATELY NOT ADDED, because it would have been a new symbol and
+ * therefore ABI 13: scan_probe_stl27l(). The STL-27L probe exists in C++
+ * (discovery::ProbeSerialStl27l / discovery::Stl27lSniffer) and is covered by
+ * tests; only its C mirror is deferred. An app that wants auto-detect over the
+ * ABI today has scan_enumerate_serial() + scan_probe_d6() and must open the
+ * remaining ports itself. */
 #define SCAN_ABI_VERSION 12u
 
 /* --- errors: mirror of scanengine::ScanError --------------------------- */
@@ -257,7 +284,17 @@ enum {
   SCAN_DEVICE_UNKNOWN = 0,
   SCAN_DEVICE_D6 = 1,
   SCAN_DEVICE_MID360 = 2,
-  SCAN_DEVICE_RTK_ROVER = 3
+  SCAN_DEVICE_RTK_ROVER = 3,
+  /* ITEM 119: LDROBOT STL-27L 2D lidar over USB serial. THIS IS THE VALUE AN
+   * APP PUTS IN scan_device_config::kind TO SELECT AN STL-27L. It reuses the
+   * D6's serial fields verbatim — serial_port_name, serial_baud (0 => 921600,
+   * the STL-27L's rate, NOT the D6's 230400), serial_write (unused: the
+   * LD-series has no command channel), send_start_stop_commands (ignored for
+   * the same reason) — and its bytes go in through the same
+   * scan_engine_push_serial_bytes(). A NEW VALUE of an existing enum field: no
+   * struct layout, no signature and no default behaviour changed, so this is
+   * ABI 12 and an ABI-12 consumer that never passes 4 is unaffected. */
+  SCAN_DEVICE_STL27L = 4
 };
 
 enum {
@@ -290,9 +327,15 @@ enum {
   SCAN_STREAM_SLAM_MAP = 8,  /* registered world-frame points: A6's map, A8's
                               * assembled pushbroom cloud */
   SCAN_STREAM_POSE_LIO = 9,
-  SCAN_STREAM_IMU_PHONE = 10 /* ROUND 9: the PHONE's gyro/accel. Distinct from
-                              * SCAN_STREAM_IMU, which is the Mid-360's — the
-                              * offline pipelines route on that distinction. */
+  SCAN_STREAM_IMU_PHONE = 10, /* ROUND 9: the PHONE's gyro/accel. Distinct from
+                               * SCAN_STREAM_IMU, which is the Mid-360's — the
+                               * offline pipelines route on that distinction. */
+  SCAN_STREAM_LIDAR_STL27L = 11 /* ITEM 119: raw STL-27L UART bytes and the
+                                 * points decoded from them. Distinct from
+                                 * SCAN_STREAM_LIDAR_D6 for exactly the reason
+                                 * above: the two wire protocols share nothing,
+                                 * and the offline D6 pipeline identifies a
+                                 * container by its lidar stream id. */
 };
 
 /* --- poses: mirror of poses/pose_source.h + pose_interpolator.h ---------- */

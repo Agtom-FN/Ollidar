@@ -72,6 +72,27 @@ val MonoValue = TextStyle(
     letterSpacing = 0.sp,
 )
 
+/**
+ * ROUND 25 item 116 — **a live number that does not twitch.**
+ *
+ * The tracking-lost popup counts seconds under its headline, centred. JetBrains
+ * Mono is fixed-pitch, so "9 s" and "10 s" already differ by one cell — but the
+ * count is CENTRED, so every digit added or removed shifts the whole string
+ * half a cell sideways, once a second, in the middle of a card the operator is
+ * being told to hold still in front of. `tnum` states the intent explicitly
+ * (and is what makes this correct if the family ever changes), and the tracking
+ * drops to zero: [MonoLabel]'s 0.14 em is for scanning a code like `MID-360`,
+ * not for reading a number that is changing while you look at it.
+ */
+val MonoTabular = TextStyle(
+    fontFamily = MonoFontFamily,
+    fontWeight = FontWeight.Medium,
+    fontSize = 15.sp,
+    lineHeight = 20.sp,
+    letterSpacing = 0.sp,
+    fontFeatureSettings = "tnum",
+)
+
 /** The mono meta line under a project card. */
 val MonoMeta = TextStyle(
     fontFamily = MonoFontFamily,

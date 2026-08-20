@@ -218,6 +218,31 @@ object BracketNominals {
                 0.0, 0.0, 0.0, 1.0,
             ),
         )
+        // ROUND 25 item 119 — STL-27L: the SAME nominal as the D6, on purpose.
+        //
+        // The CAD nominal encodes the BRACKET, not the sensor's internals: the
+        // reference-v1 mount has one lidar seat, directly above the camera,
+        // scan plane vertical. An STL-27L bolted into that seat therefore has
+        // the D6's rotation (identity, derived above and pinned by
+        // `D6ChiralityTest` — the LD-series fan is right-handed about the same
+        // spin axis) and the D6's lever arm. Inventing a different translation
+        // here would be inventing a bracket that does not exist; the two
+        // sensors' bodies differ by millimetres and the wizard's whole job is
+        // to recover that difference from measurement rather than from a guess
+        // typed into this file.
+        //
+        // UNVERIFIED, like the D6's translation beside it: no physical bracket
+        // and no STL-27L hardware exist. Kept as a separate branch rather than
+        // folded in with the D6 so that a real STL-27L seat, when one is cut,
+        // has an obvious place to land.
+        SensorType.STL27L -> Mat4(
+            doubleArrayOf(
+                1.0, 0.0, 0.0, 0.000,
+                0.0, 1.0, 0.0, -0.060,
+                0.0, 0.0, 1.0, -0.035,
+                0.0, 0.0, 0.0, 1.0,
+            ),
+        )
         // Mid-360: heavier, sits further back on the handle.
         SensorType.MID360 -> Mat4(
             doubleArrayOf(

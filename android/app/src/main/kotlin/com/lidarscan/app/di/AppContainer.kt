@@ -156,6 +156,27 @@ class AppContainer(context: Context) {
      */
     val tutorialReplayRequest = kotlinx.coroutines.flow.MutableStateFlow(false)
 
+    /**
+     * ROUND 25 item 115 — **"Scan saved.", for the scan the operator did not
+     * press Stop on.**
+     *
+     * Leaving the Scan tab now stops and seals whatever was recording. That
+     * seal deliberately does not navigate (see `CaptureViewModel`'s
+     * `sealTriggeredByLeaving` — navigating would drag an operator who asked
+     * for Settings into Projects, and would re-arm the round-23 bounce), so the
+     * only place the app can honestly report "your walk was saved" is the
+     * Projects tab, whenever it is next looked at.
+     *
+     * Carries the sealed project's id rather than a `true`: Projects has the
+     * list, so it can name the scan, and an id is also what makes the notice
+     * idempotent if two screens observe it.
+     *
+     * On the container and not in `SettingsRepository` for the same reason
+     * [tutorialReplayRequest] is — it is an event about this run of the app,
+     * not a preference. Consumed by the screen that shows it.
+     */
+    val scanSavedNotice = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+
     val appRunId: String = java.util.UUID.randomUUID().toString()
 
     /** D6 USB device discovery, permission flow and open-connection registry (B2). */
@@ -178,6 +199,31 @@ class AppContainer(context: Context) {
      * appear after this container is built — see `UdpMid360Detector`'s doc.
      */
     val mid360HeartbeatDetector = UdpMid360Detector { ethernetMonitor.state.value.network }
+
+    /**
+     * ROUND 25 item 118 (owner amendment) — the connection-detection debug
+     * sweep, written into `capture.log` under `[net-debug]`.
+     *
+     * Built here rather than per-screen because the three things that feed it
+     * live in three different lifetimes: the Mid-360 wizard's ~1 s poll, the
+     * Capture tab's sensor auto-detect race, and the developer-mode Settings
+     * row. One instance means one rate-limiter, which is the only way the
+     * "at most one block per second per category" promise can actually hold
+     * across all three.
+     *
+     * Its [com.lidarscan.app.net.ConnectionDebugSweeper.enabled] flag mirrors
+     * `AppSettings.developerMode` and is set from the same Settings collector
+     * that already mirrors the flag onto [captureLog] — see `CaptureScreen`'s
+     * `developerCaptureDebug` line. Off, it does no work at all.
+     *
+     * The sink is `captureLog::log`, so a sweep also lands in an open
+     * capture's own `debug/capture-debug.log` for free.
+     */
+    val connectionDebugSweeper = com.lidarscan.app.net.ConnectionDebugSweeper(
+        context = appContext,
+        ethernetMonitor = ethernetMonitor,
+        sink = { tag, message -> captureLog.log(tag, message) },
+    )
 
     init {
         // B3: MUST run before any Mid-360 device is added. The engine's SDK2
@@ -239,6 +285,12 @@ class AppContainer(context: Context) {
         // phone's USB stack, so it is applied to the registry before any
         // connection can be opened rather than at connect time.
         d6UsbConnectionRegistry.setSensorLatencyMillis(persisted.d6SensorLatencyMs)
+        // ROUND 25 item 118 (owner amendment): the `[net-debug]` channel's
+        // developer-mode flag, seeded from the SAME synchronous startup read
+        // rather than a second one — so a wizard opened straight from a cold
+        // start (without passing through Capture or Settings, whose collectors
+        // also mirror it) already logs. Off by default; off costs nothing.
+        connectionDebugSweeper.enabled = persisted.developerMode
         val persistedUseFake = persisted.useFakeEngine
         val forceFake = BuildConfig.FORCE_FAKE_ENGINE || persistedUseFake
         val bridge: EngineBridge = if (!forceFake && ScanEngineNative.isAvailable) {

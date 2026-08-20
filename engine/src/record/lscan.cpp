@@ -212,6 +212,10 @@ bool decode_phone_imu_chunk(ByteSpan in, PhoneImuChunkRecord* out) {
 StreamId stream_of(ChunkType t) {
   switch (t) {
     case ChunkType::kD6Raw: return StreamId::kLidarD6;
+    // ITEM 119. Its own stream id, sharing lidar.bin the way kLidarMid360
+    // already does: ReplaySource filters on the CHUNK TYPE, so a container
+    // holding both never replays one sensor's bytes into the other's parser.
+    case ChunkType::kStl27lRaw: return StreamId::kLidarStl27l;
     case ChunkType::kMid360Points: return StreamId::kLidarMid360;
     case ChunkType::kMid360Imu: return StreamId::kImu;
     case ChunkType::kPoseAr: return StreamId::kPoseAr;
@@ -241,6 +245,7 @@ StreamId stream_of(ChunkType t) {
 const char* stream_file_of(StreamId s) {
   switch (s) {
     case StreamId::kLidarD6:
+    case StreamId::kLidarStl27l:
     case StreamId::kLidarMid360: return kLidarStreamFile;
     case StreamId::kImu: return kImuStreamFile;
     case StreamId::kPoseAr:

@@ -26,6 +26,7 @@
 #include "scanengine/core/log.h"
 #include "scanengine/drivers/d6/commands.h"
 #include "scanengine/drivers/d6/d6_parser.h"
+#include "scanengine/drivers/stl27l/stl27l_parser.h"
 #include "scanengine/gnss/nmea.h"
 #include "scanengine/timesync/clock.h"
 #include "serial_port.h"
@@ -113,6 +114,133 @@ bool D6Sniffer::LooksLikeText() const { return impl_->text; }
 
 void D6Sniffer::Reset() {
   impl_->parser.reset();
+  impl_->text_run = 0;
+  impl_->text = false;
+  std::memset(impl_->tail, 0, sizeof(impl_->tail));
+}
+
+// ===========================================================================
+// STL-27L  (ITEM 119)
+// ===========================================================================
+//
+// PROTOCOL-DERIVED, NOT OBSERVED. No STL-27L hardware exists on this project;
+// the bands below come from the public LD-series references and the
+// datasheet's rates, not from a capture. They are deliberately GENEROUS —
+// a probe that refuses to identify real hardware is a worse failure than one
+// that takes an extra packet to be sure — and every one of them is named so
+// that a first-contact session can widen exactly the one that was wrong.
+
+namespace {
+
+// Header sanity, on top of the CRC. The CRC alone is eight bits; these turn
+// a 1-in-256 coincidence into a 1-in-millions one, and they cost four
+// comparisons.
+bool stl27l_packet_looks_sane(const stl27l::Packet& p) {
+  // Spin rate. The datasheet's nominal is 10 Hz = 3600 deg/s; the PWM input
+  // takes it roughly 5-13 Hz. The band is wider than that on both sides.
+  if (p.speed_dps < 600 || p.speed_dps > 9000) return false;
+  // Angles are 0.01 deg and decode() already divided by 100, so both must be
+  // inside one revolution.
+  if (!(p.start_angle_deg >= 0.f && p.start_angle_deg < 360.f)) return false;
+  if (!(p.end_angle_deg >= 0.f && p.end_angle_deg < 360.f)) return false;
+  // Twelve points at the datasheet rate span 360*12/2160 = 2 degrees. Allow
+  // anything from a hair above zero to 30 degrees, which covers a unit spun
+  // far faster than spec, and reject a span of exactly zero (a stuck encoder
+  // or, far more likely, a false header made of repeated bytes).
+  float end = p.end_angle_deg;
+  if (end < p.start_angle_deg) end += 360.f;
+  const float span = end - p.start_angle_deg;
+  if (!(span > 0.001f && span <= 30.f)) return false;
+  return true;
+}
+
+}  // namespace
+
+struct Stl27lSniffer::Impl {
+  stl27l::Parser parser;
+  // The COIN-D6 cross-check. Its own parser, fed the same bytes, so "this is
+  // the other lidar" is a decode and not a heuristic.
+  d6::Parser d6_parser;
+  std::uint32_t sane_packets = 0;
+  std::uint16_t speed_dps = 0;
+  std::uint32_t text_run = 0;
+  bool text = false;
+  char tail[4] = {0, 0, 0, 0};
+
+  Impl() {
+    stl27l::Config cfg;
+    cfg.drop_zero_range = true;
+    cfg.emit_bad_crc_points = false;
+    // A probe reads packet accounting, never points; a false header must cost
+    // one byte, not 47 (Config::consume_packet_on_bad_crc).
+    cfg.consume_packet_on_bad_crc = false;
+    // The probe has no use for timestamps and no wire model it can trust
+    // (a discovery read is bursty by nature), so leave that machinery off.
+    cfg.per_sample_timestamps = false;
+    parser.set_config(cfg);
+    parser.set_point_callback([](const stl27l::Point&) {});
+    parser.set_packet_callback([this](const stl27l::Packet& p) {
+      if (stl27l_packet_looks_sane(p)) {
+        ++sane_packets;
+        speed_dps = p.speed_dps;
+      }
+    });
+
+    d6::Config dcfg;
+    dcfg.checksum = d6::ChecksumVariant::kVendorSdk;  // field-proven, see above
+    dcfg.drop_zero_range = true;
+    d6_parser.set_config(dcfg);
+    d6_parser.set_point_callback([](const d6::Point&) {});
+  }
+};
+
+Stl27lSniffer::Stl27lSniffer() : impl_(new Impl) {}
+Stl27lSniffer::~Stl27lSniffer() = default;
+
+void Stl27lSniffer::Feed(const std::uint8_t* data, std::size_t n) {
+  if (data == nullptr || n == 0) return;
+
+  // The text latch, identical in shape to D6Sniffer's and there for the same
+  // reason: a UM982 or a console banner must never read as a lidar.
+  for (std::size_t i = 0; i < n && !impl_->text; ++i) {
+    impl_->text_run = is_textish(data[i]) ? impl_->text_run + 1 : 0;
+    if (impl_->text_run >= 32) impl_->text = true;
+    impl_->tail[0] = impl_->tail[1];
+    impl_->tail[1] = impl_->tail[2];
+    impl_->tail[2] = impl_->tail[3];
+    impl_->tail[3] = static_cast<char>(data[i]);
+    if (impl_->tail[2] == '$' && (impl_->tail[3] == 'G' || impl_->tail[3] == 'P')) {
+      impl_->text = true;
+    }
+    if (std::memcmp(impl_->tail, "#UNI", 4) == 0) impl_->text = true;
+  }
+
+  impl_->parser.feed(data, n);
+  impl_->d6_parser.feed(data, n);
+}
+
+bool Stl27lSniffer::Identified() const {
+  if (impl_->text) return false;
+  if (LooksLikeD6()) return false;  // the other lidar owns this port
+  return impl_->sane_packets >= kPacketsToIdentify;
+}
+std::uint32_t Stl27lSniffer::packets_ok() const {
+  return static_cast<std::uint32_t>(impl_->parser.stats().packets_ok);
+}
+std::uint32_t Stl27lSniffer::packets_bad_crc() const {
+  return static_cast<std::uint32_t>(impl_->parser.stats().packets_bad_crc);
+}
+std::uint16_t Stl27lSniffer::speed_dps() const { return impl_->speed_dps; }
+bool Stl27lSniffer::LooksLikeText() const { return impl_->text; }
+bool Stl27lSniffer::LooksLikeD6() const {
+  return impl_->d6_parser.stats().packets_ok >= D6Sniffer::kPacketsToIdentify;
+}
+
+void Stl27lSniffer::Reset() {
+  impl_->parser.reset();
+  impl_->d6_parser.reset();
+  impl_->sane_packets = 0;
+  impl_->speed_dps = 0;
   impl_->text_run = 0;
   impl_->text = false;
   std::memset(impl_->tail, 0, sizeof(impl_->tail));
@@ -287,6 +415,55 @@ std::optional<D6Probe> ProbeSerialD6(const std::vector<std::string>& port_paths,
       SCAN_LOG_INFO(kMod, "d6 found on %s (%u packets, after start command)", path.c_str(),
                     p.packets_ok);
       return p;
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<Stl27lProbe> ProbeSerialStl27l(const std::vector<std::string>& port_paths,
+                                             int per_port_ms) {
+  // One stage, all of it passive. A powered STL-27L emits ~1800 packets per
+  // second, so four of them arrive inside the first few milliseconds — the
+  // budget here is dominated by open() latency, not by the dwell.
+  const int budget = per_port_ms > 0 ? per_port_ms : 1000;
+
+  for (const std::string& path : port_paths) {
+    discovery_serial::SerialPort port;
+    const discovery_serial::OpenResult r =
+        port.Open(path, static_cast<int>(stl27l::kDefaultBaud));
+    if (r != discovery_serial::OpenResult::kOk) {
+      if (r == discovery_serial::OpenResult::kBusy) {
+        SCAN_LOG_DEBUG(kMod, "stl27l probe: %s is busy — skipping", path.c_str());
+      } else {
+        SCAN_LOG_DEBUG(kMod, "stl27l probe: %s not usable (%s)", path.c_str(),
+                       discovery_serial::to_string(r));
+      }
+      continue;
+    }
+
+    Stl27lSniffer sniffer;
+    std::vector<std::uint8_t> buf(kReadChunk);
+    const std::int64_t end = now_ms() + budget;
+    while (now_ms() < end && !sniffer.Identified()) {
+      if (sniffer.LooksLikeText() || sniffer.LooksLikeD6()) break;  // somebody else's port
+      const int n = port.Read(buf.data(), buf.size(), 50);
+      if (n < 0) break;
+      if (n > 0) sniffer.Feed(buf.data(), static_cast<std::size_t>(n));
+    }
+
+    if (sniffer.Identified()) {
+      Stl27lProbe p;
+      p.port = path;
+      p.baud = stl27l::kDefaultBaud;
+      p.packets_ok = sniffer.packets_ok();
+      p.packets_bad_crc = sniffer.packets_bad_crc();
+      p.speed_dps = sniffer.speed_dps();
+      SCAN_LOG_INFO(kMod, "stl-27l found on %s (%u packets, %u deg/s, passive)", path.c_str(),
+                    p.packets_ok, static_cast<unsigned>(p.speed_dps));
+      return p;
+    }
+    if (sniffer.LooksLikeD6()) {
+      SCAN_LOG_DEBUG(kMod, "stl27l probe: %s is speaking COIN-D6 — not ours", path.c_str());
     }
   }
   return std::nullopt;

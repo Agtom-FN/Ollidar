@@ -216,6 +216,13 @@ if(ENGINE_BUILD_TESTS)
 
     if(ENGINE_BUILD_TOOLS)
         add_test(NAME engine_cli_selftest COMMAND engine_cli --selftest --quiet)
+        # ITEM 119. The same end-to-end path with the OTHER serial lidar
+        # selected (scan_device_config::kind = SCAN_DEVICE_STL27L). It is a
+        # separate entry rather than a flag on the one above because the two
+        # assert different point counts, and a selftest that silently covers
+        # only whichever sensor was built last is not a selftest.
+        add_test(NAME engine_cli_selftest_stl27l
+                 COMMAND engine_cli --selftest --quiet --sensor stl27l)
         add_test(NAME engine_cli_version COMMAND engine_cli --version)
         # INT-34: the D1 cloud-worker entry point, smoke-tested end to end.
         # --post-selftest synthesizes a tiny Mid-360 .lscan into a temp dir,

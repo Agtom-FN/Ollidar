@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -28,9 +29,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -84,9 +87,11 @@ import com.lidarscan.app.ui.common.fixColor
 import com.lidarscan.app.ui.components.BackBar
 import com.lidarscan.app.ui.components.Hint
 import com.lidarscan.app.ui.components.PrimaryPill
+import com.lidarscan.app.ui.components.ScanCard
 import com.lidarscan.app.ui.components.ScanChip
 import com.lidarscan.app.ui.components.ScanDims
 import com.lidarscan.app.ui.components.SecondaryPill
+import com.lidarscan.app.ui.components.SegmentedPill
 import com.lidarscan.app.ui.components.Stat
 import com.lidarscan.app.ui.components.StatPanel
 import com.lidarscan.app.ui.theme.DisplayFontFamily
@@ -95,14 +100,20 @@ import com.lidarscan.app.ui.theme.Ember
 import com.lidarscan.app.ui.theme.InkFaint
 import com.lidarscan.app.ui.theme.MonoLabel
 import com.lidarscan.app.ui.theme.MonoMeta
+import com.lidarscan.app.ui.theme.MonoTabular
 import com.lidarscan.app.ui.theme.MonoValue
+import com.lidarscan.app.ui.theme.OnSemGoodContainer
+import com.lidarscan.app.ui.theme.OnSemWarnContainer
 import com.lidarscan.app.ui.theme.OnEmber
 import com.lidarscan.app.ui.theme.PoseBlue
 import com.lidarscan.app.ui.theme.ScanTeal
 import com.lidarscan.app.ui.theme.SemBad
 import com.lidarscan.app.ui.theme.SemGood
+import com.lidarscan.app.ui.theme.SemGoodContainer
 import com.lidarscan.app.ui.theme.SemWarn
+import com.lidarscan.app.ui.theme.SemWarnContainer
 import com.lidarscan.app.ui.theme.ViewportGround
+import com.lidarscan.app.ui.theme.sensorBadgeColor
 import com.lidarscan.core.capture.CaptureAutoConnectState
 import com.lidarscan.core.engine.CaptureState
 import com.lidarscan.core.engine.ConnectionState
@@ -195,6 +206,19 @@ fun CaptureRoute(
                     // push poses into, so it gets no AR controller at all
                     // rather than one that would silently do nothing.
                     arController = if (isReplay) null else container.arController,
+                    // ROUND 25 item 115: leaving the tab closes the tracking
+                    // session outright rather than pausing it, so a
+                    // backgrounded Scan tab costs no camera. A replay has no
+                    // session to close and gets a no-op.
+                    shutDownTracking = {
+                        if (!isReplay) container.arController.close()
+                    },
+                    // ROUND 25 item 115: the seal that ran because the operator
+                    // walked away announces itself on Projects instead of
+                    // dragging them there.
+                    onScanSavedInBackground = { sealedId ->
+                        container.scanSavedNotice.value = sealedId
+                    },
                     // ROUND 9 (item 35): the phone IMU densifies ARCore's ~30 Hz
                     // poses for the D6's 4000 Hz returns. A replay has neither.
                     phoneImu = if (isReplay) null else container.phoneImuRecorder,
@@ -213,11 +237,21 @@ fun CaptureRoute(
                         if (isReplay) null else container.rtkManager.georefRecord(handle)
                     },
                     // ROUND 5 (item 7): auto-detect on entry. Both probes, raced.
+                    //
+                    // ROUND 25 item 119: still exactly two entries. The serial
+                    // one now walks D6 → STL-27L internally rather than being
+                    // raced against a second USB probe — see
+                    // `SerialLidarAutoDetector` for why two coroutines opening
+                    // the same CH340 at different bauds would be a bug.
                     autoDetectors = if (isReplay) {
                         emptyList()
                     } else {
                         listOf(
-                            com.lidarscan.app.capture.D6UsbAutoDetector(container.d6UsbConnectionRegistry),
+                            com.lidarscan.app.capture.SerialLidarAutoDetector
+                                .fromRegistry(
+                                    container.d6UsbConnectionRegistry,
+                                    connectionDebug = container.connectionDebugSweeper,
+                                ),
                             com.lidarscan.app.capture.Mid360HeartbeatAutoDetector(
                                 detector = container.mid360HeartbeatDetector,
                                 ethernetMonitor = container.ethernetMonitor,
@@ -226,6 +260,8 @@ fun CaptureRoute(
                                     // this device's capture defaults.
                                     container.settingsRepository.setLastDetectedMid360(lidarIp, hostIp, sn)
                                 },
+                                // ROUND 25 item 118 (owner amendment).
+                                connectionDebug = container.connectionDebugSweeper,
                             ),
                         )
                     },
@@ -242,8 +278,12 @@ fun CaptureRoute(
                             )
                         }
                     },
-                    openSerialPort = { path ->
-                        com.lidarscan.app.capture.openSerialPortByPath(container.d6UsbConnectionRegistry, path)
+                    openSerialPort = { path, baud ->
+                        com.lidarscan.app.capture.openSerialPortByPath(
+                            container.d6UsbConnectionRegistry,
+                            path,
+                            baud,
+                        )
                     },
                     manualMid360Defaults = {
                         val s = container.settingsRepository.settings.first()
@@ -525,6 +565,13 @@ fun CaptureRoute(
     LaunchedEffect(container) {
         container.settingsRepository.settings.collect {
             container.captureLog.developerCaptureDebug = it.developerMode && it.captureDebugLog
+            // ROUND 25 item 118 (owner amendment): the connection-detection
+            // debug channel rides the SAME seven-tap unlock, mirrored from the
+            // same collector so there is one place the flag is read. Note it
+            // is gated on `developerMode` alone and not on `captureDebugLog`:
+            // the per-capture debug log is about a capture, and this is about
+            // why a capture could not start at all.
+            container.connectionDebugSweeper.enabled = it.developerMode
         }
     }
     val stats by viewModel.stats.collectAsStateWithLifecycle()
@@ -905,7 +952,7 @@ fun CaptureRoute(
         onRetryAutoDetect = viewModel::retryAutoDetect,
         onShowManualEntry = viewModel::showManualEntry,
         onHideManualEntry = { viewModel.hideManualEntry() },
-        onManualDeviceConnect = viewModel::connectManualD6,
+        onManualDeviceConnect = viewModel::connectManualSerialLidar,
         onManualLidarIpChange = viewModel::setManualLidarIp,
         onManualHostIpChange = viewModel::setManualHostIp,
         onManualMid360Connect = viewModel::connectManualMid360,
@@ -1109,7 +1156,7 @@ fun CaptureScreen(
     onRetryAutoDetect: () -> Unit,
     onShowManualEntry: () -> Unit,
     onHideManualEntry: () -> Unit,
-    onManualDeviceConnect: (ManualSerialDevice) -> Unit,
+    onManualDeviceConnect: (ManualSerialDevice, SensorType) -> Unit,
     onManualLidarIpChange: (String) -> Unit,
     onManualHostIpChange: (String) -> Unit,
     onManualMid360Connect: () -> Unit,
@@ -1236,7 +1283,7 @@ fun CaptureScreen(
     val compact = CaptureLayout.useCompactChrome(connected = connected, manualEntryOpen = manualEntryOpen)
     val screenHeightDp = LocalConfiguration.current.screenHeightDp.toFloat()
     // The mount row is only for the sensor whose extrinsic the trim is ABOUT.
-    val mountRowVisible = poseTrackingRequired && sensor == SensorType.COIN_D6
+    val mountRowVisible = poseTrackingRequired && sensor.isPhoneTrackedPushbroom
     // The `BackBar` survives only where there is a real parent to go back to.
     // The Capture *tab* has none — its back arrow went to Projects, which the
     // floating tab bar already does — and 56 dp is 7 % of a phone screen.
@@ -1274,11 +1321,11 @@ fun CaptureScreen(
                 actions = {
                     ScanChip(
                         text = sensor.badgeLabel.uppercase(),
-                        color = if (connected) {
-                            if (sensor == SensorType.MID360) PoseBlue else ScanTeal
-                        } else {
-                            null
-                        },
+                        // ROUND 25 item 119: exhaustive, see `sensorBadgeColor`.
+                        // Null while disconnected is deliberate and unchanged —
+                        // an untinted chip is how this bar says "nothing on the
+                        // cable yet".
+                        color = if (connected) sensorBadgeColor(sensor) else null,
                         showDot = true,
                     )
                     Spacer(Modifier.width(8.dp))
@@ -1854,7 +1901,10 @@ fun CaptureScreen(
             liveSlam = liveSlam,
             liveSlamEditable = !live && connected,
             // ROUND 13: a COIN-D6 can never feed the LIO this gates.
-            liveSlamSupported = sensor != SensorType.COIN_D6,
+            // ROUND 25 item 119: a 2-D lidar cannot run live SLAM — one scan
+            // plane does not constrain a 6-DoF pose — and that is true of the
+            // STL-27L for exactly the reason it is true of the D6.
+            liveSlamSupported = !sensor.isPhoneTrackedPushbroom,
             onLiveSlamChange = onLiveSlamChange,
             connection = {
                 if (autoConnectState != null) {
@@ -1881,7 +1931,7 @@ fun CaptureScreen(
                     Hint("Replay session — there is no device to connect.", color = InkFaint)
                 }
             },
-            mount = if (poseTrackingRequired && sensor == SensorType.COIN_D6) {
+            mount = if (poseTrackingRequired && sensor.isPhoneTrackedPushbroom) {
                 {
                     MountReferenceDetail(
                         mountTrim = mountTrim,
@@ -2365,8 +2415,12 @@ private tailrec fun android.content.Context.findActivity(): android.app.Activity
 internal fun TrackingLossPopup(state: com.lidarscan.core.capture.TrackingBannerState) {
     if (state.banner == com.lidarscan.core.capture.TrackingBanner.NONE) return
     val lost = state.banner == com.lidarscan.core.capture.TrackingBanner.LOST
-    val accent = if (lost) SemWarn else SemGood
-    val shape = RoundedCornerShape(ScanDims.CardRadius)
+    // ROUND 25 item 116: the semantic CONTAINER pair, not a raw hex and not a
+    // neutral card wearing a coloured ring. One token decides the ground, one
+    // decides everything drawn on it, and both move together if the semantic
+    // amber is ever retuned.
+    val container = if (lost) SemWarnContainer else SemGoodContainer
+    val onContainer = if (lost) OnSemWarnContainer else OnSemGoodContainer
 
     // The amber card counts up at 250 ms, like the start panel's own tick, so
     // "how long have I been standing here" is answered without arithmetic.
@@ -2391,41 +2445,74 @@ internal fun TrackingLossPopup(state: com.lidarscan.core.capture.TrackingBannerS
             .testTag("trackingPopupScrim"),
         contentAlignment = Alignment.Center,
     ) {
-        Column(
-            Modifier
-                .fillMaxWidth()
+        // ROUND 25 item 116 — this is now the app's OWN card component, with
+        // the app's radius, the app's hairline weight and the app's padding,
+        // instead of a `Column` that reproduced two of the three and invented a
+        // 3 dp ring for the rest. The only geometry this card states for itself
+        // is the one thing that IS particular to it: it floats over a scrim, so
+        // it casts a shadow. Both banners get the identical call — item 116
+        // asks for the same geometry on the green card, and the way to
+        // guarantee that is to have one call site rather than two that agree.
+        ScanCard(
+            modifier = Modifier
                 .padding(horizontal = 26.dp)
-                .background(MaterialTheme.colorScheme.surfaceContainer, shape)
-                .border(3.dp, accent, shape)
-                .padding(horizontal = 20.dp, vertical = 22.dp)
                 // The round-23 tags, kept: the presentation moved, the meaning
                 // did not, and a renamed tag would silently retire the
                 // assertions that pin it.
                 .testTag(if (lost) "trackingLostBanner" else "trackingBackBanner"),
-            horizontalAlignment = Alignment.CenterHorizontally,
+            container = container,
+            borderColor = onContainer.copy(alpha = 0.55f),
+            elevation = 16.dp,
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 22.dp),
         ) {
+            // Status iconography consistent with the rest of the app, which is
+            // the `Icons.Filled` family throughout — and `CheckCircle` for the
+            // green edge is the SAME glyph the process-result lines and the
+            // selection tick already use for "this is fine".
+            Icon(
+                if (lost) Icons.Filled.Warning else Icons.Filled.CheckCircle,
+                contentDescription = null,
+                tint = onContainer,
+                modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .size(34.dp)
+                    .testTag("trackingBannerIcon"),
+            )
+            Spacer(Modifier.height(10.dp))
             Text(
                 if (lost) {
                     com.lidarscan.core.capture.TrackingLossBanners.LOST_TEXT
                 } else {
                     com.lidarscan.core.capture.TrackingLossBanners.REGAINED_TEXT
                 },
-                fontFamily = DisplayFontFamily,
-                fontWeight = FontWeight.Bold,
-                // Bigger than the banner's 19 sp: this is read at arm's length,
-                // at hip height, by someone who has just looked down.
-                fontSize = 26.sp,
-                color = accent,
+                // The app's type scale rather than a hand-set size: this is a
+                // headline on a card, so it is `headlineSmall` — Display
+                // family, semi-bold, the redesign's negative tracking — read at
+                // hip height, so it is scaled up by the one factor the role
+                // does not carry. 26 sp was the right SIZE and the wrong way to
+                // ask for it: a hand-set `fontSize` with a hand-set weight is a
+                // fourth typographic dialect on a screen that already has
+                // three.
+                style = MaterialTheme.typography.headlineSmall.copy(fontSize = 26.sp),
+                color = onContainer,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                modifier = Modifier.testTag("trackingBannerText"),
+                modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .testTag("trackingBannerText"),
             )
             if (lost) {
                 Spacer(Modifier.height(8.dp))
                 Text(
                     com.lidarscan.core.capture.TrackingLossBanners.lostDetail(elapsed),
-                    style = MonoLabel.copy(fontSize = 15.sp),
-                    color = accent,
-                    modifier = Modifier.testTag("trackingLostElapsed"),
+                    // Tabular figures: the count is centred and changes every
+                    // second, and proportional digits would slide the whole
+                    // line sideways under a card that is telling the operator
+                    // to stand still. See `MonoTabular`.
+                    style = MonoTabular,
+                    color = onContainer,
+                    modifier = Modifier
+                        .align(Alignment.CenterHorizontally)
+                        .testTag("trackingLostElapsed"),
                 )
             }
         }
@@ -2756,7 +2843,7 @@ private fun PreCaptureStrip(
     onRetryAutoDetect: () -> Unit,
     onShowManualEntry: () -> Unit,
     onHideManualEntry: () -> Unit,
-    onManualDeviceConnect: (ManualSerialDevice) -> Unit,
+    onManualDeviceConnect: (ManualSerialDevice, SensorType) -> Unit,
     onManualLidarIpChange: (String) -> Unit,
     onManualHostIpChange: (String) -> Unit,
     onManualMid360Connect: () -> Unit,
@@ -2810,9 +2897,11 @@ private fun PreCaptureStrip(
             }
         }
 
-        // ROUND 5 item 11: the mount hint. Short, and only for the sensor it
-        // applies to — the D6's geometry is the whole reason the capture is 3D.
-        if (poseTrackingRequired && sensor == SensorType.COIN_D6) {
+        // ROUND 5 item 11: the mount hint. Short, and only for the sensors it
+        // applies to — a 2-D lidar's mount geometry is the whole reason the
+        // capture is 3D at all, which is as true of ROUND 25 item 119's
+        // STL-27L as it is of the D6.
+        if (poseTrackingRequired && sensor.isPhoneTrackedPushbroom) {
             Spacer(Modifier.height(4.dp))
             // ROUND 24 item 110(a): was 33 words including "6-DoF". The rest
             // of the explanation is now TutorialStep.SCAN_BUTTON / START_HOLD.
@@ -3000,11 +3089,30 @@ private fun AutoDetectLine(
 /**
  * The inline manual fallback (owner addition 1). Both transports, because at this
  * point the app does not know which one the operator has: a tap-to-connect list of
- * attached serial ports for the D6, and the two addresses for the Mid-360.
+ * attached serial ports, and the two addresses for the Mid-360.
  *
  * A panel on the screen, never a dialog (item 7). Its own height is capped and it
  * scrolls, so a rig with six serial devices cannot push the live viewport off the
  * bottom of the screen.
+ *
+ * ## ROUND 25 item 119 — the sensor row
+ *
+ * The header used to read "COIN-D6 · USB" and every Connect button meant
+ * "connect a COIN-D6". With two lidars on the same cable, the same connector
+ * and the same driver class, the port itself no longer says which box is on the
+ * end of it — only the person holding it does. So the panel asks, once, with a
+ * two-option [SegmentedPill], and Connect acts on the answer.
+ *
+ * This is also the intended escape hatch from auto-detect's one honest weakness
+ * (`SerialLidarAutoDetector`'s class doc): a probe that guesses wrong is
+ * overridden here in one tap, without a wizard and without a reconnect dance.
+ *
+ * The choice is **local to the panel** rather than ViewModel state. It is a
+ * question about the cable in front of the operator right now, it is answered
+ * and consumed in the same gesture, and hoisting it would put a field into the
+ * capture session that outlives the reason it was asked. `rememberSaveable` is
+ * enough — it survives the rotation, which is the only lifecycle event that
+ * happens between picking and tapping.
  */
 @Composable
 private fun ManualEntryPanel(
@@ -3012,11 +3120,12 @@ private fun ManualEntryPanel(
     lidarIp: String,
     hostIp: String,
     busy: Boolean,
-    onDeviceConnect: (ManualSerialDevice) -> Unit,
+    onDeviceConnect: (ManualSerialDevice, SensorType) -> Unit,
     onLidarIpChange: (String) -> Unit,
     onHostIpChange: (String) -> Unit,
     onMid360Connect: () -> Unit,
 ) {
+    var manualSerialSensor by rememberSaveable { mutableStateOf(SensorType.COIN_D6) }
     val shape = RoundedCornerShape(ScanDims.TileRadius)
     Column(
         Modifier
@@ -3028,7 +3137,22 @@ private fun ManualEntryPanel(
             .padding(12.dp)
             .testTag("manualEntryPanel"),
     ) {
-        Text("COIN-D6 · USB", style = MonoLabel, color = Ember)
+        Text("USB SCANNER", style = MonoLabel, color = Ember)
+        Spacer(Modifier.height(6.dp))
+        // The two serial lidars, by the same badge labels the Projects cards
+        // use — no new vocabulary for the operator to learn.
+        SegmentedPill(
+            options = listOf(
+                SensorType.COIN_D6 to SensorType.COIN_D6.badgeLabel,
+                SensorType.STL27L to SensorType.STL27L.badgeLabel,
+            ),
+            selected = manualSerialSensor,
+            onSelect = { manualSerialSensor = it },
+            enabled = !busy,
+            modifier = Modifier.testTag("manualSensorSelector"),
+        )
+        Spacer(Modifier.height(4.dp))
+        Hint(com.lidarscan.core.Wording.MANUAL_SERIAL_PICK, color = InkFaint)
         Spacer(Modifier.height(6.dp))
         if (devices.isEmpty()) {
             Hint(com.lidarscan.core.Wording.NO_USB_DEVICE + "\n" + com.lidarscan.core.Wording.NO_USB_DEVICE_DETAIL)
@@ -3049,7 +3173,7 @@ private fun ManualEntryPanel(
                     Spacer(Modifier.width(8.dp))
                     TextButton(
                         enabled = !busy,
-                        onClick = { onDeviceConnect(device) },
+                        onClick = { onDeviceConnect(device, manualSerialSensor) },
                         modifier = Modifier.testTag("manualConnectDevice"),
                     ) { Text("Connect") }
                 }
@@ -4286,8 +4410,14 @@ private fun deviceDiagnostics(
         rotation = health?.let { "%.2f Hz".format(it.rotationHz) } ?: "—",
         // ROUND 5 item 11: the D6 has NO IMU. This row used to print the sensor's
         // badge here, which read as "the D6 has an IMU called COIN-D6".
+        // ROUND 25 item 119: the STL-27L has no IMU either — the LD-series is
+        // a spinning rangefinder and nothing else — so it reads the same line
+        // as the D6. Written as its own branch rather than folded in with the
+        // D6 or dropped into an `else`, because the next sensor to arrive must
+        // be forced to answer this question rather than inherit an answer.
         imu = when (sensor) {
             SensorType.COIN_D6 -> "none on device · phone IMU via ARCore"
+            SensorType.STL27L -> "none on device · phone IMU via ARCore"
             SensorType.MID360 -> "MID-360 built-in"
         },
         checksum = checksum,

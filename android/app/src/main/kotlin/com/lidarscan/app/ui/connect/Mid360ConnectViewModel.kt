@@ -6,6 +6,7 @@ import com.lidarscan.app.data.SettingsRepository
 import com.lidarscan.app.engine.Mid360LinkState
 import com.lidarscan.app.engine.NativeMid360Probe
 import com.lidarscan.app.engine.ScanEngineNative
+import com.lidarscan.app.net.ConnectionDebugSweeper
 import com.lidarscan.app.net.EthernetMonitor
 import com.lidarscan.app.net.EthernetState
 import com.lidarscan.app.net.NetworkBoundUdpSocket
@@ -13,6 +14,7 @@ import com.lidarscan.app.net.StaticIpGuidance
 import com.lidarscan.core.net.Mid360AutoDetectController
 import com.lidarscan.core.net.Mid360AutoDetectState
 import com.lidarscan.core.net.Mid360Detector
+import com.lidarscan.core.net.Mid360Diagnosis
 import com.lidarscan.core.net.Mid360Field
 import com.lidarscan.core.net.Mid360Heartbeat
 import com.lidarscan.core.net.Mid360SelfTest
@@ -21,6 +23,7 @@ import com.lidarscan.core.net.Mid360Validation
 import com.lidarscan.core.net.validateMid360Settings
 import com.lidarscan.core.net.withDetectedHeartbeat
 import com.lidarscan.core.store.ProjectStore
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,6 +33,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Screen state for the Mid-360 connect wizard.
@@ -60,6 +64,20 @@ data class Mid360ConnectUiState(
     val nativeAvailable: Boolean = ScanEngineNative.isAvailable,
     val autoDetect: Mid360AutoDetectState = Mid360AutoDetectState(),
     val showManualEntry: Boolean = false,
+    /**
+     * ROUND 25 item 118: which rung of the Ethernet chain is broken, right
+     * now. Recomputed on a ~1 s poll while the wizard is open (see
+     * [Mid360ConnectViewModel.refreshDiagnosis]) so that plugging a powered
+     * hub in changes the screen without a tap.
+     */
+    val diagnosis: Mid360Diagnosis.Step = Mid360Diagnosis.classify(
+        adapterPresent = false,
+        linkUp = false,
+        interfaceAddresses = emptyList(),
+        usbDeviceNames = emptyList(),
+    ),
+    /** Item 118: every USB device the OS enumerates — the evidence under a NO_ADAPTER verdict. */
+    val usbDevices: List<String> = emptyList(),
 ) {
     enum class Phase { IDLE, TESTING, READY, FAILED }
 
@@ -111,6 +129,25 @@ class Mid360ConnectViewModel(
     private val projectId: String?,
     private val settingsRepository: SettingsRepository,
     detector: Mid360Detector,
+    /**
+     * ROUND 25 item 118: what the OS enumerates on USB. A **supplier**, not a
+     * snapshot — the whole point is that it changes while this screen is open.
+     * Defaulted so the wizard still constructs on a platform with no
+     * `UsbManager`, and so tests need not stub it.
+     */
+    private val usbDeviceNames: () -> List<String> = { emptyList() },
+    /**
+     * ROUND 25 item 118, **owner amendment**: the `[net-debug]` sweep, written
+     * on every poll tick of this wizard.
+     *
+     * Nullable and defaulted for the same reason [usbDeviceNames] is — the
+     * wizard must still construct on a platform without a `UsbManager`, and
+     * the existing ViewModel tests must not have to stub a logger. It is
+     * rate-limited inside the sweeper, so "every poll tick" is at most one
+     * block per second with the rest reported as a suppressed count; a wizard
+     * left open on a bench cannot rotate `capture.log` out of existence.
+     */
+    private val connectionDebug: ConnectionDebugSweeper? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(Mid360ConnectUiState())
@@ -125,11 +162,23 @@ class Mid360ConnectViewModel(
     private var testStartMs = 0L
     private var baselinePointsOut = 0L
 
+    /**
+     * ROUND 25 item 118: when a heartbeat was last actually parsed. The
+     * diagnostic's freshness test is against wall-clock age, not against "did
+     * auto-detect ever succeed" — a device that answered ten minutes ago and
+     * has since been unplugged must not read as OK.
+     */
+    private var lastHeartbeatAtMs: Long? = null
+
     init {
         ethernetMonitor.start()
         viewModelScope.launch {
             ethernetMonitor.state.collect { eth ->
                 _uiState.value = _uiState.value.copy(ethernet = eth).revalidated()
+                // The adapter appearing or vanishing is exactly the event the
+                // diagnostic exists to narrate, so it re-runs here as well as
+                // on the screen's poll.
+                refreshDiagnosis()
             }
         }
         // Per-project persistence (Tech Spec §3.1's "Save per project"). A
@@ -174,9 +223,108 @@ class Mid360ConnectViewModel(
             )
             val heartbeat = detectState.found
             if (detectState.status == Mid360AutoDetectState.Status.FOUND && heartbeat != null) {
+                lastHeartbeatAtMs = System.currentTimeMillis()
                 applyDetectedHeartbeat(heartbeat)
             }
+            // ROUND 25 item 118: a listen that resolved (either way) changes
+            // the diagnosis — a heartbeat moves it to OK, a timeout leaves it
+            // on IP_OK_NO_LIDAR with something to report.
+            if (detectState.status != Mid360AutoDetectState.Status.LISTENING) refreshDiagnosis()
         }.launchIn(viewModelScope)
+        refreshDiagnosis()
+    }
+
+    // --- ROUND 25 item 118: the Ethernet diagnostic ---------------------------
+
+    /**
+     * Re-runs the pure `:core` classifier against what the OS says right now.
+     *
+     * Called from the ethernet callback, from each auto-detect resolution, and
+     * from the screen's ~1 s poll while it is open — never from a background
+     * job, so nothing here runs once the wizard is gone.
+     *
+     * Two mappings are made here and nowhere else, because they are the only
+     * Android-shaped facts in the whole diagnostic:
+     *
+     *  * **linkUp** is "the OS has an Ethernet `Network`" — [EthernetState.adapterPresent]
+     *    is named for the older, coarser question and is precisely that.
+     *  * **adapterPresent** is that OR "one of the enumerated USB devices is
+     *    recognisably an Ethernet adapter". That second half is the whole
+     *    NO_ADAPTER/ADAPTER_NO_LINK split: hardware the kernel enumerated but
+     *    never brought up is a different problem from no hardware, and the
+     *    owner's log could not tell them apart.
+     */
+    fun refreshDiagnosis() {
+        viewModelScope.launch { applyDiagnosis() }
+    }
+
+    /**
+     * The body of [refreshDiagnosis], returning the rung it landed on so
+     * [retryDiagnostic] can act on it without racing its own write.
+     *
+     * The USB enumeration is a binder round-trip, and this runs once a second
+     * for as long as the wizard is open, so it goes to [Dispatchers.IO] — a
+     * diagnostic screen that stutters the UI thread while diagnosing is its
+     * own bug report.
+     */
+    private suspend fun applyDiagnosis(): Mid360Diagnosis.Step {
+        // A diagnostic screen that crashes while diagnosing is the worst
+        // possible outcome, so the enumeration is never allowed to throw out.
+        val usb = withContext(Dispatchers.IO) {
+            runCatching { usbDeviceNames() }.getOrDefault(emptyList())
+        }
+        val current = _uiState.value
+        val linkUp = current.ethernet.adapterPresent
+        val adapterPresent = linkUp || usb.any(Mid360Diagnosis::looksLikeEthernetAdapter)
+        // The heartbeat's own persisted host beats the typed field: it is what
+        // the device is ACTUALLY unicasting to, and the typed field is a guess
+        // until a beacon says otherwise.
+        val expectedHost = current.autoDetect.found?.persistedHostIp ?: current.settings.hostIp
+        val step = Mid360Diagnosis.classify(
+            adapterPresent = adapterPresent,
+            linkUp = linkUp,
+            interfaceAddresses = current.ethernet.addresses.map { "${it.ip}/${it.prefixLength}" },
+            usbDeviceNames = usb,
+            expectedHostIp = expectedHost,
+            heartbeatAgeMillis = lastHeartbeatAtMs?.let { System.currentTimeMillis() - it },
+        )
+        _uiState.value = _uiState.value.copy(diagnosis = step, usbDevices = usb)
+        // ROUND 25 item 118 (owner amendment). The wizard's own six-word
+        // verdict is now backed by a full `[net-debug]` sweep — USB
+        // descriptors, every interface, the discovery listener — so that the
+        // field report a week later can tell "nothing on USB" from "a hub that
+        // enumerated and produced no interface", which is what the owner's
+        // Acer HY41-T9 could not be told apart from.
+        //
+        // Wrapped: a diagnostic that can throw would take down the screen that
+        // exists to diagnose.
+        runCatching {
+            connectionDebug?.logSweep(
+                trigger = ConnectionDebugSweeper.TRIGGER_WIZARD_POLL,
+                context = ConnectionDebugSweeper.SweepContext(
+                    expectedHostIp = expectedHost,
+                    heartbeatAgeMillis = lastHeartbeatAtMs?.let { System.currentTimeMillis() - it },
+                ),
+            )
+        }
+        return step
+    }
+
+    /**
+     * The Retry every state offers. Re-reads the world; and on the one state
+     * where the next step is not something the operator does with their hands
+     * (addressing correct, lidar silent), it runs the existing UDP 56201
+     * heartbeat discovery rather than a second listener of its own.
+     */
+    fun retryDiagnostic() {
+        viewModelScope.launch {
+            val step = applyDiagnosis()
+            if (step.runsDiscovery &&
+                _uiState.value.autoDetect.status != Mid360AutoDetectState.Status.LISTENING
+            ) {
+                startAutoDetect()
+            }
+        }
     }
 
     // --- AUTO-DETECT ---------------------------------------------------------

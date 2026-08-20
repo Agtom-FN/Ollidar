@@ -1053,6 +1053,22 @@ Result<DeviceId> Engine::add_device(const DeviceConfig& cfg) {
       driver = std::make_unique<D6Driver>(id, dcfg, ctx);
       break;
     }
+    case DeviceKind::kStl27l: {
+      // ITEM 119. Same routing as the D6, through the SAME shim: the two
+      // profile-sink signatures are identical by construction (see
+      // stl27l_driver.h), so the pushbroom path does not fork per sensor. A
+      // rig can carry a D6 and an STL-27L at once and both feed one assembler.
+      Stl27lConfig scfg = cfg.stl27l;
+      auto shim = std::make_unique<Impl::D6ProfileShim>();
+      shim->self = impl_.get();
+      shim->user = scfg.profile_sink;
+      shim->user_data = scfg.profile_sink_user_data;
+      scfg.profile_sink = &Impl::on_d6_profile;
+      scfg.profile_sink_user_data = shim.get();
+      impl_->d6_shims.push_back(std::move(shim));
+      driver = std::make_unique<Stl27lDriver>(id, scfg, ctx);
+      break;
+    }
     case DeviceKind::kMid360: {
       // A4/A6: every IMU sample goes through the Engine's one ImuIngest (and
       // therefore through the kLidarMid360 estimator the point path also
@@ -1086,6 +1102,15 @@ Result<DeviceId> Engine::add_device(const DeviceConfig& cfg) {
       break;
     case DeviceKind::kUnknown:
       return set_last_error(ScanError::kInvalidArgument, "device kind not set");
+    default:
+      // A `kind` this build has never heard of. Before ITEM 119 an
+      // out-of-range value fell straight out of the switch with `driver` still
+      // null and was inserted into the device map as a null unique_ptr, which
+      // is a crash the moment anything reaches for it. Now that DeviceKind is
+      // an enum an app can hold a NEWER value of, that has to be an error and
+      // not a fall-through.
+      return set_last_error(ScanError::kInvalidArgument, "unknown device kind %d",
+                            static_cast<int>(cfg.kind));
   }
 
   Driver* raw = driver.get();
@@ -1176,14 +1201,21 @@ Status Engine::push_serial_bytes(DeviceId id, ByteSpan bytes, TimePoint t_arriva
   // re-framing them here would mean parsing before recording, which is the one
   // thing record-always forbids. GnssSource::push_nmea frames arbitrary chunks,
   // so a replay that feeds these back byte for byte reproduces the capture.
+  //
+  // ITEM 119: the STL-27L takes the identical route as its OWN chunk type.
+  // Recording it as kD6Raw would put 47-byte LD frames in front of the D6
+  // parser on every replay and make lscan_is_d6_project() say yes to a
+  // container that has no D6 in it.
   const DeviceKind kind = d->kind();
-  if (kind == DeviceKind::kD6 || kind == DeviceKind::kRtkRover) {
+  if (kind == DeviceKind::kD6 || kind == DeviceKind::kRtkRover ||
+      kind == DeviceKind::kStl27l) {
+    lscan::ChunkType ct = lscan::ChunkType::kGnssNmea;
+    if (kind == DeviceKind::kD6) ct = lscan::ChunkType::kD6Raw;
+    else if (kind == DeviceKind::kStl27l) ct = lscan::ChunkType::kStl27lRaw;
     std::lock_guard<std::mutex> rlock(impl_->record_m);
     if (impl_->recorder->is_open()) {
       const std::int64_t t = t_arrival.nanos != 0 ? t_arrival.nanos : SteadyClock::now().nanos;
-      (void)impl_->recorder->write_chunk(
-          kind == DeviceKind::kD6 ? lscan::ChunkType::kD6Raw : lscan::ChunkType::kGnssNmea, t,
-          bytes);
+      (void)impl_->recorder->write_chunk(ct, t, bytes);
     }
   }
   return d->push_bytes(bytes, t_arrival);

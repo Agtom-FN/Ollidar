@@ -22,6 +22,8 @@
 #include "scanengine/drivers/d6/d6_parser.h"
 #include "scanengine/drivers/driver.h"
 #include "scanengine/drivers/mid360/mid360_driver.h"
+#include "scanengine/drivers/stl27l/stl27l_driver.h"
+#include "scanengine/drivers/stl27l/stl27l_parser.h"
 #include "scanengine/export/exporter.h"
 #include "scanengine/gnss/gnss.h"
 #include "scanengine/jobs/colorize_wiring.h"

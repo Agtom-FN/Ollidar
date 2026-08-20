@@ -559,21 +559,31 @@ Java_com_lidarscan_app_engine_ScanEngineNative_nativeEngineState(JNIEnv*, jclass
   return static_cast<jint>(state);
 }
 
-// Returns the device id (>= 0) on success, -1 on failure (call
-// nativeLastError() for detail). `writer` may be null (device.write == NULL
-// => "engine sends no commands", per scanengine_c.h) for a receive-only
-// connect. On success the shim holds a JVM global ref to `writer` until
-// nativeRemoveDevice frees it.
+// Adds a lidar that arrives as bytes on a serial port. Returns the device id
+// (>= 0) on success, -1 on failure (call nativeLastError() for detail).
+// `writer` may be null (device.write == NULL => "engine sends no commands",
+// per scanengine_c.h) for a receive-only connect. On success the shim holds a
+// JVM global ref to `writer` until nativeRemoveDevice frees it.
+//
+// ROUND 25 item 119: was nativeAddD6Device, with `cfg.kind = SCAN_DEVICE_D6`
+// written in below. That literal was the only D6-specific line in the whole
+// function — the STL-27L uses the SAME scan_device_config serial fields
+// (serial_port_name / serial_baud / serial_write / send_start_stop_commands)
+// and the same scan_engine_push_serial_bytes — so `kind` became a parameter
+// and the name stopped lying. `kind` is NOT validated here on purpose: the
+// engine owns the set of legal values, and a shim that kept its own copy of
+// that list would drift from scanengine_c.h the first time a device was added.
+// An unknown kind comes back as SCAN_ERR_INVALID_ARGUMENT and therefore -1.
 JNIEXPORT jint JNICALL
-Java_com_lidarscan_app_engine_ScanEngineNative_nativeAddD6Device(
-    JNIEnv* env, jclass, jlong handle, jstring serial_port_name, jint baud,
+Java_com_lidarscan_app_engine_ScanEngineNative_nativeAddSerialLidarDevice(
+    JNIEnv* env, jclass, jlong handle, jint kind, jstring serial_port_name, jint baud,
     jboolean send_start_stop, jobject writer) {
   auto* engine = reinterpret_cast<scan_engine*>(handle);
   const char* port_utf =
       serial_port_name != nullptr ? env->GetStringUTFChars(serial_port_name, nullptr) : nullptr;
 
   scan_device_config cfg{};
-  cfg.kind = SCAN_DEVICE_D6;
+  cfg.kind = static_cast<int32_t>(kind);  // SCAN_DEVICE_* — the caller's DeviceKind
   cfg.serial_port_name = port_utf;
   cfg.serial_baud = static_cast<uint32_t>(baud);
   cfg.send_start_stop_commands = send_start_stop ? 1 : 0;
@@ -591,7 +601,8 @@ Java_com_lidarscan_app_engine_ScanEngineNative_nativeAddD6Device(
   if (port_utf != nullptr) env->ReleaseStringUTFChars(serial_port_name, port_utf);
 
   if (err != SCAN_OK) {
-    LOGE("scan_engine_add_device (D6) failed: %d (%s)", err, scan_engine_last_error());
+    LOGE("scan_engine_add_device (serial lidar, kind=%d) failed: %d (%s)", static_cast<int>(kind), err,
+         scan_engine_last_error());
     if (ctx != nullptr) {
       env->DeleteGlobalRef(ctx->writer_global_ref);
       delete ctx;

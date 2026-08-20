@@ -11,6 +11,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.lidarscan.app.ui.theme.SensorD6Badge
 import com.lidarscan.app.ui.theme.SensorMid360Badge
+import com.lidarscan.app.ui.theme.SensorStl27lBadge
 import com.lidarscan.core.model.SensorType
 import com.lidarscan.core.model.WorkflowProfile
 
@@ -37,9 +38,13 @@ fun InfoChip(
 
 @Composable
 fun SensorBadge(sensor: SensorType, modifier: Modifier = Modifier) {
+    // ROUND 25 item 119: every sensor names its own badge colour explicitly.
+    // No `else` — a fourth sensor must break this build rather than quietly
+    // inherit whichever tint happened to be last in the list.
     val color = when (sensor) {
         SensorType.COIN_D6 -> SensorD6Badge
         SensorType.MID360 -> SensorMid360Badge
+        SensorType.STL27L -> SensorStl27lBadge
     }
     InfoChip(text = sensor.badgeLabel, color = color, modifier = modifier)
 }

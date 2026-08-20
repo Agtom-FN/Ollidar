@@ -58,9 +58,18 @@ class Round24UiTest {
     // ── item 107 ───────────────────────────────────────────────────────────
 
     /**
-     * **Item 107.** Icons only, centred, each still carrying its name for a
-     * screen reader — and the selected one carrying the ember dot, because on a
-     * bar of four glyphs a tint alone is not a state.
+     * **Item 107, as amended by ROUND 25 item 120.** Icons only, centred, each
+     * still carrying its name for a screen reader — and now with **no dot at
+     * all**.
+     *
+     * The dot assertions became their converse rather than being deleted. A
+     * removed feature that is merely un-tested comes back the next time someone
+     * "restores" a selected-state affordance; a removed feature that is
+     * asserted absent does not. `useUnmergedTree` is kept for the same reason
+     * round 24 needed it: each tab button is `clickable`, which merges its
+     * descendants, so anything drawn inside a tab is invisible to the merged
+     * tree and an assertion made against the merged tree would pass whether the
+     * dot were there or not.
      */
     @Test
     fun theTabBarIsIconsOnlyAndStillAccessible() {
@@ -69,24 +78,14 @@ class Round24UiTest {
             for (name in listOf("Projects", "Scan", "Jobs", "Settings")) {
                 composeRule.onNode(hasContentDescription(name)).assertExists()
             }
-            // Exactly one tab is selected, so exactly one dot is drawn.
-            //
-            // `useUnmergedTree`: each tab button is `clickable`, which merges
-            // its descendants, so the dot inside it is invisible to the merged
-            // tree. That merge is correct — a tab must announce itself as ONE
-            // thing — and it is why this assertion reads the unmerged tree.
-            assertEquals(
-                "exactly one tab may carry the selected dot",
-                1,
-                composeRule.onAllNodesWithTag("tabSelectedDot", useUnmergedTree = true)
-                    .fetchSemanticsNodes().size,
-            )
-            assertEquals(
-                "…and the other three are unselected",
-                3,
-                composeRule.onAllNodesWithTag("tabUnselectedDot", useUnmergedTree = true)
-                    .fetchSemanticsNodes().size,
-            )
+            for (tag in listOf("tabSelectedDot", "tabUnselectedDot")) {
+                assertEquals(
+                    "item 120: the tab bar draws no $tag",
+                    0,
+                    composeRule.onAllNodesWithTag(tag, useUnmergedTree = true)
+                        .fetchSemanticsNodes().size,
+                )
+            }
             // The bar still drives navigation by tag, which is what every other
             // emulator test in this suite depends on.
             composeRule.onNodeWithTag("tab_settings").performClick()
@@ -285,6 +284,24 @@ class Round24UiTest {
                 composeRule.waitUntil(timeoutMillis = 15_000) { !has("captureLogPath") }
             }
 
+            // ROUND 25: scroll back to the row before asserting it is DISPLAYED.
+            //
+            // The precondition above is not free: re-locking developer mode
+            // requires the version footer, and the footer is the last thing on
+            // a long scrolling page — so establishing the precondition leaves
+            // Settings scrolled to the BOTTOM, where Profile (the first row) is
+            // off-screen. `assertIsDisplayed` then fails on a page that is
+            // perfectly correct, and it fails ONLY when the device arrived with
+            // developer mode already on. That is the worst kind of test
+            // failure: it passes on CI, it passes for whoever runs the suite
+            // twice, and it fails for the one person who just did the round's
+            // manual verification on the same AVD — which is exactly how it
+            // surfaced.
+            //
+            // `performScrollTo` rather than weakening this to `assertExists`:
+            // "Profile is the top row of Settings" is the claim item 113
+            // actually makes, and an existence check would no longer make it.
+            composeRule.onNodeWithTag("settingsProfileRow").performScrollTo()
             composeRule.onNodeWithTag("settingsProfileRow").assertIsDisplayed()
             composeRule.onNodeWithTag("settingsTutorialRow").assertExists()
             composeRule.onNodeWithTag("advancedFeaturesSwitch").assertExists()

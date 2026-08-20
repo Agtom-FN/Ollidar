@@ -149,20 +149,7 @@ object StaticIpGuidance {
      * it means Settings genuinely has no such screen).
      */
     fun openSettings(context: Context): String? {
-        // Ordered most-specific to least. None of these is guaranteed to
-        // exist: `resolveActivity` is what keeps an unresolvable one from
-        // throwing, and is why this is a list rather than one call.
-        val candidates = buildList {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                // AOSP's Ethernet screen has no public action constant; the
-                // wireless-settings screen is its documented parent and is
-                // where every vendor's entry hangs off.
-                add(Settings.ACTION_WIRELESS_SETTINGS to "Network settings")
-            }
-            add(Settings.ACTION_WIRELESS_SETTINGS to "Network settings")
-            add(Settings.ACTION_SETTINGS to "Settings")
-        }
-        for ((action, label) in candidates) {
+        for ((action, label) in candidates()) {
             val intent = Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             if (intent.resolveActivity(context.packageManager) != null) {
                 context.startActivity(intent)
@@ -170,5 +157,40 @@ object StaticIpGuidance {
             }
         }
         return null
+    }
+
+    /**
+     * ROUND 25 item 118 — does any of [candidates] actually resolve on this
+     * build?
+     *
+     * The diagnostic wizard shows its "Open Ethernet settings" button **only**
+     * when this is true. A button that does nothing on the one build where
+     * Settings genuinely has no such screen (several MagicOS/EMUI builds ship
+     * none — see [caveat]) is worse than no button: the operator taps it,
+     * nothing happens, and they conclude the app is broken rather than that
+     * the phone cannot do this.
+     *
+     * Same `resolveActivity` call [openSettings] makes, so the two cannot
+     * disagree.
+     */
+    fun canOpenSettings(context: Context): Boolean = candidates().any { (action, _) ->
+        Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            .resolveActivity(context.packageManager) != null
+    }
+
+    /**
+     * Ordered most-specific to least. None of these is guaranteed to exist:
+     * `resolveActivity` is what keeps an unresolvable one from throwing, and
+     * is why this is a list rather than one call.
+     */
+    private fun candidates(): List<Pair<String, String>> = buildList {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            // AOSP's Ethernet screen has no public action constant; the
+            // wireless-settings screen is its documented parent and is
+            // where every vendor's entry hangs off.
+            add(Settings.ACTION_WIRELESS_SETTINGS to "Network settings")
+        }
+        add(Settings.ACTION_WIRELESS_SETTINGS to "Network settings")
+        add(Settings.ACTION_SETTINGS to "Settings")
     }
 }

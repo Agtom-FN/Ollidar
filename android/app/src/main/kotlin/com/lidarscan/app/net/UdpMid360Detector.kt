@@ -48,6 +48,11 @@ class UdpMid360Detector(private val network: () -> Network?) : Mid360Detector {
                     soTimeout = POLL_TIMEOUT_MS
                 }
                 runCatching { network()?.bindSocket(socket) }
+                // ROUND 25 item 118 (owner amendment): "no heartbeat heard"
+                // means two completely different things depending on whether
+                // anything was listening, and the owner's log could not say
+                // which. A no-op unless developer mode is on.
+                ConnectionDebugTrace.noteListening(true, Mid360HeartbeatParser.HEARTBEAT_PORT)
 
                 val buffer = ByteArray(MAX_DATAGRAM_BYTES)
                 val packet = DatagramPacket(buffer, buffer.size)
@@ -65,6 +70,17 @@ class UdpMid360Detector(private val network: () -> Network?) : Mid360Detector {
                     }
 
                     val payload = packet.data.copyOfRange(packet.offset, packet.offset + packet.length)
+                    // Item 118 amendment: recorded BEFORE the parse and
+                    // whatever the parse says, because "something else is
+                    // broadcasting on 56201" is a real failure mode — it is
+                    // why the loop below keeps listening past a bad parse —
+                    // and is otherwise completely invisible. The payload is
+                    // summarised and forgotten; it is never stored or logged.
+                    ConnectionDebugTrace.noteDatagram(
+                        sourceIp = packet.address?.hostAddress ?: "?",
+                        sourcePort = packet.port,
+                        payload = payload,
+                    )
                     val heartbeat = Mid360HeartbeatParser.parse(payload)
                     if (heartbeat != null) {
                         return@withContext Mid360DetectionResult.Found(heartbeat)
@@ -82,6 +98,7 @@ class UdpMid360Detector(private val network: () -> Network?) : Mid360Detector {
                 )
             } finally {
                 socket?.close()
+                ConnectionDebugTrace.noteListening(false, Mid360HeartbeatParser.HEARTBEAT_PORT)
             }
         }
 

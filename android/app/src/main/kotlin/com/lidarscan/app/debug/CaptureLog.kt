@@ -358,5 +358,27 @@ class CaptureLog(context: Context) {
          * deaths on 2026-08-20 left nothing at all.
          */
         const val TAG_CRASH = "crash"
+
+        /**
+         * ROUND 25 item 118 (owner amendment): the connection-detection debug
+         * channel — full USB enumeration, every network interface, and the
+         * discovery listener's own activity, each sweep led by a one-line
+         * verdict.
+         *
+         * A tag on THIS log rather than a file of its own, deliberately. The
+         * owner's failure was `[net] mid360 preflight: no-ethernet` twice, two
+         * minutes apart, and the whole value of a sweep is that it sits
+         * directly beneath the `[net]` line it explains; a separate file would
+         * have to be exported separately and then matched up by timestamp,
+         * which is the problem `CaptureLog` was built to remove. It also means
+         * a sweep lands in an open capture's `debug/capture-debug.log` for
+         * free, since [log] mirrors every line into the sink — so a `.lscan`
+         * taken while a Mid-360 would not connect carries the reason.
+         *
+         * Written only when developer mode is on, and rate-limited to one
+         * block per second per category — see
+         * `com.lidarscan.core.net.ConnectionDebugRateLimiter`.
+         */
+        const val TAG_NET_DEBUG = com.lidarscan.core.net.ConnectionSweepFormat.TAG
     }
 }

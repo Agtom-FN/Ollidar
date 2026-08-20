@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -40,7 +41,76 @@ class SettingsViewModel(
     private val onSensorLatencyApplied: ((Int) -> Unit)? = null,
     /** ROUND 7: the application context the Downloads copy needs; null in a bare-JVM test. */
     private val downloadsContext: android.content.Context? = null,
+    /**
+     * ROUND 25 item 118, **owner amendment**: the connection-detection sweep
+     * behind the developer-mode "Connection debug" row. Null in a bare-JVM
+     * test, and null is the whole degradation — the row simply reports that
+     * there is nothing to sweep with.
+     */
+    private val connectionDebug: com.lidarscan.app.net.ConnectionDebugSweeper? = null,
 ) : ViewModel() {
+
+    // ── ROUND 25 item 118 (owner amendment): Connection debug ──────────────
+    //
+    // The owner's Acer HY41-T9 hub did not work and the app said only "No
+    // Ethernet adapter found." — which cannot distinguish "never enumerated on
+    // USB" from "enumerated, no interface appeared" from "interface up on the
+    // wrong subnet". The periodic `[net-debug]` sweeps fix that for whoever
+    // reads the log afterwards; this row fixes it for whoever is standing
+    // there with the hub in their hand, by running one full sweep NOW and
+    // putting it on the screen.
+    //
+    // Deliberately NOT rate-limited (see ConnectionDebugSweeper.sweepNow): a
+    // person pressing a button is entitled to an answer. It still writes to
+    // the log as well as to the screen, because the two audiences are
+    // different people at different times.
+
+    private val _connectionDebugOutput = MutableStateFlow<String?>(null)
+
+    /** The last sweep's rendered block, or null before one has been run. Shown monospace and scrollable. */
+    val connectionDebugOutput: StateFlow<String?> = _connectionDebugOutput.asStateFlow()
+
+    private val _connectionDebugRunning = MutableStateFlow(false)
+
+    /** True while a sweep is in flight, so the row can say so rather than looking dead. */
+    val connectionDebugRunning: StateFlow<Boolean> = _connectionDebugRunning.asStateFlow()
+
+    /**
+     * Runs one full detection sweep and shows it.
+     *
+     * The expected host IP comes from this device's last successfully detected
+     * Mid-360 rather than a constant: the verdict's "wrong subnet" branch is
+     * only meaningful against the address the lidar actually unicasts to, and
+     * saying `192.168.1.5` when the device on site was configured for
+     * `192.168.2.5` would turn the sweep into a confident wrong answer.
+     */
+    fun runConnectionDebugSweep() {
+        val sweeper = connectionDebug
+        if (sweeper == null) {
+            _connectionDebugOutput.value = "Connection debug is unavailable in this build."
+            return
+        }
+        if (_connectionDebugRunning.value) return
+        _connectionDebugRunning.value = true
+        viewModelScope.launch {
+            // Turning the flag on here as well as in the Capture collector: a
+            // person who has just unlocked developer mode and pressed this
+            // button has not necessarily passed through the Capture tab since,
+            // and a sweep that silently reported an empty discovery section
+            // would be the same class of uninformative the amendment exists to
+            // remove.
+            sweeper.enabled = true
+            val hostIp = runCatching {
+                settingsRepository.settings.first().lastDetectedMid360HostIp
+            }.getOrNull() ?: com.lidarscan.core.net.Mid360Settings.DEFAULT_HOST_IP
+            _connectionDebugOutput.value = runCatching {
+                sweeper.sweepNow(
+                    context = com.lidarscan.app.net.ConnectionDebugSweeper.SweepContext(expectedHostIp = hostIp),
+                )
+            }.getOrElse { e -> "Connection debug sweep failed: ${e.javaClass.simpleName}: ${e.message}" }
+            _connectionDebugRunning.value = false
+        }
+    }
 
     // ── ROUND 24 item 113: DETAIL, in Settings ─────────────────────────────
     //
@@ -229,6 +299,13 @@ class SettingsViewModel(
     /** ROUND 17 item 66: the seven-tap unlock, and its one setting. */
     fun setDeveloperMode(enabled: Boolean) {
         viewModelScope.launch { settingsRepository.setDeveloperMode(enabled) }
+        // ROUND 25 item 118 (owner amendment): the `[net-debug]` channel rides
+        // the same unlock. Mirrored synchronously here so re-locking stops the
+        // logging at once rather than at the next Capture-tab collection —
+        // a developer switch that keeps writing after it is switched off is
+        // not a switch.
+        connectionDebug?.enabled = enabled
+        if (!enabled) _connectionDebugOutput.value = null
     }
 
     fun setCaptureDebugLog(enabled: Boolean) {

@@ -65,6 +65,7 @@ SCAN_CHECK_ENUM(SCAN_ERR_FILE, ScanError::kFileError);
 SCAN_CHECK_ENUM(SCAN_DEVICE_D6, DeviceKind::kD6);
 SCAN_CHECK_ENUM(SCAN_DEVICE_MID360, DeviceKind::kMid360);
 SCAN_CHECK_ENUM(SCAN_DEVICE_RTK_ROVER, DeviceKind::kRtkRover);
+SCAN_CHECK_ENUM(SCAN_DEVICE_STL27L, DeviceKind::kStl27l);
 
 SCAN_CHECK_ENUM(SCAN_DEV_DISCONNECTED, DeviceState::kDisconnected);
 SCAN_CHECK_ENUM(SCAN_DEV_STREAMING, DeviceState::kStreaming);
@@ -84,6 +85,7 @@ SCAN_CHECK_ENUM(SCAN_STREAM_POSE_FUSED, StreamId::kPoseFused);
 SCAN_CHECK_ENUM(SCAN_STREAM_SLAM_MAP, StreamId::kSlamMap);
 SCAN_CHECK_ENUM(SCAN_STREAM_POSE_LIO, StreamId::kPoseLio);
 SCAN_CHECK_ENUM(SCAN_STREAM_IMU_PHONE, StreamId::kImuPhone);
+SCAN_CHECK_ENUM(SCAN_STREAM_LIDAR_STL27L, StreamId::kLidarStl27l);
 
 // A8's three new enums. The drift guard matters more here than usual: the
 // gates are what Tech Spec §3.3's "flagged and excluded by default" and
@@ -719,6 +721,19 @@ scan_error_t scan_engine_add_device(scan_engine* engine, const scan_device_confi
         handle_of(engine)->serial_shims.push_back(std::move(shim));
       }
       dc.d6.send_start_stop_commands = cfg->send_start_stop_commands != 0;
+      break;
+    case DeviceKind::kStl27l:
+      // ITEM 119. Same serial fields as the D6 — the app opens the port and
+      // pushes bytes through scan_engine_push_serial_bytes() either way — with
+      // two differences that are the device's, not the ABI's:
+      //   * serial_baud 0 means 921600 here, not 230400. Leaving it zero is
+      //     the right thing to do; the driver fills in its own default.
+      //   * serial_write / send_start_stop_commands are IGNORED: the LD-series
+      //     free-runs from power-on and has no command channel. They are not
+      //     rejected, because a caller reusing one config struct for either
+      //     sensor should not have to clear them.
+      dc.stl27l.serial.port_name = cfg->serial_port_name != nullptr ? cfg->serial_port_name : "";
+      if (cfg->serial_baud != 0) dc.stl27l.serial.baud = cfg->serial_baud;
       break;
     case DeviceKind::kMid360: {
       if (cfg->lidar_ip != nullptr) dc.mid360.udp.lidar_ip = cfg->lidar_ip;

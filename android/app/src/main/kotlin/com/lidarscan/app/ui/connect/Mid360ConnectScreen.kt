@@ -38,9 +38,11 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -49,7 +51,9 @@ import com.lidarscan.app.engine.Mid360LinkState
 import com.lidarscan.app.net.StaticIpGuidance
 import com.lidarscan.app.ui.common.InfoChip
 import com.lidarscan.core.net.Mid360AutoDetectState
+import com.lidarscan.core.net.Mid360Diagnosis
 import com.lidarscan.core.net.Mid360Field
+import com.lidarscan.core.net.Mid360HeartbeatParser
 import com.lidarscan.core.net.Mid360SelfTest
 import com.lidarscan.core.net.Mid360Settings
 import kotlinx.coroutines.delay
@@ -82,6 +86,22 @@ fun Mid360ConnectScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+
+    // ROUND 25 item 118. Resolved once, not on every recomposition: whether
+    // Settings has an Ethernet screen cannot change while this wizard is open,
+    // and `resolveActivity` is a binder call.
+    val canOpenEthernetSettings = remember(context) { StaticIpGuidance.canOpenSettings(context) }
+
+    // ROUND 25 item 118: the diagnostic poll. Keyed on Unit so it starts with
+    // the screen and — the part that matters for the battery — is cancelled
+    // the moment the screen leaves composition. Nothing here runs in the
+    // background; the ViewModel does no polling of its own.
+    LaunchedEffect(Unit) {
+        while (true) {
+            viewModel.refreshDiagnosis()
+            delay(DIAGNOSTIC_POLL_MS)
+        }
+    }
 
     // Keep the health numbers live after a pass — the probe stays up and the
     // interesting part (does loss % stay at zero for 30 s?) happens after the
@@ -120,6 +140,13 @@ fun Mid360ConnectScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            DiagnosticCard(
+                state = state,
+                canOpenEthernetSettings = canOpenEthernetSettings,
+                onRetry = viewModel::retryDiagnostic,
+                onOpenSettings = { StaticIpGuidance.openSettings(context) },
+            )
+
             AutoDetectCard(state, viewModel)
 
             if (state.showManualEntry) {
@@ -146,6 +173,202 @@ fun Mid360ConnectScreen(
         }
     }
 }
+
+/**
+ * ROUND 25 item 118 — **the Ethernet diagnostic, stepwise.**
+ *
+ * The owner's field log said `no-ethernet — No Ethernet adapter`, twice, and
+ * that was the entire diagnosis for what could have been any of three
+ * different faults. This card is the ladder from
+ * [com.lidarscan.core.net.Mid360Diagnosis] rendered one rung at a time: the
+ * state you are stuck on, in six words; what to do, in twelve; the evidence
+ * that rung needs (the USB device list when there is no adapter, the
+ * interface's addresses when there are any); and a Retry, on every single
+ * state, because the operator's loop is plug-something-in-and-look.
+ *
+ * It sits **above** auto-detect deliberately. Auto-detect is the second
+ * question ("which device is this?"); this is the first ("is there a wire?"),
+ * and asking them in the other order is how the owner spent two minutes
+ * listening for a heartbeat on a link that did not exist.
+ */
+@Composable
+private fun DiagnosticCard(
+    state: Mid360ConnectUiState,
+    canOpenEthernetSettings: Boolean,
+    onRetry: () -> Unit,
+    onOpenSettings: () -> Unit,
+) {
+    val step = state.diagnosis
+    val listening = state.autoDetect.status == Mid360AutoDetectState.Status.LISTENING
+
+    Card(Modifier.fillMaxWidth().testTag("mid360DiagCard")) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    if (step.isOk) Icons.Filled.CheckCircle else Icons.Filled.Error,
+                    contentDescription = null,
+                    tint = if (step.isOk) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(Mid360Diagnosis.TITLE, style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.weight(1f))
+                InfoChip(
+                    text = step.logToken,
+                    color = if (step.isOk) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                )
+            }
+
+            // The two lines the wording law is about: what is wrong, then what
+            // to do. Tagged as one node so an emulator test can read the whole
+            // verdict without knowing how it is laid out.
+            Column(
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.testTag("mid360DiagState"),
+            ) {
+                Text(
+                    step.instruction,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = if (step.isOk) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                )
+                Text(step.detail, style = MaterialTheme.typography.bodyMedium)
+            }
+
+            // State 1's evidence: what the OS DOES see. An empty list is the
+            // "nothing plugged in" case; a non-empty one with no Ethernet
+            // network is hardware that enumerated and did not come up.
+            if (step.showsUsbDevices) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                    modifier = Modifier.testTag("mid360UsbList"),
+                ) {
+                    Text(
+                        Mid360Diagnosis.USB_DEVICES_LABEL,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (state.usbDevices.isEmpty()) {
+                        Text(
+                            Mid360Diagnosis.NO_USB_DEVICES,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                        )
+                    } else {
+                        state.usbDevices.forEach { device ->
+                            Text(
+                                device,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                            )
+                        }
+                    }
+                }
+            }
+
+            // States 3/4's evidence: what this phone actually holds, read back
+            // from the live interface rather than from what Settings claims.
+            if (step.showsAddresses && state.ethernet.addresses.isNotEmpty()) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                    modifier = Modifier.testTag("mid360DiagAddresses"),
+                ) {
+                    Text(
+                        Mid360Diagnosis.ADDRESSES_LABEL,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        state.ethernet.addresses.joinToString(", ") { "${it.ip}/${it.prefixLength}" },
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                    )
+                }
+            }
+
+            // State 4: run the EXISTING heartbeat discovery (UDP 56201), with
+            // its own live progress, and say what was heard.
+            if (step.runsDiscovery) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.testTag("mid360DiagDiscovery"),
+                ) {
+                    if (listening) {
+                        Text(
+                            Mid360Diagnosis.LISTENING,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        LinearProgressIndicator(
+                            progress = { state.autoDetect.progress },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    Text(
+                        heardReport(state),
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Button(
+                    onClick = onRetry,
+                    enabled = !listening,
+                    modifier = Modifier.testTag("mid360DiagRetry"),
+                ) {
+                    Text(Mid360Diagnosis.RETRY)
+                }
+                // Only when the intent resolves: a button that does nothing on
+                // a build with no Ethernet settings screen reads as a broken
+                // app rather than as a phone that cannot do this.
+                if (step.showsEthernetSettings && canOpenEthernetSettings) {
+                    OutlinedButton(
+                        onClick = onOpenSettings,
+                        modifier = Modifier.testTag("mid360DiagEthernetSettings"),
+                    ) {
+                        Icon(Icons.Filled.OpenInNew, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(Mid360Diagnosis.OPEN_ETHERNET_SETTINGS)
+                    }
+                }
+                if (listening) {
+                    Spacer(Modifier.width(4.dp))
+                    CircularProgressIndicator(Modifier.height(20.dp).width(20.dp))
+                }
+            }
+        }
+    }
+}
+
+/**
+ * What discovery heard, as a log-shaped line — the one place in this card the
+ * wording law does not apply, because it is the round-17-to-22 lesson about
+ * field reports: numbers, ports and serials, deliberately.
+ */
+private fun heardReport(state: Mid360ConnectUiState): String {
+    val port = Mid360HeartbeatParser.HEARTBEAT_PORT
+    val heartbeat = state.autoDetect.found
+    return when {
+        heartbeat != null ->
+            "udp/$port heard SN ${heartbeat.serialNumber} fw ${heartbeat.firmwareVersion} " +
+                "at ${heartbeat.lidarIp}, streaming to ${heartbeat.persistedHostIp}"
+
+        state.autoDetect.status == Mid360AutoDetectState.Status.ERROR ->
+            "udp/$port ${state.autoDetect.message.orEmpty()}"
+
+        state.autoDetect.status == Mid360AutoDetectState.Status.TIMED_OUT ->
+            "udp/$port ${Mid360Diagnosis.HEARD_NOTHING} " +
+                "(${state.autoDetect.timeoutMs / 1000}s, 0 heartbeats)"
+
+        state.autoDetect.status == Mid360AutoDetectState.Status.LISTENING ->
+            "udp/$port listening, ${state.autoDetect.elapsedMs}ms of ${state.autoDetect.timeoutMs}ms"
+
+        else -> "udp/$port not listened on yet"
+    }
+}
+
+/** Item 118: ~1 s, so plugging a powered hub in updates the screen while the operator is still holding it. */
+private const val DIAGNOSTIC_POLL_MS = 1_000L
 
 /**
  * AUTO-DETECT: the wizard's first step and primary action — listens for the

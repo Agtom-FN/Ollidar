@@ -1,10 +1,13 @@
 package com.lidarscan.app.ui.connect
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.lidarscan.app.di.AppContainer
+import com.lidarscan.app.net.UsbDeviceNames
 
 /**
  * Nav entry point for the Mid-360 connect wizard.
@@ -22,6 +25,13 @@ fun Mid360ConnectRoute(
     onBack: () -> Unit,
     onContinueToCapture: (() -> Unit)? = null,
 ) {
+    // ROUND 25 item 118. Built here rather than in AppContainer because it is
+    // stateless, permission-free and used by exactly one screen — and because
+    // it holds the application context, so a wizard-scoped instance leaks
+    // nothing.
+    val context = LocalContext.current
+    val usbDevices = remember(context) { UsbDeviceNames(context) }
+
     val vm: Mid360ConnectViewModel = viewModel(
         key = "mid360-connect-${projectId ?: "no-project"}",
         factory = viewModelFactory {
@@ -32,6 +42,12 @@ fun Mid360ConnectRoute(
                     projectId = projectId,
                     settingsRepository = container.settingsRepository,
                     detector = container.mid360HeartbeatDetector,
+                    usbDeviceNames = usbDevices::list,
+                    // ROUND 25 item 118 (owner amendment): the container's one
+                    // sweeper, so its rate limiter is shared with the Capture
+                    // tab's auto-detect and the Settings row rather than each
+                    // keeping a private window.
+                    connectionDebug = container.connectionDebugSweeper,
                 )
             }
         },

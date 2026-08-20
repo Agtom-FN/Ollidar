@@ -275,9 +275,29 @@ object Wording {
      */
     const val START_LOOK_AT = "Point at furniture, an arm away."
 
-    /** was: "No serial device attached. Plug the D6 into USB-C OTG — it appears here as soon as it does." */
-    const val NO_USB_DEVICE = "Plug the D6 into USB-C."
+    /**
+     * was: "No serial device attached. Plug the D6 into USB-C OTG — it appears
+     * here as soon as it does."
+     *
+     * ROUND 25 item 119 dropped the product name: two different lidars now
+     * arrive on that same USB-C port, so "the D6" was about to become wrong for
+     * half the people reading it. "The scanner" is also the vocabulary rounds
+     * 22 and 24 settled on everywhere else — `CaptureAutoConnectController`'s
+     * NOTHING_FOUND already says "No scanner found."
+     */
+    const val NO_USB_DEVICE = "Plug the scanner into USB-C."
     const val NO_USB_DEVICE_DETAIL = "It appears here as soon as it does."
+
+    /**
+     * ROUND 25 item 119 — the label under the manual panel's two-option sensor
+     * row.
+     *
+     * The row exists because the port cannot answer the question: a COIN-D6 and
+     * an STL-27L use the same connector and the same USB-serial bridge chip, so
+     * the only thing that knows which is on the cable is the person holding it.
+     * Six words, and the first is what to do.
+     */
+    const val MANUAL_SERIAL_PICK = "Pick the scanner on this cable."
 
     /** was: "No self-test step: the live view above is the proof. If points appear, the device works." */
     const val LIVE_VIEW_IS_THE_PROOF = "Points on screen mean it works."
@@ -336,6 +356,8 @@ object Wording {
         START_LOOK_AT,
         NO_USB_DEVICE,
         LIVE_VIEW_IS_THE_PROOF,
+        // ── ROUND 25 item 119 ──
+        MANUAL_SERIAL_PICK,
         D6_MOUNT_DETAIL,
     )
 

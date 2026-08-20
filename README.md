@@ -1,9 +1,20 @@
+<img src="docs/img/app-icon.svg" width="96" align="left" alt="LidarScan icon">
+
 # LidarScan
 
 Dual-lidar (COIN-D6 pushbroom + Livox Mid-360 live SLAM) scanner, built as one
 shared C++ engine with three consumers: an Android app, a desktop app
 (macOS/Windows/Linux), and a cloud processing worker. Sensors also pair with
 an RTK GNSS rover for georeferenced capture.
+
+<br clear="left">
+
+**Read the manual first if you are here to scan, not to build:**
+[`docs/QUICK_START.md`](docs/QUICK_START.md) gets a first COIN-D6 scan on disk
+in ten steps; [`docs/USER_MANUAL.md`](docs/USER_MANUAL.md) is the complete
+operator manual — every tab, the scan flow, the viewer and its gestures, Send
+logs, the Settings map, Mid-360 and STL-27L setup, and troubleshooting. Both
+track the shipping UI (currently **v0.9.10**).
 
 **Spec:** `docs/LidarScan Tech Spec.md` (v1.2.1, approved 2026-08-14) —
 architecture, hardware facts, the full execution plan (workstreams A–E) and
@@ -27,8 +38,11 @@ spikes/   Phase 0 de-risk spikes (S1-S7) — kept as historical record, several
           own tests run against.
 tools/    remote-capture kit (tools/remote-capture/) for collecting real
           sensor data at a hardware site when the dev machine isn't there.
-docs/     the spec, bench setup/procurement/smoke-test docs (docs/bench/),
-          and field validation protocol + report template (docs/field-test/).
+docs/     the spec, the user manual + quick start (USER_MANUAL.md,
+          QUICK_START.md), the app mark (img/app-icon.svg — transcribed
+          from the shipped launcher drawables), bench
+          setup/procurement/smoke-test docs (docs/bench/), and field
+          validation protocol + report template (docs/field-test/).
 ```
 
 ---
