@@ -51,14 +51,31 @@ Current version: **0.9.10** (Android).
 
 What's actually been run, on what, with what numbers — not marketing claims.
 
+### Lidars
+
+| Hardware | Where tested | Key numbers |
+| --- | --- | --- |
+| **COIN-D6** lidar | Bench + field | Bench: 100.0000% packet checksum pass over a 180 s soak, ~4,000 samples/s at ~10 Hz spin, per-point noise σ = 5.2 mm. Field: best scans reach ~1.0–1.4 cm same-surface consistency at walking pace |
+| **Livox Mid-360** | Bench (desktop/macOS) | 60 s soak at 199,999 points/s, built-in IMU at 200.00 Hz, zero lost packets — full capture → process → 3D cloud pipeline verified. Phone connection currently blocked on Android Ethernet adapter compatibility |
+| **LDROBOT STL-27L** | Not yet tested | Driver is code-complete with protocol-exact simulated tests; awaiting first hardware bench |
+
+### Phones
+
 | Hardware | Where tested | Key numbers |
 | --- | --- | --- |
 | **Google Pixel 8 Pro** (phone) | Field, primary test device | ARCore tracking ~30 Hz; phone IMU sustained at 399/400 Hz; factory camera↔IMU calibration read and in use |
-| **COIN-D6** lidar | Bench + field | Bench: 100.0000% packet checksum pass over a 180 s soak, ~4,000 samples/s at ~10 Hz spin, per-point noise σ = 5.2 mm. Field: best scans reach ~1.0–1.4 cm same-surface consistency at walking pace |
-| **Livox Mid-360** | Bench (desktop/macOS) | 60 s soak at 199,999 points/s, built-in IMU at 200.00 Hz, zero lost packets — full capture → process → 3D cloud pipeline verified. Phone connection currently blocked on Android Ethernet adapter compatibility |
-| **Unicore UM982** RTK receiver | Bench (indoor, no antenna fix) | 230400 baud, 7 NMEA sentence types at 1 Hz including dual-antenna heading, 210/210 checksums OK |
-| **LDROBOT STL-27L** | Not yet tested | Driver is code-complete with protocol-exact simulated tests; awaiting first hardware bench |
+
+### Computers
+
+| Hardware | Where tested | Key numbers |
+| --- | --- | --- |
 | **Desktop app** (Apple M4, macOS) | Bench | 146k-point cloud renders at ~46 fps (Metal); floor-plan extraction and merge workbench verified against synthetic ground truth, merge ICP residual ~10 mm |
+
+### Other
+
+| Hardware | Where tested | Key numbers |
+| --- | --- | --- |
+| **Unicore UM982** RTK receiver | Bench (indoor, no antenna fix) | 230400 baud, 7 NMEA sentence types at 1 Hz including dual-antenna heading, 210/210 checksums OK |
 
 Notes:
 - The whole app has been field-tested only on the Pixel 8 Pro, through 0.9.10 — no other phone has been tried yet.
