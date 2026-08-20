@@ -46,6 +46,26 @@ Current version: **0.9.10** (Android).
 
 ---
 
+## Tested hardware and results
+
+What's actually been run, on what, with what numbers — not marketing claims.
+
+| Hardware | Where tested | Key numbers |
+| --- | --- | --- |
+| **Google Pixel 8 Pro** (phone) | Field, primary test device | ARCore tracking ~30 Hz; phone IMU sustained at 399/400 Hz; factory camera↔IMU calibration read and in use |
+| **COIN-D6** lidar | Bench + field | Bench: 100.0000% packet checksum pass over a 180 s soak, ~4,000 samples/s at ~10 Hz spin, per-point noise σ = 5.2 mm. Field: best scans reach ~1.0–1.4 cm same-surface consistency at walking pace |
+| **Livox Mid-360** | Bench (desktop/macOS) | 60 s soak at 199,999 points/s, built-in IMU at 200.00 Hz, zero lost packets — full capture → process → 3D cloud pipeline verified. Phone connection currently blocked on Android Ethernet adapter compatibility |
+| **Unicore UM982** RTK receiver | Bench (indoor, no antenna fix) | 230400 baud, 7 NMEA sentence types at 1 Hz including dual-antenna heading, 210/210 checksums OK |
+| **LDROBOT STL-27L** | Not yet tested | Driver is code-complete with protocol-exact simulated tests; awaiting first hardware bench |
+| **Desktop app** (Apple M4, macOS) | Bench | 146k-point cloud renders at ~46 fps (Metal); floor-plan extraction and merge workbench verified against synthetic ground truth, merge ICP residual ~10 mm |
+
+Notes:
+- The whole app has been field-tested only on the Pixel 8 Pro, through 0.9.10 — no other phone has been tried yet.
+- One vendor CH340 USB-serial adapter caused COIN-D6 stream stalls and eventually failed; a replacement adapter fixed it 100%. Adapter quality matters.
+- The Mid-360 pipeline is fully proven from a desktop over Ethernet; one laptop-class USB-C hub failed to enumerate on Android. Diagnostics for this shipped in 0.9.10, and adapter guidance is in the manual.
+
+---
+
 ## Quick start
 
 1. Install the APK and open the app.
@@ -181,3 +201,21 @@ every tab, the viewer, Mid-360 and STL-27L setup, and troubleshooting.
 | `desktop/` | the desktop viewer app |
 | `cloud/` | the optional cloud processing worker and job service |
 | `docs/` | the user manual, quick start, and design docs |
+
+---
+
+## Contributing
+
+Bug reports, suggestions, feature requests, and pull requests are all
+welcome — this project is better with more eyes on it.
+
+- Found a bug or have an idea? Open a [GitHub Issue](../../issues) — see
+  [CONTRIBUTING.md](CONTRIBUTING.md) for what to include.
+- Want to fix something yourself? Pull requests are welcome; CONTRIBUTING.md
+  covers the workflow and the test suites to keep green.
+- Just want to try the app? Grab the latest APK or desktop build from the
+  [Releases page](../../releases) (beta).
+
+If you're filing a bug report, attaching the app's Send-logs bundle
+(Profile → Send logs) helps a lot — it's the fastest way to see what
+actually happened.
