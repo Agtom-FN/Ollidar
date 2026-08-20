@@ -2,191 +2,182 @@
 
 # LidarScan
 
-Dual-lidar (COIN-D6 pushbroom + Livox Mid-360 live SLAM) scanner, built as one
-shared C++ engine with three consumers: an Android app, a desktop app
-(macOS/Windows/Linux), and a cloud processing worker. Sensors also pair with
-an RTK GNSS rover for georeferenced capture.
+Strap a small spinning lidar to your phone, walk around a room, and get a
+corrected 3D point cloud out the other end.
 
 <br clear="left">
 
-**Read the manual first if you are here to scan, not to build:**
-[`docs/QUICK_START.md`](docs/QUICK_START.md) gets a first COIN-D6 scan on disk
-in ten steps; [`docs/USER_MANUAL.md`](docs/USER_MANUAL.md) is the complete
-operator manual — every tab, the scan flow, the viewer and its gestures, Send
-logs, the Settings map, Mid-360 and STL-27L setup, and troubleshooting. Both
-track the shipping UI (currently **v0.9.10**).
-
-**Spec:** `docs/LidarScan Tech Spec.md` (v1.2.1, approved 2026-08-14) —
-architecture, hardware facts, the full execution plan (workstreams A–E) and
-milestones M0–M5. Read that first for *why*; this file is *where things live
-and how to build them*.
+Current version: **0.9.10** (Android).
 
 ---
 
-## Layout
+## What it does
 
-```
-engine/   shared C++20 engine — drivers, SLAM, post-processing, GNSS/RTK,
-          merge, export, jobs. C ABI (JNI) + C++ API (Qt/CLI). See below.
-android/  Kotlin + Jetpack Compose app, links the engine via JNI/C ABI.
-desktop/  Qt 6 Widgets + Filament app (macOS/Windows/Linux), links the
-          engine's C++ API directly.
-cloud/    D1 worker image (containerized engine_cli) + D2 job service
-          (Python/FastAPI-style token-auth REST API, MVP/single-tenant).
-spikes/   Phase 0 de-risk spikes (S1-S7) — kept as historical record, several
-          (S2, S5, S6) also ship reusable simulators/fixtures the engine's
-          own tests run against.
-tools/    remote-capture kit (tools/remote-capture/) for collecting real
-          sensor data at a hardware site when the dev machine isn't there.
-docs/     the spec, the user manual + quick start (USER_MANUAL.md,
-          QUICK_START.md), the app mark (img/app-icon.svg — transcribed
-          from the shipped launcher drawables), bench
-          setup/procurement/smoke-test docs (docs/bench/), and field
-          validation protocol + report template (docs/field-test/).
-```
+- **Tap Scan, hold still, walk, tap Stop.** The app measures the sensor's
+  exact angle on your phone at the start of every scan, then sweeps its
+  spinning lidar slice along the path your phone's camera tracks. No manual
+  calibration step.
+- **Live coverage guidance while you walk.** Thin or missed walls show up as
+  amber arcs in the live view so you know where to walk back over before you
+  stop, not after.
+- **A big warning when tracking is lost.** An amber card fills the screen —
+  *"Tracking lost. Stop. Hold still."* — because walking through a tracking
+  gap usually makes it unrepairable afterwards.
+- **The mount is re-measured every time.** The lidar comes off the bracket
+  between sessions, so the app never trusts an old or hard-coded angle — it
+  measures fresh at the start of each scan.
+- **Processing runs by itself.** The moment you press Stop, the scan is
+  graded and processed automatically, with honest numbers (a self-check
+  distance in centimetres, not a made-up star rating) rather than a grade
+  you'd have to take on faith.
+- **Export or share straight from the phone.** PLY, LAS 1.4, PCD, DXF or PDF,
+  one scan at a time or several at once, straight to your Downloads folder or
+  the Android share sheet.
 
 ---
 
-## The engine (`engine/`)
+## Supported sensors
 
-The shared capture/SLAM/processing core. C++20, CMake + presets, `vcpkg` when
-`VCPKG_ROOT` is set (CI), `find_package`/`FetchContent` fallback otherwise (a
-laptop with no vcpkg still builds). Doctest for unit tests.
+| Sensor | What it is | Status |
+| --- | --- | --- |
+| **COIN-D6** | 2D spinning lidar, plugs in over USB-C | Field-proven — this is the sensor the app was built and tested around |
+| **Livox Mid-360** | 3D lidar with its own IMU, connects over Ethernet | Supported. Needs a guided setup: a static IP wizard and a step-by-step connection diagnostic (see below) |
+| **LDROBOT STL-27L** | 2D spinning lidar, longer range and more points than the D6 | Supported in code, **bench validation pending** — no physical unit has been connected to the app yet |
 
-**Modules** (see `engine/docs/A*-*.md` for the one-doc-per-task design write-up
-of each, and `engine/DESIGN.md` for the cross-cutting contract — threading,
-errors, event bus, C ABI rules):
+---
 
-| Area | What |
+## Quick start
+
+1. Install the APK and open the app.
+2. Mount the lidar flat on the back of the phone (zero mark up, cap pointing
+   forward) and plug it in over USB-C — or, for a Mid-360, wire it up over
+   Ethernet (see Mid-360 diagnostics below).
+3. Tap the **Scan** tab (the radar icon). The app finds the sensor by itself.
+4. Press the big **SCAN** button and **hold still** — a short panel counts
+   through locking tracking and measuring the mount, then says
+   **"GO — start walking."**
+5. **Walk slowly**, turning on the spot rather than swinging the phone
+   around corners.
+6. Press **STOP**. The scan is saved, graded and processed automatically —
+   you land in Projects with the finished scan ready to open.
+
+Finished scans live in the **Projects** tab. Tap one to view it, export it,
+or share it.
+
+Full detail: [`docs/QUICK_START.md`](docs/QUICK_START.md) for a first scan in
+ten steps, [`docs/USER_MANUAL.md`](docs/USER_MANUAL.md) for everything else —
+every tab, the viewer, Mid-360 and STL-27L setup, and troubleshooting.
+
+---
+
+## Key features
+
+### Scanning
+
+- Automatic mount re-zero at the start of every scan, defended against bad
+  readings — a materially worse measurement is refused and sampling keeps
+  going.
+- A four-stage start panel (new tracking session → lock tracking → measure
+  the mount → GO) so you always know what the app is waiting on and why.
+- A full-screen tracking-loss popup that tells you to stop and hold still,
+  and clears itself automatically once tracking returns.
+- Leaving the Scan tab (switching to Projects, Jobs or Settings) stops and
+  saves whatever scan is running — nothing is left half-recorded.
+- A six-step in-app tutorial, offered once on first launch and replayable
+  any time from Settings.
+
+### Viewing
+
+- Orbit with one finger, pan with two, pinch to zoom, double-tap to reframe
+  the whole scan — a real touch viewer, not a turntable locked to one point.
+- A measure tool: tap two points, get a distance in metres or feet.
+- Multiple colour modes and a walked-path overlay so you can see where you
+  went.
+
+### Projects
+
+- A gallery or list view of every scan, sortable by name or date.
+- Long-press to select several scans at once, then export or share them
+  together — one job per scan, gathered into a single share sheet.
+
+### Quality and honesty
+
+- Every processed scan gets a real self-check number in centimetres, not a
+  cosmetic star rating.
+- A gap-rescue pass tries to re-register a tracking-loss break automatically,
+  and an auto-level pass straightens a tilted floor — both only apply a fix
+  if it demonstrably improves the scan, and both leave the file untouched if
+  they can't.
+- The maximum point detail is capped to what your phone's memory can safely
+  hold — there is deliberately no override, because a setting whose only job
+  is to crash the app isn't a setting worth having.
+- A built-in crash recorder captures every process death to the log, so a
+  send-logs report actually contains what happened.
+- Problems are logged and explained on their own terms — the app doesn't
+  blame poor lighting or the environment without evidence for a failure it
+  hasn't diagnosed.
+
+### Profile and feedback
+
+- A Profile screen with your device facts (app version, device, scan count,
+  storage used) and a one-tap **Send logs** that bundles the capture log and
+  ships it to your mail app, chat, or a configured server.
+- A feedback box for typing a note that goes along with the same bundle.
+
+### Mid-360 diagnostics
+
+- A guided Ethernet setup wizard: it walks the physical chain (adapter →
+  link → address → lidar heard) one rung at a time and tells you exactly
+  which one is failing and what to do about it.
+- A hidden developer **[net-debug]** mode (seven taps on the version footer)
+  for deeper diagnostics when the guided wizard isn't enough.
+
+---
+
+## Recent updates
+
+- **0.9.5** — automatic mount re-zero at scan start, an auto-level pass for
+  tilted floors, and a per-device mount profile (no more hard-coded mount
+  geometry).
+- **0.9.6** — hotfix: a deadlock that stopped every COIN-D6 scan from
+  starting, plus a clearer scan-start progress panel.
+- **0.9.7** — six stability root causes fixed (including a crash recorder,
+  a navigation bug that silently killed processing, and a renderer crash on
+  the detail slider), a new Simple Mode, and the Agtom orange theme and app
+  icon.
+- **0.9.8** — fixed a bug where the Scan button went dead after finishing a
+  scan, brought back export/share plus group export/share, and added the
+  full-screen tracking-loss warning banner.
+- **0.9.9** — icon-only tab bar, the Profile and Send logs screen, the
+  in-app tutorial, and a centered tracking-loss popup.
+- **0.9.10** — real orbit/pan/zoom gestures in the viewer, STL-27L support,
+  and the Mid-360 Ethernet diagnostics wizard, alongside this manual.
+
+---
+
+## Honest limits
+
+- **STL-27L has never touched real hardware.** Code-complete and tested
+  against synthetic fixtures, but bench validation is still pending — treat
+  the first real scan as a test.
+- **Mid-360 needs an Android-supported Ethernet adapter.** A plain RTL8153
+  adapter works unpowered; most multi-port USB-C hubs need their own power
+  supply on the hub's PD port, or the adapter browns out and disappears.
+- **A tracking-loss gap usually can't be repaired.** Standing still until
+  tracking returns is the only reliable fix — the gap-rescue pass refuses
+  far more often than it succeeds, on purpose.
+- **There is no detail-level override.** Point detail is capped to what your
+  phone's memory can hold, because an earlier version that allowed
+  overriding it could crash mid-scan.
+
+---
+
+## Repository layout
+
+| Path | What's there |
 | --- | --- |
-| `drivers/d6`, `drivers/mid360` | COIN-D6 serial driver, Livox Mid-360 UDP driver (vendored patched SDK2, `AUTO`-detected) |
-| `timesync/` | per-stream clock correlation + IMU ingestion |
-| `record/` | `.lscan` container (crash-safe writer, replay reader, zip transfer bundles) |
-| `slam/` | live LIO (ESKF + iVox, Mid-360), post pipeline (full-density re-run, Scan Context + hand-rolled pose-graph loop closure), D6 pushbroom assembler + mount-calibration solver |
-| `gnss/` | NMEA, NTRIP client, RTCM3 framing, WGS84/UTM/CRS, georeferencing fusion |
-| `merge/` | multi-session coarse align (georeferenced / manual-pick / yaw-search) + ICP refine + dedup |
-| `color/`, `plan/` | camera colorization keyframe pipeline; floor-plan slice/extract/DXF/PDF |
-| `export/` | PLY (binary, RGB), LAS 1.4 (georeferenced), PCD |
-| `jobs/` | local job runner, cloud submit client, transfer bundle export/import |
-| `cloud/`, `poses/`, `core/` | paged point store, pose-source abstractions, engine skeleton / event bus / error model |
-| `capi/` | the C ABI (JNI boundary) mirroring the C++ API |
-| `tools/engine_cli` | headless CLI — `--selftest`, `--synth`, `--replay`, `--post`, `--post-selftest`; this is also the cloud worker's entry point |
-
-### Build
-
-```sh
-cd engine
-cmake --preset macos-universal    # or windows-msvc-x64 / windows-clangcl-x64 / linux-x64 / android-arm64
-cmake --build --preset macos-universal
-ctest --preset macos-universal -LE "sim|sim-rtk"   # fast path, ~480 cases
-```
-
-`-LE "sim|sim-rtk"` skips the loopback-port simulator suites (see below) —
-they are not safe on a shared/parallel runner and are excluded from every CI
-build-matrix leg for that reason. Run them explicitly when you want them:
-
-```sh
-ctest --preset macos-universal -L "sim|sim-rtk"    # needs spikes/s2-mid360-sim's
-                                                    # simulator built (scripts/fetch_sdk2.sh)
-                                                    # and python3 for the S5 RTK sims
-```
-
-### Tests
-
-~480 doctest cases across `engine/tests/test_*.cpp` (auto-globbed by
-`CMakeLists.txt` — name a new test file `test_*.cpp` and it is picked up with
-no build-file edit). Highlights:
-
-- Per-module unit tests (`test_d6_*`, `test_mid360_driver`, `test_lio`,
-  `test_post`, `test_gnss`, `test_merge`, `test_pushbroom`, `test_mount_calib`,
-  `test_export`, `test_lscan_io`, …), most with a real-hardware-measured
-  section against the one committed CC-BY real Mid-360+IMU capture
-  (`spikes/s2-mid360-sim/fixtures/outdoor_imu_ccby_6s.livoxdump` — see that
-  directory's `FIXTURES.md` for provenance and licensing).
-- `test_e2_replay_golden.cpp` (workstream E2) — end-to-end replay/golden
-  integration tests: a committed golden COIN-D6 byte stream and a committed
-  golden Mid-360 datagram sequence, each decoded through the real driver and
-  checked against hardcoded point-count/checksum/coordinate values
-  (`engine/tests/integration/data/`, see that directory's `README.md` for
-  provenance and how to regenerate); plus a runtime skip-unless-present LIO+
-  post determinism check against the CC-BY fixture, asserting the same
-  numbers `engine/docs/A6-lio.md` §7.2 / `A7-post.md` §6.3 measured (path
-  length ≈ 32.4 m, \|g\| ≈ 9.816 m/s²).
-- `mid360_sim_e2e` (label `sim`) / `gnss_rtk_sim_e2e` (label `sim-rtk`) —
-  optional, loopback-port, only registered when their simulator/spike trees
-  are present; see `engine/CMakeLists.txt`'s `ENGINE_SIM_TESTS` block.
-
-### CI
-
-`.github/workflows/engine-ci.yml` — 8 jobs: the 5-target build matrix
-(Windows MSVC, Windows clang-cl, macOS universal, Linux x86_64, Android NDK
-arm64 build-only), a dedicated macOS job that runs the `sim`/`sim-rtk`
-simulator suites serially, an Android **app** build (`:core:test
-:app:assembleDebug`, `continue-on-error` while the toolchain proves itself in
-CI), and a desktop app build-only job. `.github/workflows/worker-image.yml`
-builds + smoke-tests the cloud worker container image separately, publishing
-to GHCR on tag pushes.
-
----
-
-## Android app (`android/`)
-
-Kotlin + Jetpack Compose, single-activity, Material 3. Links the engine
-through the JNI/C ABI. See `android/NOTES.md` for the full toolchain/version-
-pinning story (AGP 8.13.2 + Gradle 8.14.5, deliberately not bleeding-edge —
-read that file before bumping either).
-
-```sh
-cd android
-./gradlew :core:test          # plain-JVM unit tests, no SDK/emulator needed
-./gradlew :app:assembleDebug  # full app build, needs Android SDK
-```
-
-## Desktop app (`desktop/`)
-
-Qt 6 **Widgets** (not QML — see `desktop/NOTES.md` §1.1 for why: the Filament
-viewport wants to own its own native surface, and Widgets +
-`createWindowContainer()` is the integration S3 actually proved). Links the
-engine's C++ API directly via `add_subdirectory`.
-
-```sh
-cd desktop
-brew install qt ninja                     # macOS; see NOTES.md for Windows/Linux
-./tools/fetch_filament.sh v1.75.0         # pinned — do not bump casually, see NOTES.md
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-./build/lidarscan
-```
-
-## Cloud (`cloud/`)
-
-- `cloud/worker/` — D1: a containerized `engine_cli` (headless Linux build).
-  `Dockerfile` + `scripts/validate_image.sh`; built/smoke-tested/published by
-  `.github/workflows/worker-image.yml`.
-- `cloud/service/` — D2: the job service (token auth, resumable upload,
-  queue, worker orchestration), MVP/single-tenant per Tech Spec §3.8's
-  contractual boundaries. `cd cloud/service && python3.12 -m venv .venv &&
-  .venv/bin/pip install -r requirements.txt` — see that directory's own
-  `README.md` for the rest.
-
----
-
-## Field validation
-
-`docs/field-test/PROTOCOL.md` — step-by-step runs for when hardware/field
-access is available (indoor loop closure, corridor pushbroom, outdoor RTK
-walk vs. known points, two-session merge), each with a target cited from the
-relevant module's synthetic baseline. `docs/field-test/ACCURACY_REPORT_TEMPLATE.md`
-is the table skeleton each run's results go into. `docs/bench/TEST_CHECKLIST.md`
-(spike S4) is the lighter-weight prerequisite: wiring/enumeration/protocol-
-liveness, no app code involved, meant to be re-run before every field session.
-
-## Status
-
-Hardware is at a remote location as of this writing; S2/S5 were de-risked via
-protocol-faithful simulators (`spikes/s2-mid360-sim`, `spikes/s5-rtk-sim`) and
-a remote-capture kit (`tools/remote-capture/`) collects real data at the
-hardware site. See the Tech Spec's "Hardware-absent addendum" (§4) and each
-module's own `engine/docs/A*.md` "What is still hardware-only" section for
-exactly what remains to close with real sensors — `docs/field-test/` is where
-that gets closed.
+| `android/` | the Android app (Kotlin + Jetpack Compose) |
+| `engine/` | the shared C++ scanning/processing engine |
+| `desktop/` | the desktop viewer app |
+| `cloud/` | the optional cloud processing worker and job service |
+| `docs/` | the user manual, quick start, and design docs |
