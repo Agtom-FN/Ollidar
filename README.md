@@ -37,13 +37,27 @@ Current version: **0.9.10** (Android).
 
 ---
 
-## Supported sensors
+## Supported hardware
 
-| Sensor | What it is | Status |
+At a glance — what plugs into which app, and how ready it is. ✅ Working ·
+🔶 Setup needed · 🧪 Untested · ❌ Not supported.
+
+### Phone app (Android) — the handheld scanner
+
+| Hardware | Connection | Status |
 | --- | --- | --- |
-| **COIN-D6** | 2D spinning lidar, plugs in over USB-C | Field-proven — this is the sensor the app was built and tested around |
-| **Livox Mid-360** | 3D lidar with its own IMU, connects over Ethernet | Supported. Needs a guided setup: a static IP wizard and a step-by-step connection diagnostic (see below) |
-| **LDROBOT STL-27L** | 2D spinning lidar, longer range and more points than the D6 | Supported in code, **bench validation pending** — no physical unit has been connected to the app yet |
+| COIN-D6 | USB-C (serial) | ✅ Working — field-proven |
+| Livox Mid-360 | Ethernet (USB-C adapter) | 🔶 Setup needed — needs an Android-supported Ethernet adapter; guided wizard + diagnostics built in |
+| LDROBOT STL-27L | USB-C (serial) | 🧪 Untested — supported in code, first hardware bench pending |
+| Unicore UM982 RTK | Bluetooth | 🔶 Optional — for outdoor georeferencing; bench-verified link |
+
+### Desktop app (macOS) — the processing workbench
+
+| Hardware | Connection | Status |
+| --- | --- | --- |
+| Livox Mid-360 | Ethernet | ✅ Working — bench-proven capture → process → 3D cloud |
+| COIN-D6 | USB (serial) | 🔶 Working on macOS 26 — serial path unverified on older macOS |
+| LDROBOT STL-27L | — | ❌ Not supported yet |
 
 ---
 
