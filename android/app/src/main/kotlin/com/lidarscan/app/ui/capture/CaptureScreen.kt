@@ -147,6 +147,16 @@ fun CaptureRoute(
      * Projects. Null (the replay route) means "stay here".
      */
     onScanSealed: ((String) -> Unit)? = null,
+    /**
+     * ROUND 23 item 106(c) — the Advanced switch, read by the shell and passed
+     * down so the Scan tab can ask [com.lidarscan.core.SimpleMode] the same
+     * questions every other surface asks it.
+     */
+    advanced: Boolean = false,
+    /** ROUND 23 item 106(c): the Mid-360 wizard, with no project in front of it. */
+    onOpenMid360Setup: (() -> Unit)? = null,
+    /** ROUND 23 item 106(c): the device-level RTK screen. */
+    onOpenRtk: (() -> Unit)? = null,
 ) {
     // ROUND 5.2: the fine-location prompt, hoisted here because only an Activity
     // context can ask. The ViewModel calls `requestLocationPermission` at Start;
@@ -338,8 +348,16 @@ fun CaptureRoute(
                     loadDeviceDisplay = { container.settingsRepository.displayParams() },
                     persistDeviceDisplay = { p -> container.settingsRepository.setDisplayParams(p) },
                     // ROUND 19 item 77: the checklist's one persisted bit.
+                    // ROUND 23 item 106(b): …and the flag that folded the sheet
+                    // into the start panel. With
+                    // `FeatureFlags.PRE_SCAN_CHECKLIST_SHEET` off this reads as
+                    // "already dismissed", so the modal is never armed while the
+                    // sheet, the API and the ROUND 19 tests stay exactly as they
+                    // are. The checks themselves did not go anywhere — see
+                    // `PreScanChecks` and `StartProgress.checks`.
                     preScanChecklistDismissed = {
-                        container.settingsRepository.preScanChecklistDismissed()
+                        !com.lidarscan.core.FeatureFlags.PRE_SCAN_CHECKLIST_SHEET ||
+                            container.settingsRepository.preScanChecklistDismissed()
                     },
                     persistPreScanChecklistDismissed = {
                         container.settingsRepository.setPreScanChecklistDismissed()
@@ -446,6 +464,10 @@ fun CaptureRoute(
     // start sequence is in, since when, and the gate's live verdict.
     val startProgress by viewModel.startProgress.collectAsStateWithLifecycle()
     val startWarmup by viewModel.startWarmup.collectAsStateWithLifecycle()
+    // ── ROUND 23 ───────────────────────────────────────────────────────────
+    val trackingBanner by viewModel.trackingBanner.collectAsStateWithLifecycle()
+    val startTapRefusal by viewModel.startTapRefusal.collectAsStateWithLifecycle()
+    val detailLevel by viewModel.detailLevel.collectAsStateWithLifecycle()
     // ROUND 20 item 83: the New-capture confirm.
     val showNewCaptureConfirm by viewModel.showNewCaptureConfirm.collectAsStateWithLifecycle()
     // ROUND 17 item 66: Developer Mode's answer, kept current on the one object
@@ -559,6 +581,23 @@ fun CaptureRoute(
     // emits exactly when it did, still with `replay = 1`, so a recomposition
     // (or an Activity recreation mid-seal, which is ROUND 10's own bug) still
     // recovers the pending navigation.
+    //
+    // ── ROUND 23 item 101: AND IT IS SPENT WHEN IT IS USED ──────────────────
+    //
+    // This is the defect the owner reported as "the scan button is dead". The
+    // paragraph above says the buffer "cannot survive to re-navigate later"
+    // because nav destroys the ViewModel — and ROUND 22 item 88 stopped nav
+    // destroying the ViewModel. So on every return to the Scan tab this
+    // collector re-attached, the buffered id replayed, and the operator was
+    // bounced straight back to Projects before he could press anything. There
+    // is no log line for it because the `navigate -> Projects` line is written
+    // at the emit. Killing the app was the only cure, and killing the app is
+    // what he did between every scan.
+    //
+    // [CaptureViewModel.sealNavigationHandled] spends the event at the instant
+    // it is acted on, and logs that it did. ROUND 10's property is untouched:
+    // a collector that attaches LATE still receives the id, because the
+    // buffer is only dropped by a collector that has used it.
     var pendingNavigationId by remember { mutableStateOf<String?>(null) }
     if (onScanSealed != null) {
         LaunchedEffect(viewModel) {
@@ -570,9 +609,18 @@ fun CaptureRoute(
             // immediately, exactly as ROUND 10 shipped it.
             if (sessionSummary != null) return@LaunchedEffect
             pendingNavigationId = null
+            viewModel.sealNavigationHandled(id)
             onScanSealed(id)
         }
     }
+
+    // ── ROUND 23 item 101(a): the tab re-arms on entry ──────────────────────
+    //
+    // Keyed on the ViewModel so it runs once per screen instance — which,
+    // since item 88, is once per trip INTO the tab rather than once per
+    // ViewModel. A live capture is left strictly alone; see
+    // [CaptureViewModel.onScanScreenEntered].
+    LaunchedEffect(viewModel) { viewModel.onScanScreenEntered() }
 
     // ROUND 6 (owner item 19): the AR path degraded. Fall back to the 3D-orbit
     // view rather than leaving the operator staring at a black overlay — the
@@ -710,6 +758,21 @@ fun CaptureRoute(
         startHold = startHold,
         startProgress = startProgress,
         startWarmup = startWarmup,
+        trackingBanner = trackingBanner,
+        detailLevels = viewModel.detailLevels,
+        detailLevel = detailLevel,
+        detailCeilingNote = viewModel.detailCeilingNote,
+        onDetailChange = viewModel::setDetailLevel,
+        // ROUND 23 item 106(c): contextual on the SENSOR, never on the switch —
+        // `SimpleMode` has said so since round 22 and this is the surface that
+        // finally asks. A D6 operator sees neither chip.
+        onOpenMid360Setup = onOpenMid360Setup
+            ?.takeIf { com.lidarscan.core.SimpleMode.showsMid360Connect(advanced, sensor) },
+        onOpenRtk = onOpenRtk
+            ?.takeIf { com.lidarscan.core.SimpleMode.showsRtk(advanced, sensor) },
+        startTapRefusal = startTapRefusal,
+        onDismissStartTapRefusal = viewModel::dismissStartTapRefusal,
+        onStartRefused = viewModel::reportStartTapRefused,
         showNewCaptureConfirm = showNewCaptureConfirm,
         onNewCapture = viewModel::requestNewCapture,
         onConfirmNewCapture = viewModel::confirmNewCapture,
@@ -717,6 +780,7 @@ fun CaptureRoute(
         arAvailable = viewModel.arAvailable,
         arTracking = arStatus?.tracking == true,
         arSessionRunning = arStatus?.sessionRunning == true,
+        arSessionWanted = needsArSession,
         arTrackingHint = arStatus?.trackingHint,
         arTrackingLossEpisodes = arStatus?.trackingLossEpisodes ?: 0,
         posesPushed = arStatus?.posesPushed ?: 0L,
@@ -893,6 +957,23 @@ fun CaptureScreen(
     startProgress: CaptureViewModel.StartProgress? = null,
     /** ROUND 21 item 85: the ROUND 12 gate's live verdict while it holds Start. */
     startWarmup: com.lidarscan.core.capture.TrackingWarmup.Verdict? = null,
+    /** ROUND 23 item 105: amber while the tracker is blind, green for 2 s after. */
+    trackingBanner: com.lidarscan.core.capture.TrackingBannerState =
+        com.lidarscan.core.capture.TrackingBannerState(),
+    // ── ROUND 23 item 106(a): DETAIL — Auto / High / Max ────────────────────
+    detailLevels: List<com.lidarscan.core.capture.DetailLevel> =
+        com.lidarscan.core.capture.DetailLevel.entries,
+    detailLevel: com.lidarscan.core.capture.DetailLevel = com.lidarscan.core.capture.DetailLevels.DEFAULT,
+    detailCeilingNote: String? = null,
+    onDetailChange: (com.lidarscan.core.capture.DetailLevel) -> Unit = {},
+    /** ROUND 23 item 106(c): non-null shows the Mid-360 setup chip on the Scan tab. */
+    onOpenMid360Setup: (() -> Unit)? = null,
+    /** ROUND 23 item 106(c): non-null shows the RTK chip on the Scan tab. */
+    onOpenRtk: (() -> Unit)? = null,
+    /** ROUND 23 item 101(b): the reason the last press could not start anything. */
+    startTapRefusal: String? = null,
+    onDismissStartTapRefusal: () -> Unit = {},
+    onStartRefused: (String) -> Unit = {},
     /** ROUND 20 item 83: the New-capture confirm dialog (a capture is live). */
     showNewCaptureConfirm: Boolean = false,
     onNewCapture: () -> Unit = {},
@@ -901,6 +982,8 @@ fun CaptureScreen(
     arAvailable: Boolean,
     arTracking: Boolean,
     arSessionRunning: Boolean,
+    /** ROUND 23 item 101: this screen wants an AR session right now (see CaptureViewport). */
+    arSessionWanted: Boolean = false,
     arTrackingHint: String?,
     arTrackingLossEpisodes: Int,
     posesPushed: Long,
@@ -1029,6 +1112,21 @@ fun CaptureScreen(
     val recording = captureState == CaptureState.RECORDING
     val paused = captureState == CaptureState.PAUSED
     val live = recording || paused
+
+    // ── ROUND 23 item 101(b) ────────────────────────────────────────────────
+    //
+    // Why the scan button will not start anything, standing — not only after a
+    // tap. "If it is disabled, the UI must say why in ≤6 words" is the rule,
+    // and the reason is the SAME sentence the tap logs, so the screen and the
+    // capture log can never disagree about one press. Computed here, next to
+    // the states it is made of, and read by both the transport row and the
+    // hint band.
+    val startBlockedReason: String? = when {
+        live || starting -> null
+        captureState == CaptureState.STOPPING -> com.lidarscan.core.Wording.START_SEALING
+        !connected -> com.lidarscan.core.Wording.START_NEEDS_SENSOR
+        else -> null
+    }
     val poseState = poseTrackingState(
         required = poseTrackingRequired,
         arAvailable = arAvailable,
@@ -1125,6 +1223,10 @@ fun CaptureScreen(
                             onOpenAdvanced = { sheet = CaptureSheet.SETTINGS },
                             captureState = captureState,
                             connected = connected,
+                            // ROUND 23 item 101(b): a tap that cannot start
+                            // must SAY so rather than land on an inert control.
+                            startBlockedReason = startBlockedReason,
+                            onStartRefused = onStartRefused,
                             liveView = liveView,
                             isReplaySession = isReplaySession,
                             pauseSupported = !isReplaySession && sensor != SensorType.MID360,
@@ -1164,6 +1266,7 @@ fun CaptureScreen(
                             recording = recording,
                             sensor = sensor,
                             arAvailable = arAvailable,
+                            arSessionWanted = arSessionWanted,
                             arTrackingHint = arTrackingHint,
                             arOverlay = arOverlay,
                             arPosePump = arPosePump,
@@ -1176,7 +1279,6 @@ fun CaptureScreen(
                             trailLengthM = trailLengthM,
                             coverageSectors = coverageSectors,
                             onRefreshAutoDownshift = onRefreshAutoDownshift,
-                            onOpenSettings = { sheet = CaptureSheet.SETTINGS },
                             onOpenDiagnostics = { sheet = CaptureSheet.DIAGNOSTICS },
                             onCameraModeChange = onCameraModeChange,
                             onRendererChanged = onRendererChanged,
@@ -1194,6 +1296,14 @@ fun CaptureScreen(
                     // protect a viewport that is showing nothing worth protecting
                     // would be the wrong trade in both directions.
                     val loudBanners: @Composable () -> Unit = {
+                        // ── ROUND 23 item 105 (owner request) ───────────────
+                        //
+                        // "a warning need to tell user stop walking while
+                        // tracking lost until the tracking back." FIRST in the
+                        // band, above even the start panel, because it is the
+                        // only message on this screen that is about what the
+                        // operator's FEET should be doing in the next second.
+                        TrackingLossBanner(trackingBanner)
                         // ROUND 21 item 85 (owner request, verbatim: "i dont
                         // know what is the app loading with, show me the
                         // progress and tell me what i am waiting for and how
@@ -1265,7 +1375,7 @@ fun CaptureScreen(
                     // flick away, and the viewport keeps its height.
                     val anyHint = georefNote != null || refreshDownshiftNote != null || motionHint != null ||
                         arErrorMessage != null || sectionHint != null || liveMapFullNote != null ||
-                        dndNote != null ||
+                        dndNote != null || startTapRefusal != null || startBlockedReason != null ||
                         (mountTrimNote != null && !mountTrimNoteIsWarning)
                     val hints: @Composable () -> Unit = {
                         if (anyHint) {
@@ -1275,6 +1385,30 @@ fun CaptureScreen(
                                     .heightIn(max = CaptureLayout.HINT_BAND_MAX_DP.dp)
                                     .verticalScroll(rememberScrollState()),
                             ) {
+                                // ROUND 23 item 101(b): the tap that was
+                                // refused, in the words the log used, for four
+                                // seconds. Amber and first, because it is the
+                                // answer to something the operator did one
+                                // second ago.
+                                if (startTapRefusal != null) {
+                                    Hint(
+                                        startTapRefusal,
+                                        color = SemWarn,
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
+                                            .clickable(onClick = onDismissStartTapRefusal)
+                                            .testTag("startTapRefusalNote"),
+                                    )
+                                } else if (startBlockedReason != null) {
+                                    // The standing reason, quietly, so the
+                                    // dimmed button is never a mystery in the
+                                    // first place.
+                                    Hint(
+                                        startBlockedReason,
+                                        color = InkFaint,
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
+                                            .testTag("startBlockedNote"),
+                                    )
+                                }
                                 if (dndNote != null) {
                                     // SemWarn, not InkFaint: this one is about
                                     // the measurement, not about a convenience.
@@ -1386,8 +1520,9 @@ fun CaptureScreen(
                             poseChipVisible = poseTrackingRequired && connected,
                             showCaptureChip = true,
                             onOpenCapture = { sheet = CaptureSheet.CAPTURE },
-                            onOpenDisplay = { sheet = CaptureSheet.SETTINGS },
                             onOpenDiagnostics = { sheet = CaptureSheet.DIAGNOSTICS },
+                            onOpenMid360Setup = onOpenMid360Setup,
+                            onOpenRtk = onOpenRtk,
                             onNewCapture = onNewCapture.takeUnless { isReplaySession },
                         )
                     }
@@ -1438,8 +1573,9 @@ fun CaptureScreen(
                             poseChipVisible = false,
                             showCaptureChip = false,
                             onOpenCapture = {},
-                            onOpenDisplay = { sheet = CaptureSheet.SETTINGS },
                             onOpenDiagnostics = { sheet = CaptureSheet.DIAGNOSTICS },
+                            onOpenMid360Setup = onOpenMid360Setup,
+                            onOpenRtk = onOpenRtk,
                             onNewCapture = onNewCapture.takeUnless { isReplaySession },
                         )
                     }
@@ -1633,6 +1769,11 @@ fun CaptureScreen(
             colormap = colormap,
             pointSizePx = pointSizePx,
             lodBudgetMPoints = lodBudgetMPoints,
+            // ROUND 23 item 106(a): the round-22 Detail model, drawn.
+            detailLevels = detailLevels,
+            detailLevel = detailLevel,
+            detailCeilingNote = detailCeilingNote,
+            onDetailChange = onDetailChange,
             refreshHz = refreshHz,
             // ROUND 5.3 (item 17): the ceiling is the panel's, read from the
             // display this composable is actually on.
@@ -1848,8 +1989,11 @@ private fun CaptureChipRow(
     poseChipVisible: Boolean,
     showCaptureChip: Boolean,
     onOpenCapture: () -> Unit,
-    onOpenDisplay: () -> Unit,
     onOpenDiagnostics: () -> Unit,
+    /** ROUND 23 item 106(c): non-null shows the Mid-360 setup chip. */
+    onOpenMid360Setup: (() -> Unit)? = null,
+    /** ROUND 23 item 106(c): non-null shows the RTK chip. */
+    onOpenRtk: (() -> Unit)? = null,
     /** ROUND 20 item 83: non-null shows the New-capture chip (owner-requested). */
     onNewCapture: (() -> Unit)? = null,
 ) {
@@ -1870,8 +2014,39 @@ private fun CaptureChipRow(
                 onClick = onOpenCapture,
             )
         }
-        SheetChip(label = "Display", readout = null, testTag = "displaySheetChip", onClick = onOpenDisplay)
+        // ── ROUND 23 item 102 ────────────────────────────────────────────────
+        //
+        // The "Display" chip opened `CaptureSheet.SETTINGS` — the SAME sheet as
+        // the viewport's ⚙ and the transport row's Advanced button. Counting
+        // the owner's complaint honestly, that was three doors to one room,
+        // and round 22's whole point was that there should be one. The chip
+        // row keeps the chips that go somewhere ELSE (the capture config sheet
+        // and diagnostics) and the New-capture reset, and the parameter that
+        // opened the settings sheet from here is gone with the chip.
         SheetChip(label = "Diag", readout = null, testTag = "diagnosticsSheetChip", onClick = onOpenDiagnostics)
+        // ── ROUND 23 item 106(c): the Mid-360 doors, contextual ─────────────
+        //
+        // Shown only when a Mid-360 is the selected sensor (or Advanced is on)
+        // — `SimpleMode.showsMid360Connect` / `showsRtk` decide, one tab up.
+        // The owner must be able to reach the wizard and the rover WITHOUT
+        // first discovering a switch in Settings, which is what round 22's own
+        // item 97 promised and never wired to a surface.
+        if (onOpenMid360Setup != null) {
+            SheetChip(
+                label = com.lidarscan.core.Wording.MID360_SETUP,
+                readout = null,
+                testTag = "mid360SetupChip",
+                onClick = onOpenMid360Setup,
+            )
+        }
+        if (onOpenRtk != null) {
+            SheetChip(
+                label = com.lidarscan.core.Wording.RTK_SETUP,
+                readout = null,
+                testTag = "rtkChip",
+                onClick = onOpenRtk,
+            )
+        }
         // ROUND 20 item 83 — "add a new-capture button to clear all settings
         // and refresh for a new scan with new settings". Per-scan state and
         // per-scan choices reset; device facts (mount profile, DND, developer
@@ -1963,6 +2138,80 @@ private fun SaveErrorBanner(message: String, onDismiss: () -> Unit) =
  * owner two field sessions.
  */
 /**
+ * ROUND 23 (item 105, owner request) — **STOP WALKING.**
+ *
+ * The owner's words: *"a warning need to tell user stop walking while tracking
+ * lost until the tracking back."*
+ *
+ * The measurement behind it is his own scan-070. The 4.1 s gap at 12:02:22 was
+ * refused by the ROUND 19 gyro gate with `gyro=73.34deg` against a reported
+ * `12.70deg` — seventy-three degrees of turn while ARCore had no idea where
+ * the phone was. Nothing that runs afterwards can heal a gap that big, because
+ * the two sides of it no longer share any geometry to agree about. Standing
+ * still keeps the gap closeable; walking through it does not. The app knew
+ * this was happening (the tracking chip went amber, the cue buzzed) and never
+ * once said what to DO.
+ *
+ * So: full width, amber, at the very top of the loud band, and it does not go
+ * away by itself — [com.lidarscan.core.capture.TrackingLossBanners] holds it
+ * until the tracker actually returns, then flips it green for two seconds so
+ * the operator knows they may walk again. The strong haptic and the tone are
+ * the existing `CueKind.TRACKING_DEGRADED` channel (see
+ * `CaptureViewModel.updateTrackingBanner` for why a second buzzer here would
+ * make both patterns unreadable); the green edge plays the light GO tick.
+ */
+@Composable
+private fun TrackingLossBanner(state: com.lidarscan.core.capture.TrackingBannerState) {
+    if (state.banner == com.lidarscan.core.capture.TrackingBanner.NONE) return
+    val lost = state.banner == com.lidarscan.core.capture.TrackingBanner.LOST
+    val accent = if (lost) SemWarn else SemGood
+    val shape = RoundedCornerShape(ScanDims.TileRadius)
+
+    // The amber banner counts up, at 250 ms like the start panel's own tick,
+    // so "how long have I been standing here" is answered without arithmetic.
+    var tick by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(state.banner, state.sinceMillis) {
+        while (lost) {
+            tick = System.currentTimeMillis()
+            kotlinx.coroutines.delay(250)
+        }
+    }
+    val elapsed = (tick - state.sinceMillis).coerceAtLeast(0L)
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 6.dp)
+            .background(accent.copy(alpha = 0.22f), shape)
+            .border(2.dp, accent, shape)
+            .padding(horizontal = 12.dp, vertical = 10.dp)
+            .testTag(if (lost) "trackingLostBanner" else "trackingBackBanner"),
+    ) {
+        Text(
+            if (lost) {
+                com.lidarscan.core.capture.TrackingLossBanners.LOST_TEXT
+            } else {
+                com.lidarscan.core.capture.TrackingLossBanners.REGAINED_TEXT
+            },
+            fontFamily = DisplayFontFamily,
+            fontWeight = FontWeight.Bold,
+            fontSize = 19.sp,
+            color = accent,
+            modifier = Modifier.testTag("trackingBannerText"),
+        )
+        if (lost) {
+            Spacer(Modifier.height(2.dp))
+            Text(
+                com.lidarscan.core.capture.TrackingLossBanners.lostDetail(elapsed),
+                style = MonoLabel,
+                color = accent,
+                modifier = Modifier.testTag("trackingLostElapsed"),
+            )
+        }
+    }
+}
+
+/**
  * ROUND 21 (item 85) — the unified start-progress panel, owner request
  * verbatim: "i dont know what is the app loading with, show me the progress
  * and tell me what i am waiting for and how long and what should i do while
@@ -2051,6 +2300,27 @@ private fun StartProgressPanel(
                     style = MonoLabel,
                     color = InkFaint,
                 )
+            }
+        }
+        // ── ROUND 23 item 106(b): the checklist, folded in ──────────────────
+        //
+        // ROUND 19's modal showed four rows on the first press of every device,
+        // most of them saying that everything was fine. These are the same
+        // checks, in the panel that is already on screen, and only when one of
+        // them has something to report. `PreScanChecklistSheet` and
+        // `startCapture(skipChecklist)` stay compiled and tested behind
+        // `FeatureFlags.PRE_SCAN_CHECKLIST_SHEET`.
+        val checks = progress?.checks.orEmpty()
+        if (checks.isNotEmpty()) {
+            Spacer(Modifier.height(4.dp))
+            Column(Modifier.testTag("startProgressChecks")) {
+                checks.forEach { check ->
+                    Text(
+                        check,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SemWarn,
+                    )
+                }
             }
         }
         if (pulseFlash) {
@@ -2628,6 +2898,13 @@ private fun CaptureViewport(
     recording: Boolean,
     sensor: SensorType,
     arAvailable: Boolean,
+    /**
+     * ROUND 23 item 101: true when this screen has asked for (and is holding)
+     * an ARCore session — `CaptureRoute`'s `needsArSession`. The pose pump is
+     * composed only when it is, so the pump can never spin against a session
+     * that does not exist.
+     */
+    arSessionWanted: Boolean,
     arTrackingHint: String?,
     arOverlay: @Composable (Modifier) -> Unit,
     arPosePump: @Composable (Modifier) -> Unit,
@@ -2641,7 +2918,6 @@ private fun CaptureViewport(
     /** ROUND 19 item 75: null (or all-zero: unmeasured) hides the ring. */
     coverageSectors: FloatArray? = null,
     onRefreshAutoDownshift: (Int) -> Unit,
-    onOpenSettings: () -> Unit,
     onOpenDiagnostics: () -> Unit,
     onCameraModeChange: (CameraMode) -> Unit,
     /**
@@ -2797,7 +3073,24 @@ private fun CaptureViewport(
         // overlay (which pumps ARCore itself) is not the renderer on screen.
         // Two pumps would call Session.update() from two threads, so this is an
         // either/or by construction.
-        if (poseTrackingRequired && arAvailable && cameraMode != CameraMode.AR) {
+        //
+        // ── ROUND 23 item 101: …and only when there is a session to pump ────
+        //
+        // The owner's 12:00:52 line — `gate refused NO_SESSION asked=POSE_PUMP#2
+        // owner=POSE_PUMP#2 created=false resumed=false (+59 more since the last
+        // line)` — is a `GLSurfaceView` at `RENDERMODE_CONTINUOUSLY` calling
+        // `Session.update()` sixty times a second against a session that does
+        // not exist. The claim is correct, the owner is correct, and there is
+        // simply nothing there: the screen creates the ARCore session only when
+        // [arSessionWanted] (the same predicate `CaptureRoute` uses), and until
+        // then the pump was spinning a real GL thread and a real camera-shaped
+        // surface for nothing but log noise and battery.
+        //
+        // Composing the pump on the same predicate makes the two agree by
+        // construction. The rate limiter stays — a few refusals still happen in
+        // the window between this view's `factory` and `createSession()`
+        // returning, and that window is exactly what it was written for.
+        if (poseTrackingRequired && arAvailable && arSessionWanted && cameraMode != CameraMode.AR) {
             arPosePump(Modifier.align(Alignment.BottomStart).padding(start = 2.dp, bottom = 2.dp))
         }
 
@@ -2919,22 +3212,21 @@ private fun CaptureViewport(
             ScanChip(text = healthLabel, color = healthColor, modifier = Modifier.padding(horizontal = 6.dp))
         }
 
-        // ── the 48 dp Display button: the single entry point for settings ─
-        Box(
-            Modifier
-                .align(Alignment.CenterEnd)
-                .padding(end = 14.dp)
-                .size(48.dp)
-                .shadow(8.dp, CircleShape)
-                .background(MaterialTheme.colorScheme.surfaceContainer, CircleShape)
-                .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
-                .clickable(role = Role.Button, onClick = onOpenSettings)
-                .semantics { contentDescription = "Capture settings" }
-                .testTag("captureSettingsButton"),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(Icons.Filled.Tune, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
-        }
+        // ── ROUND 23 item 102: THE SECOND ADVANCED BUTTON IS GONE ───────────
+        //
+        // The owner, verbatim: *"there are 2 advance button in the scan."* He
+        // is describing this one and the round-22 `advancedButton` in the
+        // transport row: same `Icons.Filled.Tune`, same 1 dp hairline circle,
+        // same `CaptureSheet.SETTINGS` behind both. Round 22 added the
+        // labelled door beside the scan button and simply left this one
+        // floating on the viewport's right edge, so the "gather everything
+        // behind one tap" item shipped as two taps that do the same thing.
+        //
+        // The round-22 placement is the one that stays — it is beside the
+        // control the operator is already looking at, it is 52 dp rather than
+        // 48, and it is the one the brief named. The parameter that fed this
+        // button is removed with it rather than left dangling: an unused door
+        // in a signature is how a duplicate comes back.
     }
 }
 
@@ -3082,6 +3374,14 @@ private fun TransportRow(
      * scan-045 failure. A control that is working has to look like it.
      */
     starting: Boolean = false,
+    /**
+     * ROUND 23 item 101(b) — non-null when a press cannot start anything, in
+     * the six-word sentence the log line will carry. The button stays
+     * TAPPABLE: an inert control is what three rounds of "the scan button is
+     * dead" were made of.
+     */
+    startBlockedReason: String? = null,
+    onStartRefused: (String) -> Unit = {},
     onLiveViewChange: (Boolean) -> Unit,
     onStart: () -> Unit,
     onPause: () -> Unit,
@@ -3252,8 +3552,21 @@ private fun TransportRow(
                 .alpha(if (armed || live) 1f else 0.45f)
                 .shadow(16.dp, CircleShape, ambientColor = Ember, spotColor = Ember)
                 .background(Ember, CircleShape)
-                .clickable(enabled = connected && !stopping, role = Role.Button) {
-                    if (live) onStop() else onStart()
+                // ── ROUND 23 item 101(b): NEVER INERT, NEVER SILENT ────────
+                //
+                // This used to be `enabled = connected && !stopping`, so a
+                // press with no sensor attached — or during a seal — went
+                // nowhere at all: no ViewModel call, no log line, no pixel
+                // changed. That is precisely the shape of the owner's
+                // complaint, and it is indistinguishable to him from the item
+                // 101 navigation defect that actually caused this round's.
+                // A button that will not act must still ANSWER.
+                .clickable(enabled = true, role = Role.Button) {
+                    when {
+                        live -> onStop()
+                        startBlockedReason != null -> onStartRefused(startBlockedReason)
+                        else -> onStart()
+                    }
                 }
                 .semantics { contentDescription = recordLabel }
                 .testTag("recordButton"),

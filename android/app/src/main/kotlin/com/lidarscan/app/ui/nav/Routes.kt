@@ -91,6 +91,20 @@ object Routes {
      */
     const val RTK = "rtk"
 
+    /**
+     * ROUND 23 item 106(c) — the Mid-360 wizard, reached from the **Scan tab**,
+     * before any project exists.
+     *
+     * The owner is testing Mid-360 + RTK next, and with Advanced OFF the only
+     * doors to the wizard were inside the Details hub that Simple mode hides.
+     * `Mid360ConnectViewModel` has taken a nullable `projectId` since B3 (the
+     * addresses are stored device-level as well as per project), so this is a
+     * second entry into the SAME screen rather than a second screen — with no
+     * project id, "save into this project's manifest" is simply not offered
+     * and the device-level save is.
+     */
+    const val MID360_SETUP = "mid360_setup"
+
     /** B12: georeferenced auto-merge — inherently multi-project, so also global. */
     const val MERGE = "merge"
 }

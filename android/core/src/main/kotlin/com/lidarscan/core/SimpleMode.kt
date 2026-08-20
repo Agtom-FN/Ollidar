@@ -1,6 +1,7 @@
 package com.lidarscan.core
 
 import com.lidarscan.core.model.SensorType
+import com.lidarscan.core.render.DisplayProfile
 
 /**
  * ROUND 22 item 97 — **what Simple mode shows, in one place.**
@@ -79,4 +80,30 @@ object SimpleMode {
     /** The **Mid-360 connect wizard** — same contextual rule, same reason. */
     fun showsMid360Connect(advanced: Boolean, sensor: SensorType): Boolean =
         advanced || sensor == SensorType.MID360
+
+    /**
+     * ROUND 23 item 106d — **the same three rules, applied to the chip that
+     * actually selects a profile.**
+     *
+     * Round 22 hid Survey, Research and the floor plan; the Review screen's
+     * Display panel went on enumerating `DisplayProfile.entries`, so all four
+     * profiles stayed one tap away in Simple mode and `showsSurveyProfile`
+     * answered "no" while a chip labelled "Survey" sat on the screen. Applying
+     * a profile is how the Survey GNSS gate and the Research 50 M-point budget
+     * get switched on, so this was the hidden feature reachable anyway — the
+     * exact shape [showsFloorPlan]'s null-callback pairing exists to prevent.
+     *
+     * Quick scan is never hidden: it is the simple path's own profile, and a
+     * panel with no profile chips at all is a panel with a dangling heading.
+     */
+    fun showsDisplayProfile(advanced: Boolean, profile: DisplayProfile): Boolean = when (profile) {
+        DisplayProfile.SURVEY -> showsSurveyProfile(advanced)
+        DisplayProfile.RESEARCH -> showsResearchProfile(advanced)
+        DisplayProfile.FLOOR_PLAN -> showsFloorPlan(advanced)
+        DisplayProfile.QUICK_SCAN -> true
+    }
+
+    /** The profile chips to draw, in the enum's own order. */
+    fun displayProfiles(advanced: Boolean): List<DisplayProfile> =
+        DisplayProfile.entries.filter { showsDisplayProfile(advanced, it) }
 }

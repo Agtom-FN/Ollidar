@@ -81,6 +81,9 @@ fun tabForRoute(route: String?): ScanTab = when {
     route == Routes.SETTINGS -> ScanTab.SETTINGS
     route == Routes.CAPTURE_NEW -> ScanTab.CAPTURE
     route == Routes.JOBS_PICK -> ScanTab.JOBS
+    // ROUND 23 item 106(c): the project-less Mid-360 wizard is a Scan-tab
+    // errand — it is opened from the Scan tab and it comes back to it.
+    route == Routes.MID360_SETUP -> ScanTab.CAPTURE
     route.endsWith("/capture") || route.endsWith("/capture/replay") -> ScanTab.CAPTURE
     route.endsWith("/processing") -> ScanTab.JOBS
     else -> ScanTab.PROJECTS

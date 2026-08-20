@@ -3313,3 +3313,161 @@ is no override. 28 cases across `DeviceTierLodCeilingTest` and `DetailLevelTest`
 **Numbers.** Engine untouched, **ABI stays 12**. `:core` **672** (was 587),
 `:app` **153** (was 129), 0 failures. VERSION 0.9.7; **versionCode 907 and
 versionName 0.9.7 verified in the built APK** (aapt2 badging).
+
+---
+
+## ROUND 23 (v0.9.8) — the owner's 0.9.7 field session, 2026-08-20, 11:59–12:30
+
+Log `captures/lidarscan-capture-log-2026-08-20-1230.txt`, scans 070–073. What
+round 22 fixed **stayed** fixed: the auto-process completed in-process (070
+selfCheck 2.65 cm + a 5.1° mount suggestion, 071 1.90 cm), the start-hold trim
+gate REFUSED a worse re-zero at 12:06:19 and then accepted a better sample, and
+the new gate logging did its job at ≤1 Hz. What round 22 **broke** is item 101,
+and it is the third round in a row on the same path.
+
+**101 — THE SCAN BUTTON IS DEAD AFTER A SEAL, and round 22 is why.** Between
+`seal navigate -> Projects` (12:02:43) and the next process start (12:05:20,
+the `[store] device tier` line) the log has **zero lines** — no `startCapture`,
+no gate wait, no world reset. The tap never reached the ViewModel. Root cause:
+`_sealedProjectId` is a `MutableSharedFlow(replay = 1)` and its own doc comment
+carries the invariant it depended on — *"because the buffer belongs to the
+ViewModel — which nav destroys on the way to Projects — it cannot survive to
+re-navigate later"*. **Item 88 deleted that invariant.** `saveState` /
+`restoreState` keep the `CAPTURE_NEW` back-stack entry and its `ViewModelStore`
+alive, so the replay buffer survives too: every return to the Scan tab
+re-attaches `CaptureRoute`'s collector, the buffered id replays, and
+`onScanSealed` fires `goTab(PROJECTS)` again — silently, because the
+`navigate -> Projects` line is written at *emit* time, not at collection. The
+operator is bounced off the Scan tab before he can press anything, and only
+killing the process (which destroys the buffer) clears it. That is exactly the
+workaround he found. Fixes: the seal navigation is **consumed exactly once**
+(`sealNavigationHandled` resets the replay cache, and the consumption is
+logged); re-entering the Scan tab **re-arms** it (a stale start latch with no
+live capture is released and logged); and **a tap on the Scan button is never
+silent** — a refusal logs `[session] start tap refused: <reason>`, pulses the
+start panel and names the reason on screen in ≤6 words. Regression tests replay
+the owner's sequence three times in ONE process. Also: the pose pump is only
+composed when an AR session is actually wanted, which ends the `gate refused
+NO_SESSION` pumping-against-a-closed-session loop of 12:00:52.
+
+**102 — TWO ADVANCED BUTTONS.** Owner: *"there are 2 advance button in the
+scan."* Round 22 added `advancedButton` to the transport row and left
+`captureSettingsButton` — the 48 dp ⚙ floating on the viewport's right edge —
+opening the **same** `CaptureSheet.SETTINGS`. The viewport one goes; the
+round-22 placement beside the scan button stays.
+
+**103 — THE TAB LABEL.** Owner: *"The ui not renamed or changed as you asked."*
+`ScanTab.CAPTURE`'s label has read `"Scan"` since round 22, so this is verified
+on the emulator rather than argued about in a diff, and pinned by a semantics
+test that reads the label off the `tab_capture` node.
+
+**104 — EXPORT AND SHARE CAME BACK, AND THEY WORK ON A SELECTION.** Owner:
+*"the export and share button also gone. also please add group export and
+share."* Review gets **Export** and **Share** side by side (the same
+`ProcessingViewModel` job; Share is the round-7 Downloads delivery followed by
+the share sheet). The Projects ⋯ menu gets **Share**. And Projects grows a
+**selection mode**: long-press selects instead of deleting, a top bar counts
+the selection, and Export / Share / Delete act on all of it — sequential export
+jobs, one `ACTION_SEND_MULTIPLE` sheet, a progress chip per card, the delete
+confirm kept.
+
+**105 — "STOP WALKING" WHILE TRACKING IS LOST (owner request).** *"a warning
+need to tell user stop walking while tracking lost until the tracking back."*
+A full-width amber banner — **"Tracking lost. Stop. Hold still."** — plus a
+strong haptic and the existing audio cue channel, held until tracking returns,
+then a green **"OK — keep walking."** for two seconds. This is not a nicety:
+scan-070's 4.1 s gap was refused because the gyro witness measured **73.34°**
+of turn where the tracker reported 12.70°. Walking through a loss is what makes
+a gap unhealable, and nothing on screen said so.
+
+**106 — THE ROUND-22 DEFERRALS.** (a) Detail **Auto / High / Max** chips drawn
+in the Advanced sheet (the model and its tests shipped in round 22, the UI did
+not). (b) The pre-scan checklist folded into `StartProgressPanel` per item 95,
+`startCapture(skipChecklist)` and its tests intact. (c) With Advanced OFF and a
+Mid-360 selected, the Scan tab offers **Mid-360 setup** and RTK is reachable
+from it — the owner tests Mid-360 + RTK next and must not have to find a
+switch first. (d) The Survey and Research display-profile chips are gated by
+`SimpleMode`.
+
+### Resolution — 2026-08-20 (0.9.8, round 23)
+
+**101 — root-caused, fixed, and pinned in one process.** The predicate that
+made the button inert was not a predicate at all: the tap never reached the
+screen, because `CaptureRoute`'s seal collector re-fired on every entry.
+`_sealedProjectId` keeps `replay = 1` (ROUND 10's late-collector property is
+real and is now its own test) and the event is **spent by the collector that
+acts on it** — `CaptureViewModel.sealNavigationHandled(id)` resets the replay
+cache and logs `navigation consumed id=… — the Scan tab is re-armed` beside the
+ROUND 10 `navigate -> Projects` line it pairs with. Three more guards:
+`onScanScreenEntered()` re-arms the tab on every entry (a start latch held with
+no capture running is released and logged; a live capture is left strictly
+alone); the record button is `clickable(enabled = true)` and every refusal —
+UI-level or in-sequence — goes through `reportStartTapRefused`, which writes
+`[session] start tap refused: <reason>`, pulses the start panel and puts the
+SAME six-word sentence on screen; and the standing reason is shown before
+anything is pressed (`startBlockedNote`), so a dimmed button is never a
+mystery. `CaptureRound23Test` replays the owner's sequence — start → record →
+seal → navigate → back → START AGAIN — **three times against one ViewModel**
+and asserts three distinct projects, plus the no-replay property, the ROUND 10
+late-collector property, and that a mid-walk tab switch changes nothing. On the
+emulator, a tap on the refusing button now produces
+`[session] start tap refused: Connect the scanner first.` in the app's own log.
+The POSE_PUMP spam was real and is gone: `ArPosePumpView` is composed only when
+the screen actually wants an AR session (`arSessionWanted`, the same predicate
+that creates it), so a `GLSurfaceView` at `RENDERMODE_CONTINUOUSLY` can no
+longer pump `Session.update()` against a session that does not exist.
+
+**102 — one door, not three.** The duplicate was
+`CaptureScreen.kt`'s `captureSettingsButton` (48 dp ⚙ on the viewport's right
+edge) beside round 22's `advancedButton`; both `Icons.Filled.Tune`, both
+opening `CaptureSheet.SETTINGS`. Counting honestly there was a third — the chip
+row's **Display** chip — opening the same sheet again. Both are removed, with
+their parameters rather than left dangling, and the emulator test asserts
+exactly one `advancedButton`, zero `captureSettingsButton`, zero
+`displaySheetChip`.
+
+**103 — verified on the emulator; the label was already right.** `ScanTab`'s
+label has read "Scan" since round 22 and the bottom bar on the AVD reads
+**Projects · Scan · Jobs · Settings**, in the Agtom orange, with the big ember
+SCAN circle and its word. `Round23ScanTabTest.theScanTabIsLabelledScan` now
+asserts it on the `tab_capture` node so the claim is checkable rather than
+arguable, and the aggregate line that still said "no projects yet" was moved to
+the operator's vocabulary ("no scans yet").
+
+**104 — export and share, singly and in groups.** Review carries **Export** and
+**Share** side by side in both modes (`ProcessingViewModel.export(context,
+share)` — the same job, the same ROUND 7 Downloads delivery, then the sheet);
+the Projects ⋯ menu gained **Share**; and Projects grew a selection mode
+(long-press enters it, tap toggles, a bar counts the selection) with **Export /
+Share / Delete** over the whole selection — sequential jobs through
+`ProjectExporter`, one `ACTION_SEND_MULTIPLE` sheet at the end, a progress chip
+per card, the delete confirm kept. The sequencing and the selection state
+machine are pure `:core` (`ProjectSelection`, `BatchExport`), including "a
+failure in the middle does not stop the rest, and is reported".
+
+**105 — the banner, and why standing still matters.** `TrackingLossBanners`
+(`:core`) holds an amber, full-width **"Tracking lost. Stop. Hold still."** with
+a live count-up for as long as the tracker is blind, then flips green —
+**"OK — keep walking."** — for two seconds. The strong haptic and the tone are
+the EXISTING `CueKind.TRACKING_DEGRADED` channel, fed from the same tick, so
+two patterns can never overlap into one unreadable buzz; the green edge plays
+the light `GO_START` tick. Driven from `updateMotionHint`, which is where the
+tracking signal, the motion hint and the cues already agree with each other.
+
+**106 — the deferrals, done.** (a) The Detail row is **drawn**: Auto / High /
+Max from `DetailLevels.selectableOn`, replacing the raw "LOD budget" slider in
+the Advanced sheet — on the AVD it correctly offers Auto and High only, with
+"Limited by this device" underneath, which is item 100 working. (b) The
+checklist is folded: `PreScanChecks.notesFor` puts a note in the start panel
+only when a check has something to report, and the sheet, the
+`startCapture(skipChecklist)` API and the ROUND 19 tests stay behind
+`FeatureFlags.PRE_SCAN_CHECKLIST_SHEET = false`. (c) `Routes.MID360_SETUP` is a
+project-less door to the same wizard, and the Scan tab shows **Mid-360 setup**
+and **RTK position** chips whenever a Mid-360 is selected — Advanced OFF, no
+switch to find first. (d) The Survey and Research profile chips are gated by
+`SimpleMode.displayProfiles`.
+
+**Numbers.** Engine untouched, **ABI stays 12**, engine ctest **7/7**. `:core`
+**727** (was 672), `:app` **168** (was 155), emulator **25/25** (was 22/22), 0
+failures anywhere. VERSION 0.9.8; **versionCode 908 / versionName 0.9.8
+verified in the built APK** (aapt2 badging).

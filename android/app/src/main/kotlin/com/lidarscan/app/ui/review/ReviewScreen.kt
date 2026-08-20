@@ -6,6 +6,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.IosShare
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.ui.draw.clip
 import androidx.compose.material3.LinearProgressIndicator
 import com.lidarscan.app.ui.theme.SemBad
@@ -74,7 +75,7 @@ import com.lidarscan.app.render.PointCloudView
 import com.lidarscan.core.measure.MeasureUnit
 import com.lidarscan.core.render.ColorMode
 import com.lidarscan.core.render.Colormap
-import com.lidarscan.core.render.DisplayProfile
+import com.lidarscan.core.projects.ProjectActionWording
 import com.lidarscan.core.render.PointSizeMode
 import kotlin.math.roundToInt
 
@@ -355,13 +356,28 @@ fun ReviewScreen(
             Spacer(Modifier.height(10.dp))
         }
 
-        // ── ROUND 22 items 96 + 97: Floor plan (Advanced) / Export ──────────
+        // ── ROUND 22 items 96 + 97 / ROUND 23 item 104a ─────────────────────
         //
         // The floor plan is behind the Advanced switch, so on an ordinary walk
-        // this row is one full-width Export button — which is the point of
-        // item 96: Export used to mean "open the Details hub, find the
-        // Processing screen, pick a format there". It is here now, on the
-        // screen the operator is already looking at.
+        // this row is Share + Export — which is the point of item 96: Export
+        // used to mean "open the Details hub, find the Processing screen, pick
+        // a format there". It is here now, on the screen the operator is
+        // already looking at.
+        //
+        // ROUND 23 item 104a: **and so is Share, in BOTH modes.** Round 22 gave
+        // Review a full-width Export and, with it, only the Downloads copy —
+        // the hand-off to the system share sheet that the bundle path had
+        // always carried was left on the Processing screen that Simple mode
+        // removes. From where the owner stands that is export/share
+        // "vanishing", and it is fixed by giving the sheet its own button
+        // rather than by hiding it inside Export: Share is
+        // `ProcessingViewModel.export(share = true)`, i.e. the same job and the
+        // same ROUND 7 "Downloads FIRST, sheet second" order, one flag apart.
+        //
+        // Export is the primary and Share the secondary because only one of the
+        // two guarantees the file survives the operator dismissing a chooser.
+        // Share is drawn whenever there is a ViewModel behind it, so Advanced
+        // mode — where Export navigates to the Processing screen — keeps it too.
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 14.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -372,6 +388,14 @@ fun ReviewScreen(
                     icon = Icons.Filled.GridView,
                     onClick = onOpenPlan,
                     modifier = Modifier.weight(1f),
+                )
+            }
+            if (exportVm != null) {
+                SecondaryPill(
+                    text = ProjectActionWording.SHARE_ACTION,
+                    icon = Icons.Filled.Share,
+                    onClick = { exportVm.export(exportContext, share = true) },
+                    modifier = Modifier.weight(1f).testTag("reviewShareButton"),
                 )
             }
             PrimaryPill(
@@ -404,7 +428,7 @@ fun ReviewScreen(
                 topEnd = ScanDims.SheetRadius,
             ),
         ) {
-            DisplayPanel(state, vm)
+            DisplayPanel(state, vm, advanced)
         }
     }
 }
@@ -459,7 +483,7 @@ private fun MeasureHud(state: ReviewUiState, vm: ReviewViewModel) {
  * admits it.
  */
 @Composable
-private fun DisplayPanel(state: ReviewUiState, vm: ReviewViewModel) {
+private fun DisplayPanel(state: ReviewUiState, vm: ReviewViewModel, advanced: Boolean = false) {
     val d = state.display
     Column(
         Modifier
@@ -476,8 +500,18 @@ private fun DisplayPanel(state: ReviewUiState, vm: ReviewViewModel) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            DisplayProfile.entries.forEach { p ->
+        // ── ROUND 23 item 106d: the profile chips obey Simple mode ──────────
+        //
+        // Round 22 hid the Survey and Research profiles and the floor plan; this
+        // panel went on enumerating DisplayProfile.entries, so all four chips
+        // stayed one tap away and `SimpleMode.showsSurveyProfile(false)`
+        // answered "no" with a chip labelled "Survey" on the screen. Applying a
+        // profile is how the Survey GNSS capture gate and the Research point
+        // budget get switched on, so this was the hidden feature reachable
+        // anyway. The filter is `SimpleMode.displayProfiles`, in :core and under
+        // test, rather than three inline conditions here.
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.testTag("reviewProfileChips")) {
+            com.lidarscan.core.SimpleMode.displayProfiles(advanced).forEach { p ->
                 FilterChip(selected = false, onClick = { vm.applyProfile(p) }, label = { Text(p.displayName) })
             }
         }

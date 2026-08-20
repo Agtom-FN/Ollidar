@@ -22,8 +22,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -68,6 +74,9 @@ import com.lidarscan.app.ui.theme.SemGood
 import com.lidarscan.app.ui.theme.SemWarn
 import com.lidarscan.core.Wording
 import com.lidarscan.core.model.SensorType
+import com.lidarscan.core.projects.BatchAction
+import com.lidarscan.core.projects.ProjectActionWording
+import com.lidarscan.core.projects.ProjectSelection
 import com.lidarscan.core.store.Project
 import kotlinx.coroutines.flow.first
 
@@ -96,6 +105,11 @@ fun ProjectsListRoute(
      * duplicating the export UI on a card.
      */
     onExport: (String) -> Unit = onOpenReview,
+    /**
+     * ROUND 23 item 104b — the card's ⋯ › Share. Same destination as Export:
+     * Review is where the Share button and the format row both live.
+     */
+    onShare: (String) -> Unit = onExport,
     /**
      * ROUND 22 item 97: with Advanced ON, the ⋯ menu gains a fourth item that
      * opens the "Details, jobs & export" hub — the screen Simple mode removes
@@ -137,9 +151,49 @@ fun ProjectsListRoute(
     )
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
+    // ── ROUND 23 item 104c: group export / share / delete ───────────────────
+    //
+    // A second ViewModel rather than more fields on ProjectsListViewModel: that
+    // one also backs the project PICKER, and it deliberately knows nothing
+    // about AppContainer, a Context or the export pipeline. This one owns the
+    // selection, the per-card job progress and the batch run; both are read by
+    // the same screen. Nothing in ui/nav changes — the route already has the
+    // container.
+    val batchViewModel: ProjectBatchViewModel = viewModel(
+        factory = viewModelFactory {
+            initializer {
+                ProjectBatchViewModel(
+                    exporter = com.lidarscan.app.share.ProjectExporter(
+                        repo = container.processingRepository,
+                        store = container.projectStore,
+                    ),
+                    store = container.projectStore,
+                    onProjectsChanged = viewModel::refresh,
+                    log = { line ->
+                        container.captureLog.log(com.lidarscan.app.debug.CaptureLog.TAG_EXPORT, line)
+                    },
+                    // ROUND 22 item 90: a batch the operator started must not
+                    // die because they left the tab. Same scope, same reason as
+                    // ProjectsListViewModel's reprocess.
+                    jobScope = container.containerScope,
+                )
+            }
+        },
+    )
+    val batchState by batchViewModel.uiState.collectAsStateWithLifecycle()
+
     // ROUND 5: the tab is a list + a preview, so the list has to be fresh when
     // the Capture tab has just created a project behind it.
     LaunchedEffect(Unit) { viewModel.refresh() }
+
+    // A group delete removes the scans the selection still names. Pruning here
+    // (rather than trusting the batch to have exited) keeps the two in step
+    // when the list changes for any other reason too.
+    LaunchedEffect(uiState.projects) {
+        batchViewModel.pruneSelection(uiState.projects.map { it.id })
+    }
+
+    val batchContext = androidx.compose.ui.platform.LocalContext.current
 
     ProjectsListScreen(
         uiState = uiState,
@@ -151,8 +205,26 @@ fun ProjectsListRoute(
         onSettings = onSettings,
         onDeleteProject = viewModel::delete,
         onExportProject = onExport,
+        // ROUND 23 item 104b: ⋯ › Share opens the scan, where the Share button
+        // now lives (item 104a) — the same door ⋯ › Export uses, for the same
+        // reason: the format row and the sheet are both on Review.
+        onShareProject = onShare,
         onReprocessProject = viewModel::reprocessProject,
         onOpenDetails = if (com.lidarscan.core.SimpleMode.showsProjectDetailHub(advanced)) onOpenProject else null,
+        selection = batchState.selection,
+        batchRunning = batchState.running,
+        batchBusy = batchState.busy,
+        batchMessage = batchState.message,
+        onEnterSelection = batchViewModel::enterSelection,
+        onToggleSelection = batchViewModel::toggle,
+        onExitSelection = batchViewModel::exitSelection,
+        onBatchAction = { action ->
+            batchViewModel.runOnSelection(
+                context = batchContext,
+                action = action,
+                listOrder = uiState.projects.map { it.id },
+            )
+        },
     )
 }
 
@@ -182,10 +254,30 @@ fun ProjectsListScreen(
     onSettings: () -> Unit,
     onDeleteProject: (String) -> Unit,
     onExportProject: (String) -> Unit = {},
+    /** ROUND 23 item 104b — the ⋯ menu's new Share item. */
+    onShareProject: (String) -> Unit = {},
     onReprocessProject: (String) -> Unit = {},
     onOpenDetails: ((String) -> Unit)? = null,
+    // ── ROUND 23 item 104c: selection mode ──────────────────────────────────
+    /** The state machine's current value — see [ProjectSelection] in :core. */
+    selection: ProjectSelection = ProjectSelection.EMPTY,
+    /** project id → 0..1 for a BATCH job running against that card. */
+    batchRunning: Map<String, Float> = emptyMap(),
+    /** True from the first job of a batch to the last. */
+    batchBusy: Boolean = false,
+    /** [com.lidarscan.core.projects.BatchReport.summary] once a run finishes. */
+    batchMessage: String? = null,
+    onEnterSelection: (String) -> Unit = {},
+    onToggleSelection: (String) -> Unit = {},
+    onExitSelection: () -> Unit = {},
+    onBatchAction: (BatchAction) -> Unit = {},
 ) {
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
+    // The group Delete confirm. ROUND 23 item 104c is explicit that moving
+    // delete out of the long-press must not become an accidental-delete
+    // regression: the dialog is the same one the card's ⋯ › Delete opens, it
+    // just names a count instead of a scan.
+    var showBatchDeleteConfirm by remember { mutableStateOf(false) }
     // ROUND 8 (item 31): adopt the just-sealed scan ONCE, keyed on the id.
     // Keyed rather than run on every composition because the user must stay in
     // charge afterwards: collapsing the card and having it spring back open on
@@ -218,6 +310,32 @@ fun ProjectsListScreen(
             },
         )
 
+        // ROUND 23 item 104c: the selection bar. It appears only in selection
+        // mode, carries the count and the three group actions, and its X is the
+        // way out — a mode with no visible exit is the reason long-press modes
+        // get a bad name.
+        if (selection.isActive) {
+            SelectionBar(
+                selection = selection,
+                busy = batchBusy,
+                onClose = onExitSelection,
+                onExport = { onBatchAction(BatchAction.EXPORT) },
+                onShare = { onBatchAction(BatchAction.SHARE) },
+                onDelete = { showBatchDeleteConfirm = true },
+            )
+        }
+        // The batch's own last word. ROUND 7's rule over a set: a run of three
+        // that produced two files says so, out loud, and says what to tap.
+        batchMessage?.let { message ->
+            Hint(
+                message,
+                color = InkFaint,
+                modifier = Modifier
+                    .padding(horizontal = 20.dp, vertical = 4.dp)
+                    .testTag("batchMessage"),
+            )
+        }
+
         // Weighted so the list gets the height LEFT OVER under the hero,
         // not the full screen height (which would run the last card under the
         // floating tab bar).
@@ -243,7 +361,19 @@ fun ProjectsListScreen(
                         ProjectCard(
                             project = project,
                             selected = selectedId == project.id,
-                            progress = uiState.running[project.id],
+                            // ROUND 23 item 104c: a reprocess chip and an export
+                            // chip are the same chip. Whichever job is running
+                            // against this card owns it; they cannot both run,
+                            // because the batch refuses to start a second run
+                            // and the reprocess refuses a second run per id.
+                            progress = uiState.running[project.id] ?: batchRunning[project.id],
+                            progressLabel = if (uiState.running.containsKey(project.id)) {
+                                { percent -> Wording.fixingProgress(percent) }
+                            } else {
+                                { percent -> ProjectActionWording.exportingProgress(percent) }
+                            },
+                            selecting = selection.isActive,
+                            checked = selection.contains(project.id),
                             // ── ROUND 22 item 96: a tap OPENS THE SCAN ───────
                             //
                             // ROUND 5 made a tap "select and preview in place",
@@ -254,11 +384,29 @@ fun ProjectsListScreen(
                             // tapping it opens it. Selection still happens (the
                             // seal→Projects handoff and the Jobs tab both read
                             // it), it just no longer competes with opening.
+                            //
+                            // ROUND 23 item 104c: **while selecting, a tap
+                            // picks.** That is the one mode in which the card is
+                            // not a door, and it is the reason ProjectSelection
+                            // refuses to start a selection from a tap.
                             onClick = {
-                                onSelectProject(project.id)
-                                onOpenReview(project.id)
+                                if (selection.isActive) {
+                                    onToggleSelection(project.id)
+                                } else {
+                                    onSelectProject(project.id)
+                                    onOpenReview(project.id)
+                                }
                             },
+                            // ROUND 23 item 104c: long-press ENTERS selection
+                            // mode and picks this card. It used to open the
+                            // delete confirm; delete is now in the ⋯ menu (where
+                            // it has been since round 22) AND in the selection
+                            // bar, so nothing lost a route — a destructive
+                            // action simply stopped being the only thing a
+                            // long-press could mean.
+                            onLongClick = { onEnterSelection(project.id) },
                             onExport = { onExportProject(project.id) },
+                            onShare = { onShareProject(project.id) },
                             onReprocess = { onReprocessProject(project.id) },
                             onOpenDetails = onOpenDetails?.let { open -> { open(project.id) } },
                             onDelete = { onDeleteProject(project.id) },
@@ -273,7 +421,10 @@ fun ProjectsListScreen(
                             // two of which describe behaviour item 96 changed
                             // (a tap opens now; delete is in the ⋯ menu, where
                             // it is discovered rather than explained).
-                            Wording.PROJECTS_LIST_HINT +
+                            // ROUND 23 item 104c: and one line for the mode
+                            // that a gesture alone cannot advertise.
+                            Wording.PROJECTS_LIST_HINT + "\n" +
+                                ProjectActionWording.SELECTION_HINT +
                                 if (uiState.hiddenEmptyCount > 0) {
                                     "\n" + Wording.PROJECTS_EMPTY_HIDDEN
                                 } else {
@@ -287,6 +438,97 @@ fun ProjectsListScreen(
             }
         }
     }
+
+    if (showBatchDeleteConfirm) {
+        AlertDialog(
+            shape = RoundedCornerShape(ScanDims.DialogRadius),
+            onDismissRequest = { showBatchDeleteConfirm = false },
+            // The SAME dialog the single-card Delete opens — same title, same
+            // body, same confirm word. Only the count in front of it is new.
+            title = { Text("${Wording.DELETE_TITLE} (${selection.count})") },
+            text = { Text(Wording.DELETE_BODY) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showBatchDeleteConfirm = false
+                        onBatchAction(BatchAction.DELETE)
+                    },
+                    modifier = Modifier.testTag("batchDeleteConfirm"),
+                ) { Text(ProjectActionWording.DELETE_ACTION) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBatchDeleteConfirm = false }) { Text("Cancel") }
+            },
+        )
+    }
+}
+
+/**
+ * ROUND 23 item 104c — **the selection bar.**
+ *
+ * Count on the left, the three group actions on the right, and an X that is the
+ * only way out of the mode. Delete is last and carries the theme's error tint:
+ * it is the one action here that cannot be undone, and it is the one that used
+ * to be what a long-press did by itself.
+ *
+ * The actions are disabled while a batch runs rather than hidden — a bar whose
+ * buttons vanish mid-run reads as the app having lost the selection.
+ */
+@Composable
+private fun SelectionBar(
+    selection: ProjectSelection,
+    busy: Boolean,
+    onClose: () -> Unit,
+    onExport: () -> Unit,
+    onShare: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp)
+            .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(ScanDims.CardRadius))
+            .padding(horizontal = 6.dp, vertical = 4.dp)
+            .testTag("selectionBar"),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onClose, modifier = Modifier.testTag("selectionClose")) {
+            Icon(
+                Icons.Filled.Close,
+                contentDescription = ProjectActionWording.SELECTION_CLOSE,
+                tint = MaterialTheme.colorScheme.onSurface,
+            )
+        }
+        Text(
+            text = selection.title(),
+            fontFamily = DisplayFontFamily,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 15.sp,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f).testTag("selectionCount"),
+        )
+        IconButton(onClick = onExport, enabled = !busy, modifier = Modifier.testTag("selectionExport")) {
+            Icon(
+                Icons.Filled.IosShare,
+                contentDescription = Wording.CARD_MENU_EXPORT,
+                tint = MaterialTheme.colorScheme.onSurface,
+            )
+        }
+        IconButton(onClick = onShare, enabled = !busy, modifier = Modifier.testTag("selectionShare")) {
+            Icon(
+                Icons.Filled.Share,
+                contentDescription = ProjectActionWording.SHARE_ACTION,
+                tint = MaterialTheme.colorScheme.onSurface,
+            )
+        }
+        IconButton(onClick = onDelete, enabled = !busy, modifier = Modifier.testTag("selectionDelete")) {
+            Icon(
+                Icons.Filled.Delete,
+                contentDescription = ProjectActionWording.DELETE_ACTION,
+                tint = MaterialTheme.colorScheme.error,
+            )
+        }
+    }
 }
 
 private fun aggregateLine(projects: List<Project>, hiddenEmptyCount: Int = 0): String {
@@ -294,13 +536,16 @@ private fun aggregateLine(projects: List<Project>, hiddenEmptyCount: Int = 0): S
     // discovered — "2 projects" on a phone with five directories on it would be
     // the app quietly disagreeing with the file manager.
     val hidden = if (hiddenEmptyCount > 0) " · $hiddenEmptyCount empty hidden" else ""
-    if (projects.isEmpty()) return "no projects yet$hidden"
+    // ROUND 23: the operator's word is "scan" everywhere else on this screen
+    // (item 98 renamed the empty state and the card menu in round 22 and left
+    // this line saying "projects"). One vocabulary.
+    if (projects.isEmpty()) return "no scans yet$hidden"
     val georeferenced = projects.count { it.manifest.crsEpsg != null && it.manifest.crsEpsg != 0 }
     val totalPoints = projects.sumOf { it.manifest.pointCountEstimate ?: 0L }
     val pts = when {
         totalPoints >= 1_000_000 -> "%.1f M points".format(totalPoints / 1_000_000.0)
         totalPoints > 0 -> "%,d points".format(totalPoints)
-        else -> "no captures yet"
+        else -> "no points yet"
     }
     return "${projects.size} project${if (projects.size == 1) "" else "s"} · " +
         "$georeferenced georeferenced · $pts$hidden"
@@ -322,10 +567,18 @@ private fun aggregateLine(projects: List<Project>, hiddenEmptyCount: Int = 0): S
 private fun ProjectCard(
     project: Project,
     selected: Boolean,
-    /** ROUND 22 item 96: 0..1 while a reprocess started from this card runs; null otherwise. */
+    /** ROUND 22 item 96: 0..1 while a job started from this card runs; null otherwise. */
     progress: Float? = null,
+    /** ROUND 23 item 104c: what the progress chip says — a reprocess and an export differ. */
+    progressLabel: (Int) -> String = { percent -> Wording.fixingProgress(percent) },
+    /** ROUND 23 item 104c: the list is in selection mode, so a tap picks. */
+    selecting: Boolean = false,
+    /** ROUND 23 item 104c: this card is in the selection. */
+    checked: Boolean = false,
     onClick: () -> Unit,
+    onLongClick: () -> Unit = {},
     onExport: () -> Unit,
+    onShare: () -> Unit = {},
     onReprocess: () -> Unit,
     /** ROUND 22 item 97: non-null only with Advanced on. */
     onOpenDetails: (() -> Unit)? = null,
@@ -341,17 +594,30 @@ private fun ProjectCard(
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.surfaceContainer, shape)
             .border(
-                1.dp,
-                if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                // A picked card is outlined in the primary colour and 2 dp, so
+                // "which of these am I about to export" is answerable at arm's
+                // length rather than by reading a small tick.
+                if (checked) 2.dp else 1.dp,
+                when {
+                    checked -> MaterialTheme.colorScheme.primary
+                    selected -> MaterialTheme.colorScheme.primary
+                    else -> MaterialTheme.colorScheme.outlineVariant
+                },
                 shape,
             )
             .combinedClickable(
                 onClick = onClick,
-                onLongClick = { showDeleteConfirm = true },
-                onLongClickLabel = "Delete ${manifest.name}",
+                onLongClick = onLongClick,
+                onLongClickLabel = ProjectActionWording.SELECT_LABEL,
             )
             .padding(10.dp)
-            .testTag(if (selected) "projectCardSelected" else "projectCard"),
+            .testTag(
+                when {
+                    checked -> "projectCardChecked"
+                    selected -> "projectCardSelected"
+                    else -> "projectCard"
+                },
+            ),
     ) {
         // ROUND 5 (item 8): the preview IS the selection. A selected card gives
         // its cloud two and a half times the height — enough to read the shape of
@@ -365,6 +631,18 @@ private fun ProjectCard(
             Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 11.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            if (selecting) {
+                Icon(
+                    if (checked) Icons.Filled.CheckCircle else Icons.Outlined.RadioButtonUnchecked,
+                    contentDescription = null,
+                    tint = if (checked) MaterialTheme.colorScheme.primary else InkFaint,
+                    modifier = Modifier
+                        .height(18.dp)
+                        .padding(end = 2.dp)
+                        .testTag(if (checked) "projectCardTick" else "projectCardUntick"),
+                )
+                Spacer(Modifier.padding(horizontal = 3.dp))
+            }
             Text(
                 text = manifest.name,
                 fontFamily = DisplayFontFamily,
@@ -406,6 +684,15 @@ private fun ProjectCard(
                         onClick = { menuOpen = false; onExport() },
                         modifier = Modifier.testTag("cardMenuExport"),
                     )
+                    // ROUND 23 item 104b: Share, next to Export, because the
+                    // owner's report is that BOTH vanished — and a menu that
+                    // offers only "save it where you cannot browse to it" is
+                    // half an answer.
+                    DropdownMenuItem(
+                        text = { Text(ProjectActionWording.SHARE_ACTION) },
+                        onClick = { menuOpen = false; onShare() },
+                        modifier = Modifier.testTag("cardMenuShare"),
+                    )
                     DropdownMenuItem(
                         text = { Text(Wording.CARD_MENU_REPROCESS) },
                         onClick = { menuOpen = false; onReprocess() },
@@ -442,7 +729,7 @@ private fun ProjectCard(
                     strokeWidth = 2.dp,
                 )
                 Text(
-                    Wording.fixingProgress((progress * 100).toInt()),
+                    progressLabel((progress * 100).toInt()),
                     style = MonoMeta,
                     color = InkFaint,
                     modifier = Modifier.testTag("projectCardJobChip"),

@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.SharingStarted
@@ -1257,6 +1258,31 @@ class CaptureViewModel(
      * way to Projects — it cannot survive to re-navigate later. It is
      * re-delivered on a recomposition only if the whole ViewModel outlived one,
      * and in that case re-delivering is exactly what should happen.
+     *
+     * ## ROUND 23 (owner item 101): THAT LAST PARAGRAPH STOPPED BEING TRUE
+     *
+     * *"because the buffer belongs to the ViewModel — which nav destroys on
+     * the way to Projects"* was the whole safety argument for `replay = 1`,
+     * and **ROUND 22 item 88 deleted the premise**: `saveState` /
+     * `restoreState` keep the `CAPTURE_NEW` back-stack entry and its
+     * `ViewModelStore` alive across the seal hop, so this ViewModel — and its
+     * replay buffer — now outlive the navigation they caused.
+     *
+     * The owner's 0.9.7 log is the cost. After `seal navigate -> Projects` at
+     * 12:02:43 the next line in the file is a process restart at 12:05:20:
+     * **zero** lines in between, from a man who was pressing the scan button.
+     * Every tap on the Scan tab re-attached `CaptureRoute`'s collector, the
+     * buffered id replayed, and `onScanSealed` bounced him straight back to
+     * Projects — silently, because `navigate -> Projects` is logged where the
+     * emit happens, not where it is collected. Killing the app cleared it,
+     * because killing the app was the only thing that destroyed the buffer.
+     * That is exactly the workaround he found, three rounds running.
+     *
+     * So the event is now **consumed exactly once**: the collector calls
+     * [sealNavigationHandled] the moment it acts on the id, which drops the
+     * replay cache and says so in the log. `replay = 1` keeps doing the job
+     * ROUND 10 gave it — a collector that attaches late still gets the id —
+     * and can no longer do the job nobody asked for.
      */
     private val _sealedProjectId = MutableSharedFlow<String>(
         replay = 1,
@@ -1264,6 +1290,21 @@ class CaptureViewModel(
         onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
     )
     val sealedProjectId: SharedFlow<String> = _sealedProjectId.asSharedFlow()
+
+    /**
+     * ROUND 23 item 101 — the seal navigation has been acted on; spend it.
+     *
+     * Called by `CaptureRoute` at the instant it hands [id] to the navigator.
+     * Idempotent, cheap, and logged: the absence of this line beside a
+     * `navigate -> Projects` line is now itself the diagnosis, in the same
+     * spirit as the ROUND 10 line it pairs with.
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun sealNavigationHandled(id: String) {
+        if (_sealedProjectId.replayCache.isEmpty()) return
+        _sealedProjectId.resetReplayCache()
+        logEvent(LOG_TAG_SEAL, "navigation consumed id=$id — the Scan tab is re-armed")
+    }
 
     // --- ROUND 6 (owner item 21): the D6 live map ----------------------------
 
@@ -1804,6 +1845,14 @@ class CaptureViewModel(
         val beganAtMillis: Long,
         /** Bumped for every press swallowed mid-sequence; the panel pulses on change (item 85). */
         val pulses: Int = 0,
+        /**
+         * ROUND 23 item 106(b) — the pre-scan checklist, folded in.
+         *
+         * Empty on a normal start, which is the whole point: ROUND 19's modal
+         * showed four rows whether or not any of them had anything to say. See
+         * [com.lidarscan.core.capture.PreScanChecks].
+         */
+        val checks: List<String> = emptyList(),
     )
 
     private val _startProgress = MutableStateFlow<StartProgress?>(null)
@@ -1906,6 +1955,159 @@ class CaptureViewModel(
         // banner lingers into the walk and is cleared by its own delayed job.
         if (_startHold.value?.go != true) _startHold.value = null
         startInFlight.set(false)
+    }
+
+    // ── ROUND 23 item 101(b): A TAP ON THE SCAN BUTTON IS NEVER SILENT ──────
+    //
+    // Three rounds in a row the owner's report has been a variation of "the
+    // button does nothing", and every time the app's own answer has been the
+    // same: nothing on screen, nothing in the log. Round 17 fixed a swallowed
+    // press, round 21 made a swallowed press PULSE, and round 22 then produced
+    // a state (item 101's replayed seal navigation) in which the press could
+    // not even reach the ViewModel. The rule that ends this is structural
+    // rather than case-by-case:
+    //
+    //   * the button is always tappable while it is visible, and
+    //   * every refusal — at the UI edge or inside the sequence — is logged as
+    //     `start tap refused: <reason>` AND put on screen in the same words.
+    //
+    // The reason is one of item 98's short sentences, so the screen and the
+    // log can never tell different stories about the same press.
+    private val _startTapRefusal = MutableStateFlow<String?>(null)
+
+    /** Non-null for [START_TAP_REFUSAL_LINGER_MS] after a refused press. */
+    val startTapRefusal: StateFlow<String?> = _startTapRefusal.asStateFlow()
+
+    private var startTapRefusalJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * Report — loudly — that a press could not start anything.
+     *
+     * Called from the screen for the refusals it can see (no sensor, a seal
+     * still running) and from [runStartSequence] for the ones only the
+     * ViewModel can (a sequence already in flight, a capture already running).
+     */
+    fun reportStartTapRefused(reason: String) {
+        logEvent(LOG_TAG_SESSION, "start tap refused: $reason")
+        _startTapRefusal.value = reason
+        // The panel pulse is the ROUND 21 channel and it still applies: if
+        // there IS a sequence running, "heard you, already on it" is the
+        // honest thing for the panel to do.
+        pulseStartProgress()
+        startTapRefusalJob?.cancel()
+        startTapRefusalJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(START_TAP_REFUSAL_LINGER_MS)
+            _startTapRefusal.value = null
+        }
+    }
+
+    /**
+     * ROUND 23 — stop this ViewModel's own coroutines, for a JVM test.
+     *
+     * `onCleared` is the production path and is `protected`, so a unit test
+     * cannot reach it; without something like this a test that builds a
+     * `CaptureViewModel` leaves its 500 ms motion ticker running on the test
+     * `Main` dispatcher for the rest of the JVM, and the NEXT test class's
+     * `Dispatchers.setMain` fails with "Main is used concurrently with setting
+     * it" — which is a real, flaky, cross-class failure that has nothing to do
+     * with the code under test.
+     *
+     * Cancels the children rather than the scope: the ViewModel stays valid,
+     * which keeps the semantics of "the screen went away" rather than "this
+     * object is now broken".
+     */
+    @androidx.annotation.VisibleForTesting
+    internal fun shutDownForTest() {
+        viewModelScope.coroutineContext[kotlinx.coroutines.Job]?.cancelChildren()
+    }
+
+    fun dismissStartTapRefusal() {
+        startTapRefusalJob?.cancel()
+        _startTapRefusal.value = null
+    }
+
+    /**
+     * ROUND 23 item 101(a) — **the Scan tab re-arms on entry.**
+     *
+     * Before ROUND 22 every return to this tab built a fresh ViewModel, so
+     * "clean ready state" was free and nobody had to think about it. Item 88's
+     * `saveState`/`restoreState` made the ViewModel survive the trip — which
+     * is the right fix for four constructions in 37 seconds, and which means
+     * every scrap of per-scan state now travels with it. Item 101's replayed
+     * navigation was the expensive one; this is the guard for the whole class.
+     *
+     * Deliberately conservative: a tab switch DURING a recording or a start is
+     * a normal thing to do (the operator checks the projects list mid-walk),
+     * and re-arming under a live capture would be a far worse bug than the one
+     * being fixed. So this only acts when there is demonstrably nothing
+     * running, and everything it does is logged.
+     */
+    fun onScanScreenEntered() {
+        val state = captureState.value
+        val live = state == com.lidarscan.core.engine.CaptureState.RECORDING ||
+            state == com.lidarscan.core.engine.CaptureState.PAUSED ||
+            state == com.lidarscan.core.engine.CaptureState.STOPPING
+        if (live || _starting.value) return
+        // A latch with no sequence behind it is exactly the "Start is dead
+        // until the app is killed" failure of ROUND 21, arriving by a
+        // different road: the sequence's owner was disposed, not released.
+        if (startInFlight.get()) {
+            logEvent(
+                LOG_TAG_SESSION,
+                "scan tab re-armed: a start latch was held with no capture running " +
+                    "(state=$state) — releasing it so the button works",
+            )
+            releaseStart()
+        }
+        _startTapRefusal.value = null
+        // Per-scan leftovers that used to die with the ViewModel. The mount
+        // trim, the connection, the preset and the display block are device
+        // facts and are deliberately untouched — the same line ROUND 20 item
+        // 83 drew for the New-capture button.
+        if (_saveError.value != null) _saveError.value = null
+    }
+
+    // ── ROUND 23 item 105: STOP WALKING WHILE THE TRACKER IS BLIND ──────────
+    //
+    // See `TrackingLossBanner` in :core for the measurement that makes this
+    // worth a full-width banner: scan-070's refused 4.1 s gap carried 73.34°
+    // of gyro turn against a reported 12.70°. The operator kept walking
+    // because nothing told him not to.
+    private val _trackingBanner = MutableStateFlow(com.lidarscan.core.capture.TrackingBannerState())
+
+    /** Amber while blind, green for two seconds after tracking returns. */
+    val trackingBanner: StateFlow<com.lidarscan.core.capture.TrackingBannerState> =
+        _trackingBanner.asStateFlow()
+
+    private fun updateTrackingBanner(recording: Boolean, tracking: Boolean, nowMillis: Long) {
+        val previous = _trackingBanner.value
+        val next = com.lidarscan.core.capture.TrackingLossBanners.next(
+            previous = previous,
+            recording = recording,
+            tracking = tracking,
+            nowMillis = nowMillis,
+        )
+        if (next == previous) return
+        _trackingBanner.value = next
+        if (com.lidarscan.core.capture.TrackingLossBanners.becameLost(previous, next)) {
+            // The strong haptic and the tone are the EXISTING cue channel —
+            // `CueKind.TRACKING_DEGRADED` fires from the same tick, repeats
+            // every 4 s while the loss lasts, and is already gated on the
+            // operator's own cue switch. A second buzzer here would be two
+            // patterns overlapping, which OperatorCues' header explains is
+            // worse than either alone.
+            logEvent(LOG_TAG_AR, "tracking lost while recording — banner up: stop walking, hold still")
+        }
+        if (com.lidarscan.core.capture.TrackingLossBanners.becameRegained(previous, next)) {
+            logEvent(
+                LOG_TAG_AR,
+                "tracking regained after ${nowMillis - previous.sinceMillis} ms of blindness — " +
+                    "banner green for ${com.lidarscan.core.capture.TrackingLossBanners.REGAINED_LINGER_MS} ms",
+            )
+            // One short, light tick — the ROUND 20 GO cue, reused because it
+            // means exactly this: you may walk now.
+            if (cuesArmed) playCue(com.lidarscan.core.capture.CueKind.GO_START)
+        }
     }
 
     /**
@@ -2369,6 +2571,17 @@ class CaptureViewModel(
             playCue(fired)
             logEvent(LOG_TAG_AR, "cue: ${fired.name.lowercase()}")
         }
+
+        // ROUND 23 item 105 (owner request): the same tick, the same tracking
+        // signal, one more consumer — the banner that tells the operator to
+        // STOP WALKING while the tracker is blind. Fed from here for the exact
+        // reason the cues are: the hint, the cue and the banner must never
+        // disagree about whether the tracker has the room.
+        updateTrackingBanner(
+            recording = recording,
+            tracking = status == null || status.tracking,
+            nowMillis = nowMillis,
+        )
     }
 
     /**
@@ -2954,7 +3167,11 @@ class CaptureViewModel(
                 // owner pressed a silent button three times at 01:29–01:31;
                 // the panel now pulses so "the app IS working on it" needs no
                 // guessing.
-                pulseStartProgress()
+                //
+                // ROUND 23 item 101(b): …and it now also SAYS so, in the same
+                // four words the log line carries. A pulse on a panel the
+                // operator is not looking at is still a silent refusal.
+                reportStartTapRefused(com.lidarscan.core.Wording.START_ALREADY)
                 return
             }
             val already = captureState.value
@@ -2962,6 +3179,7 @@ class CaptureViewModel(
                 already == com.lidarscan.core.engine.CaptureState.PAUSED
             ) {
                 logEvent(LOG_TAG_SESSION, "start IGNORED: already $already")
+                reportStartTapRefused(com.lidarscan.core.Wording.START_ALREADY_RECORDING)
                 releaseStart()
                 return
             }
@@ -2989,6 +3207,15 @@ class CaptureViewModel(
             _startProgress.value = StartProgress(
                 stage = StartStage.RESET,
                 beganAtMillis = clock(),
+                // ROUND 23 item 106(b): the checklist's checks, evaluated once
+                // at the press and shown inside the panel that is already up —
+                // and only when one of them actually has something to report.
+                checks = com.lidarscan.core.capture.PreScanChecks.notesFor(
+                    trimAccuracyDeg = _storedMountTrim.value?.trim?.accuracyDeg,
+                    dndProtected = _dndState.value == com.lidarscan.core.capture.DndState.PROTECTED ||
+                        _dndState.value == com.lidarscan.core.capture.DndState.ALREADY_QUIET ||
+                        _dndState.value == com.lidarscan.core.capture.DndState.DISABLED,
+                ),
             )
         }
 
@@ -4987,6 +5214,61 @@ class CaptureViewModel(
         markCustomIfDiverged()
     }
 
+    // ── ROUND 23 item 106(a): DETAIL — Auto / High / Max, drawn at last ─────
+    //
+    // ROUND 22 item 95 specified this control and item 100 clamped it to the
+    // device tier; both shipped as `:core` model plus 28 tests, and neither
+    // was ever put on a screen. This is the mapping through, and it is
+    // deliberately thin — `DetailLevels` already decides everything (which
+    // rungs this phone may be offered, what each one costs, what the note
+    // says), so all the ViewModel does is turn a rung into the two numbers the
+    // renderer and the preset table already understand.
+
+    /** The rungs this device may be offered. Never empty — Auto is always in it. */
+    val detailLevels: List<com.lidarscan.core.capture.DetailLevel>
+        get() = com.lidarscan.core.capture.DetailLevels.selectableOn(deviceTier, displayCeilingHz)
+
+    /** Item 100's four-word note, or null when nothing is being limited. */
+    val detailCeilingNote: String?
+        get() = com.lidarscan.core.capture.DetailLevels.ceilingNote(deviceTier, displayCeilingHz)
+
+    /** Which rung the current budget corresponds to. */
+    val detailLevel: StateFlow<com.lidarscan.core.capture.DetailLevel> =
+        _lodBudgetMPoints
+            .map { mPoints ->
+                com.lidarscan.core.capture.DetailLevels.levelForBudget(
+                    points = mPoints * 1_000_000,
+                    tier = deviceTier,
+                    displayCeilingHz = displayCeilingHz,
+                )
+            }
+            .stateIn(
+                viewModelScope,
+                kotlinx.coroutines.flow.SharingStarted.Eagerly,
+                com.lidarscan.core.capture.DetailLevels.DEFAULT,
+            )
+
+    /**
+     * Pick a Detail rung: the clamped point budget goes to the renderer, and
+     * the rung's preset goes to the existing preset path so the rest of the
+     * tuning (page sizes, decode rate, refresh) follows exactly as it does
+     * when the preset row is used directly. There is no override — a rung
+     * above the ceiling is not in [detailLevels] at all.
+     */
+    fun setDetailLevel(level: com.lidarscan.core.capture.DetailLevel) {
+        val points = com.lidarscan.core.capture.DetailLevels.budgetPointsFor(
+            level = level,
+            tier = deviceTier,
+            displayCeilingHz = displayCeilingHz,
+        )
+        logEvent(
+            LOG_TAG_SESSION,
+            "detail=${level.name} budget=${points / 1_000_000}M tier=$deviceTier preset=${level.preset}",
+        )
+        setPreset(level.preset)
+        _lodBudgetMPoints.value = (points / 1_000_000).coerceIn(1, 200)
+    }
+
     /**
      * ROUND 9 (owner item 33) — **the leave path, audited.**
      *
@@ -5062,6 +5344,15 @@ class CaptureViewModel(
         /** ROUND 6 log tags — mirrors `com.lidarscan.app.debug.CaptureLog`'s, without depending on it. */
         const val LOG_TAG_SESSION = "session"
         const val LOG_TAG_SEAL = "seal"
+
+        /**
+         * ROUND 23 item 101(b): how long a refused-tap reason stays on screen.
+         *
+         * Long enough to be read by someone who was looking at the button when
+         * they pressed it, short enough that it is gone before the condition it
+         * describes has changed underneath it.
+         */
+        const val START_TAP_REFUSAL_LINGER_MS = 4_000L
 
         /**
          * ROUND 16 item 58(b). One second between checks, three before the

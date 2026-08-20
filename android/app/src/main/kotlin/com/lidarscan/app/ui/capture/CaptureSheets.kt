@@ -143,6 +143,15 @@ fun CaptureSettingsSheet(
     colormap: Colormap,
     pointSizePx: Float,
     lodBudgetMPoints: Int,
+    // ── ROUND 23 item 106(a): DETAIL — Auto / High / Max ────────────────────
+    /** The rungs THIS device may be offered (item 100's ceiling has already dropped the rest). */
+    detailLevels: List<com.lidarscan.core.capture.DetailLevel> =
+        com.lidarscan.core.capture.DetailLevel.entries,
+    /** The rung the current budget corresponds to. */
+    detailLevel: com.lidarscan.core.capture.DetailLevel = com.lidarscan.core.capture.DetailLevels.DEFAULT,
+    /** Item 100's four-word note, or null when nothing is being limited. */
+    detailCeilingNote: String? = null,
+    onDetailChange: (com.lidarscan.core.capture.DetailLevel) -> Unit = {},
     // ── ROUND 5 additions ────────────────────────────────────────────────────
     /** Item 10: viewport refresh cap in fps, 0 = uncapped. */
     refreshHz: Int,
@@ -440,20 +449,43 @@ fun CaptureSettingsSheet(
                 )
                 Spacer(Modifier.height(12.dp))
 
+                // ── ROUND 23 item 106(a): DETAIL, at last on a screen ───────
+                //
+                // ROUND 22 item 95 specified Auto / High / Max and item 100
+                // clamped every rung to the device tier; both shipped as
+                // `:core` model plus 28 tests and neither was ever drawn. What
+                // was on screen instead was this: a raw "LOD budget" slider
+                // reading out in millions of points, offering up to 50 M on a
+                // phone that can hold 6.3 — which is the app inviting the
+                // crash item 91 had just fixed.
+                //
+                // The rungs come from `DetailLevels.selectableOn`, so a rung
+                // above this device's ceiling is ABSENT rather than disabled
+                // (the owner's rule: "User will not able to increase the LOD
+                // due to the detected hardware"), and the note under the row
+                // says so in four words. `onLodChange` is untouched and still
+                // reaches the same renderer path — this control simply picks
+                // the number instead of asking the operator to.
                 SheetRowLabel(
-                    label = "LOD budget",
-                    hint = "sparse → every return",
+                    label = com.lidarscan.core.Wording.DETAIL_LABEL,
+                    hint = com.lidarscan.core.Wording.DETAIL_BUDGET_HINT,
                     readout = "$lodBudgetMPoints M",
                 )
-                SheetSlider(
-                    value = lodBudgetMPoints.toFloat(),
-                    // ROUND 19 item 76: Review's endpoints, rounded into this
-                    // slider's whole-million grid — one range, two panels.
-                    range = 1f..com.lidarscan.core.render.DisplayLimits.LOD_MAX_M,
-                    steps = com.lidarscan.core.render.DisplayLimits.LOD_MAX_M.toInt() - 2,
-                    onValueChange = { onLodChange(it.toInt()) },
-                    contentDescription = "LOD budget",
+                SegmentedPill(
+                    options = detailLevels.map { it to it.displayName },
+                    selected = detailLevel,
+                    onSelect = onDetailChange,
+                    height = ScanDims.SegmentTall,
+                    modifier = Modifier.testTag("detailRow"),
                 )
+                if (detailCeilingNote != null) {
+                    Spacer(Modifier.height(4.dp))
+                    Hint(
+                        detailCeilingNote,
+                        color = InkFaint,
+                        modifier = Modifier.testTag("detailCeilingNote"),
+                    )
+                }
                 Spacer(Modifier.height(8.dp))
 
                 // ROUND 8 (item 28): the Session block — Live 3D map, Live SLAM

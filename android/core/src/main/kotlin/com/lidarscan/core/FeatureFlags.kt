@@ -80,4 +80,22 @@ object FeatureFlags {
      * the engine's whole `color/` module and their tests are untouched.
      */
     const val COLORIZE_ENABLED = false
+
+    /**
+     * ROUND 23 item 106(b) — the **pre-scan checklist as a MODAL SHEET**.
+     *
+     * OFF. ROUND 22 item 95 asked for the checklist to stop being a separate
+     * modal and for its checks to fold into the start panel, which is what
+     * `PreScanChecks` + `StartProgress.checks` now do: the checks are shown
+     * inside the panel that is already up, and only when one of them has
+     * something to report.
+     *
+     * Nothing is deleted, in this file's own tradition. `PreScanChecklistSheet`,
+     * `CaptureViewModel.startFromChecklist` / `dismissPreScanChecklist`, the
+     * `startCapture(skipChecklist)` API and the ROUND 19 tests that drive them
+     * are all untouched — the ViewModel simply reads the persisted
+     * "already dismissed" bit as `true` while this is false, so the sheet is
+     * never armed in the shipping app. To revive: set this true.
+     */
+    const val PRE_SCAN_CHECKLIST_SHEET = false
 }

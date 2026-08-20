@@ -38,6 +38,68 @@ object ShareTargets {
         context.startActivity(chooser)
     }
 
+    /**
+     * ROUND 23 item 104c — **N files, ONE share sheet.**
+     *
+     * Group Share exports each selected scan in turn (see
+     * `com.lidarscan.core.projects.BatchExport`) and then hands the whole set
+     * over at once. Opening one sheet per scan would be three sheets stacked on
+     * top of each other, of which the operator sees the last: the same "a
+     * hand-off with no result callback" trap ROUND 7 named, multiplied.
+     *
+     * `ACTION_SEND_MULTIPLE` with `EXTRA_STREAM` as an **`ArrayList<Uri>`** —
+     * `putParcelableArrayListExtra` will not take any other `List`, and a plain
+     * array silently produces a sheet with nothing attached. Everything else is
+     * [shareFile]'s contract, unchanged: FileProvider Uris, a per-Uri read
+     * grant, and a chooser with its own task because the caller is a ViewModel
+     * holding an application context.
+     *
+     * The files are already in `Downloads/LidarScan/` by the time this is
+     * called. The sheet is the extra, never the delivery.
+     */
+    fun shareFiles(context: Context, files: List<File>, title: String) {
+        if (files.isEmpty()) return
+        if (files.size == 1) {
+            shareFile(context, files.first(), mimeFor(files.first()), title)
+            return
+        }
+        val uris = ArrayList<android.net.Uri>(files.size)
+        files.forEach { uris.add(uriFor(context, it)) }
+        val send = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+            type = commonMime(files)
+            putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+            putExtra(Intent.EXTRA_TITLE, title)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        val chooser = Intent.createChooser(send, title).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(chooser)
+    }
+
+    /**
+     * The one `type` an `ACTION_SEND_MULTIPLE` of mixed files can honestly
+     * carry.
+     *
+     * Pure, and separated from [shareFiles] so it is unit-testable without an
+     * emulator — the intent itself is not, and this is the half that decides
+     * which targets appear in the sheet. Three PLY files keep
+     * `application/octet-stream`; a PLY and a PNG fall back to the full
+     * wildcard; two PNGs collapse to the image family, which keeps the
+     * image-capable targets that `application/octet-stream` would have thrown
+     * away (the ROUND 15 item 56 lesson, applied to a set).
+     *
+     * (Kotlin block comments nest, so the literal MIME wildcards are spelled
+     * out in words here rather than written with a slash-star.)
+     */
+    fun commonMime(files: List<File>): String {
+        if (files.isEmpty()) return "*/*"
+        val mimes = files.map { mimeFor(it) }.distinct()
+        if (mimes.size == 1) return mimes.first()
+        val families = mimes.map { it.substringBefore('/') }.distinct()
+        return if (families.size == 1) "${families.first()}/*" else "*/*"
+    }
+
     /** MIME types for the file kinds this app produces. */
     fun mimeFor(file: File): String = when (file.extension.lowercase()) {
         "zip" -> "application/zip"

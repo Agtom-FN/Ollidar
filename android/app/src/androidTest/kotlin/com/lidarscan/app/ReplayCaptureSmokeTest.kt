@@ -204,7 +204,10 @@ class ReplayCaptureSmokeTest {
             // and its new rows are exercised while points are still landing. The
             // Live toggle is on the transport row, on by default.
             composeRule.onNodeWithTag("liveViewSwitch").assertIsDisplayed()
-            composeRule.onNodeWithTag("captureSettingsButton").performClick()
+            // ROUND 23 item 102: the viewport's own ⚙ is gone — it was the
+            // second of the "2 advance button" the owner counted. The one
+            // door is the transport row's Advanced button.
+            composeRule.onNodeWithTag("advancedButton").performClick()
             composeRule.waitUntil(timeoutMillis = 10_000) {
                 composeRule.onAllNodesWithTag("captureSettingsSheet").fetchSemanticsNodes().isNotEmpty()
             }

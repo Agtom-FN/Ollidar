@@ -132,6 +132,20 @@ fun LidarScanApp(
                     projectId = null,
                     onBack = { goTab(Routes.PROJECTS) },
                     onOpenMountCalibration = { pid -> navController.navigate(Routes.mountCalibration(pid)) },
+                    // ── ROUND 23 item 106(c) ────────────────────────────────
+                    //
+                    // The owner tests Mid-360 + RTK next, and with Advanced OFF
+                    // every door to those two screens was inside the Details
+                    // hub that Simple mode hides. `SimpleMode.showsMid360Connect`
+                    // / `showsRtk` have said since round 22 that these are
+                    // CONTEXTUAL on the sensor rather than gated by the switch;
+                    // this is the first surface that actually asks them. The
+                    // Scan screen shows the two chips only when a Mid-360 is
+                    // the selected sensor (or Advanced is on) — a D6 operator
+                    // never sees either.
+                    advanced = advanced,
+                    onOpenMid360Setup = { navController.navigate(Routes.MID360_SETUP) },
+                    onOpenRtk = { navController.navigate(Routes.RTK) },
                     // ── ROUND 8, owner item 31: stop => seal => Projects ──────
                     //
                     // A capture used to end on the Capture tab, still drawing
@@ -314,6 +328,20 @@ fun LidarScanApp(
                 }
             }
 
+
+            // ROUND 23 item 106(c): the same wizard, with no project behind it,
+            // reachable from the Scan tab so a Mid-360 can be set up before the
+            // first scan exists.
+            composable(Routes.MID360_SETUP) {
+                UnderTabBar {
+                    Mid360ConnectRoute(
+                        container = container,
+                        projectId = null,
+                        onBack = { navController.popBackStack() },
+                        onContinueToCapture = { goTab(Routes.CAPTURE_NEW) },
+                    )
+                }
+            }
 
             // B7: the mount-calibration wizard (S6 WIZARD.md's five screens).
             composable(

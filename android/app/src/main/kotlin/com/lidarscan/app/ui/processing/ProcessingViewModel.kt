@@ -263,8 +263,20 @@ class ProcessingViewModel(
      * since Android 11. So the export is now **followed to completion** and
      * copied into `Downloads/LidarScan/`, and the operator is told the
      * destination by name. See [com.lidarscan.app.share.DownloadsExporter].
+     *
+     * ROUND 23 item 104a — **[share] is the whole of the Review screen's new
+     * Share button.**
+     *
+     * The owner's report is that export/share "vanished": Review grew a
+     * full-width Export in round 22 and lost the hand-off to the system sheet
+     * that the bundle path had always had. Rather than a second export
+     * implementation next to this one, Share is this same call with one flag —
+     * the same job, the same file, the same Downloads copy FIRST, and then the
+     * sheet. That ordering is not incidental: it is what
+     * `transferBundle(context, share = true)` has done since ROUND 7, for the
+     * reason [awaitJobThenDeliver] documents.
      */
-    fun export(context: Context) {
+    fun export(context: Context, share: Boolean = false) {
         val p = _uiState.value.project ?: return
         viewModelScope.launch {
             val format = _uiState.value.exportFormat
@@ -282,7 +294,7 @@ class ProcessingViewModel(
                 return@launch
             }
             _uiState.value = _uiState.value.copy(message = "Exporting ${out.name}…")
-            awaitJobThenDeliver(context, submitted.getOrThrow(), out, share = false)
+            awaitJobThenDeliver(context, submitted.getOrThrow(), out, share)
         }
     }
 
@@ -335,53 +347,52 @@ class ProcessingViewModel(
      * they then pick anything from the share sheet.
      */
     private suspend fun awaitJobThenDeliver(context: Context, jobId: Long, file: File, share: Boolean) {
-        while (true) {
-            val job = repo.jobs.value.firstOrNull { it.id == jobId }
-            if (job == null || !job.state.isTerminal) {
-                kotlinx.coroutines.delay(400)
-                continue
-            }
-            if (job.state != com.lidarscan.core.jobs.JobState.DONE || !file.isFile) {
-                val why = job.statusText
-                _uiState.value = _uiState.value.copy(
-                    message = "Export failed ($why). Nothing was written to Downloads.",
-                )
-                log("export FAILED job=$jobId state=${job.state} file=${file.name} reason=$why")
-                return
-            }
-
-            val copied = withContext(Dispatchers.IO) {
-                com.lidarscan.app.share.DownloadsExporter.copyToDownloads(context, file)
-            }
-            copied.fold(
-                onSuccess = { where ->
-                    _uiState.value = _uiState.value.copy(
-                        message = "Exported to $where (${humanBytes(file.length())}).",
-                    )
-                    log("export OK job=$jobId ${file.name} -> $where bytes=${file.length()}")
-                    if (share) {
-                        ShareTargets.shareFile(context, file, ShareTargets.mimeFor(file), "Send ${file.name}")
-                        log("export share sheet opened for ${file.name}")
-                    }
-                },
-                onFailure = { e ->
-                    // The bytes DO exist — say where, even though that path is
-                    // not browsable, because adb and a desktop can still reach
-                    // it and a lost capture is worse than an ugly sentence.
-                    _uiState.value = _uiState.value.copy(
-                        message = "Export finished but could not be copied to Downloads " +
-                            "(${e.javaClass.simpleName}: ${e.message}). The file is on the phone at " +
-                            "${file.absolutePath} — use the share sheet or a USB cable to get it off.",
-                    )
-                    log("export COPY FAILED ${file.name}: ${e.javaClass.name}: ${e.message}")
-                    // Offer the hand-off anyway: it is the only remaining route.
-                    runCatching {
-                        ShareTargets.shareFile(context, file, ShareTargets.mimeFor(file), "Send ${file.name}")
-                    }
-                },
+        // ROUND 23 item 104c: the wait itself moved to
+        // ProjectExporter.awaitTerminal so the batch path and this one
+        // cannot grow two different ideas of "finished". Everything below
+        // — the messages, the log lines, the copy-failed fallback — is
+        // unchanged.
+        val job = com.lidarscan.app.share.ProjectExporter.awaitTerminal(repo, jobId)
+        if (job == null || job.state != com.lidarscan.core.jobs.JobState.DONE || !file.isFile) {
+            val why = job?.statusText ?: "the job disappeared"
+            _uiState.value = _uiState.value.copy(
+                message = "Export failed ($why). Nothing was written to Downloads.",
             )
+            log("export FAILED job=$jobId state=${job?.state} file=${file.name} reason=$why")
             return
         }
+
+        val copied = withContext(Dispatchers.IO) {
+            com.lidarscan.app.share.DownloadsExporter.copyToDownloads(context, file)
+        }
+        copied.fold(
+            onSuccess = { where ->
+                _uiState.value = _uiState.value.copy(
+                    message = "Exported to $where (${humanBytes(file.length())}).",
+                )
+                log("export OK job=$jobId ${file.name} -> $where bytes=${file.length()}")
+                if (share) {
+                    ShareTargets.shareFile(context, file, ShareTargets.mimeFor(file), "Send ${file.name}")
+                    log("export share sheet opened for ${file.name}")
+                }
+            },
+            onFailure = { e ->
+                // The bytes DO exist — say where, even though that path is
+                // not browsable, because adb and a desktop can still reach
+                // it and a lost capture is worse than an ugly sentence.
+                _uiState.value = _uiState.value.copy(
+                    message = "Export finished but could not be copied to Downloads " +
+                        "(${e.javaClass.simpleName}: ${e.message}). The file is on the phone at " +
+                        "${file.absolutePath} — use the share sheet or a USB cable to get it off.",
+                )
+                log("export COPY FAILED ${file.name}: ${e.javaClass.name}: ${e.message}")
+                // Offer the hand-off anyway: it is the only remaining route.
+                runCatching {
+                    ShareTargets.shareFile(context, file, ShareTargets.mimeFor(file), "Send ${file.name}")
+                }
+            },
+        )
+        return
     }
 
     /**

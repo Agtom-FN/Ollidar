@@ -157,6 +157,47 @@ object Wording {
     /** The Detail row's own label. */
     const val DETAIL_LABEL = "Detail"
 
+    // ── ROUND 23 item 105: the tracking-loss banner ────────────────────────
+
+    /**
+     * The owner's request, and the most important five words in the app:
+     * scan-070's refused gap measured 73.34° of gyro turn during 4.1 s of
+     * blindness. Walking through a loss is what makes a gap unhealable.
+     */
+    const val TRACKING_LOST = "Tracking lost. Stop. Hold still."
+
+    /** The green confirmation, two seconds, then gone. */
+    const val TRACKING_BACK = "OK — keep walking."
+
+    /** The one detail line under the amber banner. */
+    fun trackingLostFor(seconds: Long): String = "Lost for ${seconds}s."
+
+    // ── ROUND 23 item 101(b): a refused tap says why ───────────────────────
+
+    /**
+     * The scan button is SHOWN and will not start. Before this round that was
+     * silent — the owner pressed it, nothing happened, nothing was logged, and
+     * he restarted the app between every scan for three rounds. Each of these
+     * is both the on-screen reason and the tail of the
+     * `[session] start tap refused:` line, so the screen and the log can never
+     * tell different stories.
+     */
+    const val START_NEEDS_SENSOR = "Connect the scanner first."
+
+    /** A seal is still running. */
+    const val START_SEALING = "Saving your last scan."
+
+    /** A start is already running — the panel pulses as well (ROUND 21 item 85). */
+    const val START_ALREADY = "Already starting…"
+
+    /** A capture is live; the button is a STOP button right now. */
+    const val START_ALREADY_RECORDING = "Already recording."
+
+    // ── ROUND 23 item 106(c): the Mid-360 door on the Scan tab ─────────────
+
+    const val MID360_SETUP = "Mid-360 setup"
+    const val RTK_SETUP = "RTK position"
+
     /**
      * Every sentence above that is an INSTRUCTION (six words or fewer). The
      * guard walks this list; a new instruction that is not in it is not
@@ -187,6 +228,16 @@ object Wording {
         SCAN_BUTTON_STARTING,
         ADVANCED_SHEET_BUTTON,
         DETAIL_LABEL,
+        // ── ROUND 23 ──
+        TRACKING_LOST,
+        TRACKING_BACK,
+        START_NEEDS_SENSOR,
+        START_SEALING,
+        START_ALREADY,
+        START_ALREADY_RECORDING,
+        MID360_SETUP,
+        RTK_SETUP,
+        trackingLostFor(12),
     )
 
     /** Every sentence above that is a DETAIL line (twelve words or fewer). */
