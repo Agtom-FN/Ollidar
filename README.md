@@ -1,3 +1,4 @@
+<body>
 <img src="docs/img/app-icon.png" width="96" height="100%" align="left" alt="Ollidar icon — a llama in a top hat emitting a lidar fan">
 
 # Ollidar
@@ -310,3 +311,4 @@ welcome — this project is better with more eyes on it.
 If you're filing a bug report, attaching the app's Send-logs bundle
 (Profile → Send logs) helps a lot — it's the fastest way to see what
 actually happened.
+</body>
