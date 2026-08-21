@@ -2,8 +2,7 @@
 
 # Ollidar
 
-<br>
-<br>
+
 <br>
 <br>
 Strap a small spinning lidar to your phone, walk around a room, and get a
