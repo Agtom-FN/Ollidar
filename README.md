@@ -3,6 +3,8 @@
 # Ollidar
 
 <br>
+<br>
+<br>
 Strap a small spinning lidar to your phone, walk around a room, and get a
 corrected 3D point cloud out the other end.
 
