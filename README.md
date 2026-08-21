@@ -10,9 +10,9 @@ corrected 3D point cloud out the other end.
 
 Current version: **0.9.11** (Android).
 
-The app is called **Ollidar**; the repository, the Android package
+The app and this repository are both called **Ollidar**. The Android package
 (`com.lidarscan.app`), the `.lscan` files and the `Downloads/LidarScan/`
-export folder are all still **lidarscan**. That is deliberate: on Android the
+export folder keep the old **lidarscan** name on purpose: on Android the
 package name *is* the app's identity, and changing it would install a second
 app rather than rename the one already on the phone.
 
@@ -252,7 +252,7 @@ every tab, the viewer, Mid-360 and STL-27L setup, and troubleshooting.
 - **0.9.10** — real orbit/pan/zoom gestures in the viewer, STL-27L support,
   and the Mid-360 Ethernet diagnostics wizard, alongside this manual.
 - **0.9.11** — the app is now called **Ollidar** and has a new llama icon
-  (the package, the repo and the export folder keep the `lidarscan` name);
+  (the package and the export folder keep the `lidarscan` name);
   Scan and Review both go fullscreen, with the tab bar hidden while a scan
   runs and a tap on empty space hiding the viewer's controls; both
   orientations are supported, with the start orientation worked out from
