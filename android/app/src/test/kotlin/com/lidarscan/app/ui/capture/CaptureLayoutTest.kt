@@ -175,4 +175,89 @@ class CaptureLayoutTest {
             )
         }
     }
+
+    // ── ROUND 26 item 124: the budget, inverted ────────────────────────────
+
+    /**
+     * The floating chrome gets exactly what the viewport used to give up, and
+     * the two halves must still add up to the whole screen. If they ever stop
+     * doing so, either the picture is being covered or the connect flow is
+     * being squeezed, and both are silent failures on a device.
+     */
+    @Test
+    fun `the chrome ceiling is what the viewport floor leaves over`() {
+        for (height in realPhoneHeightsDp) {
+            for (mountRow in listOf(true, false)) {
+                val viewport = CaptureLayout.viewportMinHeightDp(height, mountRow, appBar = false)
+                val chrome = CaptureLayout.chromeMaxHeightDp(height, mountRow)
+                assertEquals(
+                    "at ${height}dp (mountRow=$mountRow) the two halves must be the whole screen",
+                    height.toDouble(),
+                    (viewport + chrome).toDouble(),
+                    0.001,
+                )
+            }
+        }
+    }
+
+    /**
+     * And it never squeezes the connect flow off the screen. On a tall phone
+     * the ceiling is generous; the floor is what protects the one state where
+     * the chrome matters more than the picture, because there is no picture.
+     */
+    @Test
+    fun `the floating chrome always has room for the manual entry panel`() {
+        for (height in realPhoneHeightsDp + listOf(600f, 640f)) {
+            assertTrue(
+                "at ${height}dp the chrome ceiling ${CaptureLayout.chromeMaxHeightDp(height)} " +
+                    "must clear the ${CaptureLayout.CHROME_FLOOR_DP}dp floor",
+                CaptureLayout.chromeMaxHeightDp(height) >= CaptureLayout.CHROME_FLOOR_DP,
+            )
+        }
+    }
+
+    /**
+     * The tab-bar clearance is still a real number, and the fullscreen layout
+     * still spends it — but only while the tab bar is on screen. Round 25 item
+     * 120 removed a dot and left its reserved space behind; this is the same
+     * mistake one layer up, and it is asserted rather than remembered.
+     */
+    @Test
+    fun `the tab bar clearance is only owed while the tab bar is drawn`() {
+        assertTrue(
+            "the clearance must be big enough to clear the 58dp bar plus its 12dp inset",
+            CaptureLayout.TAB_BAR_CLEARANCE_DP >= 70f,
+        )
+        // The fullscreen layout's own rule, stated here because it is arithmetic
+        // and not a pixel: hidden bar => the controls sit on the navigation bar
+        // padding alone, which is strictly less than the clearance.
+        assertTrue(CaptureLayout.TAB_BAR_CLEARANCE_DP > 12f)
+    }
+
+    /**
+     * The disconnected screen's ceiling clears the connect flow, which is the
+     * tallest stack this screen draws. Its `Connect` button below the fold is
+     * the exact failure `ReplayCaptureSmokeTest` caught on the AVD, and the
+     * number that prevents it belongs in a test rather than in a memory.
+     */
+    @Test
+    fun `the connect flow gets everything the floating controls do not use`() {
+        for (height in realPhoneHeightsDp) {
+            val connect = CaptureLayout.connectFlowMaxHeightDp(height)
+            assertTrue(
+                "at ${height}dp the connect flow (${connect}dp) must beat the connected " +
+                    "ceiling (${CaptureLayout.chromeMaxHeightDp(height)}dp)",
+                connect > CaptureLayout.chromeMaxHeightDp(height),
+            )
+            assertEquals(
+                "it reserves exactly the two floating bands",
+                (height - CaptureLayout.FLOATING_CONTROL_RESERVE_DP).toDouble(),
+                connect.toDouble(),
+                0.001,
+            )
+        }
+        // And on a small screen the floor still wins, rather than the reserve
+        // producing a negative height that Compose would silently clamp.
+        assertTrue(CaptureLayout.connectFlowMaxHeightDp(300f) >= CaptureLayout.CHROME_FLOOR_DP)
+    }
 }

@@ -45,7 +45,18 @@ data class DisplayParams(
      */
     val lodPointBudget: Int = 5_000_000,
     val colorMode: ColorMode = ColorMode.RGB,
-    val height: ScalarColorParams = ScalarColorParams(manualMin = 0f, manualMax = 3f),
+    /**
+     * ROUND 26 (owner item 127): height opens on **[Colormap.TURBO]**.
+     *
+     * The 0–3 m range was always here; the colormap was not, so an unset height
+     * block inherited [ScalarColorParams]' own SPECTRUM. Spectrum is a
+     * full-saturation hue sweep that starts saturated blue and ends saturated
+     * red, which makes a floor and a ceiling equally loud; Turbo starts and ends
+     * DARK, so the extremes of a height range separate instead of competing.
+     * Only the DEFAULT moves — a project whose `project.json` already names a
+     * colormap deserialises that name and never reaches this line.
+     */
+    val height: ScalarColorParams = ScalarColorParams(manualMin = 0f, manualMax = 3f, colormap = Colormap.TURBO),
     val intensity: ScalarColorParams = ScalarColorParams(),
     val time: ScalarColorParams = ScalarColorParams(),
     /**
@@ -160,6 +171,26 @@ data class DisplayParams(
         val CAPTURE_COLORMAP: Colormap = Colormap.GRAYSCALE
 
         /**
+         * ROUND 26 (owner item 127): **TURBO**, and a constant of its own
+         * because height and intensity are not the same question.
+         *
+         * [CAPTURE_COLORMAP] above is item 39's answer for INTENSITY, which is
+         * the capture tab's default colour mode: grey is *deliberate* there —
+         * intensity is a reflectance reading and a grey ramp is the one that
+         * does not invent structure the sensor did not measure. Height is the
+         * opposite case. It is a spatial coordinate the operator is trying to
+         * read quantitatively ("is that step 15 cm or 25?"), and a hue ramp is
+         * what makes a 10 cm difference visible at all.
+         *
+         * So the two blocks stop sharing one constant. Round 10's rule that a
+         * default is stated ONCE is kept — it is just that there are two
+         * defaults here, each stated once, rather than one default doing two
+         * jobs. Existing saved projects are untouched; only new/unset ones land
+         * here.
+         */
+        val CAPTURE_HEIGHT_COLORMAP: Colormap = Colormap.TURBO
+
+        /**
          * The whole block, for callers that want the value rather than the
          * four constants. Runs through [clamped] so it can never be a shape
          * `clamp_display_params()` would disagree with.
@@ -180,7 +211,10 @@ data class DisplayParams(
                 manualMax = 3f,
                 gamma = CAPTURE_GAMMA,
                 brightness = CAPTURE_BRIGHTNESS,
-                colormap = CAPTURE_COLORMAP,
+                // ROUND 26 (item 127): TURBO, not CAPTURE_COLORMAP — the
+                // intensity block above keeps grey on purpose. See
+                // [CAPTURE_HEIGHT_COLORMAP].
+                colormap = CAPTURE_HEIGHT_COLORMAP,
             ),
         ).clamped()
 
@@ -325,7 +359,14 @@ fun profileDefaults(profile: DisplayProfile): DisplayParams = when (profile) {
         pointSize = PointSizeParams(mode = PointSizeMode.ADAPTIVE, adaptiveMinPx = 1.5f, adaptiveMaxPx = 4f),
         lodPointBudget = 15_000_000,
         colorMode = ColorMode.HEIGHT,
-        height = ScalarColorParams(autoRange = true, manualMin = 0f, manualMax = 3f, colormap = Colormap.SPECTRUM),
+        // ROUND 26 (owner item 127): SURVEY's height ramp becomes TURBO. A14 §5
+        // wrote SPECTRUM here and this is the one preset value that is now
+        // deliberately not a transcription — the owner asked for Turbo as the
+        // default height colouring, and SURVEY is the height-mode preset. Floor
+        // plan below keeps THERMAL, which is not an oversight: its height range
+        // is a 50 cm slice and thermal's black->red->yellow->white gives that
+        // narrow band more contrast than any hue sweep does.
+        height = ScalarColorParams(autoRange = true, manualMin = 0f, manualMax = 3f, colormap = Colormap.TURBO),
         edlEnabled = true,
         edlStrength = 0.6f,
         background = Rgba(16, 16, 20, 255),

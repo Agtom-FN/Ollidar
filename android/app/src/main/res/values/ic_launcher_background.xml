@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- ============================================================
-         LAUNCHER ICON PARAMETERS - round 22, v0.9.7
-         Variant "4g - Slice-scan A" (owner-approved).
+         LAUNCHER ICON PARAMETERS - ROUND 26, v0.9.11.
+         Variant "Ollidar llama" (owner-supplied artwork).
 
          This file is the SINGLE source of truth for the adaptive icon's
          background colour. Nothing else hard-codes it: the adaptive-icon
@@ -14,7 +14,20 @@
          theme tweak will silently restyle the launcher icon.
          ============================================================ -->
 
-    <!-- Icon plate. Deep slate; deliberately darker and cooler than the app
-         surface so the mark reads on both light and dark launcher wallpapers. -->
-    <color name="ic_launcher_background">#1C2430</color>
+    <!-- The cream plate the llama is drawn on, sampled from the owner's
+         master-flat-square-1024.png (modal interior colour, #F2F1EC).
+
+         It matches the foreground layer's own cream EXACTLY, and that is
+         load-bearing rather than tidy: the foreground is a raster tile of the
+         artwork that stops well short of the canvas edge, so background and
+         foreground meet at a visible seam unless the two creams are the same
+         value. Launcher parallax slides the layers against each other, which
+         would make any mismatch move. Re-sample this if the artwork is
+         re-exported.
+
+         NOT the orange frame colour (#E55B2A). The master's orange frame is a
+         FRAME, and the launcher already draws one - its own mask. Painting the
+         plate orange and insetting the cream would double-frame the mark and
+         put an unpredictable-width ring under every OEM mask shape. -->
+    <color name="ic_launcher_background">#F2F1EC</color>
 </resources>

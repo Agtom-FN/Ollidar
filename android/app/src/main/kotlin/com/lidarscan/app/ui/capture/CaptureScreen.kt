@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
@@ -33,6 +34,8 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -61,6 +64,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -823,6 +827,59 @@ fun CaptureRoute(
     }
 
     // ROUND 5.3 (item 18): the screen stays awake while a capture is running.
+    // ── ROUND 26 item 124 (owner choice C): the tab bar, while scanning ────
+    //
+    // One boolean up to the shell, owned here. `starting` is included on
+    // purpose: the start sequence can hold for four to eight seconds behind
+    // the round-12 tracking gate, and a tab bar that waits until RECORDING to
+    // get out of the way slides away underneath the operator's thumb at the
+    // exact moment the hold-still card appears.
+    //
+    // The dispose arm is the safety half. A scan screen can leave the
+    // composition by a tab switch, by system back, or by the process being
+    // rebuilt; in every one of those the bar must come back, and clearing it
+    // where the screen ends is the only place that covers all three.
+    // (Round 25 item 115 has already stopped and sealed the capture itself by
+    // then — this is the chrome catching up, not a second policy.)
+    val scanBusy = captureState == CaptureState.RECORDING ||
+        captureState == CaptureState.PAUSED ||
+        starting
+    DisposableEffect(scanBusy) {
+        container.scanInProgress.value = scanBusy
+        onDispose { container.scanInProgress.value = false }
+    }
+
+    // ── ROUND 26 item 125(c): the orientation LOCKS at GO ───────────────────
+    //
+    // Turning the phone mid-scan is SCANNING MOTION, not a UI event. Two
+    // separate things go wrong if the Activity is allowed to follow it:
+    //
+    //  1. The mount reference is measured once, during the hold-still stage,
+    //     against the orientation the operator started in. Re-deriving it
+    //     mid-capture would move the extrinsic under a running recording; not
+    //     re-deriving it while the UI rotates would tell the operator the app
+    //     had adapted when it had not.
+    //  2. This Activity declares no `configChanges`, so a rotation DESTROYS
+    //     and rebuilds it — mid-walk, with an ARCore session and a USB serial
+    //     stream attached. Round 24's `isChangingConfigurations` discriminator
+    //     makes that survivable (the capture is deliberately not stopped by
+    //     it), but "survivable" is not "free": it is a full Compose teardown
+    //     and an AR re-attach during the seconds the operator is walking.
+    //
+    // So the simpler of item 125(c)'s two options ships: the UI FREEZES.
+    // `SCREEN_ORIENTATION_LOCKED` pins whatever orientation the scan started
+    // in; the release is `UNSPECIFIED`, not `SENSOR`, because `SENSOR` would
+    // override a user who has auto-rotate switched off.
+    DisposableEffect(scanBusy, captureActivity) {
+        val activity = captureActivity
+        if (activity != null && scanBusy) {
+            activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LOCKED
+        }
+        onDispose {
+            activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
+
     // A walkthrough is minutes of walking with the phone in one hand and nothing
     // being touched — the default screen timeout would black it out mid-walk, and
     // on some OEM skins that also stops the camera the D6's pose stream depends on.
@@ -1284,12 +1341,13 @@ fun CaptureScreen(
     val screenHeightDp = LocalConfiguration.current.screenHeightDp.toFloat()
     // The mount row is only for the sensor whose extrinsic the trim is ABOUT.
     val mountRowVisible = poseTrackingRequired && sensor.isPhoneTrackedPushbroom
-    // The `BackBar` survives only where there is a real parent to go back to.
-    // The Capture *tab* has none — its back arrow went to Projects, which the
-    // floating tab bar already does — and 56 dp is 7 % of a phone screen.
-    // `isReplaySession` is the discriminator because REPLAY_CAPTURE is the only
-    // project-scoped entry into this screen left (see Routes.kt).
-    val showAppBar = isReplaySession || !compact
+    // ROUND 26 item 124: the `BackBar` survives ONLY for the replay session,
+    // which since round 23 is the one project-scoped entry into this screen
+    // (see Routes.kt) and therefore the one with a real parent to go back to.
+    // The Capture tab's own back arrow went to Projects, which the tab bar
+    // already does, and 56 dp of a FULLSCREEN live view is not a rounding
+    // error. The discriminator is read at the draw site now rather than being
+    // hoisted into a flag that only one branch uses.
 
     // ── ROUND 24 item 112: a Box, so one thing can sit OVER the screen ─────
     //
@@ -1302,50 +1360,20 @@ fun CaptureScreen(
     // controls it rings report their bounds into a registry the overlay reads.
     // Off-tour this provides nothing and the anchor modifiers are `Modifier`.
     TutorialAnchorScope(enabled = tutorialState.running) {
-    Column(
+    // ── ROUND 26 item 124: THE SCREEN IS THE LIVE VIEW ──────────────────
+    //
+    // No insets here and no background padding: the viewport is a full-bleed
+    // sibling at the bottom of this Box and every control is an overlay ON it,
+    // each applying its OWN safe-area padding. Putting `statusBarsPadding()`
+    // here instead — which is what this Column did for twenty rounds — is
+    // exactly what a camera app must not do: it insets the PICTURE to make
+    // room for chrome, and the picture is the product.
+    Box(
         Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .statusBarsPadding()
-            .navigationBarsPadding(),
+            .background(MaterialTheme.colorScheme.background),
     ) {
-        if (showAppBar) {
-            BackBar(
-                title = project?.manifest?.name
-                    ?: if (isReplaySession) "Capture — Replay" else "New scan",
-                subtitle = when {
-                    project != null -> "${project.manifest.profile.displayName} · ${captureStateLabel(captureState)}"
-                    else -> "${profile.displayName} · ${captureStateLabel(captureState)}"
-                },
-                onBack = onBack,
-                actions = {
-                    ScanChip(
-                        text = sensor.badgeLabel.uppercase(),
-                        // ROUND 25 item 119: exhaustive, see `sensorBadgeColor`.
-                        // Null while disconnected is deliberate and unchanged —
-                        // an untinted chip is how this bar says "nothing on the
-                        // cable yet".
-                        color = if (connected) sensorBadgeColor(sensor) else null,
-                        showDot = true,
-                    )
-                    Spacer(Modifier.width(8.dp))
-                },
-            )
-        }
-
-        // ROUND 8 (item 28): three RTK chips are 32 dp of a screen that a D6
-        // walkthrough — which has no rover at all — spends saying "NO ROVER".
-        // Shown whenever there is genuinely RTK to report, and otherwise left to
-        // the Diagnostics sheet's own `Georeference source` row.
-        if (!compact || georefSource.isRtk || ntrip.receiving) {
-            FixChipStrip(fix = fix, ntrip = ntrip, georefSource = georefSource)
-        }
-
-        // Weighted, not fillMaxSize: a `fillMaxSize` child of a Column takes
-        // the FULL incoming height, not the height left over after the app bar
-        // and the chip strip — which pushed the transport row under the
-        // floating tab bar. Caught on a booted emulator, not in review.
-        Box(Modifier.fillMaxWidth().weight(1f)) {
+        Box(Modifier.fillMaxSize()) {
             when (uiState) {
                 CaptureUiState.Loading -> Box(Modifier.fillMaxSize())
                 CaptureUiState.NotFound -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -1363,20 +1391,42 @@ fun CaptureScreen(
                     // a glance than a four-tile panel anyway. `StatPanel` itself
                     // stays — the session-summary sheet is where a four-tile
                     // read-out earns its height.
-                    val body: @Composable () -> Unit = {
-                        TransportRow(
-                            // ROUND 22 item 95: the one Advanced door.
-                            onOpenAdvanced = { sheet = CaptureSheet.SETTINGS },
+                    // ── ROUND 26 item 124: the two chrome BANDS ────────
+                    //
+                    // Declared here, above every lambda that needs them,
+                    // because the VIEWPORT needs them too: its own four corner
+                    // chips have to stay inside the picture rather than under
+                    // the floating controls, and that is the same two numbers.
+                    //
+                    // The tab bar is only owed its 86 dp while it is on screen.
+                    // Hiding it and keeping the reservation would leave the FAB
+                    // stranded above a gap nothing draws in — round 25 item
+                    // 120's mistake, one layer up.
+                    val tabBarHidden = live || starting
+                    val bottomClearance = if (tabBarHidden) 12.dp else ScanDims.TabBarClearance
+                    // The replay session is the one entry that still draws a
+                    // `BackBar`, and it is 56 dp tall — so the band has to start
+                    // below it or the chip row prints through the status pill.
+                    // Found on the AVD's synthetic replay, which is the only
+                    // place on an emulator where both are on screen at once.
+                    val chromeTopDp = 96.dp + if (isReplaySession) ScanDims.BackBar else 0.dp
+
+                    // ROUND 26 item 124: the transport row is gone. Its five
+                    // controls were a horizontal band that cost 80 dp of the
+                    // picture; they are now three overlays in three different
+                    // corners of it, and each one is a separate composable so a
+                    // layout that re-anchors for landscape can move them
+                    // independently instead of moving one rigid Row.
+                    val controls: @Composable (Boolean) -> Unit = { vertical ->
+                        ScanControlCluster(
+                            vertical = vertical,
                             captureState = captureState,
                             connected = connected,
-                            // ROUND 23 item 101(b): a tap that cannot start
-                            // must SAY so rather than land on an inert control.
                             startBlockedReason = startBlockedReason,
                             onStartRefused = onStartRefused,
                             liveView = liveView,
                             isReplaySession = isReplaySession,
                             pauseSupported = !isReplaySession && sensor != SensorType.MID360,
-                            stats = stats,
                             starting = starting,
                             onLiveViewChange = onLiveViewChange,
                             onStart = onStart,
@@ -1388,6 +1438,21 @@ fun CaptureScreen(
 
                     val viewport: @Composable (Modifier) -> Unit = { modifier ->
                         CaptureViewport(
+                            fullBleed = true,
+                            // The chrome's two bands, handed to the viewport so
+                            // its own corner chips draw inside the picture
+                            // rather than under the floating controls.
+                            chipInsets = androidx.compose.foundation.layout.PaddingValues(
+                                start = 14.dp,
+                                // Landscape parks the control cluster on the
+                                // END edge, so the health chip's bottom-end
+                                // corner is behind the SCAN button there and
+                                // nowhere near it in portrait. One number, one
+                                // branch, rather than a second chip position.
+                                end = if (isLandscape) 108.dp else 14.dp,
+                                top = chromeTopDp - 12.dp,
+                                bottom = bottomClearance + 52.dp,
+                            ),
                             // ROUND 24 item 110(b): the tracking-lost step
                             // rings the viewport, because that is where the
                             // popup lands and what the operator is watching.
@@ -1678,7 +1743,6 @@ fun CaptureScreen(
                             )
                         }
                         CaptureChipRow(
-                            onOpenTutorial = onStartTutorial,
                             preset = preset,
                             scanName = scanName.ifBlank { newScan?.autoName ?: project?.manifest?.name ?: "New scan" },
                             poseState = poseState,
@@ -1732,7 +1796,6 @@ fun CaptureScreen(
                         // well would put a second `scanNameField` and a second
                         // `manualLidarIpField` in the tree at the same time.
                         CaptureChipRow(
-                            onOpenTutorial = onStartTutorial,
                             preset = preset,
                             scanName = scanName,
                             poseState = poseState,
@@ -1746,57 +1809,180 @@ fun CaptureScreen(
                         )
                     }
 
-                    if (isLandscape) {
-                        Row(Modifier.fillMaxSize()) {
-                            viewport(Modifier.weight(1f).fillMaxHeight().padding(start = 14.dp, bottom = 12.dp))
-                            Column(
-                                Modifier
-                                    .width(340.dp)
-                                    .fillMaxHeight()
-                                    .verticalScroll(rememberScrollState())
-                                    .padding(bottom = ScanDims.TabBarClearance),
-                            ) {
-                                loudBanners()
-                                if (compact) compactChrome() else fullChrome()
-                                hints()
-                                body()
+                    // ══ ROUND 26 item 124 — THE FULLSCREEN LAYOUT ══════════
+                    //
+                    // One full-bleed viewport, and every control an overlay on
+                    // it. The three things this buys, in the order the owner
+                    // asked for them: the live view is the whole screen; the
+                    // controls are where a thumb already is; and nothing but
+                    // the picture competes for height, so the round-8 "60 % of
+                    // the screen" rule is satisfied at 100 % and the arithmetic
+                    // that enforced it now budgets the FLOATING CHROME instead
+                    // (see [CaptureLayout.chromeMaxHeightDp]).
+                    //
+                    // The chrome is deliberately NOT deleted. Everything the
+                    // pre-capture screen needs — the name field, auto-detect,
+                    // the manual panel, the mount row, the chip row, the hint
+                    // band — floats as a card over the viewport instead of
+                    // pushing it down the screen. A camera app that cannot find
+                    // its camera shows a panel over the preview; it does not
+                    // stop being a camera app.
+                    viewport(Modifier.fillMaxSize())
+
+                    // ── TOP: the merged status pill, and the gear ───────────
+                    Column(
+                        Modifier
+                            .align(Alignment.TopCenter)
+                            .fillMaxWidth()
+                            .statusBarsPadding(),
+                    ) {
+                        // The back bar survives only for the replay session,
+                        // which is the one entry into this screen with a real
+                        // parent. The tab's own back arrow went to Projects,
+                        // which the tab bar already does, and 56 dp of a
+                        // fullscreen live view is not free.
+                        if (isReplaySession) {
+                            BackBar(
+                                title = project?.manifest?.name ?: "Capture — Replay",
+                                subtitle = "${profile.displayName} · ${captureStateLabel(captureState)}",
+                                onBack = onBack,
+                            )
+                        }
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.Top,
+                        ) {
+                            // ROUND 26 item 124: ONE pill, four facts. The
+                            // sensor badge, the elapsed time, the point count
+                            // and the metres walked were four separate widgets
+                            // in three separate bands; a glance mid-walk wants
+                            // them in one place, and a fullscreen viewport has
+                            // exactly one place to put them.
+                            ScanStatusPill(
+                                modifier = Modifier.widthIn(max = 260.dp),
+                                sensor = sensor,
+                                connected = connected,
+                                captureState = captureState,
+                                stats = stats,
+                                trailLengthM = trailLengthM,
+                                liveView = liveView,
+                            )
+                            // A weighted SPACER, and the pill merely width-
+                            // capped. `weight(1f, fill = false)` on the pill
+                            // does not reserve the row — Compose places Row
+                            // children consecutively and simply does not use
+                            // the unfilled remainder — so the gear ended up
+                            // touching the pill instead of at the end edge.
+                            // Caught in landscape on the AVD, where the free
+                            // space is large enough to make it obvious.
+                            Spacer(Modifier.weight(1f))
+                            ScanGearButton(onOpenAdvanced = { sheet = CaptureSheet.SETTINGS })
+                        }
+                        // The RTK/georeference chips keep their round-8 rule:
+                        // shown when there is genuinely RTK to report.
+                        if (!compact || georefSource.isRtk || ntrip.receiving) {
+                            Box(Modifier.padding(horizontal = 4.dp)) {
+                                FixChipStrip(fix = fix, ntrip = ntrip, georefSource = georefSource)
                             }
                         }
+                    }
+
+                    // ── THE FLOATING CHROME ────────────────────────────────
+                    //
+                    // Banners, the start card, the connect flow and the hint
+                    // band, in one scrollable column that is capped so it can
+                    // never cover the whole picture. In portrait it hangs off
+                    // the bottom of the top bar; in landscape it takes the
+                    // start rail, which is the round-8 340 dp column with the
+                    // viewport now behind it rather than beside it.
+                    val chromeMax = if (compact) {
+                        CaptureLayout.chromeMaxHeightDp(
+                            screenHeightDp = screenHeightDp,
+                            mountRow = mountRowVisible,
+                        ).dp
                     } else {
-                        Column(Modifier.fillMaxSize()) {
-                            loudBanners()
-                            if (compact) compactChrome() else fullChrome()
-                            // ROUND 8 (item 28): the hero cloud's share of the
-                            // screen is now a NUMBER, not whatever is left over.
-                            // `weight(1f)` still hands it every pixel the rest of
-                            // the column does not claim — that part is unchanged —
-                            // but the chrome above and below it has been budgeted
-                            // so that "what is left over" is at least
-                            // [CaptureLayout.MIN_VIEWPORT_FRACTION] of the screen,
-                            // and the `heightIn` floor below is that budget made
-                            // enforceable rather than merely intended.
-                            viewport(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .weight(1f)
-                                    .heightIn(
-                                        min = if (compact) {
-                                            CaptureLayout.viewportMinHeightDp(
-                                                screenHeightDp = screenHeightDp,
-                                                mountRow = mountRowVisible,
-                                                appBar = showAppBar,
-                                            ).dp
-                                        } else {
-                                            CaptureLayout.VIEWPORT_FLOOR_DP.dp
-                                        },
-                                    )
-                                    .padding(horizontal = 14.dp),
+                        // Disconnected, the connect flow IS the screen's job —
+                        // see [CaptureLayout.connectFlowMaxHeightDp].
+                        CaptureLayout.connectFlowMaxHeightDp(screenHeightDp).dp
+                    }
+                    Column(
+                        Modifier
+                            .align(if (isLandscape) Alignment.TopStart else Alignment.TopCenter)
+                            .then(
+                                if (isLandscape) {
+                                    // Landscape's rail is a BAND, not a centred
+                                    // card: it runs from under the status pill
+                                    // down to just above the corner chips, so it
+                                    // can never print the connect flow through
+                                    // the map-mode chip (which is what a centred
+                                    // column did on the AVD) and it gets the
+                                    // whole height in between for the tallest
+                                    // thing this screen draws.
+                                    Modifier
+                                        .width(340.dp)
+                                        .fillMaxHeight()
+                                        .statusBarsPadding()
+                                        .padding(top = chromeTopDp + 8.dp, bottom = 132.dp)
+                                } else {
+                                    // Portrait is a band too, for the same
+                                    // reason: anchored under the status row and
+                                    // stopping above the control cluster, so the
+                                    // connect flow's last line cannot end up
+                                    // printed through the SCAN button.
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .statusBarsPadding()
+                                        .padding(top = chromeTopDp)
+                                        .heightIn(max = chromeMax)
+                                },
                             )
-                            hints()
-                            Spacer(Modifier.height(6.dp))
-                            body()
-                            Spacer(Modifier.height(ScanDims.TabBarClearance))
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 12.dp),
+                    ) {
+                        loudBanners()
+                        if (compact) compactChrome() else fullChrome()
+                        hints()
+                    }
+
+                    // ── BOTTOM: the corners, and the one dominant control ───
+                    //
+                    // Portrait: map-mode chip · FAB · '?' — the FAB centred
+                    // between the two corners, which is where a camera app's
+                    // shutter is and where a thumb lands without looking.
+                    // Landscape: the same cluster rotates to the end edge and
+                    // the two chips stay in the bottom corners, because a
+                    // corner is a corner in both orientations.
+                    if (isLandscape) {
+                        Column(
+                            Modifier
+                                .align(Alignment.CenterEnd)
+                                .navigationBarsPadding()
+                                .padding(end = 18.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            controls(true)
                         }
+                    }
+                    Row(
+                        Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .navigationBarsPadding()
+                            .padding(horizontal = 14.dp)
+                            .padding(bottom = bottomClearance),
+                        verticalAlignment = Alignment.Bottom,
+                    ) {
+                        MapModeChip(
+                            liveMapEnabled = liveMapEnabled,
+                            liveMapRequested = liveMapRequested,
+                            onClick = { sheet = CaptureSheet.CAPTURE },
+                        )
+                        Spacer(Modifier.weight(1f))
+                        if (!isLandscape) {
+                            controls(false)
+                            Spacer(Modifier.weight(1f))
+                        }
+                        TutorialChip(onOpenTutorial = onStartTutorial)
                     }
                 }
             }
@@ -2174,8 +2360,6 @@ private fun MountStateRow(
  */
 @Composable
 private fun CaptureChipRow(
-    /** ROUND 24 item 110(b): the ? that opens the tour. */
-    onOpenTutorial: () -> Unit = {},
     preset: com.lidarscan.core.capture.PerformancePreset,
     scanName: String,
     poseState: PoseTrackingState,
@@ -2202,30 +2386,10 @@ private fun CaptureChipRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(7.dp),
     ) {
-        // ── ROUND 24 item 110(b): the ? ─────────────────────────────────────
-        //
-        // First in the row and deliberately small: it is a door for someone
-        // who is lost, not a control anyone uses twice. A circle rather than a
-        // chip because every chip in this row opens a sheet ABOUT the scan and
-        // this one does not.
-        Box(
-            Modifier
-                .size(34.dp)
-                .background(MaterialTheme.colorScheme.surfaceContainer, CircleShape)
-                .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
-                .clickable(role = Role.Button, onClick = onOpenTutorial)
-                .semantics { contentDescription = com.lidarscan.core.capture.ScanTutorial.HELP_LABEL }
-                .testTag("tutorialButton"),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                "?",
-                fontFamily = DisplayFontFamily,
-                fontWeight = FontWeight.Bold,
-                fontSize = 15.sp,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-        }
+        // ROUND 26 item 124: the ? left this row for the viewport's bottom-end
+        // corner ([TutorialChip]). It is drawn ONCE — a second `tutorialButton`
+        // in the tree is not a duplicated affordance, it is an ambiguous test
+        // selector, and `Round24UiTest` drives the whole tour through that tag.
         if (showCaptureChip) {
             SheetChip(
                 label = scanName.takeIf { it.isNotBlank() } ?: "Capture",
@@ -3219,6 +3383,25 @@ private fun ManualEntryPanel(
 
 @Composable
 private fun CaptureViewport(
+    /**
+     * ROUND 26 item 124 — edge-to-edge: no rounded corner, no hairline, no
+     * inset. True on the Scan tab, where this composable IS the screen.
+     */
+    fullBleed: Boolean = false,
+    /**
+     * ROUND 26 item 124 — where the viewport's OWN chips may draw.
+     *
+     * The viewport has always carried four status chips in its four corners
+     * (keyframes, pose, stream, health). Full bleed put the screen's floating
+     * controls in the same four corners, and the first AVD recording printed
+     * "BUILDING MAP…" straight through the map-mode chip and the health chip
+     * through the `?`. The chips are not moved and none is removed — they are
+     * simply told which band of the picture belongs to the chrome. Default is
+     * the 12 dp the framed viewport used, so the calibration wizard's inset
+     * card is unaffected.
+     */
+    chipInsets: androidx.compose.foundation.layout.PaddingValues =
+        androidx.compose.foundation.layout.PaddingValues(12.dp),
     modifier: Modifier,
     connected: Boolean,
     isReplaySession: Boolean,
@@ -3269,7 +3452,13 @@ private fun CaptureViewport(
      */
     onRendererChanged: (com.lidarscan.app.render.PointCloudRenderer?) -> Unit = {},
 ) {
-    val shape = RoundedCornerShape(ScanDims.CardRadius)
+    // ROUND 26 item 124: NO CARD FRAME. The viewport is the screen, and a
+    // screen does not have a rounded corner and a hairline drawn inside its own
+    // edge — that is a card, and a card is what the owner asked to be rid of.
+    // `fullBleed` is a parameter rather than an unconditional change because
+    // the mount-calibration wizard hosts the same composable inside a real
+    // card, where the frame is correct.
+    val shape = if (fullBleed) RectangleShape else RoundedCornerShape(ScanDims.CardRadius)
 
     // ROUND 5 AUDIT bugfix: the bottom-left "what stream is on screen" chip
     // used to read `liveSlam` alone (the requested mode) — see
@@ -3306,7 +3495,10 @@ private fun CaptureViewport(
     Box(
         modifier
             .background(ViewportGround, shape)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
+            .then(
+                if (fullBleed) Modifier
+                else Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape),
+            )
             .clip(shape)
             .testTag("captureViewport"),
     ) {
@@ -3380,18 +3572,31 @@ private fun CaptureViewport(
                 modifier = Modifier.fillMaxSize(),
             )
         } else {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(
-                    when {
-                        !liveView -> "Live view is off — the recording is unaffected"
-                        connected -> "3D view needs the real engine (simulated-engine build)"
-                        isReplaySession -> "Starting the replay engine…"
-                        else -> "Connect a sensor to see the live 3D view"
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(28.dp),
-                )
+            // ROUND 26 item 124: the placeholder is SUPPRESSED under the
+            // floating connect flow.
+            //
+            // Fullscreen put the connect card in the middle of the viewport,
+            // which is where this sentence was already centred — so a
+            // disconnected screen drew "Connect a sensor to see the live 3D
+            // view" straight through the panel that says "No scanner found.
+            // Plug it in, then Retry." and offers the Retry button. Two
+            // sentences saying the same thing, overlapping. The panel wins: it
+            // is the one with a control on it. Every OTHER placeholder state
+            // still draws, because none of them has a card in front of it.
+            val suppressedByConnectCard = !connected && !isReplaySession && liveView
+            if (!suppressedByConnectCard) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        when {
+                            !liveView -> "Live view is off — the recording is unaffected"
+                            connected -> "3D view needs the real engine (simulated-engine build)"
+                            else -> "Starting the replay engine…"
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(28.dp),
+                    )
+                }
             }
         }
 
@@ -3404,8 +3609,14 @@ private fun CaptureViewport(
                 points = trailPoints,
                 lengthM = trailLengthM,
                 coverageSectors = coverageSectors,
+                // ROUND 26 item 124: the coverage arcs draw over the FULL
+                // viewport, but 10 dp off the bottom edge is now exactly where
+                // the SCAN button is. `chipInsets` is the chrome's own two
+                // bands, so the mini-map lands just above the control cluster —
+                // still bottom-centre, still the first thing under the thumb's
+                // eyeline, and no longer under the thumb itself.
                 modifier = Modifier.align(Alignment.BottomCenter)
-                    .padding(bottom = 10.dp)
+                    .padding(chipInsets)
                     .size(width = 108.dp, height = 84.dp),
             )
         }
@@ -3446,7 +3657,7 @@ private fun CaptureViewport(
         if (recording && keyframesEnabled && com.lidarscan.core.FeatureFlags.COLORIZE_ENABLED) {
             ScanChip(
                 text = "KF $keyframesWritten",
-                modifier = Modifier.align(Alignment.TopStart).padding(12.dp).testTag("keyframeChip"),
+                modifier = Modifier.align(Alignment.TopStart).padding(chipInsets).testTag("keyframeChip"),
             )
         }
 
@@ -3499,14 +3710,14 @@ private fun CaptureViewport(
                 text = poseState.chipLabel,
                 color = poseState.chipColor,
                 showDot = true,
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = 12.dp)
+                modifier = Modifier.align(Alignment.TopCenter).padding(chipInsets)
                     .testTag("poseTrackingViewportChip"),
             )
         } else if (cameraMode == CameraMode.AR && arTrackingHint != null) {
             ScanChip(
                 text = arTrackingHint,
                 color = SemWarn,
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = 52.dp),
+                modifier = Modifier.align(Alignment.TopCenter).padding(chipInsets).padding(top = 40.dp),
             )
         }
 
@@ -3531,7 +3742,7 @@ private fun CaptureViewport(
             },
             color = PoseBlue,
             showDot = true,
-            modifier = Modifier.align(Alignment.BottomStart).padding(start = 12.dp, bottom = 12.dp, end = 12.dp)
+            modifier = Modifier.align(Alignment.BottomStart).padding(chipInsets)
                 .padding(start = 6.dp),
         )
 
@@ -3543,7 +3754,7 @@ private fun CaptureViewport(
         Box(
             Modifier
                 .align(Alignment.BottomEnd)
-                .padding(end = 12.dp, bottom = 6.dp)
+                .padding(chipInsets)
                 .height(ScanDims.Touch)
                 .clickable(role = Role.Button, onClick = onOpenDiagnostics)
                 .semantics { contentDescription = "Diagnostics — device health $healthLabel" }
@@ -3692,27 +3903,40 @@ private fun TrajectoryTrailOverlay(
  * accessibility *and* for the emulator smoke test — the button itself is a
  * circle with no text, exactly as designed.
  */
+/**
+ * ROUND 26 item 124 — **the one dominant control, floating.**
+ *
+ * Round 22's `TransportRow` put five controls in a horizontal band 80 dp tall
+ * across the bottom of the screen. The band is gone; the controls are not.
+ * What was a Row is now three overlays — this cluster, [ScanStatusPill] and
+ * [ScanGearButton] — placed independently by the fullscreen layout, which is
+ * what lets landscape move the cluster to the end edge without moving the
+ * status read-out with it.
+ *
+ * Everything the operator's hand knows is preserved deliberately: the ember
+ * circle, its shadow, the round-5.3 grow-while-live sizes, the round-21 rule
+ * that the button stays TAPPABLE during a start, the round-23 rule that a
+ * press which cannot start still ANSWERS, and every test tag. An operator who
+ * has used 0.9.10 must not have to learn this screen again — item 124 is a
+ * relayout, not a new transport.
+ *
+ * [vertical] is the landscape form: the same three controls stacked up the end
+ * edge instead of across the bottom, so the thumb of the hand that is holding
+ * the phone reaches the FAB in either orientation (item 125(a)).
+ */
 @Composable
-private fun TransportRow(
+private fun ScanControlCluster(
+    vertical: Boolean,
     captureState: CaptureState,
     connected: Boolean,
     liveView: Boolean,
     isReplaySession: Boolean,
     pauseSupported: Boolean,
     /**
-     * ROUND 8 (item 28): the four capture numbers, as one mono line under the
-     * Live switch, replacing the standalone four-cell `StatPanel` and its
-     * spacers (~80 dp). See the `body` lambda in [CaptureScreen].
-     */
-    stats: CaptureStats,
-    /**
      * ROUND 17 item 64 — true from the press until the capture is recording or
      * the attempt has failed. The ROUND 12 tracking gate can hold Start for
-     * four to eight seconds and, until this round, NOTHING on screen changed
-     * for the whole of it: `_startWarmup` was computed and rendered nowhere.
-     * The owner pressed again, which is what any reasonable person does to a
-     * button that does not respond, and that second press is the entire
-     * scan-045 failure. A control that is working has to look like it.
+     * four to eight seconds and, until that round, NOTHING on screen changed
+     * for the whole of it. A control that is working has to look like it.
      */
     starting: Boolean = false,
     /**
@@ -3728,114 +3952,24 @@ private fun TransportRow(
     onPause: () -> Unit,
     onResume: () -> Unit,
     onStop: () -> Unit,
-    /**
-     * ROUND 22 item 95 — **the one ADVANCED button.**
-     *
-     * The owner asked for the power-user controls to be *gathered*, not
-     * removed: "one button opening the full existing settings sheet — Detail
-     * control, display options, New-scan reset, everything power-user —
-     * nothing deleted, just gathered behind one tap." This opens the SAME
-     * `CaptureSettingsSheet` the display icon has always opened; what changed
-     * is that there is now one obvious door to it beside the scan button
-     * instead of an icon in a strip.
-     */
-    onOpenAdvanced: () -> Unit = {},
 ) {
     val recording = captureState == CaptureState.RECORDING
     val paused = captureState == CaptureState.PAUSED
     val live = recording || paused
     val stopping = captureState == CaptureState.STOPPING
 
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 18.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Switch(
-                    checked = liveView,
-                    // Always editable, before AND during a recording: that is the
-                    // whole point of item 10's "capture itself also runs with live
-                    // view" — the operator decides, mid-walk, whether the phone
-                    // should keep drawing.
-                    onCheckedChange = onLiveViewChange,
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = Color.White,
-                        checkedTrackColor = Ember,
-                        checkedBorderColor = Ember,
-                    ),
-                    modifier = Modifier.testTag("liveViewSwitch"),
-                )
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    if (liveView) "Live view" else "Live view off",
-                    fontFamily = DisplayFontFamily,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 15.sp,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.width(8.dp))
-                // The caption the numbers displaced. Kept, because "the Live
-                // switch does not touch the recording" is the single most
-                // important thing to know about the only control on this screen
-                // that looks like it might.
-                Text(
-                    "display only",
-                    style = MonoLabel.copy(fontSize = 9.5.sp, letterSpacing = 0.06.em),
-                    color = InkFaint,
-                    maxLines = 1,
-                )
-            }
-            Spacer(Modifier.height(3.dp))
-            // ROUND 8 (item 28): points / rate / duration / size, on one line.
-            //
-            // `pointsCapturedValue` MUST stay on the points number and MUST stay
-            // parseable as either a grouped integer or "1.24 M" — the CI
-            // emulator smoke test polls this exact node for ~20 s to prove the
-            // native decoder is landing points, and `formatPoints` documents why
-            // it stays a plain integer below a million.
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    formatPoints(stats.pointsCaptured),
-                    style = MonoValue.copy(fontSize = 13.sp),
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    modifier = Modifier.testTag("pointsCapturedValue"),
-                )
-                Text(
-                    " pts · ${formatRate(stats.pointsPerSecond)}/s · " +
-                        "${formatDuration(stats.elapsedMillis)} · ${formatMegabytes(stats.recordingSizeBytes)}",
-                    style = MonoLabel.copy(fontSize = 10.sp, letterSpacing = 0.04.em),
-                    color = InkFaint,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-
+    val secondaries: @Composable () -> Unit = {
         // Pause: offered only where it actually works. Replay has no pause hook
         // in ReplaySource (B4) and a Mid-360 cannot pause without truncating the
         // recording on resume (B2/B3) — so it is present and dimmed rather than
-        // absent, which keeps the transport's shape stable across sensors.
-        // ROUND 5.3 (item 18): mid-walk, one-handed, the two controls that matter
-        // grow. 52 → 64 dp pause and 64 → 76 dp stop while a session is live: a
-        // thumb reaching across a phone that is also carrying a lidar is not the
-        // same thumb that set the scan up on a bench.
+        // absent, which keeps the cluster's shape stable across sensors.
         val pauseEnabled = live && pauseSupported && !stopping
-        Box(
-            Modifier
-                .size(if (live) 64.dp else 52.dp)
-                .alpha(if (pauseEnabled) 1f else 0.3f)
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh, CircleShape)
-                .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
-                .clickable(enabled = pauseEnabled, role = Role.Button) {
-                    if (recording) onPause() else onResume()
-                }
-                .semantics { contentDescription = if (paused) "Resume recording" else "Pause recording" }
-                .testTag("pauseButton"),
-            contentAlignment = Alignment.Center,
+        SecondaryRoundButton(
+            size = if (live) 56.dp else 48.dp,
+            enabled = pauseEnabled,
+            contentDescription = if (paused) "Resume recording" else "Pause recording",
+            testTag = "pauseButton",
+            onClick = { if (recording) onPause() else onResume() },
         ) {
             Icon(
                 if (paused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
@@ -3843,137 +3977,345 @@ private fun TransportRow(
                 tint = MaterialTheme.colorScheme.onSurface,
             )
         }
+    }
 
-        Spacer(Modifier.width(12.dp))
-
-        // ROUND 5 item 9: Start creates a NEW project, and the label says so —
-        // there is no state in which this button records into something that
-        // already existed (bar the replay path, which says "replay").
-        // ROUND 22 item 95: the button's own word, on the button.
-        //
-        // "Start new scan" / "Stop recording" were accessibility labels on a
-        // circle that showed a dot or a square. The owner asked for ONE
-        // dominant control that says what it does, so the word is drawn: SCAN
-        // while idle, STOP while recording, CANCEL during the start sequence —
-        // which is also the first time the start sequence has been
-        // interruptible from the control that began it.
-        val recordWord = when {
-            live -> com.lidarscan.core.Wording.SCAN_BUTTON_RECORDING
-            starting -> com.lidarscan.core.Wording.SCAN_BUTTON_STARTING
-            else -> com.lidarscan.core.Wording.SCAN_BUTTON
-        }
-        val recordLabel = when {
-            live -> "Stop recording"
-            starting -> "Cancel this start"
-            isReplaySession -> "Start replay"
-            else -> "Start a scan"
-        }
-        // ROUND 17 item 64: armed = the press will start something new. While a
-        // start is in flight the button is dimmed and spinning, so the operator
-        // is told by the control itself rather than by a scan that comes out
-        // wrong.
-        //
-        // ROUND 21 item 85: the button stays TAPPABLE while a start is in
-        // flight. The press still cannot start anything — the ROUND 17 atomic
-        // swallows it — but it now PULSES the start-progress panel ("heard
-        // you, already on it") instead of vanishing into an inert control.
-        // The owner pressed a silent button three times at 01:29–01:31; a
-        // swallowed press must never again be indistinguishable from a dead one.
-        val armed = connected && !stopping && !starting
-        // ROUND 22 item 95: ONE DOMINANT CONTROL.
-        //
-        // Deliberately the SAME component as before — the ember circle, the
-        // ember shadow, `recordButton`'s test tag, the round-21 rule that it
-        // stays tappable during a start — scaled up and given its word. The
-        // brief is explicit that this is restructuring and rewording, not a
-        // restyle: an operator who has used 0.9.6 must recognise this button.
-        Box(
-            Modifier
-                .size(if (live) 108.dp else 96.dp)
-                // ROUND 24 item 110(b): the tour's first two steps ring this.
-                .then(rememberTutorialAnchor(com.lidarscan.core.capture.TutorialAnchor.SCAN_BUTTON))
-                .alpha(if (armed || live) 1f else 0.45f)
-                .shadow(16.dp, CircleShape, ambientColor = Ember, spotColor = Ember)
-                .background(Ember, CircleShape)
-                // ── ROUND 23 item 101(b): NEVER INERT, NEVER SILENT ────────
-                //
-                // This used to be `enabled = connected && !stopping`, so a
-                // press with no sensor attached — or during a seal — went
-                // nowhere at all: no ViewModel call, no log line, no pixel
-                // changed. That is precisely the shape of the owner's
-                // complaint, and it is indistinguishable to him from the item
-                // 101 navigation defect that actually caused this round's.
-                // A button that will not act must still ANSWER.
-                .clickable(enabled = true, role = Role.Button) {
-                    when {
-                        live -> onStop()
-                        startBlockedReason != null -> onStartRefused(startBlockedReason)
-                        else -> onStart()
-                    }
-                }
-                .semantics { contentDescription = recordLabel }
-                .testTag("recordButton"),
-            contentAlignment = Alignment.Center,
-        ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                if (starting && !live) {
-                    androidx.compose.material3.CircularProgressIndicator(
-                        modifier = Modifier.size(22.dp),
-                        color = OnEmber,
-                        strokeWidth = 3.dp,
-                    )
-                    Spacer(Modifier.height(5.dp))
-                } else {
-                    // The universal record/stop mark is KEPT above the word: a
-                    // dot while idle, a square while live. The word says what
-                    // happens; the mark says which state you are in, and losing
-                    // it would make a glanced-at button ambiguous.
-                    Box(
-                        Modifier
-                            .size(if (live) 22.dp else 20.dp)
-                            .background(OnEmber, if (live) RoundedCornerShape(5.dp) else CircleShape),
-                    )
-                    Spacer(Modifier.height(6.dp))
-                }
-                Text(
-                    recordWord,
-                    fontFamily = com.lidarscan.app.ui.theme.UiFontFamily,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
-                    letterSpacing = 0.08.em,
-                    color = OnEmber,
-                    modifier = Modifier.testTag("recordButtonLabel"),
-                )
-            }
-        }
-
-        Spacer(Modifier.width(12.dp))
-
-        // ── ROUND 22 item 95: ADVANCED ⚙, one tap, nothing deleted ──────────
-        //
-        // The same `CaptureSettingsSheet` that has always held the display
-        // block, the Detail control and the New-scan reset — reached from one
-        // labelled door beside the scan button rather than from an icon the
-        // operator had to already know about. Deliberately the existing
-        // secondary-control shape (the pause button's circle, its ground, its
-        // hairline) so nothing about the row's visual language changes.
-        Box(
-            Modifier
-                .size(52.dp)
-                .then(rememberTutorialAnchor(com.lidarscan.core.capture.TutorialAnchor.ADVANCED))
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh, CircleShape)
-                .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
-                .clickable(role = Role.Button, onClick = onOpenAdvanced)
-                .semantics { contentDescription = "Advanced settings" }
-                .testTag("advancedButton"),
-            contentAlignment = Alignment.Center,
+    val liveToggle: @Composable () -> Unit = {
+        // ROUND 26 item 124: the Live-view SWITCH became a round eye button,
+        // and the honesty it carried moved rather than being dropped. "display
+        // only · recording unaffected" was a caption beside a switch on a band
+        // that no longer exists; the fact now lives in [ScanStatusPill], which
+        // says LIVE VIEW OFF · STILL RECORDING in the one place the operator is
+        // already looking. The tag is unchanged because the emulator suite
+        // asserts on it, and the control is still editable during a recording —
+        // that is the whole of item 10.
+        SecondaryRoundButton(
+            size = if (live) 56.dp else 48.dp,
+            enabled = true,
+            contentDescription = if (liveView) "Live view on, display only" else "Live view off, still recording",
+            testTag = "liveViewSwitch",
+            onClick = { onLiveViewChange(!liveView) },
         ) {
             Icon(
-                Icons.Filled.Tune,
+                if (liveView) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurface,
+                tint = if (liveView) Ember else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+
+    val fab: @Composable () -> Unit = {
+        ScanFab(
+            live = live,
+            starting = starting,
+            stopping = stopping,
+            connected = connected,
+            isReplaySession = isReplaySession,
+            startBlockedReason = startBlockedReason,
+            onStartRefused = onStartRefused,
+            onStart = onStart,
+            onStop = onStop,
+        )
+    }
+
+    if (vertical) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            liveToggle()
+            fab()
+            secondaries()
+        }
+    } else {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            secondaries()
+            fab()
+            liveToggle()
+        }
+    }
+}
+
+/**
+ * The secondary control shape — the circle, the ground and the hairline the
+ * pause button has had since round 5.3. One composable rather than three
+ * copies, because item 124 needs the same shape in three corners and a fourth
+ * copy is how the gear and the pause button drift apart.
+ */
+@Composable
+private fun SecondaryRoundButton(
+    size: androidx.compose.ui.unit.Dp,
+    enabled: Boolean,
+    contentDescription: String,
+    testTag: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    Box(
+        modifier
+            .size(size)
+            .alpha(if (enabled) 1f else 0.3f)
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.92f), CircleShape)
+            .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .semantics { this.contentDescription = contentDescription }
+            .testTag(testTag),
+        contentAlignment = Alignment.Center,
+    ) { content() }
+}
+
+/**
+ * ROUND 22 item 95's dominant control, unchanged in behaviour and moved to the
+ * middle of the bottom edge — where a camera app's shutter is, and where a
+ * thumb lands without looking.
+ */
+@Composable
+private fun ScanFab(
+    live: Boolean,
+    starting: Boolean,
+    stopping: Boolean,
+    connected: Boolean,
+    isReplaySession: Boolean,
+    startBlockedReason: String?,
+    onStartRefused: (String) -> Unit,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+) {
+    // ROUND 5 item 9: Start creates a NEW project, and the label says so.
+    // ROUND 22 item 95: the button's own word, on the button — SCAN while
+    // idle, STOP while recording, CANCEL during the start sequence.
+    val recordWord = when {
+        live -> com.lidarscan.core.Wording.SCAN_BUTTON_RECORDING
+        starting -> com.lidarscan.core.Wording.SCAN_BUTTON_STARTING
+        else -> com.lidarscan.core.Wording.SCAN_BUTTON
+    }
+    val recordLabel = when {
+        live -> "Stop recording"
+        starting -> "Cancel this start"
+        isReplaySession -> "Start replay"
+        else -> "Start a scan"
+    }
+    // ROUND 17 item 64: armed = the press will start something new. ROUND 21
+    // item 85: the button stays TAPPABLE while a start is in flight — the
+    // press still cannot start anything, but it PULSES the start card instead
+    // of vanishing into an inert control.
+    val armed = connected && !stopping && !starting
+    Box(
+        Modifier
+            .size(if (live) 96.dp else 88.dp)
+            // ROUND 24 item 110(b): the tour's first two steps ring this.
+            .then(rememberTutorialAnchor(com.lidarscan.core.capture.TutorialAnchor.SCAN_BUTTON))
+            .alpha(if (armed || live) 1f else 0.45f)
+            .shadow(16.dp, CircleShape, ambientColor = Ember, spotColor = Ember)
+            .background(Ember, CircleShape)
+            // ── ROUND 23 item 101(b): NEVER INERT, NEVER SILENT ────────────
+            //
+            // `enabled = true` unconditionally. A press with no sensor attached
+            // — or during a seal — used to go nowhere at all: no ViewModel
+            // call, no log line, no pixel changed. A button that will not act
+            // must still ANSWER.
+            .clickable(enabled = true, role = Role.Button) {
+                when {
+                    live -> onStop()
+                    startBlockedReason != null -> onStartRefused(startBlockedReason)
+                    else -> onStart()
+                }
+            }
+            .semantics { contentDescription = recordLabel }
+            .testTag("recordButton"),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            if (starting && !live) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(22.dp),
+                    color = OnEmber,
+                    strokeWidth = 3.dp,
+                )
+                Spacer(Modifier.height(5.dp))
+            } else {
+                // The universal record/stop mark is KEPT above the word: a dot
+                // while idle, a square while live. The word says what happens;
+                // the mark says which state you are in.
+                Box(
+                    Modifier
+                        .size(if (live) 22.dp else 20.dp)
+                        .background(OnEmber, if (live) RoundedCornerShape(5.dp) else CircleShape),
+                )
+                Spacer(Modifier.height(6.dp))
+            }
+            Text(
+                recordWord,
+                fontFamily = com.lidarscan.app.ui.theme.UiFontFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 15.sp,
+                letterSpacing = 0.08.em,
+                color = OnEmber,
+                modifier = Modifier.testTag("recordButtonLabel"),
+            )
+        }
+    }
+}
+
+/**
+ * ROUND 26 item 124 — **one pill, four facts: sensor · time · points · metres.**
+ *
+ * These were a badge in the app bar, a duration inside a mono line, a point
+ * count beside it and a trail length painted under the coverage arcs — four
+ * widgets in three bands, none of which a walking operator could take in at a
+ * glance. A fullscreen viewport has exactly one place for a status read-out,
+ * and this is it.
+ *
+ * `pointsCapturedValue` MUST stay on the points number and MUST stay parseable
+ * as either a grouped integer or "1.24 M" — the CI emulator smoke test polls
+ * this exact node for ~20 s to prove the native decoder is landing points.
+ *
+ * The numbers are [MonoTabular]: they change once a second under a pill that
+ * does not move, and proportional digits would make the whole pill twitch.
+ */
+@Composable
+private fun ScanStatusPill(
+    sensor: SensorType,
+    connected: Boolean,
+    captureState: CaptureState,
+    stats: CaptureStats,
+    trailLengthM: Float,
+    liveView: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val live = captureState == CaptureState.RECORDING || captureState == CaptureState.PAUSED
+    Column(
+        modifier
+            .background(MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.86f), RoundedCornerShape(14.dp))
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f), RoundedCornerShape(14.dp))
+            .padding(horizontal = 11.dp, vertical = 7.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            ScanChip(
+                text = sensor.badgeLabel.uppercase(),
+                // ROUND 25 item 119: exhaustive, see `sensorBadgeColor`. Null
+                // while disconnected is deliberate — an untinted chip is how
+                // this says "nothing on the cable yet".
+                color = if (connected) sensorBadgeColor(sensor) else null,
+                showDot = true,
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                formatDuration(stats.elapsedMillis),
+                style = MonoTabular.copy(fontSize = 14.sp),
+                color = if (live) Ember else MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+            )
+        }
+        Spacer(Modifier.height(3.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                formatPoints(stats.pointsCaptured),
+                style = MonoValue.copy(fontSize = 12.5.sp),
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                modifier = Modifier.testTag("pointsCapturedValue"),
+            )
+            Text(
+                " pts · ${String.format(java.util.Locale.US, "%.1f", trailLengthM)} m",
+                style = MonoLabel.copy(fontSize = 10.sp, letterSpacing = 0.04.em),
+                color = InkFaint,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        // The honesty the Live switch's caption used to carry, moved to where
+        // the operator is already looking and said only when it is TRUE — a
+        // permanent "display only" caption is noise; "still recording" printed
+        // over a black viewport is the one sentence that stops a panic.
+        if (!liveView) {
+            Spacer(Modifier.height(2.dp))
+            Text(
+                if (live) "LIVE VIEW OFF · STILL RECORDING" else "LIVE VIEW OFF",
+                style = MonoLabel.copy(fontSize = 9.sp, letterSpacing = 0.06.em),
+                color = CoverageAmber,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+/**
+ * ROUND 22 item 95's ADVANCED ⚙, top-end. The same `CaptureSettingsSheet` it
+ * has always opened, and — asserted by `Round23ScanTabTest` — still the ONLY
+ * `advancedButton` in the tree.
+ */
+@Composable
+private fun ScanGearButton(onOpenAdvanced: () -> Unit) {
+    SecondaryRoundButton(
+        size = 48.dp,
+        enabled = true,
+        contentDescription = "Advanced settings",
+        testTag = "advancedButton",
+        modifier = Modifier.then(rememberTutorialAnchor(com.lidarscan.core.capture.TutorialAnchor.ADVANCED)),
+        onClick = onOpenAdvanced,
+    ) {
+        Icon(Icons.Filled.Tune, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
+    }
+}
+
+/**
+ * ROUND 26 item 124 — the bottom-START corner: what the live view is actually
+ * drawing.
+ *
+ * A READ-OUT with a door, not a switch. `MAP` means the engine's pushbroom is
+ * resolving the fan into a cloud; `SLICES` means the viewport is showing raw
+ * returns because live mapping is off or the map is full. Flipping live SLAM
+ * mid-walk is not a one-tap decision — round 6 item 21 is a whole round about
+ * what happens when the two disagree — so the tap opens the Capture sheet
+ * where the switch and its explanation live, and this corner only ever tells
+ * the truth about the current state.
+ */
+@Composable
+private fun MapModeChip(liveMapEnabled: Boolean, liveMapRequested: Boolean, onClick: () -> Unit) {
+    ScanChip(
+        text = when {
+            liveMapEnabled -> "MAP"
+            liveMapRequested -> "MAP FULL"
+            else -> "SLICES"
+        },
+        color = if (liveMapEnabled) ScanTeal else null,
+        modifier = Modifier
+            .clickable(role = Role.Button, onClick = onClick)
+            .testTag("mapModeChip"),
+    )
+}
+
+/**
+ * ROUND 26 item 124 — the bottom-END corner: the tour.
+ *
+ * Round 24 put this at the head of the chip row. In a fullscreen layout the
+ * chip row floats in the middle of the picture and can be scrolled away from
+ * the `?`, which is precisely the wrong place for the control someone who is
+ * lost reaches for. A fixed corner cannot be scrolled away from.
+ */
+@Composable
+private fun TutorialChip(onOpenTutorial: () -> Unit) {
+    Box(
+        Modifier
+            .size(38.dp)
+            .background(MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.92f), CircleShape)
+            .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
+            .clickable(role = Role.Button, onClick = onOpenTutorial)
+            .semantics { contentDescription = com.lidarscan.core.capture.ScanTutorial.HELP_LABEL }
+            .testTag("tutorialButton"),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            "?",
+            fontFamily = DisplayFontFamily,
+            fontWeight = FontWeight.Bold,
+            fontSize = 16.sp,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
     }
 }
 

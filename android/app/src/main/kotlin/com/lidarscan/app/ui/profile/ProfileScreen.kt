@@ -42,6 +42,7 @@ import com.lidarscan.app.ui.theme.Ink
 import com.lidarscan.app.ui.theme.InkFaint
 import com.lidarscan.app.ui.theme.MonoLabel
 import com.lidarscan.app.ui.theme.MonoMeta
+import com.lidarscan.core.Wording
 import com.lidarscan.core.feedback.DeviceFacts
 import com.lidarscan.core.feedback.FeedbackWording
 
@@ -250,7 +251,7 @@ private fun DeviceCard(facts: DeviceFacts) {
             color = MaterialTheme.colorScheme.onSurface,
         )
         Spacer(Modifier.height(8.dp))
-        FactRow("App", "${facts.appVersion} (${facts.versionCode})", "profileAppVersion")
+        FactRow("App", "${Wording.APP_NAME} ${facts.appVersion} (${facts.versionCode})", "profileAppVersion")
         FactRow("Device", facts.deviceModel, "profileDeviceModel")
         FactRow("Android", facts.androidVersion, "profileAndroidVersion")
         // The engine ABI is the one line here that is not for the operator —

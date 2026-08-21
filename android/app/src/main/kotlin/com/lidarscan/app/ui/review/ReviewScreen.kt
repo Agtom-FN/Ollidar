@@ -22,7 +22,12 @@ import com.lidarscan.app.ui.theme.ScanTeal
 import com.lidarscan.app.ui.theme.SemWarn
 import com.lidarscan.app.ui.theme.ViewportGround
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -58,6 +63,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -72,6 +78,7 @@ import com.lidarscan.app.render.CameraMode
 import com.lidarscan.app.render.PointCloudView
 import com.lidarscan.core.measure.MeasureUnit
 import com.lidarscan.core.render.ColorMode
+import com.lidarscan.core.render.ViewerChrome
 import com.lidarscan.core.render.Colormap
 import com.lidarscan.core.projects.ProjectActionWording
 import com.lidarscan.core.render.PointSizeMode
@@ -169,95 +176,126 @@ fun ReviewScreen(
     var showPanel by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     val manifest = state.project?.manifest
+    val isLandscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation ==
+        android.content.res.Configuration.ORIENTATION_LANDSCAPE
 
-    Column(
+    // ── ROUND 26 item 126: the controls hide on a tap ──────────────────────
+    //
+    // `rememberSaveable`, so a rotation does not un-hide them: item 125 makes
+    // Review a two-orientation screen, and an operator who hid the chrome to
+    // look at a corridor and then turned the phone sideways to see more of it
+    // would otherwise get the toolbar back in the middle of the gesture.
+    //
+    // The arbitration itself is [ViewerChrome] in `:core` — a truth table with
+    // a test, not three `if`s in a composable.
+    var controlsShown by rememberSaveable { mutableStateOf(true) }
+    val controlsVisible = ViewerChrome.controlsVisible(controlsShown, state.measureMode)
+
+    Box(
         Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .statusBarsPadding()
-            .navigationBarsPadding(),
+            .testTag("reviewScreen"),
     ) {
-        BackBar(
-            title = manifest?.name ?: "Review",
-            subtitle = listOfNotNull(
-                "Review",
-                manifest?.pointCountEstimate?.let { "%.1f M pts".format(it / 1_000_000.0) },
-                manifest?.crsEpsg?.takeIf { it != 0 }?.let { "georef EPSG $it" } ?: "local frame",
-            ).joinToString(" · "),
-            onBack = onBack,
-            actions = {
-                IconButton(onClick = { vm.toggleMeasure() }) {
-                    Icon(
-                        Icons.Filled.Straighten,
-                        contentDescription = "Measure",
-                        tint = if (state.measureMode) Ember else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                IconButton(onClick = { showPanel = true }) {
-                    Icon(
-                        Icons.Filled.Tune,
-                        contentDescription = "Display settings",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            },
+        // ── ROUND 26 item 126: THE CLOUD IS THE SCREEN ─────────────────────
+        //
+        // Edge to edge, no card, no 14 dp inset, and no `weight(1f)` fighting
+        // a column of controls for height. What was a stack — bar, framed
+        // viewport, cards, chips, pills — is a viewport with overlays on it,
+        // and every one of those overlays can now be taken away entirely.
+        ReviewViewport(
+            state = state,
+            vm = vm,
+            isLandscape = isLandscape,
+            onEmptyTap = { controlsShown = ViewerChrome.onViewportTap(controlsShown, state.measureMode) },
         )
 
-        // ── hero viewport ───────────────────────────────────────────────
-        val shape = RoundedCornerShape(20.dp)
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .padding(horizontal = 14.dp)
-                .background(ViewportGround, shape)
-                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
-                .clip(shape)
-                .testTag("reviewViewport"),
+        ReviewChrome(
+            visible = controlsVisible,
+            isLandscape = isLandscape,
+            state = state,
+            vm = vm,
+            manifest = manifest,
+            exportVm = exportVm,
+            exportContext = exportContext,
+            onBack = onBack,
+            onOpenPlan = onOpenPlan,
+            onOpenExport = onOpenExport,
+            onOpenPanel = { showPanel = true },
+        )
+    }
+
+    if (showPanel) {
+        ModalBottomSheet(
+            onDismissRequest = { showPanel = false },
+            sheetState = sheetState,
+            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            // ROUND 16 item 61: "...and there are some tab and window show the
+            // same too". This was the other one.
+            shape = RoundedCornerShape(
+                topStart = ScanDims.SheetRadius,
+                topEnd = ScanDims.SheetRadius,
+            ),
         ) {
-            if (state.hasCloud) {
-                PointCloudView(
-                    source = vm.cloudSource,
-                    colorMode = state.display.colorMode,
-                    colormap = state.display.activeScalar.colormap,
-                    pointSizePx = state.display.pointSize.fixedPx,
-                    cameraMode = CameraMode.ORBIT,
-                    displayParams = state.display,
-                    onRendererReady = vm::onRendererReady,
-                    // ── ROUND 25 item 117: the measure tap, and what it replaced ──
-                    //
-                    // This used to be a transparent `Box` with
-                    // `detectTapGestures` laid OVER the SurfaceView, on the
-                    // reasoning that "a pick never fights the orbit gesture".
-                    // It did not fight it; it removed it. A pointer-input node
-                    // above the view takes the tap AND the drag AND the pinch,
-                    // so with measure mode on the viewer could not be moved at
-                    // all — which is the state the owner would have found the
-                    // moment he tried the new pan on a scan he was measuring.
-                    //
-                    // The tap now goes through the SAME gesture arbiter as the
-                    // navigation, which is the only arrangement in which "a tap
-                    // measures, a drag orbits, two fingers pan, a pinch zooms"
-                    // is a set of rules rather than a set of hopes.
-                    onTapPick = if (state.measureMode) {
-                        { x, y -> vm.onTap(x, y) }
-                    } else {
-                        null
-                    },
-                    modifier = Modifier.fillMaxSize(),
-                )
-                if (state.measureMode) {
-                    ScanChip(
-                        text = if (state.measurement == null) "MEASURE ON · TAP A POINT" else "MEASURE ON",
-                        color = Ember,
-                        modifier = Modifier.align(Alignment.TopStart).padding(12.dp),
-                    )
-                }
-                ScanChip(
-                    text = "%,d pts".format(state.totalPoints),
-                    modifier = Modifier.align(Alignment.BottomStart).padding(12.dp),
-                )
-            } else {
+            DisplayPanel(state, vm, advanced)
+        }
+    }
+}
+
+/**
+ * ROUND 26 item 126 — the point cloud, full bleed, and the one tap path.
+ *
+ * The tap goes through `PointCloudView`'s round-25 gesture arbiter in BOTH
+ * modes now, rather than being attached only when measure mode is on. That is
+ * what makes "a measure tap is not empty space" a single decision at a single
+ * site ([ViewerChrome.onViewportTap]) instead of two listeners that could both
+ * be live.
+ */
+@Composable
+private fun ReviewViewport(
+    state: ReviewUiState,
+    vm: ReviewViewModel,
+    isLandscape: Boolean,
+    onEmptyTap: () -> Unit,
+) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(ViewportGround)
+            .testTag("reviewViewport"),
+    ) {
+        if (state.hasCloud) {
+            PointCloudView(
+                source = vm.cloudSource,
+                colorMode = state.display.colorMode,
+                colormap = state.display.activeScalar.colormap,
+                pointSizePx = state.display.pointSize.fixedPx,
+                cameraMode = CameraMode.ORBIT,
+                displayParams = state.display,
+                onRendererReady = vm::onRendererReady,
+                // ── ROUND 25 item 117 / ROUND 26 item 126: ONE tap path ──────
+                //
+                // Round 25's note, kept because it is the reason this is a
+                // callback and not an overlay: the measure tap used to be a
+                // transparent `Box` with `detectTapGestures` laid OVER the
+                // SurfaceView, on the reasoning that "a pick never fights the
+                // orbit gesture". It did not fight it; it removed it — a
+                // pointer-input node above the view takes the tap AND the drag
+                // AND the pinch, so with measure mode on the viewer could not
+                // be moved at all.
+                //
+                // Round 26 adds the second claimant. The tap is now always
+                // wired and the DECISION is made in one pure function, so
+                // hiding the chrome cannot cost a measurement and measuring
+                // cannot cost the chrome. Navigation is untouched in both:
+                // a drag orbits, two fingers pan, a pinch zooms and a double
+                // tap reframes, whether the controls are on screen or not.
+                onTapPick = { x, y ->
+                    if (ViewerChrome.tapIsMeasurement(state.measureMode)) vm.onTap(x, y) else onEmptyTap()
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
                 // ROUND 8 (owner item 27c). This used to be one paragraph
                 // saying "run Post-process first", which was wrong twice over
                 // for the sensor the owner actually uses: post-processing
@@ -266,7 +304,16 @@ fun ReviewScreen(
                 // shows the 3D map without being asked, and the only case that
                 // still shows text is the one that genuinely cannot be fixed.
                 Box(
-                    Modifier.fillMaxSize().testTag("reviewLoadState"),
+                    // ROUND 26 item 126: centred in the band the CHROME leaves,
+                    // not in the window. Full bleed put the floating top bar
+                    // and the bottom strip over the same pixels this paragraph
+                    // was centred in, and in landscape the strip is a third of
+                    // the screen — so "No cloud in memory…" printed straight
+                    // through the colour chips on the AVD.
+                    Modifier
+                        .fillMaxSize()
+                        .padding(top = 110.dp, bottom = if (isLandscape) 280.dp else 200.dp)
+                        .testTag("reviewLoadState"),
                     contentAlignment = Alignment.Center,
                 ) {
                     Column(
@@ -309,138 +356,207 @@ fun ReviewScreen(
             }
         }
 
-        // ── ROUND 13: "Process this scan" ───────────────────────────────
-        //
-        // Shown only when the capture is actually in pieces. A button that is
-        // always there and usually does nothing teaches the operator to ignore
-        // it, and this one is the answer to the complaint that opened the
-        // round: a 5-section scan was worthless and there was nothing to press.
-        if (state.sections > 1) {
-            ProcessSectionsCard(state = state, onProcess = vm::processScan)
-        }
+}
 
-        // ── colour chips ────────────────────────────────────────────────
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            // ROUND 10 (owner item 39): RGB is paused with the camera. TIME
-            // has always fallen back to the RGB pass (the hint below says so)
-            // and there is nothing behind either on this rig, so the review
-            // strip offers the two modes a D6 cloud actually has.
-            buildList {
-                add(ColorMode.HEIGHT to "HEIGHT")
-                if (com.lidarscan.core.FeatureFlags.RGB_COLOR_MODE_ENABLED) {
-                    add(ColorMode.RGB to "RGB")
-                    add(ColorMode.TIME to "TIME")
+/**
+ * ROUND 26 item 126 — **everything that is not the cloud, and all of it
+ * removable.**
+ *
+ * One `AnimatedVisibility` over the whole set rather than one per control: the
+ * owner's request is "a tap hides the controls", singular, and per-control
+ * animations would let them leave at different times, which reads as a glitch
+ * rather than as a deliberate clearing of the screen.
+ *
+ * The bottom strip still reserves `ScanDims.TabBarClearance`. Review is not
+ * the Scan tab — the floating tab bar stays up here, because leaving the
+ * viewer is a normal thing to do and there is no capture to protect — so the
+ * clearance is still owed. What is NOT owed any more is the round-1
+ * `UnderTabBar` wrapper `LidarScanApp` used to put around this route: that
+ * inset the whole SCREEN, cloud included, which is exactly the framing item
+ * 126 removes.
+ */
+@Composable
+private fun ReviewChrome(
+    visible: Boolean,
+    isLandscape: Boolean,
+    state: ReviewUiState,
+    vm: ReviewViewModel,
+    manifest: com.lidarscan.core.model.ProjectManifest?,
+    exportVm: com.lidarscan.app.ui.processing.ProcessingViewModel?,
+    exportContext: android.content.Context,
+    onBack: () -> Unit,
+    onOpenPlan: (() -> Unit)?,
+    onOpenExport: (() -> Unit)?,
+    onOpenPanel: () -> Unit,
+) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(),
+        exit = fadeOut(),
+    ) {
+        Box(Modifier.fillMaxSize().testTag("reviewControls")) {
+            // ── top: back, and the two icons ────────────────────────────────
+            Column(Modifier.align(Alignment.TopCenter).fillMaxWidth().statusBarsPadding()) {
+                BackBar(
+                    title = manifest?.name ?: "Review",
+                    subtitle = listOfNotNull(
+                        "Review",
+                        manifest?.pointCountEstimate?.let { "%.1f M pts".format(it / 1_000_000.0) },
+                        manifest?.crsEpsg?.takeIf { it != 0 }?.let { "georef EPSG $it" } ?: "local frame",
+                    ).joinToString(" · "),
+                    onBack = onBack,
+                    actions = {
+                        IconButton(onClick = { vm.toggleMeasure() }) {
+                            Icon(
+                                Icons.Filled.Straighten,
+                                contentDescription = "Measure",
+                                tint = if (state.measureMode) Ember else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        IconButton(onClick = onOpenPanel) {
+                            Icon(
+                                Icons.Filled.Tune,
+                                contentDescription = "Display settings",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    },
+                )
+                Row(Modifier.padding(horizontal = 14.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (state.measureMode) {
+                        ScanChip(
+                            text = if (state.measurement == null) "MEASURE ON · TAP A POINT" else "MEASURE ON",
+                            color = Ember,
+                        )
+                    }
+                    ScanChip(text = "%,d pts".format(state.totalPoints))
                 }
-                add(ColorMode.INTENSITY to "INTENSITY")
-            }.forEach { (mode, label) ->
-                val selected = state.display.colorMode == mode
-                ScanChip(
-                    text = label,
-                    color = if (selected) Ember else null,
-                    onClick = { vm.updateDisplay { it.copy(colorMode = mode) } },
-                    modifier = Modifier.height(38.dp).padding(top = 6.dp),
-                )
             }
-        }
 
-        // A14's own rule, surfaced rather than silently applied: PointVertex
-        // carries no per-point time, so TIME falls back to the RGB pass.
-        if (state.display.colorMode == ColorMode.TIME) {
-            Hint(
-                "No per-point time in PointVertex — this falls back to RGB.",
-                color = SemWarn,
-                modifier = Modifier.padding(horizontal = 16.dp),
-            )
-            Spacer(Modifier.height(6.dp))
-        }
-
-        if (state.measureMode) {
-            Box(Modifier.padding(horizontal = 14.dp)) { MeasureHud(state, vm) }
-            Spacer(Modifier.height(10.dp))
-        }
-
-        // ── ROUND 22 items 96 + 97 / ROUND 23 item 104a ─────────────────────
-        //
-        // The floor plan is behind the Advanced switch, so on an ordinary walk
-        // this row is Share + Export — which is the point of item 96: Export
-        // used to mean "open the Details hub, find the Processing screen, pick
-        // a format there". It is here now, on the screen the operator is
-        // already looking at.
-        //
-        // ROUND 23 item 104a: **and so is Share, in BOTH modes.** Round 22 gave
-        // Review a full-width Export and, with it, only the Downloads copy —
-        // the hand-off to the system share sheet that the bundle path had
-        // always carried was left on the Processing screen that Simple mode
-        // removes. From where the owner stands that is export/share
-        // "vanishing", and it is fixed by giving the sheet its own button
-        // rather than by hiding it inside Export: Share is
-        // `ProcessingViewModel.export(share = true)`, i.e. the same job and the
-        // same ROUND 7 "Downloads FIRST, sheet second" order, one flag apart.
-        //
-        // Export is the primary and Share the secondary because only one of the
-        // two guarantees the file survives the operator dismissing a chooser.
-        // Share is drawn whenever there is a ViewModel behind it, so Advanced
-        // mode — where Export navigates to the Processing screen — keeps it too.
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 14.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            if (onOpenPlan != null) {
-                SecondaryPill(
-                    text = "Floor plan",
-                    icon = Icons.Filled.GridView,
-                    onClick = onOpenPlan,
-                    modifier = Modifier.weight(1f),
-                )
+            // ── ROUND 13 / ROUND 26 item 126: "Process this scan", floating ──
+            //
+            // Shown only when the capture is actually in pieces. A button that
+            // is always there and usually does nothing teaches the operator to
+            // ignore it, and this one is the answer to the complaint that
+            // opened round 13: a 5-section scan was worthless and there was
+            // nothing to press. It is a card over the cloud now rather than a
+            // band between the cloud and the chips.
+            if (state.sections > 1) {
+                Box(
+                    Modifier
+                        .align(if (isLandscape) Alignment.CenterEnd else Alignment.Center)
+                        .widthIn(max = 420.dp)
+                        .padding(horizontal = 16.dp),
+                ) {
+                    ProcessSectionsCard(state = state, onProcess = vm::processScan)
+                }
             }
-            if (exportVm != null) {
-                SecondaryPill(
-                    text = ProjectActionWording.SHARE_ACTION,
-                    icon = Icons.Filled.Share,
-                    onClick = { exportVm.export(exportContext, share = true) },
-                    modifier = Modifier.weight(1f).testTag("reviewShareButton"),
-                )
+
+            // ── bottom strip: colour modes, then Export and Share ───────────
+            Column(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .heightIn(max = if (isLandscape) 260.dp else 460.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(bottom = ScanDims.TabBarClearance),
+            ) {
+                // A14's own rule, surfaced rather than silently applied:
+                // PointVertex carries no per-point time, so TIME falls back to
+                // the RGB pass.
+                if (state.display.colorMode == ColorMode.TIME) {
+                    Hint(
+                        "No per-point time in PointVertex — this falls back to RGB.",
+                        color = SemWarn,
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    )
+                    Spacer(Modifier.height(6.dp))
+                }
+
+                if (state.measureMode) {
+                    Box(Modifier.padding(horizontal = 14.dp)) { MeasureHud(state, vm) }
+                    Spacer(Modifier.height(10.dp))
+                }
+
+                // ── colour chips ────────────────────────────────────────────
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    // ROUND 10 (owner item 39): RGB is paused with the camera.
+                    // TIME has always fallen back to the RGB pass and there is
+                    // nothing behind either on this rig, so the review strip
+                    // offers the two modes a D6 cloud actually has.
+                    buildList {
+                        add(ColorMode.HEIGHT to "HEIGHT")
+                        if (com.lidarscan.core.FeatureFlags.RGB_COLOR_MODE_ENABLED) {
+                            add(ColorMode.RGB to "RGB")
+                            add(ColorMode.TIME to "TIME")
+                        }
+                        add(ColorMode.INTENSITY to "INTENSITY")
+                    }.forEach { (mode, label) ->
+                        val selected = state.display.colorMode == mode
+                        ScanChip(
+                            text = label,
+                            color = if (selected) Ember else null,
+                            onClick = { vm.updateDisplay { it.copy(colorMode = mode) } },
+                            modifier = Modifier.height(38.dp),
+                        )
+                    }
+                }
+
+                // ── ROUND 22 items 96 + 97 / ROUND 23 item 104a ─────────────
+                //
+                // The floor plan is behind the Advanced switch, so on an
+                // ordinary walk this row is Share + Export. Export is the
+                // primary and Share the secondary because only one of the two
+                // guarantees the file survives the operator dismissing a
+                // chooser; Share is `ProcessingViewModel.export(share = true)`,
+                // the same job and the same ROUND 7 "Downloads FIRST, sheet
+                // second" order, one flag apart.
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    if (onOpenPlan != null) {
+                        SecondaryPill(
+                            text = "Floor plan",
+                            icon = Icons.Filled.GridView,
+                            onClick = onOpenPlan,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    if (exportVm != null) {
+                        SecondaryPill(
+                            text = ProjectActionWording.SHARE_ACTION,
+                            icon = Icons.Filled.Share,
+                            onClick = { exportVm.export(exportContext, share = true) },
+                            modifier = Modifier.weight(1f).testTag("reviewShareButton"),
+                        )
+                    }
+                    PrimaryPill(
+                        text = com.lidarscan.core.Wording.EXPORT_ACTION,
+                        icon = Icons.Filled.IosShare,
+                        onClick = {
+                            if (onOpenExport != null) onOpenExport() else exportVm?.export(exportContext)
+                        },
+                        modifier = Modifier.weight(1f).testTag("reviewExportButton"),
+                    )
+                }
+                if (onOpenExport == null && exportVm != null) {
+                    // Item 96: the format row, on Review, reusing
+                    // ProcessingViewModel's export paths verbatim.
+                    ExportFormatRow(exportVm)
+                }
             }
-            PrimaryPill(
-                text = com.lidarscan.core.Wording.EXPORT_ACTION,
-                icon = Icons.Filled.IosShare,
-                onClick = {
-                    if (onOpenExport != null) onOpenExport() else exportVm?.export(exportContext)
-                },
-                modifier = Modifier.weight(1f).testTag("reviewExportButton"),
-            )
-        }
-        if (onOpenExport == null && exportVm != null) {
-            // Item 96: the format row, on Review, reusing ProcessingViewModel's
-            // export paths verbatim — same formats, same Downloads delivery.
-            ExportFormatRow(exportVm)
-        }
-
-        Spacer(Modifier.height(ScanDims.TabBarClearance))
-    }
-
-    if (showPanel) {
-        ModalBottomSheet(
-            onDismissRequest = { showPanel = false },
-            sheetState = sheetState,
-            containerColor = MaterialTheme.colorScheme.surfaceContainer,
-            // ROUND 16 item 61: "...and there are some tab and window show the
-            // same too". This was the other one.
-            shape = RoundedCornerShape(
-                topStart = ScanDims.SheetRadius,
-                topEnd = ScanDims.SheetRadius,
-            ),
-        ) {
-            DisplayPanel(state, vm, advanced)
         }
     }
 }
+
 
 @Composable
 private fun MeasureHud(state: ReviewUiState, vm: ReviewViewModel) {

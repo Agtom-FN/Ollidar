@@ -91,6 +91,18 @@ object ScanDims {
     /** Room scrollable content must leave so it clears the floating tab bar. */
     val TabBarClearance = 86.dp
 
+    /**
+     * ROUND 26 item 124 — the height of [BackBar], as a token.
+     *
+     * The fullscreen Scan screen positions its floating chrome band from the
+     * top of the window, so it has to know whether a back bar is in front of
+     * it. It was a literal 56 in `CaptureLayout.APP_BAR_DP` and a `height(56.dp)`
+     * in the bar itself; two copies of one number that has to agree, and the
+     * consequence of them disagreeing is a chip row printed through the status
+     * pill.
+     */
+    val BackBar = 56.dp
+
     val CardRadius = 20.dp
     val TileRadius = 14.dp
 

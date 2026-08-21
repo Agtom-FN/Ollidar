@@ -369,7 +369,7 @@ fun ProjectsListScreen(
             .navigationBarsPadding(),
     ) {
         HeroHeader(
-            title = "LidarScan",
+            title = Wording.APP_NAME,
             subtitle = aggregateLine(uiState.projects, uiState.hiddenEmptyCount),
             trailing = {
                 AvatarButton(

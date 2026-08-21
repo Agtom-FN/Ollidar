@@ -61,7 +61,11 @@ namespace {
 // every other model in this shell. Unobtrusive by design: the owner asked for
 // the version to be visible, not prominent.
 QString appTitle() {
-  return QString("LidarScan %1").arg(QCoreApplication::applicationVersion().section(' ', 0, 0));
+  // ROUND 26 item 122: the app's DISPLAY name is "Ollidar". The bundle id,
+  // the project directory and the repository keep the lidarscan name — see
+  // `Wording.APP_NAME` on the Android side for why an identifier rename is
+  // not a rename at all.
+  return QString("Ollidar Desktop %1").arg(QCoreApplication::applicationVersion().section(' ', 0, 0));
 }
 
 // Space-grouped thousands — the mockup's fmt(). Every point count in the
@@ -899,7 +903,7 @@ void MainWindow::buildMenus() {
   auto* help = menuBar()->addMenu("&Help");
   help->addAction("About", this, [this] {
     QMessageBox box(this);
-    box.setWindowTitle("LidarScan Desktop");
+    box.setWindowTitle("Ollidar Desktop");
     box.setText(QString("%1\n\nRenderer: %2\nRender clock: %3\n\nQt %4\n\nTypefaces\n  %5")
                     .arg(host_->versionString(), viewport_->surfaceDescription(),
                          viewport_->displayLinkName(), qVersion(),

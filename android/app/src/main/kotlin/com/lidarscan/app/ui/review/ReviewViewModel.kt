@@ -315,7 +315,7 @@ class ReviewViewModel(
                     ReviewLoad.NO_TRAJECTORY,
                     "Recorded before trajectory storage — showing raw sensor view.\n\n" +
                         "A COIN-D6 is a 2D lidar: the third dimension of a scan is entirely the " +
-                        "phone's motion while you walk. This capture was made by LidarScan " +
+                        "phone's motion while you walk. This capture was made by ${com.lidarscan.core.Wording.APP_NAME} " +
                         "${p.manifest.appVersion.ifBlank { "before 0.5.0" }}, which recorded the " +
                         "returns but not the trajectory, so there is no way to rebuild the 3D " +
                         "map from it — not by this app and not by any later one.\n\n" +

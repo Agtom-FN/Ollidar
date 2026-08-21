@@ -168,6 +168,74 @@ object CaptureLayout {
     const val VIEWPORT_FLOOR_DP = 140f
 
     /**
+     * ROUND 26 item 124 — **the same budget, inverted.**
+     *
+     * The viewport is the whole screen now, so [viewportMinHeightDp]'s
+     * question ("how much is the picture guaranteed?") has the trivial answer
+     * 100 % and its arithmetic would be dead code. It is not dead: the
+     * question simply turned over. The chrome no longer pushes the picture
+     * down the screen, it floats ON the picture, and the thing that now needs
+     * a ceiling is the chrome — a scrolling card stack that, unbounded, would
+     * cover the live view completely and turn a fullscreen camera app back
+     * into the stacked column item 124 replaced.
+     *
+     * So the floating chrome gets exactly what the viewport used to give up:
+     * `screenHeight − viewportMinHeight`. Everything past that scrolls inside
+     * the card instead of growing over the picture, and the round-8 60 % rule
+     * survives as the same number doing the same job from the other side.
+     *
+     * The app bar is not a parameter: in the fullscreen layout the `BackBar`
+     * exists only for the replay session and is drawn OVER the viewport like
+     * everything else, so it costs the chrome column nothing.
+     */
+    fun chromeMaxHeightDp(screenHeightDp: Float, mountRow: Boolean = true): Float =
+        (screenHeightDp - viewportMinHeightDp(screenHeightDp, mountRow, appBar = false))
+            .coerceAtLeast(CHROME_FLOOR_DP)
+
+    /**
+     * ROUND 26 item 124 — **the DISCONNECTED screen gets the height instead.**
+     *
+     * [chromeMaxHeightDp] protects the live view from the chrome, and while a
+     * sensor is streaming that is the right trade — the picture is the product
+     * and the chrome is one mount row and one chip row. Disconnected it is the
+     * wrong trade, and [useCompactChrome]'s own header already says why: with
+     * nothing on the cable the Scan tab's job IS the connect flow, and there is
+     * no live view to protect (the viewport is empty ground).
+     *
+     * The connect flow is also the tallest thing this screen ever draws — the
+     * name field, the auto-detect line, the sensor picker, the device list and
+     * the manual panel's two IP fields — so capping it at 60 % of the screen
+     * put the "Connect" button below the fold, where `ReplayCaptureSmokeTest`
+     * found it on the AVD.
+     *
+     * What is reserved instead is only what is genuinely in the way: the top
+     * status row and the floating control cluster at the bottom. Everything
+     * between them is the connect flow's.
+     */
+    fun connectFlowMaxHeightDp(screenHeightDp: Float): Float =
+        (screenHeightDp - FLOATING_CONTROL_RESERVE_DP).coerceAtLeast(CHROME_FLOOR_DP)
+
+    /**
+     * The two floating bands the chrome column must not draw under: the status
+     * pill and the gear at the top (96 dp, which is the pill's two lines plus
+     * its padding) and the control cluster at the bottom (174 dp — an 88 dp FAB
+     * idle, its padding, and the 86 dp tab-bar clearance under it). Measured
+     * from the composables rather than guessed, and the reason it is one
+     * constant is that BOTH orientations' rails are positioned from it.
+     */
+    const val FLOATING_CONTROL_RESERVE_DP = 270f
+
+    /**
+     * The chrome's own floor. A tall enough screen makes
+     * `screenHeight − 60 %` generous, but a short one could squeeze the
+     * connect flow — the name field, the auto-detect line, the manual IP
+     * panel — into a strip too small to type in, which is the one state on
+     * this screen where the chrome matters MORE than the picture (there is no
+     * picture yet). 240 dp is the manual-entry panel plus its two fields.
+     */
+    const val CHROME_FLOOR_DP = 240f
+
+    /**
      * True when the screen may drop to the compact chrome this object budgets
      * for.
      *

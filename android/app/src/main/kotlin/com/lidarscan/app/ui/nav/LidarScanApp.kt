@@ -250,7 +250,19 @@ fun LidarScanApp(
                 // navigation route mid-round is the back-stack risk round 16
                 // called out); what is consolidated is the chrome: one
                 // wrapper, like every sibling project screen.
-                UnderTabBar {
+                //
+                // ── ROUND 26 item 126: and now NO wrapper, deliberately ─────
+                //
+                // `UnderTabBar` insets the whole screen by the tab bar's 86 dp,
+                // which for a fullscreen point-cloud viewer means insetting the
+                // CLOUD to make room for chrome — the exact framing item 126
+                // exists to remove. Round 19's consolidation is not undone:
+                // Review still reserves `ScanDims.TabBarClearance`, it just
+                // reserves it inside its own floating bottom strip, where the
+                // clearance can go away with the strip when the operator taps
+                // the controls off. The two doors into Review still get
+                // identical chrome, which is what item 76 actually asked for.
+                run {
                     ReviewRoute(
                         container = container,
                         projectId = Uri.decode(backStackEntry.arguments?.getString(Routes.PROJECT_ID_ARG).orEmpty()),
@@ -412,6 +424,24 @@ fun LidarScanApp(
 
         }
 
+        // ── ROUND 26 item 124 (owner choice C): hidden while scanning ──
+        //
+        // Not `if (!scanInProgress)`: an abrupt disappearance mid-press reads
+        // as a crash. It slides down and fades, and comes back the same way on
+        // Stop or on a cancelled start.
+        //
+        // The bar is still COMPOSED while hidden — `AnimatedVisibility` keeps
+        // it in the tree — which is what preserves the round-24 tour's last
+        // step, whose whole mechanism is that the tab bar is the one bright
+        // thing left on a dimmed screen. A tour cannot start during a
+        // recording, so the two states never meet.
+        val scanning by container.scanInProgress.collectAsStateWithLifecycle()
+        androidx.compose.animation.AnimatedVisibility(
+            visible = !scanning,
+            enter = androidx.compose.animation.slideInVertically { it } + androidx.compose.animation.fadeIn(),
+            exit = androidx.compose.animation.slideOutVertically { it } + androidx.compose.animation.fadeOut(),
+            modifier = Modifier.align(Alignment.BottomCenter),
+        ) {
         ScanTabBar(
             current = currentTab,
             onSelect = { tab ->
@@ -426,8 +456,9 @@ fun LidarScanApp(
                 }
                 goTab(target)
             },
-            modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding(),
+            modifier = Modifier.navigationBarsPadding(),
         )
+        }
     }
 }
 

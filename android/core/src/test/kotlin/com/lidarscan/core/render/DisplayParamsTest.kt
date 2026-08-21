@@ -24,7 +24,9 @@ class DisplayParamsTest {
         assertEquals(4.0f, survey.pointSize.adaptiveMaxPx, 0f)
         assertEquals(15_000_000, survey.lodPointBudget)
         assertEquals(ColorMode.HEIGHT, survey.colorMode)
-        assertEquals(Colormap.SPECTRUM, survey.height.colormap)
+        // ROUND 26 (owner item 127): TURBO, was A14 §5's SPECTRUM. The one
+        // preset value that is deliberately not a transcription any more.
+        assertEquals(Colormap.TURBO, survey.height.colormap)
         assertTrue(survey.edlEnabled)
         assertEquals(0.6f, survey.edlStrength, 1e-6f)
         assertTrue(survey.showTrajectory)
@@ -34,6 +36,9 @@ class DisplayParamsTest {
         assertEquals(PointSizeMode.FIXED_PIXELS, fp.pointSize.mode)
         assertEquals(1.5f, fp.pointSize.fixedPx, 0f)
         assertEquals(8_000_000, fp.lodPointBudget)
+        // …and FLOOR_PLAN is deliberately NOT moved to Turbo by item 127: its
+        // height range is a 50 cm slice and thermal gives that narrow band more
+        // contrast than a hue sweep does.
         assertEquals(Colormap.THERMAL, fp.height.colormap)
         // The height RANGE is pinned to the clip band, not left on auto —
         // the non-obvious half of A14's floor-plan preset.

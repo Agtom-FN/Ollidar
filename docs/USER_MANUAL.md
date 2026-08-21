@@ -1,13 +1,20 @@
-# LidarScan — User Manual
+# Ollidar — User Manual
 
-App version 0.9.10 (Android). Written for the owner and for field testers.
+App version 0.9.11 (Android). Written for the owner and for field testers.
 If you only want a first scan, read [QUICK_START.md](QUICK_START.md) instead.
+
+The app is called **Ollidar** as of 0.9.11. The repository, the Android
+package (`com.lidarscan.app`), the `.lscan` scan files and the
+`Downloads/LidarScan` export folder keep the `lidarscan` name on purpose —
+renaming the package would install a second app rather than rename this one,
+and the exports already on the phone are in that folder. Sentences below
+about what an older version did keep the old name.
 
 Everything in quotation marks below is text the app actually puts on screen.
 
 ## Contents
 
-1. [What LidarScan is, and what it is not](#1-what-lidarscan-is-and-what-it-is-not)
+1. [What Ollidar is, and what it is not](#1-what-ollidar-is-and-what-it-is-not)
 2. [The four tabs](#2-the-four-tabs)
 3. [The Scan tab](#3-the-scan-tab)
 4. [When tracking is lost](#4-when-tracking-is-lost)
@@ -24,9 +31,9 @@ Everything in quotation marks below is text the app actually puts on screen.
 
 ---
 
-## 1. What LidarScan is, and what it is not
+## 1. What Ollidar is, and what it is not
 
-LidarScan turns a phone plus a small lidar into a walk-around 3D scanner. You
+Ollidar turns a phone plus a small lidar into a walk-around 3D scanner. You
 plug a lidar into the phone, press one button, walk through a space, and press
 it again. The app saves the scan, processes it, and lets you look at it,
 measure in it, export it and share it.
@@ -107,6 +114,11 @@ it, along with the space it reserved, so the icons sit centred in the bar.
 
 Screen readers announce each icon by its name ("Projects", "Scan", "Jobs",
 "Settings").
+
+**As of 0.9.11 the bar hides itself while a scan is recording or starting**,
+and slides back when you stop or cancel. The Scan screen is a camera screen
+while it is working, and four tabs across the bottom of a live view are four
+ways to end the scan by accident (§3.6).
 
 **Jobs** is a queue view for a single scan. You rarely need it: processing
 runs by itself after every Stop. If no scan is active, the tab opens a picker
@@ -235,6 +247,40 @@ Press **STOP**. The scan is sealed, then:
 
 Tap **Done** and the app takes you to Projects with the new scan selected.
 
+### 3.6 Fullscreen, and which way up the phone is — new in 0.9.11
+
+**The Scan screen is fullscreen.** The live view fills the screen edge to
+edge — no card, no frame — and the controls float on top of it: the big
+round SCAN / STOP button, one status pill, the Advanced gear, and the
+map-mode and **?** chips in the corners. The start panel and the
+tracking-lost warning are cards floating over the same live view.
+
+**The tab bar hides while you are recording** (and while a start sequence is
+in flight) and comes back when you stop or cancel. Leaving the Scan tab
+still stops and saves the scan exactly as §4 describes — the bar being
+hidden makes that harder to do by accident, it does not change what happens
+if you do it.
+
+**Both orientations work.** Portrait and landscape are both supported on
+Scan, Projects and Review, and the layouts re-anchor rather than stretch —
+in landscape the big button moves from the bottom centre to the end centre.
+
+**The start orientation is measured, not guessed, and then locked.** During
+the hold-still stage the app works out which way you are holding the phone
+**from gravity**, not from Android's rotation setting. That distinction is
+the point: hold the phone in landscape with auto-rotate off and the display
+still reports portrait, and a scan built on that reading comes out on its
+side. It writes what it decided into the capture log:
+
+```
+[ar] start orientation: landscape-left
+```
+
+At **GO the orientation locks** for the rest of the scan. Turning the phone
+mid-walk is scanning motion — it moves the sensor through the room — and the
+app treats it that way rather than rebuilding the screen underneath a
+running capture.
+
 ---
 
 ## 4. When tracking is lost
@@ -274,8 +320,10 @@ does three things:
 You will see a green **"Scan saved."** note at the top of Projects, with the
 scan's name, the first time you look at that tab afterwards.
 
-Rotating the phone is not leaving. A rotation rebuilds the screen around you
-and does not touch the scan.
+Rotating the phone is not leaving, and as of 0.9.11 it does not rebuild the
+screen either: the orientation is locked from GO until you stop (§3.6). Turn
+the phone mid-scan and the app reads it as the sensor moving, which is what
+it is.
 
 **Re-entering the Scan tab always starts a fresh scan.** It never resumes.
 If you want to check Projects mid-walk, the honest advice is: don't. Finish
@@ -344,6 +392,23 @@ icons: **Measure** (a ruler) and **Display settings** (sliders).
 While the cloud loads: *"Opening your scan…"*. If there is genuinely nothing
 in it: *"Nothing recorded in this scan."*
 
+### Fullscreen — new in 0.9.11
+
+The point cloud is edge to edge and the controls float over it: back at the
+top left, display and measure at the top right, and a strip along the bottom
+with the colour mode, **Export** and **Share**.
+
+**A tap on empty space hides every control; another tap brings them back.**
+The gestures below keep working while the controls are hidden, so you can
+orbit, pan and zoom a completely bare cloud and then tap once to get the
+buttons back.
+
+The one exception is measure mode: while the ruler is on, a tap is how you
+place a measurement point, so it places one and the controls stay put. Turn
+measure off to get the hide-and-show tap back.
+
+Both orientations work here too.
+
 ### Gestures — new in 0.9.10
 
 | Gesture | What it does |
@@ -392,6 +457,13 @@ The display panel (sliders icon) holds colour mode, colormap, point size,
 gamma, brightness, clipping, background, "Show my path", and the Detail
 budget (§10).
 
+**Height colouring defaults to Turbo as of 0.9.11** — dark blue at the
+bottom, through blue, green, yellow and orange, to red at the top. Grey and
+the other ramps are still in the display panel and can be picked at any
+time, and a scan that already had a colour choice saved keeps the one it
+had; only new scans and scans that never had one get Turbo. The same ramp is
+used in the live view while you scan.
+
 ---
 
 ## 7. Profile, Send logs, Feedback
@@ -406,7 +478,7 @@ them into a message:
 
 | Row | Example |
 | --- | --- |
-| APP | `0.9.10 (910)` |
+| APP | `Ollidar 0.9.11 (911)` |
 | DEVICE | `Google Pixel 8 Pro` |
 | ANDROID | `14` |
 | ENGINE | `ABI 12`, or `not loaded` |
@@ -540,7 +612,7 @@ developer-only items moved behind the seven-tap unlock.
 
 **The version footer**
 
-At the very bottom: `LidarScan v0.9.10 (build 910)`. **Tap it seven times**
+At the very bottom: `Ollidar v0.9.11 (build 911)`. **Tap it seven times**
 to unlock a **Developer** section, and seven more to lock it away again. The
 counter resets when you re-lock, so a single stray tap afterwards does not
 re-open it.
@@ -655,12 +727,36 @@ specific IP address.
 
 ### What you need
 
-- a **powered USB-C hub** with an Ethernet port. Bus power is not reliable
-  enough — an adapter that browns out enumerates and then vanishes, and the
-  symptom is indistinguishable from "no adapter".
-- an Ethernet cable from the hub to the Mid-360.
+- a **USB-C Ethernet adapter** the phone can actually drive — see
+  "Which adapter to buy" below, because this is where it goes wrong.
+- an Ethernet cable from the adapter to the Mid-360.
 - the Mid-360's own **9–27 V power supply** (about 6.5 W). It does not draw
   power from the phone.
+
+### Which adapter to buy
+
+The same recommendation is in the README and on the wizard's own no-adapter
+screen, so all three say one thing.
+
+- **For the lidar alone: a plain, single-purpose USB-C gigabit Ethernet
+  adapter** built on a **Realtek RTL8153** (for example the TP-Link UE300C)
+  or an **ASIX AX88179** chipset. Those are the two families Android ships
+  kernel drivers for, and they run **unpowered** straight off the phone.
+- **Avoid multi-port laptop hubs as a first attempt.** They frequently need a
+  charger plugged into their **USB-C PD port** before the Ethernet chip
+  powers up at all — plugged into a phone alone, nothing enumerates. That is
+  exactly what happened with the owner's **Acer HY41-T9**: the app said
+  "No Ethernet adapter found." because, as far as the phone was concerned,
+  there was no adapter.
+- **For lidar and charging at the same time: a powered USB-C hub with
+  Ethernet** (Anker 341 / 343 class), with the charger in the hub's PD port.
+
+**None of this has been tested on this project's phone.** No Ethernet
+interface has ever come up on Android here — not once — so the list above is
+reasoned from Android's driver support and from the one hub that failed, not
+from a shelf of adapters that were tried. Treat it as *recommended,
+untested*. If you buy one and it works, or does not, that is worth putting in
+a field report along with the wizard's USB device list.
 
 ### The address, and why you have to type it
 
@@ -718,11 +814,22 @@ enumerate** under "USB devices seen" (or *"None. Nothing on USB."*). That
 list is the evidence that separates "nothing is plugged in" from "this
 adapter did not come up", and it is worth putting in a field report.
 
+**As of 0.9.11 those two states also carry the adapter recommendation** —
+"Which adapter to buy", above — as a secondary block under the diagnosis,
+naming the RTL8153 and AX88179 chipsets, the PD-port trap on laptop hubs,
+and the fact that none of it has been tested here. It is longer than the two
+lines above it on purpose: those two are the instruction, this is the
+shopping list, and the screen keeps them apart.
+
 Where the fix is an Android setting, an **Open Ethernet settings** button
 appears — when Android on that phone resolves the deep link.
 
 ### Honest limits
 
+- **No Mid-360 has ever come up over Ethernet on this project's phone.** The
+  whole pipeline is proven from the desktop, and the phone side is proven as
+  far as the diagnosis; the adapter itself is the open question, and the
+  advice above is untested.
 - Passing every check does **not** guarantee data. A known remaining gap is
   routing rather than addressing: with Wi-Fi up, the kernel may still send
   the lidar's sockets over the wrong interface. If a Mid-360 scan records

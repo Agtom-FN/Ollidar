@@ -1,6 +1,6 @@
-<img src="docs/img/app-icon.svg" width="96" align="left" alt="LidarScan icon">
+<img src="docs/img/app-icon.png" width="96" align="left" alt="Ollidar icon — a llama in a top hat emitting a lidar fan">
 
-# LidarScan
+# Ollidar
 
 <br>
 Strap a small spinning lidar to your phone, walk around a room, and get a
@@ -8,7 +8,13 @@ corrected 3D point cloud out the other end.
 
 <br clear="left">
 
-Current version: **0.9.10** (Android).
+Current version: **0.9.11** (Android).
+
+The app is called **Ollidar**; the repository, the Android package
+(`com.lidarscan.app`), the `.lscan` files and the `Downloads/LidarScan/`
+export folder are all still **lidarscan**. That is deliberate: on Android the
+package name *is* the app's identity, and changing it would install a second
+app rather than rename the one already on the phone.
 
 ---
 
@@ -58,6 +64,24 @@ At a glance — what plugs into which app, and how ready it is. ✅ Working ·
 | Livox Mid-360 | Ethernet | ✅ Working — bench-proven capture → process → 3D cloud |
 | COIN-D6 | USB (serial) | 🔶 Working on macOS 26 — serial path unverified on older macOS |
 | LDROBOT STL-27L | — | ❌ Not supported yet |
+
+### Which Ethernet adapter for the Mid-360
+
+The Mid-360 talks over Ethernet, so on the phone it needs a USB-C Ethernet
+adapter Android's kernel can actually drive. What to buy — **recommended,
+untested on this rig**:
+
+| Want | Buy | Why |
+| --- | --- | --- |
+| Lidar only | A plain, single-purpose USB-C gigabit Ethernet adapter on a **Realtek RTL8153** (e.g. TP-Link UE300C) or **ASIX AX88179** chipset | These are the two chipset families Android ships drivers for, and they run **unpowered** straight off the phone |
+| Lidar **and** charging at once | A **powered USB-C hub with Ethernet** (Anker 341 / 343 class) | The charger feeds the hub, the hub feeds the phone and the Ethernet chip |
+| — | Avoid multi-port laptop hubs as a first try | They frequently need a charger plugged into their **USB-C PD port** before the Ethernet chip powers up at all. This is exactly what happened to the owner's **Acer HY41-T9**: nothing enumerated until the hub had its own power |
+
+**Be clear about what this is.** None of these have been tested on this
+project's phone. The Mid-360 has never enumerated an Ethernet interface on
+Android here at all, so the list above is reasoned from what Android supports
+and from the one hub that failed — it is a recommendation, not a proven
+compatibility list. If you try one, the result is worth reporting.
 
 ---
 
@@ -114,9 +138,9 @@ What's actually been run, on what, with what numbers — not marketing claims.
 | **Unicore UM982** RTK receiver | Bench (indoor, no antenna fix) | 230400 baud, 7 NMEA sentence types at 1 Hz including dual-antenna heading, 210/210 checksums OK |
 
 Notes:
-- The whole app has been field-tested only on the Pixel 8 Pro, through 0.9.10 — no other phone has been tried yet.
+- The whole app has been field-tested only on the Pixel 8 Pro, through 0.9.11 — no other phone has been tried yet.
 - One vendor CH340 USB-serial adapter caused COIN-D6 stream stalls and eventually failed; a replacement adapter fixed it 100%. Adapter quality matters.
-- The Mid-360 pipeline is fully proven from a desktop over Ethernet; one laptop-class USB-C hub failed to enumerate on Android. Diagnostics for this shipped in 0.9.10, and adapter guidance is in the manual.
+- The Mid-360 pipeline is fully proven from a desktop over Ethernet; one laptop-class USB-C hub (Acer HY41-T9) failed to enumerate on Android. Diagnostics for this shipped in 0.9.10; adapter guidance is above, in the manual, and in the wizard itself as of 0.9.11.
 
 ---
 
@@ -166,7 +190,8 @@ every tab, the viewer, Mid-360 and STL-27L setup, and troubleshooting.
   the whole scan — a real touch viewer, not a turntable locked to one point.
 - A measure tool: tap two points, get a distance in metres or feet.
 - Multiple colour modes and a walked-path overlay so you can see where you
-  went.
+  went. Height colouring uses a Turbo ramp (dark blue → red) by default;
+  grey and the other ramps are still there in the display panel.
 
 ### Projects
 
@@ -226,6 +251,14 @@ every tab, the viewer, Mid-360 and STL-27L setup, and troubleshooting.
   in-app tutorial, and a centered tracking-loss popup.
 - **0.9.10** — real orbit/pan/zoom gestures in the viewer, STL-27L support,
   and the Mid-360 Ethernet diagnostics wizard, alongside this manual.
+- **0.9.11** — the app is now called **Ollidar** and has a new llama icon
+  (the package, the repo and the export folder keep the `lidarscan` name);
+  Scan and Review both go fullscreen, with the tab bar hidden while a scan
+  runs and a tap on empty space hiding the viewer's controls; both
+  orientations are supported, with the start orientation worked out from
+  gravity and then locked for the scan; height colouring defaults to a Turbo
+  ramp; and the Mid-360 wizard, the manual and this page now name which
+  Ethernet adapter to buy.
 
 ---
 
@@ -234,9 +267,11 @@ every tab, the viewer, Mid-360 and STL-27L setup, and troubleshooting.
 - **STL-27L has never touched real hardware.** Code-complete and tested
   against synthetic fixtures, but bench validation is still pending — treat
   the first real scan as a test.
-- **Mid-360 needs an Android-supported Ethernet adapter.** A plain RTL8153
-  adapter works unpowered; most multi-port USB-C hubs need their own power
-  supply on the hub's PD port, or the adapter browns out and disappears.
+- **Mid-360 has never come up over Ethernet on this phone.** A plain
+  RTL8153 or AX88179 adapter should work unpowered, and a powered USB-C hub
+  should cover lidar plus charging — but that is a recommendation, untested
+  on this rig. Multi-port laptop hubs commonly need a charger on their PD
+  port before the Ethernet chip powers up at all.
 - **A tracking-loss gap usually can't be repaired.** Standing still until
   tracking returns is the only reliable fix — the gap-rescue pass refuses
   far more often than it succeeds, on purpose.

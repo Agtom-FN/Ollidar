@@ -264,6 +264,35 @@ private fun DiagnosticCard(
                 }
             }
 
+            // ROUND 26 item 128: what to actually buy. Secondary to the two
+            // lines above by construction — its own divider, a label, and
+            // small body text — because the diagnosis is the instruction and
+            // this is the shopping list. The strings are the wizard's
+            // advanced-screen text (see Mid360Diagnosis.ADAPTER_ADVICE): they
+            // are deliberately longer than the law's twelve words and are NOT
+            // in Mid360Diagnosis.ALL, because a chipset name is the whole
+            // point of them.
+            if (step.showsAdapterAdvice) {
+                HorizontalDivider()
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.testTag("mid360AdapterAdvice"),
+                ) {
+                    Text(
+                        Mid360Diagnosis.ADAPTER_ADVICE_LABEL,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Mid360Diagnosis.ADAPTER_ADVICE.forEach { line ->
+                        Text(
+                            line,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+
             // States 3/4's evidence: what this phone actually holds, read back
             // from the live interface rather than from what Settings claims.
             if (step.showsAddresses && state.ethernet.addresses.isNotEmpty()) {

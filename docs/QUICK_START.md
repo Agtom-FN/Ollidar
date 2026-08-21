@@ -1,7 +1,11 @@
-# LidarScan — Quick Start
+# Ollidar — Quick Start
 
-App version 0.9.10. This page gets you one COIN-D6 scan on disk. For
+App version 0.9.11. This page gets you one COIN-D6 scan on disk. For
 everything else, see [USER_MANUAL.md](USER_MANUAL.md).
+
+(The app is called Ollidar. The repository, the Android package and the
+`Downloads/LidarScan` export folder still say `lidarscan` — that is
+deliberate, not a leftover.)
 
 **Before you start**
 
@@ -19,7 +23,7 @@ everything else, see [USER_MANUAL.md](USER_MANUAL.md).
 2. **Plug the D6 into the phone's USB-C port** and allow the USB permission
    prompt if Android asks for one.
 
-3. **Open LidarScan and tap the Scan tab** — the radar icon, second from the
+3. **Open Ollidar and tap the Scan tab** — the radar icon, second from the
    left in the floating bar at the bottom. The selected tab's icon is orange.
 
 4. **Wait for the scanner to be found.** The connection panel finds it by
@@ -38,7 +42,8 @@ everything else, see [USER_MANUAL.md](USER_MANUAL.md).
 
 7. **Walk slowly and smoothly.** Normal walking pace or slower. Turn on the
    spot rather than swinging the phone around a corner. Watch the points
-   appear in the live view.
+   appear in the live view, which fills the whole screen while you scan —
+   the tab bar hides itself and comes back when you stop.
 
 8. **If an amber card fills the screen — "Tracking lost. Stop. Hold
    still." — stop walking immediately** and stand still until it turns green
@@ -58,10 +63,16 @@ everything else, see [USER_MANUAL.md](USER_MANUAL.md).
 
 **Two things that will surprise you if nobody says them**
 
-- **Leaving the Scan tab ends the scan.** Tapping Projects, Jobs or Settings
-  while recording stops and saves the scan and shuts the camera down. You
-  get a green *"Scan saved."* note on Projects. Coming back to the Scan tab
-  always starts a fresh scan — it never resumes the old one.
+- **Leaving the Scan tab ends the scan.** The tab bar is hidden while you
+  are recording, but if you do get to Projects, Jobs or Settings — with the
+  system Back gesture, say — the scan is stopped and saved and the camera is
+  shut down. You get a green *"Scan saved."* note on Projects. Coming back to
+  the Scan tab always starts a fresh scan — it never resumes the old one.
+- **The phone can be held either way, and the way you start is the way it
+  stays.** Portrait and landscape both work. At the start of a scan the app
+  works out which way you are holding the phone from gravity and then locks
+  it for the rest of the scan: turning the phone mid-walk is scanning motion,
+  not a change of layout.
 - **The mount is measured at every start.** The D6 comes off the phone
   between sessions, so its exact angle changes each time. That is what the
   hold-still stage is for. Skipping it is not offered because the angle ends

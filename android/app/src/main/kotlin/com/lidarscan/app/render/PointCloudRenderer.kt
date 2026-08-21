@@ -986,7 +986,13 @@ class PointCloudRenderer(
     private fun buildColormapTexture() {
         val tex = Texture.Builder()
             .width(ColormapLut.SIZE)
-            .height(3)
+            // ROUND 26 (owner item 127): ColormapLut.ROWS, not a literal 3.
+            // buildTextureRgba8() below emits one row per Colormap value and
+            // item 127 added a fourth (TURBO); a hard-coded height here would
+            // have allocated three rows for four rows of bytes, and the extra
+            // row would simply never reach the GPU — no exception, just a
+            // colormap that renders as whatever CLAMP_TO_EDGE gives back.
+            .height(ColormapLut.ROWS)
             .levels(1)
             .sampler(Texture.Sampler.SAMPLER_2D)
             .format(Texture.InternalFormat.RGBA8)

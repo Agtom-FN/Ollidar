@@ -19,11 +19,20 @@
 //   the same binding contract C1 uses, just from Kotlin instead of C++ (see
 //   PointCloudMaterial.kt's applyDisplayParams()).
 //
-//   Colour ramps are sampled from a 256x3 RGBA8 LUT texture (one row per
-//   scanengine::Colormap), uploaded once from colormap_lut() at renderer
-//   init — this shader does not re-derive the colormap math, so it agrees
-//   with evaluate_point_color() by construction, not by two copies of the
-//   same maths kept in sync by hand (same reasoning as the desktop file).
+//   Colour ramps are sampled from a 256 x N RGBA8 LUT texture (one row per
+//   Colormap enum value), uploaded once at renderer init — this shader does
+//   not re-derive the colormap math, so it agrees with
+//   evaluate_point_color() by construction, not by two copies of the same
+//   maths kept in sync by hand (same reasoning as the desktop file).
+//
+//   N WAS 3 AND IS NOW 4. ROUND 26 (owner item 127) added a TURBO ramp as a
+//   fourth Colormap. It is APP-SIDE ONLY — scanengine::cloud::Colormap still
+//   has three values and the engine is not modified (ABI stays 12) — but the
+//   LUT texture this shader samples is built in Kotlin by
+//   ColormapLut.buildTextureRgba8(), which now emits one row per
+//   Colormap.entries value, so the row count the fragment shader divides by
+//   has to follow it. TURBO is fourth precisely so ordinals 0..2 (the ones
+//   the engine also knows) keep their rows. See the row-centre line below.
 //
 // WHAT IS NOT HERE (matches desktop's documented scope cut)
 //   * EDL — a full-screen post-process, not a point-material effect; S3 left
@@ -127,8 +136,17 @@ fragment {
             float t = clamp((value - materialParams.valueMin) / span, 0.0, 1.0);
             if (materialParams.invert != 0) t = 1.0 - t;
             t = pow(t, 1.0 / max(materialParams.gamma, 0.1));
-            // Row centre of the 256x3 LUT: (colormap + 0.5) / 3.
-            float row = (float(materialParams.colormap) + 0.5) / 3.0;
+            // Row centre of the LUT: (colormap + 0.5) / ROW_COUNT.
+            //
+            // THE DIVISOR IS THE ROW COUNT and must equal ColormapLut.ROWS ==
+            // Colormap.entries.size (4 since round 26's Turbo — see the header).
+            // matc cannot see Kotlin, so this is the one number in the pair that
+            // a human keeps honest; ColormapLutTest pins ROWS and the texture's
+            // byte length on the other side. Getting it wrong does not fail to
+            // compile and does not throw — the sample simply lands off the row
+            // centre and every scalar-coloured point comes out slightly, or
+            // entirely, the wrong colour.
+            float row = (float(materialParams.colormap) + 0.5) / 4.0;
             rgb = texture(materialParams_colormapLut, vec2(t, row)).rgb * materialParams.brightness;
         } else {                                 // kRgb, and the documented
             rgb = src.rgb;                       // degrade for kTime/kFixQuality

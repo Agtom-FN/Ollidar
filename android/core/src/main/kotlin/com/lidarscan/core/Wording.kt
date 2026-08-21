@@ -22,6 +22,23 @@ package com.lidarscan.core
  */
 object Wording {
 
+    /**
+     * ROUND 26 item 122 — **the app's name, once.**
+     *
+     * The owner renamed the app to "Ollidar" at the DISPLAY level only. The
+     * launcher label lives in `res/values/strings.xml` because the OS reads it
+     * from there; every sentence, footer and device-card line that names the
+     * app reads it from here, so the next rename is two edits rather than a
+     * find-and-replace across a hundred files that also hits the package name.
+     *
+     * Not renamed, deliberately: `applicationId`/`namespace`
+     * (`com.lidarscan.app`) — an applicationId change is a NEW app to Android,
+     * which would strand the owner's installed beta and its scans — and the
+     * `Downloads/LidarScan/` export directory, which is a path the owner's
+     * existing files are already in. The repository is still `lidarscan`.
+     */
+    const val APP_NAME = "Ollidar"
+
     // ── Projects, empty ────────────────────────────────────────────────────
 
     /** was: "No projects yet" */

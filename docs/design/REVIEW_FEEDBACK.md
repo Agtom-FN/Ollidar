@@ -4052,3 +4052,328 @@ developer mode already on — green on CI, green on a second run, red for the on
 person who had just used the same AVD by hand. Fixed by scrolling back to the
 row, not by weakening the assertion to `assertExists`: "Profile is the top row"
 is the claim item 113 actually makes.
+
+## ROUND 26 (v0.9.11) — the owner's name, the owner's icon, and the app going fullscreen
+
+0.9.10 shipped; this round is a **product** round, not a defect round. The
+owner approved a fullscreen camera-app treatment for Scan in full (option A),
+the Turbo height gradient as proposed (B), and — the choice that decides the
+layout — the tab bar **hidden while scanning** (C). Alongside it the app gets
+its real name and its real mark, and the two orientations the phone actually
+gets held in stop being an accident of Compose and become a measured,
+logged, locked property of the capture. Seven items, 122–128.
+
+**122 — THE APP IS CALLED "Ollidar".** A **display-level** rename, and
+deliberately nothing more: `applicationId`, package and namespace stay
+`com.lidarscan.app`. On Android the applicationId *is* the app's identity —
+changing it does not rename the installed app, it installs a second one, and
+the owner's beta would stop taking updates and lose sight of its own scans.
+The launcher label, the `app_name` resource, the About/version footer, the
+Profile device card's app line, tutorial and share/notification text, and the
+in-app "LidarScan" hero on Projects all become **Ollidar**. `README.md`'s title
+becomes Ollidar with a clarifier that the repository is still `lidarscan`, and
+`USER_MANUAL.md` / `QUICK_START.md` update their current-name usage.
+`REVIEW_FEEDBACK.md` is history and is **not** rewritten. The
+`Downloads/LidarScan/` export directory stays, for the applicationId's reason
+one layer down: it is a path the owner's existing exports are already in.
+
+**123 — THE NEW LLAMA ICON.** Owner-supplied artwork: a white llama in a top
+hat emitting an orange dotted lidar fan, on cream, in an orange rounded-square
+frame. It replaces round 22's slice-scan A, which is renamed rather than
+deleted. The adaptive layers are built from the owner's flat square master:
+the plate is the artwork's own cream, the foreground is the artwork **without
+its orange frame** (a frame inside a layer the launcher then masks again is a
+double frame), and the monochrome layer is the line art as an alpha
+silhouette. `docs/img/app-icon.svg` becomes `docs/img/app-icon.png` and the
+README's mark follows it. Verified on the emulator under both a round and a
+squircle mask.
+
+**124 — THE SCAN TAB GOES FULLSCREEN.** Camera-app treatment, approved in
+full. The live view is **edge to edge** with no card frame, drawing behind the
+system bars where that is sane, and the controls float over it: one big round
+SCAN/STOP/CANCEL FAB bottom-centre in portrait and end-centre in landscape,
+ONE merged status pill top-start (sensor · time · points · metres), the
+Advanced gear top-end, and the map-mode and **?** chips in the bottom corners.
+The start flow (hold-still → GO) becomes a floating card over the live view.
+Coverage arcs and the tracking-lost popup draw over the full viewport. The
+**tab bar hides while RECORDING or while a start sequence is in flight** and
+slides back on Stop or cancel (owner choice C); leaving by system back
+mid-scan still follows round 25's leave-stops-scan rule with the same seal.
+Every existing `testTag` stays reachable and the suites adapt rather than
+being weakened.
+
+**125 — BOTH ORIENTATIONS, AND THE PHONE SAYS WHICH ONE IT IS IN.**
+(a) Rotation is available on Scan, Projects and Review, and the layouts
+re-anchor rather than stretch — the FAB moves from bottom-centre to end-centre,
+Review's strip stays bottom.
+(b) **Orientation is DETECTED AT START, from gravity**, during the hold-still
+stage — not from `Display.rotation`, because an operator with auto-rotate off
+holds the phone in landscape and the display still says portrait. The mount
+reference for the detected orientation is settled **before** recording begins
+so the map comes out level either way, and the round-20 gravity-referenced
+trim's quadrant handling is *verified* rather than assumed: a 90° roll is a
+landscape hold, not "hold tilt" to be discarded. It logs
+`[ar] start orientation: landscape-left`.
+(c) At **GO the orientation LOCKS**. Mid-scan rotation of the device is
+scanning motion, not a UI event; the mount reference must not move under a
+running capture.
+(d) Tests: the trim/nominal math against synthetic gravity for all four
+quadrants, and a UI smoke in both orientations on the emulator.
+
+**126 — THE REVIEW VIEWER GOES FULLSCREEN TOO.** Point cloud edge to edge;
+floating back (top-start), display 🎨 and measure 📏 (top-end), and a bottom
+strip carrying the colour-mode selector, Export and Share. **A tap on empty
+space hides every control and a second tap brings them back** — the gestures
+keep working while they are hidden, and because a measure tap is not "empty
+space", measure mode suppresses the toggle entirely. The multi-piece
+"Fixing…" progress becomes a floating card. Both orientations. A new test
+covers the toggle state.
+
+**127 — HEIGHT COLOURING DEFAULTS TO TURBO.** A Turbo-style ramp — dark blue
+→ blue → green → yellow → orange → red — implemented as a real entry in the
+existing colormap system rather than a special case at a draw site, with
+GRAYSCALE still selectable. Projects that saved a colormap keep it; the
+**default** for new and unset ones becomes Turbo, in Review and in the live
+view alike. The ramp's arithmetic is unit-tested against pinned sample points.
+
+**128 — WHICH ADAPTER ACTUALLY WORKS WITH THE MID-360.** The README's
+hardware section, the manual's Mid-360 section and item 118's wizard
+no-adapter state all name what to buy: a plain USB-C Gigabit adapter on a
+**Realtek RTL8153** (e.g. TP-Link UE300C) or **ASIX AX88179** chipset, which
+work **unpowered** off the phone; multi-port laptop hubs usually need a
+charger on their PD port before the Ethernet chip powers up at all — which is
+what happened to the owner's Acer HY41-T9 — and for lidar plus charging at
+once, a powered USB-C hub with Ethernet (Anker 341/343 class). The wizard's
+own text stays under the wording law: a short line, with the detail underneath.
+
+### Resolution — 2026-08-21 (0.9.11, round 26)
+
+**122 — the app is Ollidar, and nothing that identifies it moved.** The
+display name lives in exactly two places: `res/values/strings.xml`'s
+`app_name`, because that is where the OS reads the launcher label from, and
+`Wording.APP_NAME` in `:core`, which every sentence, footer and device-card
+line interpolates. The Projects hero, the Settings version footer, the Profile
+device card's `App` row, the Review trajectory note and the Processing
+failure sentence all read the constant now rather than carrying a literal, so
+the next rename is two edits and not a find-and-replace that would also hit
+the package name. `MainWindow.cpp`'s `appTitle()` on the desktop side is the
+same two-line change (**Ollidar Desktop**), which was the whole of the
+desktop's allowance this round.
+
+What did **not** change is the part that matters: `applicationId`, `namespace`
+and every `com.lidarscan.*` package are untouched, and the reason is written
+into `strings.xml` next to the label so nobody "finishes the job" later. On
+Android the applicationId IS the app's identity — changing it does not rename
+the installed app, it installs a SECOND one, and the owner's beta would stop
+taking updates while its scans sat in a data directory the new install cannot
+read. `Downloads/LidarScan/` stays for the same reason one layer down: it is a
+path the owner's existing exports are already in. `REVIEW_FEEDBACK.md` is
+history and was not rewritten; `README.md`, `USER_MANUAL.md` and
+`QUICK_START.md` carry the new name with an explicit clarifier near the top so
+the repository URL is not confusing.
+
+**123 — the llama, and the frame that was deliberately thrown away.** The zip
+the owner supplied turned out to hold finished *legacy* mipmaps
+(`ic_launcher.png` / `ic_launcher_round.png` at five densities) and no
+adaptive layers at all — and legacy icons are dead weight here, because minSdk
+is 29 and every supported device takes the `anydpi-v26` adaptive definition.
+So the layers were generated from `masters/master-flat-square-1024.png`:
+background = the artwork's own cream (`#F2F1EC`, the modal interior colour),
+foreground = the interior artwork with **the orange frame cropped off**,
+monochrome = the same line art as an alpha silhouette.
+
+Dropping the frame is the decision worth recording. An adaptive layer is
+already going to be masked by the launcher — the mask IS the frame — so
+shipping the master's own rounded orange border would draw a frame inside a
+frame, at whatever width each OEM's mask happened to leave. The cream plate is
+then the same value as the foreground's cream, which is load-bearing rather
+than tidy: the foreground is a raster tile that stops short of the canvas
+edge, and launcher parallax slides the two layers against each other, so any
+mismatch would be a moving seam.
+
+The 62 % scale was measured, not chosen: at 72 dp a round mask eats the outer
+fan dots and the muzzle; at 67 dp (62 % of the 108 dp canvas) a round mask
+clips only cream and a squircle leaves an invisible cream margin. Verified on
+the AVD's launcher under the round mask, and offline against round, squircle,
+rounded-square and themed masks rendered from the SHIPPED mipmaps rather than
+from the masters. The monochrome layer is line art rather than a filled
+silhouette and reads correctly tinted — a filled llama would have been a blob.
+Round 22's mark is renamed, not deleted:
+`drawable/ic_launcher_foreground_slicescan.xml`,
+`drawable/ic_launcher_monochrome_slicescan.xml`, and
+`docs/img/app-icon-slicescan.svg`.
+
+**124 — the Scan tab is a camera app now.** The root is a full-bleed `Box`
+with no insets and the viewport is `fillMaxSize()` with **no card frame** —
+`fullBleed` is a parameter on `CaptureViewport` rather than an unconditional
+change, because the mount-calibration wizard hosts the same composable inside
+a real card where the border is correct. `TransportRow` — five controls in an
+80 dp band — is gone, decomposed into `ScanControlCluster`, `ScanStatusPill`
+and `ScanGearButton` so that landscape can move the cluster to the end edge
+without moving the read-out with it. Every behaviour an operator's hand knows
+is preserved verbatim: the ember circle, the round-5.3 grow-while-live sizes,
+round 21's "tappable during a start", round 23's "a press that cannot start
+still ANSWERS", and every test tag.
+
+Two controls changed shape rather than moving. The Live-view **switch** became
+a round eye button, and the honesty its caption carried — "display only ·
+recording unaffected" — moved into the status pill, where it is said only when
+it is TRUE: `LIVE VIEW OFF · STILL RECORDING`, over a black viewport, is the
+one sentence that stops a panic, and a permanent "display only" caption is
+noise. The `?` left the chip row for the bottom-end corner, because the chip
+row now floats in the middle of the picture and can be **scrolled away from**,
+which is the wrong property for the control someone who is lost reaches for.
+It is drawn ONCE — a second `tutorialButton` in the tree is not a duplicated
+affordance, it is an ambiguous selector, and `Round24UiTest` drives the whole
+tour through that tag.
+
+The tab bar hides on `AppContainer.scanInProgress`, a shell-level flow in the
+shape of `tutorialReplayRequest`, because `ScanTabBar` is composed by
+`LidarScanApp` — the shell ABOVE the NavHost — which has no access to a
+`CaptureViewModel` created inside `CaptureRoute`. `CaptureRoute` owns the flag
+and clears it **on dispose**, so a screen that leaves by a tab switch, by
+system back or by a process rebuild can never strand the bar hidden. It
+includes `starting`, not just RECORDING: the round-12 gate can hold Start for
+four to eight seconds, and a bar that waits for RECORDING slides out from
+under the operator's thumb at the exact moment the hold-still card appears.
+`AnimatedVisibility` keeps it COMPOSED while hidden, which is what preserves
+round 24's last tour step (whose whole mechanism is the tab bar being the one
+bright thing on a dimmed screen).
+
+**And `CaptureLayout` was inverted rather than deleted.** The viewport is the
+whole screen, so `viewportMinHeightDp`'s question has the trivial answer 100 %
+— but the question turned over rather than going away: the chrome no longer
+pushes the picture down, it floats ON it, so the thing that now needs a
+ceiling is the chrome. `chromeMaxHeightDp` hands the floating column exactly
+what the viewport used to give up, and a test asserts the two halves still sum
+to the whole screen. `connectFlowMaxHeightDp` is the exception the AVD found:
+disconnected, `useCompactChrome`'s own header already says the tab's job IS
+the connect flow and there is no live view to protect — capping the tallest
+stack this screen draws at 60 % put the manual panel's IP fields below the
+fold and `ReplayCaptureSmokeTest` failed on `manualLidarIpField`. Both
+orientations' chrome is a BAND positioned from one constant, and the viewport
+is handed the same two numbers as `chipInsets` so its own four corner chips
+stay inside the picture — the first AVD recording printed `BUILDING MAP…`
+straight through the map-mode chip.
+
+**125 — both orientations, and the phone says which way up it was.**
+(a) Nothing was ever portrait-locked: no `screenOrientation`, no
+`requestedOrientation`, no `-land` qualifiers anywhere in the app. So (a) was
+a *layout* job, not an unlock, and that is the honest finding — Scan
+re-anchors its cluster to the end edge and its chrome to a start rail,
+Review's strip stays bottom and caps itself, and Projects already reflowed.
+
+(b) The classifier is `StartOrientation` in `:core`, and it is fed by
+**gravity**, not `Display.rotation`, for a reason an operator will recognise:
+with auto-rotate off you hold the phone in landscape and the display still
+reports portrait. The chain is three frame changes and each one is written
+out — ARCore's gravity-aligned world → the camera frame (`getPose()`, never
+`getDisplayOrientedPose()`) → the device frame, via `CameraFromImu`'s
+`SENSOR_ORIENTATION` derivation, which round 9 already needed for the IMU
+densifier and which is reused rather than restated as a 90° constant that is
+only *usually* 90. Below 20° off flat it refuses to answer and says so, because
+a ceiling scan has no "which way up" and a wrong lock is worse than an honest
+one.
+
+**The mount reference needed no per-orientation branch, and that is a finding
+rather than a gap.** Round 20's trim is `swing(hold, gravity)⁻¹` — it cancels
+everything except the operator's yaw, and a landscape hold's 90° roll is part
+of "everything else" — so the map already came out level either way and
+`MountTrimSampler`'s gates were already indifferent to the mean's value. What
+was genuinely missing is that nothing ever *decoded* the orientation the trim
+had silently swallowed. `HoldOrientationTest` proves the claim instead of
+restating it: for all four quadrants, at three tilts and any yaw, `hold ∘ trim`
+carries `+Y` to `+Y` exactly and its axis lies along gravity, and a steady
+90°-rolled hold is ACCEPTED by the sampler with the ~0°/180° trim that cancels
+the roll — not refused as "hold tilt". The log line is
+`[ar] start orientation: landscape-left (roll +90.0°, tilt 90.0°) sensor_orientation=90 deg`.
+
+(c) The lock is `SCREEN_ORIENTATION_LOCKED` while a scan is busy, released to
+`UNSPECIFIED` (not `SENSOR`, which would override an operator who has
+auto-rotate off). Item 125(c) offered "rotate or freeze, pick the simpler
+correct one": freezing is simpler AND more correct, because this Activity
+declares no `configChanges`, so a mid-walk rotation DESTROYS and rebuilds it
+with an ARCore session and a USB serial stream attached. Round 24's
+`isChangingConfigurations` discriminator makes that survivable; survivable is
+not free.
+
+**126 — the cloud is the screen, and the controls can be taken away.** The
+tap arbitration is `ViewerChrome` in `:core` — a truth table with a test, not
+three `if`s in a composable — and the tap is now wired to `PointCloudView` in
+BOTH modes rather than only when measure is on, so "a measure tap is not empty
+space" is one decision at one site. Two rules that are easy to miss are
+asserted: measure mode never toggles the chrome (you are placing two points
+for a distance and losing the toolbar between them is the failure), and
+measure mode FORCES the chrome visible, because the 📏 that leaves the mode is
+one of the controls being hidden and a mode you cannot leave is a trap. The
+whole set animates as ONE `AnimatedVisibility` — per-control animations would
+let them leave at different times, which reads as a glitch rather than as a
+deliberate clearing of the screen. `controlsShown` is `rememberSaveable` so a
+rotation does not un-hide them.
+
+`LidarScanApp`'s round-19 `UnderTabBar` wrapper came OFF this route, and that
+is not undoing item 76: the wrapper inset the whole SCREEN by 86 dp, which for
+a fullscreen viewer means insetting the CLOUD to make room for chrome. Review
+still reserves `ScanDims.TabBarClearance` — it just reserves it inside its own
+floating strip, where the clearance goes away with the strip.
+
+**127 — Turbo, as a colormap and not as a special case.** `Colormap.TURBO` is
+appended fourth, so the ordinals `points.mat` indexes (0–2) are undisturbed,
+and it is app-side only: the C ABI mirrors none of `display_params.h`, nothing
+serialises the ordinal across JNI, and `ScalarColorParams` persists the enum by
+NAME — so a fourth value costs the engine nothing and **ABI stays 12**. The
+ramp is ten published anchor stops through `lerpRgba`, documented as Turbo's
+*shape* rather than a vendored copy of Google's 256-entry table, with all ten
+pinned exactly and the owner's described progression (blue-dominant bottom,
+green middle, red top, both ends darker) asserted as a property.
+
+Two things had to move that were not on the list. `buildTextureRgba8()` built a
+literal array of three rows; it iterates `Colormap.entries` now, so a fifth
+colormap cannot desync the texture from the enum. And
+`PointCloudRenderer.buildColormapTexture()` hard-coded `Texture.Builder()
+.height(3)` — four rows of bytes into a three-row texture, with
+`CLAMP_TO_EDGE`, would have rendered every Turbo cloud as **thermal**, with no
+exception anywhere. Defaults moved only where they were defaults:
+`DisplayParams.height`, a new `CAPTURE_HEIGHT_COLORMAP`, and SURVEY.
+`CAPTURE_COLORMAP` stays GRAYSCALE because it is item 39's answer for
+INTENSITY, and FLOOR_PLAN stays THERMAL because its contrast is a deliberate
+slice-view choice. A project with a saved colormap deserialises it and never
+reaches any of these lines.
+
+**128 — the adapter answer, in three places and one of them honest about
+itself.** `Mid360Diagnosis.Step` gains `showsAdapterAdvice`, in the same shape
+as its existing `shows*` flags so the draw site still has no `when` in it, and
+the block appears on the `NO_ADAPTER` rung only. The law-governed pair is
+untouched — "No Ethernet adapter found." plus its ≤12-word detail — and the
+four advice lines sit BELOW it under the advanced-screen exemption round 25
+already established, with a test that asserts they are deliberately absent from
+`ALL` *and* would fail the 12-word ceiling, so the exclusion reads as a
+decision rather than an oversight. All three surfaces say **recommended,
+untested on this rig**: no Ethernet adapter has ever come up on this phone, and
+a list that implied otherwise would be the first thing the owner discovered was
+wrong.
+
+**Numbers.** Engine **untouched**; ABI stays **12**; ctest **8/8**. `:core`
+**911** (was 887 — +6 Turbo, +10 orientation, +4 viewer chrome, +4 adapter
+advice), `:app` unit **199** (was 195 — the inverted layout budget and the connect-flow ceiling), emulator
+**46/46** (was 42 — `Round26UiTest`), 0 failures anywhere. VERSION 0.9.11;
+**versionCode 911 / versionName 0.9.11 AND `application-label:'Ollidar'`
+verified in the built APK** (aapt2 badging).
+
+**One flake, named rather than left to be rediscovered.**
+`CaptureRound7FieldBugsTest`'s two no-data cases failed once with
+`IllegalStateException: Dispatchers.Main is used concurrently with setting it`
+from `resetMain()` in `tearDown`, and passed on every run since. It is a
+coroutine-test teardown race in the harness, not a round-26 regression — the
+round's change to that ViewModel is one `StateFlow` and one log line, neither
+of which touches a dispatcher — but it has now been seen and should be fixed
+at the fixture rather than waited for.
+
+**What is NOT proven on the emulator, said plainly.** The Review
+controls-toggle was screenshotted in its SHOWN state only: hiding them takes a
+tap on the point cloud, and the AVD's synthetic replay project fails
+processing, so there is no cloud to tap. The arbitration itself is unit-tested
+(`ViewerChromeTest`) and the fullscreen Review layout is verified in both
+orientations, but the gesture has not been driven on a device. Likewise the
+tab bar hiding was verified by starting a synthetic REPLAY recording — real
+enough to prove the flag and the animation, but not a sensor.

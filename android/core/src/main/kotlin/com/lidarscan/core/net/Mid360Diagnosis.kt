@@ -112,6 +112,8 @@ object Mid360Diagnosis {
         val showsEthernetSettings: Boolean = false,
         /** Run the existing UDP 56201 heartbeat discovery from this state. */
         val runsDiscovery: Boolean = false,
+        /** Name the adapters worth buying — ROUND 26 item 128. Only the no-adapter rung needs a shopping list. */
+        val showsAdapterAdvice: Boolean = false,
     ) {
         val isOk: Boolean get() = state == State.OK
     }
@@ -158,6 +160,53 @@ object Mid360Diagnosis {
     const val IP_OK_NO_LIDAR_DETAIL = "Check the lidar's power, then retry."
 
     const val OK = "Mid-360 heard. Ready."
+
+    // ── ROUND 26 item 128: which adapter to buy ────────────────────────────
+
+    /**
+     * The label over [ADAPTER_ADVICE]. Four words, so it passes the law on its
+     * own even though it does not have to.
+     */
+    const val ADAPTER_ADVICE_LABEL = "Which adapter to buy"
+
+    /**
+     * **What to actually buy**, shown under the two NO_ADAPTER rungs.
+     *
+     * This is a **secondary** block, deliberately below [NO_ADAPTER] and its
+     * detail line. Those two are the instruction and stay under the six/twelve
+     * word law; these are a shopping list, and a shopping list compressed to
+     * six words is a shopping list that names no chipsets and therefore helps
+     * nobody. They are **not** in [ALL] for that reason — putting them there
+     * would either fail the guard or force the chipset names out.
+     *
+     * The exemption is the one [com.lidarscan.core.WordingLaw] already grants
+     * and this screen already relies on: the Mid-360 wizard is an **advanced
+     * screen**, so its longer text gets the lighter pass — jargon is not
+     * checked and the ceiling is [com.lidarscan.core.WordingLaw.MAX_ADVANCED_WORDS]
+     * per line,
+     * which every line here obeys and a test asserts. It is the same reasoning
+     * `ConnectionSweepFormat` states for its own strings, one step milder,
+     * because this one IS read by an operator — it is just read by an operator
+     * who has been sent shopping. Do not fold these into [ALL] and do not cut
+     * the chipset names out to make them shorter.
+     *
+     * On honesty: the last line is not a disclaimer bolted on, it is the most
+     * load-bearing sentence in the block. No Ethernet adapter has ever
+     * enumerated on this project's phone, so this list is reasoned from
+     * Android's driver support and from the one hub that failed (round 25
+     * item 118a's Acer HY41-T9), not from adapters that were tried. Saying so
+     * is what keeps it a recommendation rather than a promise.
+     */
+    val ADAPTER_ADVICE: List<String> = listOf(
+        "A plain USB-C gigabit adapter on a Realtek RTL8153 (TP-Link UE300C) " +
+            "or ASIX AX88179 chipset. Those run unpowered off the phone.",
+        "Multi-port laptop hubs often need a charger in their USB-C PD port " +
+            "first. An Acer HY41-T9 failed exactly that way here.",
+        "For lidar and charging at once, a powered USB-C hub with Ethernet " +
+            "(Anker 341/343 class).",
+        "Recommended, untested on this rig: no Ethernet adapter has ever come " +
+            "up on this phone.",
+    )
 
     /** "Set a static IP: 192.168.1.5, mask 255.255.255.0." */
     fun staticIpDetail(hostIp: String): String = "Set a static IP: $hostIp, mask 255.255.255.0."
@@ -251,6 +300,7 @@ object Mid360Diagnosis {
                 detail = if (usbDeviceNames.isEmpty()) NO_ADAPTER_NOTHING_PLUGGED else NO_ADAPTER_UNSUPPORTED,
                 logToken = "no-adapter",
                 showsUsbDevices = true,
+                showsAdapterAdvice = true,
             )
         }
 

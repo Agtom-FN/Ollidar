@@ -11,3 +11,5 @@ captures/*.livoxdump
 captures/mid360_real_30s.lscan/
 graphify-out/
 .graphify_analysis.json
+dist/
+android/.kotlin/

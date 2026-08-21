@@ -1831,6 +1831,21 @@ class CaptureViewModel(
         val refusal: com.lidarscan.core.calib.StartHoldVerdict? = null,
     )
 
+    /**
+     * ROUND 26 item 125(b) — **which way up the phone was when this scan
+     * started**, worked out from gravity during the hold-still stage and then
+     * left alone for the rest of the capture.
+     *
+     * Null until a hold has produced a trim. It is a property OF THE CAPTURE,
+     * not of the current device attitude: it is written once, at the moment
+     * the mount reference is settled and before recording begins, which is
+     * exactly what item 125(c)'s lock is protecting. Nothing re-derives it
+     * mid-walk, because mid-walk rotation is scanning motion.
+     */
+    private val _startOrientation = MutableStateFlow<com.lidarscan.core.calib.HoldOrientation?>(null)
+    val startOrientation: StateFlow<com.lidarscan.core.calib.HoldOrientation?> =
+        _startOrientation.asStateFlow()
+
     private val _startHold = MutableStateFlow<StartHoldState?>(null)
 
     /** Non-null while the hold-steady stage (or its GO linger) is on screen. */
@@ -3998,6 +4013,29 @@ class CaptureViewModel(
             // gravity-referenced (item 79) and taken AFTER the world-frame
             // reset, so both halves of the round-20 bug are dead here.
             applyMountTrimResult(captured)
+            // ── ROUND 26 item 125(b): and say which way up it was ───────────
+            //
+            // Derived from the SAME hold the trim came from, so the two can
+            // never disagree, and derived from GRAVITY rather than from
+            // `Display.rotation` — an operator with auto-rotate off holds the
+            // phone in landscape and the display still says portrait.
+            //
+            // Nothing downstream branches on it. That is the finding rather
+            // than a gap: round 20's trim cancels the whole swing, so the 90°
+            // roll of a landscape hold is already absorbed and the map already
+            // comes out level either way (`HoldOrientationTest` proves it for
+            // all four quadrants). What was missing was that nothing DECODED
+            // the orientation the trim had silently swallowed, so nothing could
+            // log it, show it, or lock it.
+            val sensorOrientationDeg = arController?.status?.value?.cameraProbe?.sensorOrientationDeg
+            val orientation = com.lidarscan.core.calib.StartOrientation
+                .fromTrim(captured.trim, sensorOrientationDeg)
+            _startOrientation.value = orientation
+            logEvent(
+                LOG_TAG_AR,
+                "start orientation: ${orientation.logSuffix()} " +
+                    "sensor_orientation=" + (sensorOrientationDeg?.let { "$it deg" } ?: "unknown"),
+            )
             logEvent(
                 LOG_TAG_AR,
                 ("start hold: trim captured in the scan's own frame after %d ms — " +
@@ -5327,6 +5365,8 @@ class CaptureViewModel(
         _mountTrimNoteIsWarning.value = false
         _presetChangeNote.value = null
         _startHold.value = null
+        // ROUND 26 item 125(b): the orientation belongs to ONE capture.
+        _startOrientation.value = null
         // Counters and the trail.
         lastStatsSampleMillis = 0L
         lastStatsSamplePoints = 0L

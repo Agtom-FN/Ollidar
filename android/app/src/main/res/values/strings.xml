@@ -1,4 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">LidarScan</string>
+    <!-- ROUND 26 item 122 — the app's DISPLAY name is "Ollidar".
+
+         This is the launcher label and the only place the OS reads the name
+         from. The applicationId, the package and the Gradle namespace all stay
+         `com.lidarscan.app` on purpose: on Android the applicationId IS the
+         app's identity, so changing it does not rename the installed app, it
+         installs a SECOND one — the owner's beta would stop receiving updates
+         and its recorded scans would sit in a data directory the new install
+         cannot read. A display-level rename costs nothing and loses nothing.
+
+         `Downloads/LidarScan/` stays too, for the same reason at the file
+         level: it is a path the owner's exports already live in. -->
+    <string name="app_name">Ollidar</string>
 </resources>

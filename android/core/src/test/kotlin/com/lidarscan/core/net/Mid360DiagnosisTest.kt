@@ -385,6 +385,78 @@ class Mid360DiagnosisTest {
         }
     }
 
+    // ── ROUND 26 item 128: the adapter shopping list ────────────────────────
+
+    /**
+     * It hangs off the rung it answers. Every other rung already knows there
+     * is an adapter, so telling that operator which adapter to buy is noise
+     * on the one screen they are trying to read.
+     */
+    @Test
+    fun `only the no-adapter rungs offer the adapter advice`() {
+        for (step in everyStep()) {
+            assertEquals(
+                "showsAdapterAdvice for ${step.state}",
+                step.state == Mid360Diagnosis.State.NO_ADAPTER,
+                step.showsAdapterAdvice,
+            )
+        }
+    }
+
+    /**
+     * The advice is **advanced-screen** text, not instruction text: the
+     * Mid-360 wizard gets [WordingLaw]'s lighter pass, so the ceiling is
+     * twenty-five words a line rather than twelve. This test is the thing that
+     * stops it drifting into an essay.
+     */
+    @Test
+    fun `every adapter advice line fits the advanced-screen ceiling`() {
+        assertTrue(WordingLaw.isInstruction(Mid360Diagnosis.ADAPTER_ADVICE_LABEL))
+        for (line in Mid360Diagnosis.ADAPTER_ADVICE) {
+            assertTrue(
+                "\"$line\" is ${WordingLaw.wordCount(line)} words " +
+                    "(max ${WordingLaw.MAX_ADVANCED_WORDS})",
+                WordingLaw.wordCount(line) <= WordingLaw.MAX_ADVANCED_WORDS,
+            )
+        }
+    }
+
+    /**
+     * Deliberately outside [Mid360Diagnosis.ALL]. `ALL` is the twelve-word
+     * guard's list; folding these into it would fail the guard, and "fixing"
+     * that would mean deleting the chipset names, which are the only reason
+     * the block exists. Asserted so the exclusion reads as a decision.
+     */
+    @Test
+    fun `the adapter advice is deliberately not in ALL`() {
+        for (line in Mid360Diagnosis.ADAPTER_ADVICE) {
+            assertFalse("\"$line\" must stay out of ALL", Mid360Diagnosis.ALL.contains(line))
+            assertFalse(
+                "\"$line\" would fail the detail ceiling, which is why it is not in ALL",
+                WordingLaw.isDetail(line),
+            )
+        }
+    }
+
+    /**
+     * The four things the recommendation is FOR. A shopping list that has lost
+     * its chipset names, or its "untested", is not this list any more.
+     */
+    @Test
+    fun `the adapter advice names the chipsets, the PD trap and its own limits`() {
+        val block = Mid360Diagnosis.ADAPTER_ADVICE.joinToString(" ")
+        for (needle in listOf("RTL8153", "AX88179", "UE300C", "unpowered")) {
+            assertTrue("advice must name $needle", block.contains(needle))
+        }
+        // Round 25 item 118a's hub, and why it failed.
+        assertTrue(block.contains("HY41-T9"))
+        assertTrue(block.contains("PD port"))
+        // Lidar and charging at once.
+        assertTrue(block.contains("powered USB-C hub"))
+        // The honesty half: recommended, not proven.
+        assertTrue(block.contains("untested"))
+    }
+
     /**
      * One input per state, at the default host address so the rendered strings
      * match [Mid360Diagnosis.ALL] exactly. Both NO_ADAPTER details are

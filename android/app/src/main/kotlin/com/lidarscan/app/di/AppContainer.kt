@@ -177,6 +177,32 @@ class AppContainer(context: Context) {
      */
     val scanSavedNotice = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
 
+    /**
+     * ROUND 26 item 124 — **the tab bar hides while a scan is running.**
+     *
+     * The owner's choice C. True from the moment the start sequence is in
+     * flight until the capture stops or the start is cancelled, so the four
+     * tabs and their 86 dp of reserved screen leave a walking operator alone
+     * and the live view is genuinely the whole display.
+     *
+     * On the container for the same reason [tutorialReplayRequest] and
+     * [scanSavedNotice] are — it is a fact about this run, not a preference —
+     * but the ROUTING reason is the one that decided it: `ScanTabBar` is
+     * composed by `LidarScanApp`, which is the shell ABOVE the NavHost and has
+     * no access to a `CaptureViewModel` that is created inside `CaptureRoute`.
+     * The alternatives were a nav-scoped VM lookup from the shell (which makes
+     * the shell know about a screen's internals) or threading a callback down
+     * through the route lambdas (which is the same coupling with more
+     * argument). The existing shell-level flows already carry exactly this
+     * shape of fact.
+     *
+     * `CaptureRoute` OWNS it: it sets it from the capture state and clears it
+     * on dispose, so a scan screen that leaves the composition — by a tab
+     * switch, by system back, or by a process death that takes the whole tree
+     * — can never leave the tab bar hidden with nothing to bring it back.
+     */
+    val scanInProgress = kotlinx.coroutines.flow.MutableStateFlow(false)
+
     val appRunId: String = java.util.UUID.randomUUID().toString()
 
     /** D6 USB device discovery, permission flow and open-connection registry (B2). */

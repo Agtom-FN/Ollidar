@@ -363,6 +363,8 @@ fun CaptureSettingsSheet(
                             Colormap.GRAYSCALE to "Grey",
                             Colormap.SPECTRUM to "Spectrum",
                             Colormap.THERMAL to "Thermal",
+                            // ROUND 26 (owner item 127): the height default.
+                            Colormap.TURBO to "Turbo",
                         ),
                         selected = colormap,
                         onSelect = onColormapChange,
@@ -833,6 +835,10 @@ private fun colormapLabel(cm: Colormap) = when (cm) {
     Colormap.GRAYSCALE -> "Grey"
     Colormap.SPECTRUM -> "Spectrum"
     Colormap.THERMAL -> "Thermal"
+    // ROUND 26 (owner item 127). Named "Turbo" rather than described
+    // ("Rainbow", "Height") because it is a palette with a published identity
+    // an operator may already recognise from other point-cloud tools.
+    Colormap.TURBO -> "Turbo"
 }
 
 /**

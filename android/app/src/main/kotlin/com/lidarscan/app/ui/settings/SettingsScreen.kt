@@ -541,7 +541,7 @@ fun SettingsScreen(
         // the count over rather than re-unlocking on the next single tap.
         var versionTaps by remember(settings.developerMode) { mutableStateOf(0) }
         Text(
-            "LidarScan v${com.lidarscan.app.BuildConfig.VERSION_NAME} " +
+            "${com.lidarscan.core.Wording.APP_NAME} v${com.lidarscan.app.BuildConfig.VERSION_NAME} " +
                 "(build ${com.lidarscan.app.BuildConfig.VERSION_CODE})" +
                 if (settings.developerMode) "  ·  developer" else "",
             style = MonoLabel,

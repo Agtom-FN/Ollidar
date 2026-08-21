@@ -452,7 +452,7 @@ class ProcessingViewModel(
                                 "(streams/map.bin is absent).\n"
                         else ->
                             "Reason: processing was attempted at export time and failed; " +
-                                "the raw streams are intact — open the scan in LidarScan " +
+                                "the raw streams are intact — open the scan in ${com.lidarscan.core.Wording.APP_NAME} " +
                                 "and tap Process to retry.\n"
                     } +
                     "The raw sensor streams under streams/ are complete and untouched; " +
