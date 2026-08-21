@@ -12,6 +12,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -100,7 +101,27 @@ fun LidarScanApp(
         }
     }
 
+    // ── ROUND 27 item 136(a): THE TAB BAR RESERVES ITS SPACE ───────────────
+    //
+    // The owner: *"The tab bar make it fix the space but not overlay. collapses
+    // when scan started."* Both halves in one number. `scanning` is the same
+    // shell-level flow round 26 added for the hide; what is new is that the
+    // NavHost is INSET by the bar's clearance while the bar is up, so no screen
+    // draws under it, and the inset animates back to zero as the bar collapses
+    // — the content grows into the space the bar gives back rather than a gap
+    // appearing under a bar that has already gone (round 25 item 120's mistake,
+    // two layers up).
+    //
+    // Doing it here rather than in each screen is what makes it true of ALL of
+    // them, including the three the redesign never restyled — and it is why
+    // `CaptureScreen` stopped padding for the bar in the same round.
+    val scanning by container.scanInProgress.collectAsStateWithLifecycle()
+    val tabBarInset by androidx.compose.animation.core.animateDpAsState(
+        targetValue = if (scanning) 0.dp else ScanDims.TabBarClearance,
+        label = "tabBarInset",
+    )
     Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().padding(bottom = tabBarInset)) {
         NavHost(navController = navController, startDestination = Routes.PROJECTS) {
             composable(Routes.PROJECTS) {
                 ProjectsListRoute(
@@ -149,6 +170,11 @@ fun LidarScanApp(
                     // the selected sensor (or Advanced is on) — a D6 operator
                     // never sees either.
                     advanced = advanced,
+                    // ROUND 27 item 142(b): "Send logs" on the tracker-failure
+                    // card. Profile is where the log share already lives — a
+                    // second share implementation on the Scan tab would be two
+                    // bundles that can disagree about what a log is.
+                    onOpenProfile = { navController.navigate(Routes.PROFILE) },
                     onOpenMid360Setup = { navController.navigate(Routes.MID360_SETUP) },
                     onOpenRtk = { navController.navigate(Routes.RTK) },
                     // ── ROUND 8, owner item 31: stop => seal => Projects ──────
@@ -424,6 +450,8 @@ fun LidarScanApp(
 
         }
 
+        }
+
         // ── ROUND 26 item 124 (owner choice C): hidden while scanning ──
         //
         // Not `if (!scanInProgress)`: an abrupt disappearance mid-press reads
@@ -435,7 +463,6 @@ fun LidarScanApp(
         // step, whose whole mechanism is that the tab bar is the one bright
         // thing left on a dimmed screen. A tour cannot start during a
         // recording, so the two states never meet.
-        val scanning by container.scanInProgress.collectAsStateWithLifecycle()
         androidx.compose.animation.AnimatedVisibility(
             visible = !scanning,
             enter = androidx.compose.animation.slideInVertically { it } + androidx.compose.animation.fadeIn(),

@@ -1,6 +1,6 @@
 # Ollidar — User Manual
 
-App version 0.9.11 (Android). Written for the owner and for field testers.
+App version 0.9.12 (Android). Written for the owner and for field testers.
 If you only want a first scan, read [QUICK_START.md](QUICK_START.md) instead.
 
 The app is called **Ollidar** as of 0.9.11. The repository, the Android
@@ -162,10 +162,34 @@ Along the top of the Scan screen, scrollable sideways:
 - **Mid-360 setup** and **RTK position** — shown only when a Mid-360 is the
   selected sensor (or Advanced features is on). A D6 operator never sees them.
 - **New capture** — clears this scan's settings and starts a fresh one.
-- **a tracking chip** — the phone's tracking state, once a session exists.
+- ~~a tracking chip~~ — **gone in 0.9.12.** The tracking state was being shown
+  twice at once (here and on the viewport) and the device name twice as well.
+  Both now live in the status pill, once each.
 
 Loud banners appear above the body when something is wrong: **NO SENSOR
 DATA**, **NO POSITION TRACKING**, **MOUNT REFERENCE NOT SET**.
+
+### 3.2b When position tracking will not start — new in 0.9.12
+
+The phone's camera is the whole third dimension of a COIN-D6 scan (§3.5). If
+Google's AR services cannot use it, a card appears on the Scan page saying
+which of three things is wrong, instead of the app waiting for a tracker that
+is never going to arrive:
+
+| On screen | What to do |
+| --- | --- |
+| **Update AR services.** | Google Play Services for AR is missing or too old. The button opens its Play Store page. |
+| **This phone cannot track position.** | The phone is not on Google's ARCore list. The scanner still records; the scan will be flat. |
+| **Tracking camera stopped.** | A session started and the camera was taken away again. **Retry** rebuilds it. |
+
+The third one is the important one, and it is what the first user outside the
+owner hit on an **OPPO CPH2499**: some phones' battery-saving software takes
+the camera back from AR services a moment after it is handed over. If Retry
+does not hold, the two settings worth changing are in the phone's own
+Settings, not in Ollidar: **allow Ollidar to use the camera in the
+background**, and **turn battery optimisation off for Ollidar**. If it still
+fails, **Send logs** from the card — that is genuinely the next step, and no
+phone with this fault is on the test bench.
 
 ### 3.3 The transport row
 
@@ -179,9 +203,13 @@ At the bottom of the Scan screen:
 - the **big orange button**. It says **SCAN** while idle, **STOP** while
   recording, **CANCEL** during the start sequence. A dot means idle, a square
   means live.
-- **Advanced ⚙** — a circle to the right. Opens the display sheet: view mode,
-  tracking & camera, colour mode, colormap, point size, gamma, brightness,
-  live refresh, and **Detail** (§10).
+- **Advanced ⚙** — a circle beside the status pill. **As of 0.9.12 the sheet
+  has two tabs.** *Scan* is the display sheet: view mode, tracking & camera,
+  colour mode, colormap, point size, gamma, brightness, live refresh, and
+  **Detail** (§10). *Connection* is the same connection settings that are on
+  the page itself — the sensor picker, the USB / Ethernet manual entry, the
+  Mid-360 wizard and Diagnostics. It is the same panel in both places, so
+  whatever you type in one is what the other shows.
 
 The big button is always tappable. If a press cannot start a scan the app
 says why in one short sentence, on screen and in the log:
@@ -247,13 +275,32 @@ Press **STOP**. The scan is sealed, then:
 
 Tap **Done** and the app takes you to Projects with the new scan selected.
 
-### 3.6 Fullscreen, and which way up the phone is — new in 0.9.11
+### 3.6 The page, fullscreen while scanning, and which way up the phone is
 
-**The Scan screen is fullscreen.** The live view fills the screen edge to
-edge — no card, no frame — and the controls float on top of it: the big
-round SCAN / STOP button, one status pill, the Advanced gear, and the
-map-mode and **?** chips in the corners. The start panel and the
-tracking-lost warning are cards floating over the same live view.
+**Revised in 0.9.12.** 0.9.11 made the whole Scan screen fullscreen and
+floated every control over the live view. That was right while a scan is
+running and wrong while it is not — with nothing on the cable there is no
+picture to float over, only a black rectangle with a settings form on top of
+it. So the screen has two shapes now:
+
+**While you are NOT scanning it is an ordinary page**, from top to bottom:
+the status pill (sensor, time, points, metres walked, tracking, device
+health) with the Advanced ⚙ beside it; the live preview; the **connection
+section in the flow of the page** — scan name, auto-detect, Retry, the USB /
+Ethernet panel — which scrolls if it is longer than the room it has; and the
+control band with SCAN, pause and the live-view eye. Nothing overlaps
+anything. In landscape the same parts become three columns: connection on
+the left, preview in the middle, controls on the right.
+
+**While you are scanning it goes minimal and fullscreen.** The live view
+fills the screen, and the only things on it are the status pill, the
+SCAN/STOP cluster, the stream chip, the **?** and anything that is warning
+you. Everything you cannot act on mid-walk — the scan name, the mount
+re-zero, New capture, the preset chip — is hidden until you stop.
+
+**The tab bar reserves its own space** while it is visible: nothing is drawn
+underneath it. It collapses when a scan starts and the content grows into the
+space it gives back.
 
 **The tab bar hides while you are recording** (and while a start sequence is
 in flight) and comes back when you stop or cancel. Leaving the Scan tab
@@ -457,12 +504,17 @@ The display panel (sliders icon) holds colour mode, colormap, point size,
 gamma, brightness, clipping, background, "Show my path", and the Detail
 budget (§10).
 
-**Height colouring defaults to Turbo as of 0.9.11** — dark blue at the
-bottom, through blue, green, yellow and orange, to red at the top. Grey and
-the other ramps are still in the display panel and can be picked at any
-time, and a scan that already had a colour choice saved keeps the one it
-had; only new scans and scans that never had one get Turbo. The same ramp is
+**Height colouring is Turbo** — dark blue at the bottom, through blue,
+green, yellow and orange, to red at the top. Grey and the other ramps are
+still in the display panel and can be picked at any time. The same ramp is
 used in the live view while you scan.
+
+0.9.11 made Turbo the *default*, which turned out to reach nothing: every
+scan already on the phone had `Grey` saved against it, so switching Colour
+mode to Height still gave a grey cloud. **0.9.12 migrates them**, once each:
+a scan whose height colour was grey becomes Turbo the first time 0.9.12 opens
+it, a scan whose height colour was anything else is left exactly as it is,
+and grey chosen *after* that is respected and never overridden again.
 
 ---
 
@@ -478,7 +530,7 @@ them into a message:
 
 | Row | Example |
 | --- | --- |
-| APP | `Ollidar 0.9.11 (911)` |
+| APP | `Ollidar 0.9.12 (912)` |
 | DEVICE | `Google Pixel 8 Pro` |
 | ANDROID | `14` |
 | ENGINE | `ABI 12`, or `not loaded` |
@@ -612,7 +664,7 @@ developer-only items moved behind the seven-tap unlock.
 
 **The version footer**
 
-At the very bottom: `Ollidar v0.9.11 (build 911)`. **Tap it seven times**
+At the very bottom: `Ollidar v0.9.12 (build 912)`. **Tap it seven times**
 to unlock a **Developer** section, and seven more to lock it away again. The
 counter resets when you re-lock, so a single stray tap afterwards does not
 re-open it.
@@ -966,8 +1018,22 @@ the Projects header line counts hidden empty scans.
 ### Auto-processing failed
 
 The scan is saved and untouched. The card says *"Could not finish. Tap
-Process to retry."* Open the scan and use **Process this scan**, or the ⋯
-menu's **Process again** from Projects. If it keeps failing, send the logs.
+Process to retry."*
+
+**Fixed in 0.9.12.** Until 0.9.12 that instruction pointed at a button that
+did not exist: opening the scan showed *"No cloud in memory. Run Process on
+this project…"* and there was no Process control anywhere on the Review
+screen, and the one retry that did exist — the ⋯ menu's **Process again** —
+reported nothing at all when it failed. Both are fixed:
+
+- the Review screen's empty state has a **Process** button in it, with a
+  progress bar and the stage the job is on while it runs;
+- when a run fails, from anywhere, the reason is on screen — the engine's own
+  sentence, not a shrug — and the retry is one tap away. A failed **Process
+  again** from a Projects card leaves its reason on the card; tap the line to
+  dismiss it.
+
+If it keeps failing, send the logs.
 
 ### Sending logs when something goes wrong
 

@@ -88,7 +88,36 @@ data class ReviewUiState(
     /** What the last run did, in the operator's words. Survives until they leave the screen. */
     val stitch: com.lidarscan.core.capture.StitchResult? = null,
     val processError: String? = null,
-)
+    /**
+     * ROUND 27 item 134 — what a running job is DOING, in its own words
+     * ("Running — odometry"), or null. `processProgress` alone is a bar that
+     * sits at 0 % for the first thirty seconds of a Mid-360 resolve.
+     */
+    val processStage: String? = null,
+) {
+    /**
+     * ROUND 27 item 134(a) — **is Process the answer to what is on screen?**
+     *
+     * The Review screen has told the operator to "Run Process on this project"
+     * since round 8 and has never drawn a Process control in that state: the
+     * round-13 card is gated on `sections > 1`, which is a DIFFERENT question
+     * ("is the map in pieces?") that happens to be false in exactly the state
+     * the paragraph is about. The instruction and the affordance disagreed, and
+     * the only way to act on the instruction was a ⋯ menu on another screen.
+     *
+     * So the gate is the honest one: there is nothing to draw, the container is
+     * not still being read, and it is not the one case that genuinely cannot be
+     * fixed (a pre-0.5.0 capture with no trajectory — no pipeline can invent
+     * one, and offering a button that must fail is worse than offering none).
+     */
+    val canProcess: Boolean
+        get() = !hasCloud &&
+            !processing &&
+            load != ReviewLoad.PROBING &&
+            load != ReviewLoad.LOADING_RECORDED &&
+            load != ReviewLoad.RESOLVING &&
+            load != ReviewLoad.NO_TRAJECTORY
+}
 
 /**
  * B10 + B11 — the Review screen: §3.13's "Review (viewer, display params,
@@ -150,9 +179,22 @@ class ReviewViewModel(
             processing = true,
             processProgress = 0f,
             processError = null,
+            processStage = null,
             stitch = null,
         )
         processJob?.cancel()
+        // ── ROUND 27 item 134: the RIGHT pipeline for this container ────────
+        //
+        // `reprocessD6` is the offline D6 resolve. Handing it a Mid-360
+        // container is not a slow answer, it is the wrong one — and the state
+        // this button now appears in ("No cloud in memory. Run Process on this
+        // project — the Mid-360 pipeline re-runs the odometry…") is by
+        // construction the non-D6 case, so a button that only knew the D6 path
+        // would have been a button that could only fail.
+        if (!_uiState.value.probe.isD6) {
+            processJob = viewModelScope.launch { runPostProcess(p) }
+            return
+        }
         processJob = viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
                 processing.reprocessD6(p.directory) { f ->
@@ -167,8 +209,14 @@ class ReviewViewModel(
             if (result == null || !result.ran) {
                 _uiState.value = _uiState.value.copy(
                     processing = false,
-                    processError = "This scan could not be processed. Its recorded data may be " +
-                        "incomplete — the raw files are untouched either way.",
+                    // ROUND 27 item 134(b): the same sentence plus the engine's
+                    // own reason. "May be incomplete" is a guess printed where
+                    // a fact was available.
+                    processStage = null,
+                    processError = com.lidarscan.core.Wording.processFailed(
+                        processing.lastError()
+                            .ifBlank { "the scan's recorded data may be incomplete" },
+                    ) + " The raw files are untouched either way.",
                 )
                 return@launch
             }
@@ -188,11 +236,73 @@ class ReviewViewModel(
         }
     }
 
+    /**
+     * ROUND 27 item 134(b) — **the Mid-360 resolve, with its progress and its
+     * reason both on screen.**
+     *
+     * The failure this replaces was silent in the strictest sense: the ⋯ menu's
+     * "Process again" ran, failed, cleared its chip and returned the operator
+     * to the same "No cloud in memory" paragraph, with the real error sitting
+     * in the native engine's `lastError()` where nothing read it. An operation
+     * that can fail must say that it failed and why — that is the same rule as
+     * round 23's "a button that will not act must still ANSWER", one screen
+     * over.
+     *
+     * The job is watched rather than awaited: `submitPostProcess` enqueues on
+     * the native queue and returns an id, and the queue is polled by
+     * `ProcessingRepository` already. Watching it is what gives the operator a
+     * real fraction and a real stage name instead of a spinner.
+     */
+    private suspend fun runPostProcess(p: Project) {
+        val mount = withContext(Dispatchers.IO) { resolveMountMatrix(p) }
+        val submitted = processing.submitPostProcess(p.id, p.directory, mount)
+        val jobId = submitted.getOrNull()
+        if (jobId == null) {
+            _uiState.value = _uiState.value.copy(
+                processing = false,
+                processStage = null,
+                // The reason, not a shrug. `lastError()` is the engine's own
+                // sentence; the prefix says which half of the app is speaking.
+                processError = com.lidarscan.core.Wording.processFailed(
+                    submitted.exceptionOrNull()?.message?.ifBlank { null } ?: processing.lastError(),
+                ),
+            )
+            return
+        }
+        while (kotlinx.coroutines.currentCoroutineContext().isActive) {
+            val job = processing.jobsFor(p.id).firstOrNull { it.id == jobId }
+            if (job != null) {
+                setProgress(job.progress)
+                _uiState.value = _uiState.value.copy(processStage = job.statusText)
+                if (job.state.isTerminal) {
+                    if (job.state == com.lidarscan.core.jobs.JobState.FAILED) {
+                        _uiState.value = _uiState.value.copy(
+                            processing = false,
+                            processStage = null,
+                            processError = com.lidarscan.core.Wording.processFailed(
+                                job.message.ifBlank { processing.lastError() },
+                            ),
+                        )
+                    } else {
+                        _uiState.value = _uiState.value.copy(
+                            processing = false,
+                            processProgress = 1f,
+                            processStage = null,
+                        )
+                        openProjectCloud(p)
+                    }
+                    return
+                }
+            }
+            kotlinx.coroutines.delay(400)
+        }
+    }
+
     private fun setProgress(f: Float) {
         val s = _uiState.value
         // Monotone: a progress bar that goes backwards reads as a bug even when
         // the underlying number is honest.
-        if (s.processing && f > s.processProgress) {
+        if (s.processing && f >= s.processProgress) {
             _uiState.value = s.copy(processProgress = f.coerceIn(0f, 1f))
         }
     }

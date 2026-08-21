@@ -12,6 +12,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeLeft
 import androidx.test.core.app.ActivityScenario
@@ -128,10 +129,24 @@ class ReplayCaptureSmokeTest {
             composeRule.waitUntil(timeoutMillis = 30_000) {
                 composeRule.onAllNodesWithTag("manualEntryPanel").fetchSemanticsNodes().isNotEmpty()
             }
-            composeRule.onNodeWithTag("manualLidarIpField").assertIsDisplayed()
-            composeRule.onNodeWithTag("manualHostIpField").assertIsDisplayed()
-            composeRule.onNodeWithTag("manualConnectMid360").assertIsDisplayed()
-            composeRule.onNodeWithTag("retryAutoDetectButton").assertIsDisplayed()
+            // ROUND 27 item 136: the connect flow is a SECTION of a laid-out
+            // page now (not a card floating over a fullscreen viewport), and a
+            // section that is longer than the space it is given scrolls. That
+            // is the fix for round 26's clipped USB panel, and it means "is it
+            // displayed" has to become "can it be reached and then is it
+            // displayed" — which is the honest question about a form anyway.
+            // `Round27UiTest.theConnectFlowCanBeScrolledToItsEnd` pins the
+            // scrollability itself in both orientations.
+            listOf(
+                "manualLidarIpField",
+                "manualHostIpField",
+                "manualConnectMid360",
+                "retryAutoDetectButton",
+            ).forEach { tag ->
+                runCatching { composeRule.onNodeWithTag(tag).performScrollTo() }
+                composeRule.waitForIdle()
+                composeRule.onNodeWithTag(tag).assertIsDisplayed()
+            }
 
             // "Enter manually" stays reachable (it is the toggle that is now
             // showing "Hide manual entry"), which is the other half of addition 1.

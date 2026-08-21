@@ -92,13 +92,35 @@ class MountTrimRefiner(
         val fraction: Float,
         val label: String,
     ) {
-        /** For the capture log — the same `key=value` shape as everything else here. */
+        /**
+         * For the capture log — the same `key=value` shape as everything else
+         * here.
+         *
+         * ## ROUND 27 item 142(c) — no `NaN` in a log line
+         *
+         * The OPPO field log has
+         * `mount hold released early: holdMs=0 samples=1 p90=0.00deg
+         * stability=NaNdeg`, and `NaNdeg` is a formatter bug rather than a
+         * measurement: `stabilityDeg` is −1 until the split-half refinement has
+         * two halves to compare, and −1 was being mapped to `Double.NaN` and
+         * then printed. A log is read by a person a year later looking for one
+         * line; `NaN` makes them ask whether the maths broke, when the answer
+         * is simply that there was one sample.
+         *
+         * `n/a` says the same thing and says it truthfully. Both arms are kept
+         * — an actual NaN arriving from arithmetic would still be a real
+         * finding, so it prints `n/a` too rather than being silently zeroed.
+         */
         val logSuffix: String
-            get() = "holdMs=%d samples=%d p90=%.2fdeg stability=%.2fdeg gate=%b refined=%b".format(
+            get() = "holdMs=%d samples=%d p90=%.2fdeg stability=%s gate=%b refined=%b".format(
                 holdMillis,
                 samples,
                 spreadP90Deg,
-                if (stabilityDeg < 0.0) Double.NaN else stabilityDeg,
+                if (stabilityDeg < 0.0 || stabilityDeg.isNaN()) {
+                    "n/a"
+                } else {
+                    "%.2fdeg".format(stabilityDeg)
+                },
                 gatePasses,
                 refined,
             )

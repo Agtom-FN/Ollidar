@@ -524,6 +524,27 @@ fun SheetSection(text: String, modifier: Modifier = Modifier) {
  * hint, and the live read-out pushed to the right — the mockup's
  * `.sheet-row > label` exactly, including "the range lives in the label, not
  * in a second row under the track".
+ *
+ * ## ROUND 27 item 130 — **an informational value never ends in an ellipsis**
+ *
+ * The hint carried `maxLines = 1` and `TextOverflow.Ellipsis` inside a
+ * `weight(1f, fill = false)`, so on a 411 dp phone the Advanced sheet read
+ * `SCANNER TRACKING phone-tracked ·…` and `POINT SIZE 0.1 – 12 px · 0.1 st…`.
+ * Both are the same defect and it is a specific one: an ellipsis is a promise
+ * that the rest is reachable — by a tap, by a scroll, by a long-press — and
+ * here there is nothing to reach it with. The operator is simply told that
+ * something was said and not what.
+ *
+ * So the hint WRAPS. Not "gets a bigger cap": no cap at all, because a cap is
+ * how this comes back the first time somebody writes a longer range. The row
+ * grows a line instead, which costs 12 dp in a sheet that already scrolls, and
+ * the label and read-out stay bottom-aligned with it so the row still reads as
+ * one line of caption with a number at the end.
+ *
+ * The read-out keeps `maxLines = 1`, and that is a different decision rather
+ * than an oversight: it is a formatted quantity (`1.0 px`, `LIMITED`, `1.00`)
+ * whose width is bounded by its own format string, and wrapping a number is
+ * how `1.0 px` becomes `1.0` over `px`.
  */
 @Composable
 fun SheetRowLabel(
@@ -531,22 +552,29 @@ fun SheetRowLabel(
     readout: String,
     modifier: Modifier = Modifier,
     hint: String? = null,
+    /** ROUND 27 item 130 — so a geometry test can name the row whose hint must WRAP. */
+    hintTestTag: String? = null,
     readoutColor: Color = MaterialTheme.colorScheme.onSurface,
 ) {
     Row(
         modifier = modifier.fillMaxWidth().padding(bottom = 6.dp),
         verticalAlignment = Alignment.Bottom,
     ) {
-        Text(label.uppercase(), style = MonoLabel, color = InkFaint)
+        Text(
+            label.uppercase(),
+            style = MonoLabel,
+            color = InkFaint,
+            modifier = Modifier.testTag(hintTestTag?.let { "$it-label" } ?: "sheetRowLabel"),
+        )
         if (hint != null) {
             Spacer(Modifier.width(7.dp))
             Text(
                 hint,
                 style = MonoLabel.copy(fontSize = 9.5.sp, letterSpacing = 0.06.em),
                 color = InkFaint.copy(alpha = 0.85f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .testTag(hintTestTag ?: "sheetRowHint"),
             )
         }
         Spacer(Modifier.weight(1f))
@@ -693,11 +721,17 @@ fun DiagRow(
             modifier = Modifier.fillMaxWidth().padding(vertical = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            // ROUND 27 item 130, the same sweep one sheet over: the LABEL is
+            // a short constant and may ellipsize; the VALUE is what the
+            // operator opened Diagnostics to read and must never be cut. The
+            // weight moved from the label to the value, so a long verdict
+            // ("phone-tracked · limited", an ARCore error string) wraps
+            // right-aligned instead of being trimmed to fit a label that had
+            // already taken the row.
             Text(
                 label.uppercase(),
                 style = MonoLabel,
                 color = InkFaint,
-                modifier = Modifier.weight(1f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -706,8 +740,9 @@ fun DiagRow(
                 value,
                 style = MonoValue,
                 color = valueColor,
-                maxLines = 1,
-                modifier = if (testTag != null) Modifier.testTag(testTag) else Modifier,
+                textAlign = androidx.compose.ui.text.style.TextAlign.End,
+                modifier = (if (testTag != null) Modifier.testTag(testTag) else Modifier)
+                    .weight(1f),
             )
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)

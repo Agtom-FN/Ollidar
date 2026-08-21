@@ -4377,3 +4377,395 @@ processing, so there is no cloud to tap. The arbitration itself is unit-tested
 orientations, but the gesture has not been driven on a device. Likewise the
 tab bar hiding was verified by starting a synthetic REPLAY recording — real
 enough to prove the flag and the animation, but not a sensor.
+
+---
+
+## ROUND 27 (v0.9.12) — "the UI off so much": round 26's fullscreen refactor, measured
+
+Round 26 shipped the fullscreen Scan tab with every suite green and the layout
+visibly broken. That is the finding this round is actually about: **every test
+in the app asserts semantics, and none of them asserts geometry**, so a chrome
+column that prints through the SCAN button, a status chip stranded in the
+middle of the picture and a `?` sitting on top of the pause button were all
+invisible to CI and obvious in a screenshot. Five items, 129–133, and the
+definition of done for each of them is a before/after emulator screenshot in
+the affected orientation.
+
+**129 — THE SCAN TAB COLLIDES WITH ITSELF, IN BOTH ORIENTATIONS.**
+
+*(a) Landscape.* With no scanner attached the connect flow (scan-name field,
+"No scanner found…", Retry / Hide manual entry, the USB SCANNER panel) is
+squeezed into a rail so short that the panel is clipped mid-button, and it
+cannot be scrolled. The floating `RAW · D6` stream chip is drawn straight
+through it. The `No data` health chip floats in the middle of the picture
+beside the SCAN button. The `?` chip and the pause button overlap in the
+bottom-end corner. The centre of the screen is dead space. The fix has to be
+structural, not nudged: in landscape the connect flow gets a **bounded,
+scrollable column on the start side that reserves its space** — no floating
+element may draw over it — the floating cluster (SCAN / pause / eye) **owns the
+end side**, chips anchor to real corners with real insets, `No data` belongs
+in or beside the status pill rather than floating, and `?` and pause must never
+overlap.
+
+*(b) Portrait.* With the connect panel expanded the DND warning line is clipped
+mid-sentence and the stack runs down into the bottom control cluster. Round 26
+built `chromeMaxHeightDp` / `FLOATING_CONTROL_RESERVE_DP` for exactly this and
+the connect flow does not respect it. **All** idle-state content must respect
+the same reserve, and must be height-bounded *and* scrollable above the control
+band.
+
+*(c) A geometry regression layer.* A Compose UI test (or screenshot-diff
+harness) that asserts the bounding boxes of the connect panel, the status
+badges, the control cluster and the corner chips are **pairwise
+non-overlapping** in both orientations at a phone-size window. This class of
+bug must never ship silently again.
+
+**130 — THE ADVANCED SHEET ELLIPSIZES ITS OWN VALUES.** `SCANNER TRACKING
+phone-tracked ·…` and `POINT SIZE 0.1 – 12 px · 0.1 st…` both truncate. An
+informational value that ends in an ellipsis is a value the operator cannot
+read. Let the line wrap to two lines (or drop the redundant tail), and sweep
+the whole sheet for other `maxLines = 1` value rows.
+
+**131 — THE PROFILE SCREEN LIGHTS THE PROJECTS TAB.** Profile is a sub-screen,
+not a tab. Either no tab is highlighted while on it, or it highlights the tab
+it was opened from — pick the standard-Compose-navigation-correct answer and
+test it.
+
+**132 — A REFUSED START IS TOO QUIET.** Tapping SCAN with no scanner attached
+recolours one small line from grey to amber and nothing else. Make the refusal
+unmissable but calm: the line turns amber **and** the SCAN button gives a short
+shake/pulse plus a haptic tick, and the reason line scrolls into view if it is
+off-screen. The wording law is unchanged.
+
+**133 — POLISH FROM THE SAME AUDIT.**
+*(a)* The tutorial coach-mark may cover the panel it is describing — each
+step's banner must be placed in the half of the screen its target is **not**
+in.
+*(b)* The "Silence notifications while scanning?" system dialog appears on the
+first visit to the Scan tab, before the operator has done anything. Defer the
+Do Not Disturb ask to the first actual Start; it has no business on a first tab
+visit.
+*(c)* Round 26 left two doors to the capture sheet (`captureConfigChip` and
+`mapModeChip`). Give each one owner: the **map-mode chip toggles map mode
+directly**, the **config chip opens the sheet**.
+
+**134 — REVIEW TELLS YOU TO TAP A BUTTON THAT IS NOT THERE, AND THE RETRY
+FAILS IN SILENCE.** From a deeper AVD pass on the synthetic replay project.
+Auto-processing fails (expected on an emulator); the session summary says
+*"Processing failed — the scan is saved. Open it and tap Process to try
+again."*; opening Review says *"No cloud in memory. Run Process on this
+project…"* — and there is **no Process control anywhere on the Review
+screen**. The instruction and the affordance disagree, which is the wording
+law's own failure mode written into a layout. The only retry left is the
+Projects card's ⋯ › *Process again*, and when that fails it produces **nothing
+at all**: no progress, no error, no line — the app simply returns to the same
+"No cloud in memory" screen.
+
+*(a)* The Review empty-viewer state gets a real, primary **Process** button in
+the empty state itself, and the instruction text and the control must always
+agree.
+*(b)* Processing started from ANY entry point — the Review button, the ⋯ menu,
+the automatic run after a seal — shows visible progress (item 126's floating
+card pattern) and, on failure, a visible failure line **with the reason**. The
+honest reason already exists (`autoProcessFailureReason`; `ProcessingRepository`
+logs the real throwable). Review must show it rather than swallow it.
+*(c)* Tested: a processing failure surfaces both the reason string and the
+retry button, and the retry button starts a new job.
+
+### Amendment — the owner's own 0.9.11 Pixel session (items 135–141)
+
+The owner ran 0.9.11 on the Pixel and sent seven more. Several are the same
+root causes as 129 seen from the operator's side, and one of them — **136** —
+**revises round 26's central design decision**, so the geometry work of 129 is
+done against the new composition rather than the floating one.
+
+**135 — THE UI MUST BE RESPONSIVE.** *"The ui need to be responsive in order to
+adapt for different mobile phone."* The app is public; layouts must adapt to
+arbitrary phone sizes rather than to the Pixel 8 Pro and the AVD. No fixed-dp
+composition that collides on a smaller screen: the connect flow, the control
+cluster and the chips degrade by scrolling, wrapping or shrinking at small
+widths and heights. The geometry regression suite gains a **compact** variant
+(360 × 640 dp).
+
+**136 — NOTHING OVERLAYS EXCEPT WARNINGS; THE TAB BAR RESERVES ITS SPACE.**
+*"Nothing should overlay except warning. The tab bar make it fix the space but
+not overlay. collapses when scan started. show the settings of connection in
+the main window and not overlay."*
+*(a)* The tab bar occupies **fixed reserved space** while it is visible —
+content never draws under it — and **collapses**, returning that space to the
+content, when a scan starts. Round 26's hide-while-scanning stays; the floating
+behaviour does not.
+*(b)* The connection / manual-entry settings on the Scan page render **in the
+main content flow**, as a normal column in the window, never as an overlay on
+the viewport.
+*(c)* The only things allowed to overlay content are **warnings** (the
+tracking-lost popup, the refusal cue) and, **during a recording**, the floating
+SCAN cluster and a minimal status pill. So the idle Scan page becomes an
+ordinary laid-out page — preview, connection section, controls — and only a
+recording goes minimal and fullscreen.
+
+**137 — DECLUTTER WHILE SCANNING.** *"Hide the project name, re-zero, New
+capture button when scan started. minimize the boxes during scanning."* While
+recording, the scan-name field, the manual re-zero control, the New-capture
+chip and every other idle-only control are hidden, and the boxes shrink to the
+minimum set. The resolution enumerates exactly what is on screen during a
+recording.
+
+**138 — TWO TRACKING STATUSES AND TWO DEVICE MODELS.** *"There are 2 tracking
+status showing in the scan tab. also, 2 connected device model showing too."*
+One tracking status, one device identity, each with a single owner.
+
+**139 — CONNECTION SETTINGS IN ADVANCED, ON ITS OWN TAB.** *"put the connection
+setting in the advance button too with seperate tab."* The Advanced sheet gets
+two sections — **Scan** (today's detail/display contents) and **Connection**
+(sensor picker, USB / Ethernet manual entry, the Mid-360 wizard door, retry and
+diagnostics). Connection lives both in the idle main flow (136b) and here: same
+state, two doors, one implementation.
+
+**140 — THE MAP CHIP IS USELESS; AUDIT THE LIGHT THEME.** *"The map indicatior
+seems useless. check and verify the light theme align on all elements."*
+*(a)* The round-26 map-mode chip leaves the viewport corners; the live-map
+switch keeps its home in the sheet.
+*(b)* The full capture sequence is re-run in **light theme** and every element
+that is misaligned, invisible or wrong-contrast there is fixed. Both themes
+pass the geometry suite.
+
+**141 — HEIGHT / TURBO DOES NOT SHOW ON EXISTING PROJECTS.** *"height rgb
+showing not working too."* Round 26's own choice is the cause: `ScalarColorParams`
+persists the colormap by name, so every project saved before 0.9.11 — and the
+owner's persisted capture defaults — still carry `GRAYSCALE`, and the new Turbo
+default only reaches state that was never set. A one-time migration moves a
+persisted **height** colormap from grayscale to Turbo, logs it, and does not
+fight an operator who chooses grayscale afterwards.
+
+### Amendment 2 — the first outside user, and the owner's own Pixel log (items 142–143)
+
+The first non-Pixel device this app has ever run on: an **OPPO CPH2499**,
+Android 15, 15 GB, on 0.9.11.
+
+**142 — THE OPPO USER COULD NOT SCAN, AND THE APP NEVER SAID SO.** Every
+session attempt dies with `[ar] gate refused FAILED … created=true resumed=true
+failure=the tracking camera stopped (FatalException)`, hundreds of lines, across
+four pose pumps. The user opened the Scan tab six or more times and never got a
+scan. The ARCore failure is a known ecosystem behaviour (the camera is handed to
+ARCore and then taken back by vendor power management on some ColorOS builds)
+and this app cannot stop it; what it can stop is a **hard failure that looks
+exactly like a slow success**.
+*(a)* On Scan-tab entry, check ARCore availability: missing or outdated → a
+clear state with an **Update AR services** action into the Play listing;
+unsupported device → the honest sentence instead of an eternal "locking
+tracking".
+*(b)* When the gate reports a fatal failure that persists (>3 s), the Scan page
+shows an error card: **Tracking camera stopped.** plus **Retry** (a real session
+rebuild) and **Send logs**. The detail line carries the guidance that might
+actually work on that phone — allow the camera in the background, turn off
+battery optimisation.
+*(c)* `[ar] mount hold released early: … stability=NaNdeg` — a formatter
+printing `NaN` for "not enough samples yet". Guarded.
+*(d)* The README's tested-hardware table gains the OPPO, honestly.
+
+**143 — THE NO_POSES REBUILD RAN ZERO ATTEMPTS.** From the owner's own Pixel
+log at 18:10:22: `[ar] start gate: NO_POSES after 4000ms — … rebuilding it once
+more (rebuilt=false tries=0)`. Zero tries: the rebuild the line claims to be
+performing never ran. Root cause and fix in the resolution.
+
+**135, elevated.** The OPPO user also reports the UI renders *"packed tight"* —
+the layout that fits a Pixel 8 Pro compresses badly on a phone with fewer dp.
+Item 135 stops being a precaution and becomes a reproduced field defect: the
+verification matrix covers three device profiles and a 1.3 font scale.
+
+### Resolution — 2026-08-21 (0.9.12, round 27)
+
+**The finding that frames the whole round.** Round 26 shipped with 46/46
+emulator tests, 887 core tests and 195 app tests green, and a Scan tab that
+printed its own connect flow through its own SCAN button. Nothing failed,
+because **every test in this app asserted semantics** — is the node there, does
+it say the right thing, does tapping it work — and **not one asserted
+geometry**. So round 27 starts by adding the missing layer (`Round27UiTest`,
+14 tests) whose central claim is one sentence: the connect panel, the status
+badges, the control cluster and the corner chips are **pairwise
+non-overlapping**, in both orientations, at three window sizes. Every collision
+the owner reported is a violation of that sentence, and none of them was
+expressible in `assertExists`.
+
+**129 — four collisions, three nested scrollers, and one arithmetic error.**
+The nested scrollers are the root cause and there were **three** of them, not
+one: `PreCaptureStrip` had `heightIn(46 %).verticalScroll()`, the hint band had
+`heightIn(44.dp).verticalScroll()`, and `ManualEntryPanel` had
+`heightIn(260.dp).verticalScroll()` — all inside the chrome column's own
+`verticalScroll`. Two scrollers on one axis do not compose: the inner one eats
+every drag, so the outer column could not be scrolled *at all*, and the inner
+one clipped at its cap. That is exactly where the AVD sheared "Connect Mid-360"
+through the middle of its letters and cut `Allow Do Not Disturb in Settings` in
+half. All three now take an `ownScroll` / `Dp.Unspecified` opt-out and lay out
+at their natural height inside the one bounded scroller that owns the gesture.
+
+The arithmetic error is `chromeMaxHeightDp` applied as `heightIn(max = …)` on a
+column that was *also* padded down by 96 dp and by `statusBarsPadding()`, so the
+column overran the control band by exactly the insets. `CaptureLayout.chromeBandDp`
+is the missing second ceiling, and the three bands are **measured**
+(`onGloballyPositioned`, hung first in each chain so the reported rectangle is
+the band's outer one) rather than assumed, because the status pill grows a row
+for `LIVE VIEW OFF`, another for the health chip, and 56 dp more for a replay
+`BackBar`. A constant that was right for two rows is what printed the connect
+flow through the chip strip.
+
+**136 supersedes the answer 129 was written against, and that is the honest
+order to record it in.** Half of item 129's fix (a landscape rail, an end rail
+for the cluster, chips inset by a measured control column) was built, verified
+by screenshot, and then **revised** by the owner's own session: *"Nothing should
+overlay except warning… show the settings of connection in the main window and
+not overlay."* He is right, and the reason is worth writing down: item 124's
+argument for floating everything was "a camera app shows a panel over the
+preview", which is true of a camera app that HAS a picture. Disconnected there
+is no picture — the viewport is empty ground — so what round 26 shipped was a
+settings form floating over a black rectangle, and every collision item 129
+lists is two things competing for pixels that a column would simply have
+divided.
+
+So the screen has **two compositions and one predicate** (`minimal = live ||
+starting`). Idle it is an ordinary page: status band, preview, the connection
+section **in the flow**, the control band, and — item 136(a) — a tab bar that
+reserves its space at the shell (`LidarScanApp` insets the whole `NavHost` while
+the bar is up and animates the inset to zero as it collapses). Recording it is
+round 26's fullscreen layout, kept for the state it was actually right for.
+Round 8's `viewportMinHeightDp` comes back into force for the connected idle
+page, and its round-26 exception with it: disconnected, the preview shrinks to a
+strip and the connect flow gets the window.
+
+**The bug that only the emulator could have found.** Swapping compositions on
+Start moved `CaptureViewport` to a different subtree, so Compose disposed it and
+built a new one — tearing down a `GLSurfaceView`, a Filament renderer and the
+decode that had just been asked to start. `ReplayCaptureSmokeTest` clicked Start
+and waited twenty seconds for a point count that never left zero.
+`movableContentOf` + `rememberUpdatedState` is the fix: the same instance,
+relocated. The AVD then recorded 120,300 points in 17 s across the flip.
+
+**130 — an ellipsis is a promise the app cannot keep.** `SheetRowLabel`'s hint
+carried `maxLines = 1` + `Ellipsis` inside a `weight(1f, fill = false)`. An
+ellipsis says the rest is reachable, and here there was nothing to reach it
+with. The cap is removed rather than raised — a bigger cap is how this comes
+back the first time somebody writes a longer range. The read-out keeps
+`maxLines = 1`, which is a **different** decision: it is a formatted quantity
+whose width is bounded by its own format string, and wrapping a number is how
+`1.0 px` becomes `1.0` over `px`. `DiagRow` got the same sweep, with the weight
+moved from the label to the value. The test measures **unclipped** bounds —
+`boundsInRoot` is clipped to the scrolling sheet and reports one line's worth of
+height whatever the row actually drew, which is precisely the measurement a
+truncation test must not make.
+
+**131 — Profile lights nothing, and that is the standard answer.** The cause was
+`tabForRoute`'s `else -> PROJECTS`, a default Review and Plan legitimately use,
+inherited by a destination that is a *peer* of Projects rather than a child.
+The navigation-compose contract is `currentDestination.hierarchy.any { … }`:
+selection asserts the destination lives inside that tab's graph. The rejected
+alternative is pinned by the same test — "the tab it was opened from" would make
+one page light different tabs depending on the back stack.
+
+**132 — the refusal is answered by the control that was pressed.** Round 23
+already made the button never inert and never silent; on the AVD that turned out
+to be a four-word line in 11 sp mono, six hundred pixels from the thumb. Added:
+a 400 ms damped shake with a matching scale pulse and one haptic tick, driven by
+a *counter* (a boolean that is already true recomposes nothing — the classic
+version of this bug), and the reason line now scrolls itself into view and has a
+ground and a hairline, so it reads as a card that appeared rather than a grey
+line that changed colour. The words are untouched.
+
+**133.** (a) The card-placement rule left the composable for `:core` and grew a
+clock-free test: it compared the spot's *centre* against a midpoint taken from
+`Configuration.screenHeightDp` (24 dp shorter than the window), which decides a
+fullscreen spotlight on a rounding error. It now compares **clear room above vs
+below** and refuses both halves when neither fits. (b) The DND ask moved from
+screen entry to the first Start — and, found by CI, never over a replay session:
+a replay is a file, not a walk, and an ask that intercepts that press blocks the
+one path CI has for proving the decoder works. (c) One owner per door — and then
+item 140(a) removed the second door entirely, which is recorded rather than
+quietly deleted.
+
+**134 — an instruction with no button, and a failure with no words.** Review has
+said "Run Process on this project" since round 8 and never drew a Process
+control in that state, because the round-13 card is gated on `sections > 1` — a
+*different* question that happens to be false in exactly the state the
+paragraph is about. `ReviewUiState.canProcess` is the honest gate (nothing to
+draw, not still reading, not the one unfixable case), and the button is in the
+empty state itself. `processScan` now branches on the probe: `reprocessD6` for a
+D6, `submitPostProcess` + a watched job for anything else — the state this
+button appears in is *by construction* the non-D6 one, so a button that only
+knew the D6 path could only fail. And the silence is gone from every entry
+point: `ProjectsListViewModel.reprocess` returned `Unit`, so a failed ⋯ ›
+Process again cleared its chip and said nothing; it returns the reason now, the
+card keeps it until dismissed, and Review prints the engine's own sentence.
+Verified on the AVD: **"Processing failed: not found. Tap Process to retry."**
+
+**135 — responsive, verified at three sizes and 1.3× text.** Every band on the
+idle page is weighted, wrapped, or bounded-and-scrollable; the landscape rail is
+`min(356 dp, 38–52 % of the window)` rather than 356 dp flat; and in landscape
+the status band moved *into* the rail, because a full-width band there cost
+~120 dp of a 411 dp window — enough that the control column could not fit its
+own three buttons and the pause button was scrolled off the screen. That is the
+owner's OPPO word "packed tight", reproduced on a bench. The geometry suite
+resizes the display through the instrumentation's own shell and runs the whole
+sweep at 720 × 1280 @ 320 dpi, restoring in a `finally`.
+
+**138 — there really were two of each.** Two tracking chips (the viewport's
+top-centre corner AND `CaptureChipRow`'s), both derived from one `poseState` in
+different subtrees, so mid-transition they could disagree for a frame; and the
+device name in the pill's badge AND in `RAW · D6`. One tracking status in the
+pill, one device identity in the pill, and the stream chip says `RAW RETURNS`
+because its subject was always the stream.
+
+**141 — a default is not a migration.** Round 26 wrote in its own resolution
+that *"a project with a saved colormap deserialises it and never reaches any of
+these lines"*, as a reassurance. That sentence is the defect: every project on
+the owner's phone has a saved colormap and all of them say `GRAYSCALE`, so
+Turbo reached only projects that did not exist yet. Two fixes, because there
+were two bugs. `DisplayMigrations` migrates a persisted **height** grayscale to
+Turbo once, stamped on `DisplayParams` itself (there are two stores that carry
+one — `project.json` and the per-device defaults — and a stamp on the manifest
+would have covered one and been forgotten on the other), applied on **read** so
+no scan library is rewritten for a colour. And `CaptureViewModel` had a **single**
+`_colormap` flow, restored from the stored *intensity* block and written into
+both scalar blocks — so switching Colour mode to Height kept intensity's grey
+whatever any default said. Two flows now, one per block, each with its own
+documented default.
+
+**142 — the first user outside the owner could not scan, six times.** The
+ARCore failure is a known ecosystem behaviour this app cannot stop; the defect
+is that **a hard failure was indistinguishable from a slow success**. `ArTrouble`
+in `:core` is three states behind one predicate with a clock in it — a blink is
+not a fault, three seconds of a dead camera is, and a missing APK explains
+everything downstream of it so it is reported *instead* of the camera. The card
+carries Retry (a real `resetWorldFrame`), Update AR services (the Play listing),
+Send logs (the Profile flow), and the one detail line that might actually work
+on that phone. `UNSUPPORTED` gets no Retry, for item 134(a)'s reason two items
+over. (c) `stability=NaNdeg` was −1 ("not enough samples") mapped to `NaN` and
+printed; it says `n/a` now, and a genuine NaN still prints `n/a` rather than
+being zeroed, because a real NaN would be a real finding.
+
+**143 — the rebuild that ran zero attempts.** `resetWorldFrame` opened with
+`if (session == null) return ResetResult(ok = false, attempts = 0, …)`. That
+guard was correct when it was written — a reset means "throw this session away",
+and there was always one to throw. **Round 25 changed that**: leaving the Scan
+tab now closes the session, so "leave, come back, press Start" reaches the
+NO_POSES gate with no session, and the one action that would have fixed it
+declined in silence. "There is no session" is the strongest possible reason to
+build one; the loop already began with a `close()` that is a no-op on null, so
+the fix is permission to enter it.
+
+**Numbers.** Engine **untouched**; ABI stays **12**; ctest **8/8**. `:core`
+**935** (was 911 — +7 tutorial placement, +8 display migration, +9 AR trouble).
+`:app` unit **213** (was 199 — +6 geometry/band arithmetic, +6 process honesty,
++2 tab routing). Emulator **60/60** (was 46 — `Round27UiTest`'s 14). Zero
+failures anywhere. VERSION 0.9.12; **versionCode 912 / versionName 0.9.12 and
+`application-label:'Ollidar'` verified in the built APK** (aapt2 badging).
+
+**What is NOT proven, said plainly.** The item-142 card has never been seen on a
+device that produces the fault — the OPPO is not on this bench, ARCore does not
+run on the AVD at all, and every claim about it is a unit test plus a code path.
+Item 143's fix is likewise reasoned from the log and the guard rather than
+reproduced. The light theme was captured and is coherent, but the app ships
+**one** palette by preference (`ThemeMode.DARK` is the default, not `SYSTEM`),
+the 3D viewport keeps its black ground in both themes by design, and the amber
+advisory ink is close to its contrast floor on light — noted, not fixed. And the
+132 shake is a 400 ms animation: the screenshot proves the amber card and the
+scroll-into-view, not the motion.

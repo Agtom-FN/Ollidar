@@ -25,6 +25,15 @@ data class ProjectsUiState(
      */
     val hiddenEmptyCount: Int = 0,
     /**
+     * ROUND 27 item 134(b) — project id → why its last "Process again" failed.
+     *
+     * Kept until the operator taps the card's chip away or starts another run,
+     * for the same reason round 23's start-refusal note is kept for four
+     * seconds: the answer to something they did has to still be there when they
+     * look up.
+     */
+    val processFailures: Map<String, String> = emptyMap(),
+    /**
      * ROUND 22 item 96 — project id → progress (0..1) of a reprocess started
      * from that project's card, so the card can carry a small progress chip
      * instead of the operator having to go and find a Jobs screen that Simple
@@ -62,7 +71,18 @@ class ProjectsListViewModel(
      * Defaults to a no-op so the project PICKER (which shares this ViewModel)
      * and every JVM test keep working untouched.
      */
-    private val reprocess: suspend (java.io.File, (Float) -> Boolean) -> Unit = { _, _ -> },
+    /**
+     * ROUND 27 item 134(b) — returns the operator-facing FAILURE REASON, or
+     * null when the run succeeded.
+     *
+     * It used to return `Unit`, which is how a failed "Process again" produced
+     * literally nothing: the chip appeared, the chip vanished, and the operator
+     * was returned to the same "No cloud in memory" screen with no evidence
+     * that anything had run at all. The reason exists — `reprocessD6` returns
+     * null or `ran = false`, and the engine's `lastError()` says why — and
+     * nothing carried it out of this lambda.
+     */
+    private val reprocess: suspend (java.io.File, (Float) -> Boolean) -> String? = { _, _ -> null },
     /**
      * ROUND 22 items 90 + 96: the scope a reprocess runs in. It must outlive
      * this screen — the operator taps "Process again" and then, quite
@@ -106,23 +126,49 @@ class ProjectsListViewModel(
     fun reprocessProject(projectId: String) {
         if (_uiState.value.running.containsKey(projectId)) return
         val project = _uiState.value.projects.firstOrNull { it.id == projectId } ?: return
-        _uiState.update { it.copy(running = it.running + (projectId to 0f)) }
+        _uiState.update {
+            it.copy(
+                running = it.running + (projectId to 0f),
+                // A new attempt clears the last one's verdict. A stale failure
+                // line beside a running progress chip is two contradictory
+                // statements about the same job.
+                processFailures = it.processFailures - projectId,
+            )
+        }
         (jobScope ?: viewModelScope).launch(Dispatchers.IO) {
             try {
-                reprocess(project.directory) { f ->
+                val why = reprocess(project.directory) { f ->
                     _uiState.update { s -> s.copy(running = s.running + (projectId to f.coerceIn(0f, 1f))) }
                     true
+                }
+                // ROUND 27 item 134(b): the reason, kept, so the card can say it.
+                if (why != null) {
+                    _uiState.update { it.copy(processFailures = it.processFailures + (projectId to why)) }
                 }
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 // ROUND 22 item 90's rule, applied here too: cancellation is
                 // never swallowed and never reported as a failure.
                 throw cancelled
+            } catch (t: Throwable) {
+                _uiState.update {
+                    it.copy(
+                        processFailures = it.processFailures +
+                            (projectId to com.lidarscan.core.Wording.processFailed(
+                                t.message?.ifBlank { null } ?: "the scan could not be read",
+                            )),
+                    )
+                }
             } finally {
                 _uiState.update { it.copy(running = it.running - projectId) }
                 ProjectPreviewCache.invalidate(projectId)
                 refresh()
             }
         }
+    }
+
+    /** ROUND 27 item 134(b): the operator has read the failure line. */
+    fun dismissProcessFailure(projectId: String) {
+        _uiState.update { it.copy(processFailures = it.processFailures - projectId) }
     }
 
     fun delete(projectId: String) {

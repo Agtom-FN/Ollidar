@@ -128,7 +128,9 @@ internal fun ScanTutorialOverlay(
     val step = state.step ?: return
     val spot: Rect? = anchors[step.anchor]
 
-    Box(Modifier.fillMaxSize().testTag("tutorialOverlay")) {
+    androidx.compose.foundation.layout.BoxWithConstraints(
+        Modifier.fillMaxSize().testTag("tutorialOverlay"),
+    ) {
         // The barrier is on the CANVAS, not on this Box.
         //
         // `clickable` sets `mergeDescendants`, so putting it on the root would
@@ -170,17 +172,29 @@ internal fun ScanTutorialOverlay(
             }
         }
 
-        // The card goes to whichever half of the screen the spotlight is NOT
-        // in, so the explanation never covers the thing it explains. With no
-        // spotlight (a control that is not on screen — the Projects tab lives
-        // in the app shell, not here) it centres.
-        val screenMiddlePx = with(androidx.compose.ui.platform.LocalDensity.current) {
-            androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp.toPx() / 2f
+        // ROUND 27 item 133(a): the card goes to whichever half of the screen
+        // the spotlight is NOT in, and the rule is now
+        // `TutorialCardPlacement.cardHalf` in `:core` — a pure function of the
+        // spotlight's two edges and THIS box's height, tested on a JVM.
+        //
+        // The height comes from `BoxWithConstraints` rather than from
+        // `Configuration.screenHeightDp`, because the spotlight's bounds are in
+        // this box's pixels and the configuration height is a different number
+        // (24 dp shorter here). Comparing the two is how a rule about halves
+        // ends up deciding on an inset.
+        val windowHeightPx = with(androidx.compose.ui.platform.LocalDensity.current) {
+            maxHeight.toPx()
         }
-        val alignment = when {
-            spot == null -> Alignment.Center
-            spot.center.y > screenMiddlePx -> Alignment.TopCenter
-            else -> Alignment.BottomCenter
+        val alignment = when (
+            com.lidarscan.core.capture.TutorialCardPlacement.cardHalf(
+                spotTop = spot?.top,
+                spotBottom = spot?.bottom,
+                screenHeight = windowHeightPx,
+            )
+        ) {
+            com.lidarscan.core.capture.TutorialCardPlacement.Half.TOP -> Alignment.TopCenter
+            com.lidarscan.core.capture.TutorialCardPlacement.Half.BOTTOM -> Alignment.BottomCenter
+            com.lidarscan.core.capture.TutorialCardPlacement.Half.CENTER -> Alignment.Center
         }
         Column(
             Modifier

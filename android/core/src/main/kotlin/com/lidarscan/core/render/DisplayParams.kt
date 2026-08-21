@@ -75,6 +75,22 @@ data class DisplayParams(
     val clipBoxMax: List<Float> = listOf(10f, 10f, 10f),
     val showTrajectory: Boolean = true,
     val showPoseGraph: Boolean = false,
+    /**
+     * ROUND 27 item 141 — the highest [DisplayMigrations] level already applied
+     * to these params, or null for anything written before 0.9.12.
+     *
+     * On `DisplayParams` rather than on `ProjectManifest` because there are TWO
+     * stores that carry a saved colormap and both had the defect: the project's
+     * own `project.json`, and the per-device display defaults the Scan tab
+     * seeds itself from on a cold start (which is the one the owner's Height
+     * switch was actually reading). One field on the thing being migrated
+     * covers both, and cannot be attached to one store and forgotten on the
+     * other.
+     *
+     * Nullable and additive: the schema version does not move and a 0.9.11
+     * reader ignores the key.
+     */
+    val migration: Int? = null,
 ) {
     /** The scalar block [colorMode] actually reads — A14 §4's "active block" selection. */
     val activeScalar: ScalarColorParams

@@ -351,6 +351,66 @@ private fun ReviewViewport(
                                 MaterialTheme.colorScheme.onSurfaceVariant
                             },
                         )
+
+                        // ── ROUND 27 item 134(a): the button the paragraph
+                        // has been naming since round 8 ────────────────────
+                        //
+                        // "Run Process on this project" with no Process
+                        // control anywhere on the screen is the wording law's
+                        // own failure written into a layout: the instruction
+                        // and the affordance have to agree, and until this
+                        // round the only way to obey the instruction was a ⋯
+                        // menu on a different screen (which then failed in
+                        // silence — see 134(b) below).
+                        //
+                        // It is deliberately in the EMPTY STATE rather than in
+                        // the round-13 sections card: that card answers "the
+                        // map is in pieces", which is a different question and
+                        // is false in exactly this state.
+                        if (state.canProcess) {
+                            Spacer(Modifier.height(18.dp))
+                            PrimaryPill(
+                                text = com.lidarscan.core.Wording.REVIEW_PROCESS,
+                                onClick = vm::processScan,
+                                modifier = Modifier.testTag("reviewEmptyProcessButton"),
+                            )
+                        }
+                        if (state.processing) {
+                            Spacer(Modifier.height(18.dp))
+                            LinearProgressIndicator(
+                                progress = { state.processProgress },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("reviewEmptyProcessProgress"),
+                                color = ScanTeal,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                // The stage name, when the job reports one. A
+                                // determinate bar that sits at 0 % for the
+                                // first half-minute of a Mid-360 resolve is a
+                                // bar an operator reads as a hang.
+                                state.processStage ?: com.lidarscan.core.Wording.REVIEW_PROCESSING,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.testTag("reviewEmptyProcessStage"),
+                            )
+                        }
+                        if (state.processError != null) {
+                            // ROUND 27 item 134(b): the REASON, on screen. It
+                            // already existed — the native engine's
+                            // `lastError()`, the job's own message — and
+                            // nothing read it, so a failed run cleared its chip
+                            // and returned the operator to this same
+                            // paragraph with no evidence anything had happened.
+                            Spacer(Modifier.height(14.dp))
+                            Text(
+                                state.processError,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = SemBad,
+                                modifier = Modifier.testTag("reviewProcessError"),
+                            )
+                        }
                     }
                 }
             }

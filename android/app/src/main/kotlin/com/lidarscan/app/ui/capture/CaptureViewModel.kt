@@ -550,8 +550,33 @@ class CaptureViewModel(
     // ROUND 10 (owner item 39): the colormap default now comes from the ONE
     // place it is stated (`DisplayParams.CAPTURE_COLORMAP` = GRAYSCALE) rather
     // than being a second, disagreeing literal here.
-    private val _colormap = MutableStateFlow(com.lidarscan.core.render.DisplayParams.CAPTURE_COLORMAP)
-    val colormap: StateFlow<Colormap> = _colormap.asStateFlow()
+    // ── ROUND 27 item 141: ONE colormap flow was the bug ───────────────────
+    //
+    // The owner: *"height rgb showing not working too."* There was a single
+    // `_colormap`, restored from the STORED INTENSITY block, and the
+    // `displayParams` combine below wrote it into `height` and `intensity`
+    // alike — so switching Colour mode to Height kept intensity's grayscale and
+    // the cloud came out grey, whatever round 26's Turbo default said. The
+    // default was never reached because the flow had already been initialised
+    // from a saved value belonging to the other scalar.
+    //
+    // Two flows, one per scalar block, each with its OWN documented default
+    // (`CAPTURE_COLORMAP` = grayscale for intensity, item 39's answer;
+    // `CAPTURE_HEIGHT_COLORMAP` = Turbo for height, item 127's). `colormap` is
+    // the one for the mode currently selected, so the sheet's picker and its
+    // read-out are about the block they are drawn under.
+    private val _intensityColormap =
+        MutableStateFlow(com.lidarscan.core.render.DisplayParams.CAPTURE_COLORMAP)
+    private val _heightColormap =
+        MutableStateFlow(com.lidarscan.core.render.DisplayParams.CAPTURE_HEIGHT_COLORMAP)
+    val colormap: StateFlow<Colormap> =
+        kotlinx.coroutines.flow.combine(_colorMode, _heightColormap, _intensityColormap) { mode, h, i ->
+            if (mode == ColorMode.HEIGHT) h else i
+        }.stateIn(
+            viewModelScope,
+            kotlinx.coroutines.flow.SharingStarted.Eagerly,
+            com.lidarscan.core.render.DisplayParams.CAPTURE_COLORMAP,
+        )
     private val _pointSizePx =
         MutableStateFlow(com.lidarscan.core.render.DisplayParams.CAPTURE_POINT_SIZE_PX)
     val pointSizePx: StateFlow<Float> = _pointSizePx.asStateFlow()
@@ -798,24 +823,27 @@ class CaptureViewModel(
     val displayParams: StateFlow<com.lidarscan.core.render.DisplayParams> =
         kotlinx.coroutines.flow.combine(
             _colorMode,
-            _colormap,
+            kotlinx.coroutines.flow.combine(_heightColormap, _intensityColormap) { h, i -> h to i },
             _pointSizePx,
             _lodBudgetMPoints,
             kotlinx.coroutines.flow.combine(_displayBase, toneParams) { base, tone -> base to tone },
-        ) { mode, cm, size, lodM, baseTone ->
+        ) { mode, maps, size, lodM, baseTone ->
             val (base, tone) = baseTone
+            val (heightMap, intensityMap) = maps
             val (g, b) = tone
             base.copy(
                 colorMode = mode,
                 height = base.height.copy(
-                    colormap = cm,
+                    // ROUND 27 item 141: the HEIGHT block gets the height
+                    // colormap. It used to get intensity's.
+                    colormap = heightMap,
                     manualMin = 0f,
                     manualMax = 3f,
                     gamma = g,
                     brightness = b,
                 ),
                 intensity = base.intensity.copy(
-                    colormap = cm,
+                    colormap = intensityMap,
                     gamma = g,
                     brightness = b,
                 ),
@@ -2873,9 +2901,22 @@ class CaptureViewModel(
         // frame; one write 400 ms after the last movement).
         viewModelScope.launch {
             loadDeviceDisplay()?.let { stored ->
-                _displayBase.value = stored
                 _colorMode.value = stored.colorMode
-                _colormap.value = stored.intensity.colormap
+                _intensityColormap.value = stored.intensity.colormap
+                // ROUND 27 item 141: the persisted DEVICE defaults get the same
+                // one-time migration the project manifests get — this is the
+                // store the owner's phone actually reads on a cold start, and
+                // it has been carrying `GRAYSCALE` on height since long before
+                // Turbo existed.
+                val migrated = com.lidarscan.core.render.DisplayMigrations.migrate(
+                    stored,
+                    stored.migration,
+                )
+                if (migrated.changed) {
+                    logEvent(LOG_TAG_SESSION, com.lidarscan.core.render.DisplayMigrations.LOG_LINE)
+                }
+                _displayBase.value = migrated.params
+                _heightColormap.value = migrated.params.height.colormap
                 _pointSizePx.value = stored.pointSize.fixedPx
                 _gamma.value = stored.intensity.gamma
                 _brightness.value = stored.intensity.brightness
@@ -5383,7 +5424,8 @@ class CaptureViewModel(
         val defaults = com.lidarscan.core.render.DisplayParams.captureDefaults()
         _displayBase.value = defaults
         _colorMode.value = defaults.colorMode
-        _colormap.value = defaults.intensity.colormap
+        _intensityColormap.value = defaults.intensity.colormap
+        _heightColormap.value = defaults.height.colormap
         _pointSizePx.value = defaults.pointSize.fixedPx
         _gamma.value = defaults.intensity.gamma
         _brightness.value = defaults.intensity.brightness
@@ -5409,8 +5451,19 @@ class CaptureViewModel(
         _colorMode.value = mode
     }
 
+    /**
+     * ROUND 27 item 141 — writes the colormap of the block currently selected.
+     *
+     * The sheet only shows this picker for HEIGHT and INTENSITY (A14's own
+     * rule: RGB has no ramp), so the two arms below are exhaustive for every
+     * state in which the control is drawn.
+     */
     fun setColormap(cm: Colormap) {
-        _colormap.value = cm
+        if (_colorMode.value == ColorMode.HEIGHT) {
+            _heightColormap.value = cm
+        } else {
+            _intensityColormap.value = cm
+        }
     }
 
     /**

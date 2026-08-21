@@ -260,4 +260,137 @@ class CaptureLayoutTest {
         // producing a negative height that Compose would silently clamp.
         assertTrue(CaptureLayout.connectFlowMaxHeightDp(300f) >= CaptureLayout.CHROME_FLOOR_DP)
     }
+
+    // ── ROUND 27 item 129 ──────────────────────────────────────────────────
+
+    /**
+     * **Item 129.** The chrome band never runs into either reserved band.
+     *
+     * This is the arithmetic round 26 did not have, and its absence is the
+     * whole of item 129(b): the budget (`connectFlowMaxHeightDp`) was applied
+     * as a `heightIn(max = …)` and the SAME column was then padded down by 96
+     * dp and by `statusBarsPadding()`, so the column's bottom edge sat below
+     * the control cluster by exactly the insets. Every suite passed.
+     *
+     * The property asserted here is the one a screenshot shows: `top + band +
+     * bottom <= window`, at every real phone height, in both orientations, with
+     * the reserves at their measured (not assumed) sizes.
+     */
+    @Test
+    fun `the chrome band always fits between the two reserved bands`() {
+        val windows = realPhoneHeightsDp + listOf(360f, 411f, 420f) // + landscape phones
+        for (window in windows) {
+            for (top in listOf(96f, 120f, 152f, 208f)) { // pill, +chips, +health, +BackBar
+                for (bottom in listOf(174f, 186f, 120f)) { // idle, recording, tab bar hidden
+                    for (budget in listOf(
+                        CaptureLayout.chromeMaxHeightDp(window),
+                        CaptureLayout.connectFlowMaxHeightDp(window),
+                    )) {
+                        val band = CaptureLayout.chromeBandDp(window, top, bottom, budget)
+                        assertTrue(
+                            "window=$window top=$top bottom=$bottom budget=$budget => band=$band " +
+                                "must not overrun the window",
+                            band <= (window - top - bottom).coerceAtLeast(CaptureLayout.BAND_FLOOR_DP) + 0.001f,
+                        )
+                        assertTrue("the band is never negative", band > 0f)
+                        assertTrue(
+                            "the band never exceeds the round-8 budget it was given",
+                            band <= maxOf(budget, CaptureLayout.BAND_FLOOR_DP) + 0.001f,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * **Item 129.** On a real portrait phone the band is genuinely bounded by
+     * the reserves rather than by the budget — which is the case round 26 got
+     * wrong, and therefore the one worth naming.
+     */
+    @Test
+    fun `on a portrait phone the reserves are the binding constraint`() {
+        val window = 890f // the AVD, and every phone this has run on
+        val top = 152f // status bar + a three-row pill + the RTK chip strip
+        val bottom = 186f // tab bar clearance + the idle FAB
+        val budget = CaptureLayout.connectFlowMaxHeightDp(window) // 620
+        val band = CaptureLayout.chromeBandDp(window, top, bottom, budget)
+        assertEquals(
+            "the band is window - top - bottom, not the 620dp budget",
+            (window - top - bottom).toDouble(),
+            band.toDouble(),
+            0.001,
+        )
+        assertTrue("and it is strictly less than the budget", band < budget)
+    }
+
+    /**
+     * **Item 129(a).** Landscape on a phone has ~410 dp of height and the two
+     * reserves eat most of it. The band must still be positive and scrollable
+     * rather than being clamped up to `CHROME_FLOOR_DP` and drawn over the
+     * controls — a wish that overruns the cluster is worse than a short column,
+     * because a short column scrolls and a collision does not.
+     */
+    @Test
+    fun `landscape gets a short band rather than a colliding one`() {
+        val window = 411f
+        val band = CaptureLayout.chromeBandDp(
+            availableHeightDp = window,
+            topReserveDp = 32f, // status bar + 8
+            bottomReserveDp = 132f, // tab bar clearance + the corner chip row
+            budgetDp = CaptureLayout.connectFlowMaxHeightDp(window),
+        )
+        val available = window - 32f - 132f // 247 dp between the two reserves
+        assertTrue(
+            "the band ($band) must fit the ${available}dp actually available",
+            band <= available,
+        )
+        assertTrue("but it is still enough to type a scan name into", band >= CaptureLayout.BAND_FLOOR_DP)
+        // `connectFlowMaxHeightDp` clamps UP to `CHROME_FLOOR_DP` (240) on a
+        // short window, and 240 is more than a 360 dp landscape phone has
+        // between its two reserves. That clamp is the reason `chromeBandDp`
+        // takes the MINIMUM of the two rather than trusting the budget: a floor
+        // is a wish about how much the connect flow deserves, and a wish that
+        // overruns the control cluster is the collision this item is about.
+        val shortLandscape = 360f
+        val shortBand = CaptureLayout.chromeBandDp(
+            availableHeightDp = shortLandscape,
+            topReserveDp = 32f,
+            bottomReserveDp = 132f,
+            budgetDp = CaptureLayout.connectFlowMaxHeightDp(shortLandscape),
+        )
+        assertEquals(
+            "the window wins over the floor",
+            (shortLandscape - 32f - 132f).toDouble(),
+            shortBand.toDouble(),
+            0.001,
+        )
+        assertTrue(shortBand < CaptureLayout.CHROME_FLOOR_DP)
+    }
+
+    /**
+     * **Item 129(a).** The three landscape rails must fit side by side in a
+     * phone-sized landscape window, with picture left over between them.
+     * Without this the "reserved column" claim is a hope: 356 + 360 is already
+     * 716 of 914 dp.
+     */
+    @Test
+    fun `the landscape rails fit in a landscape phone window`() {
+        val narrowestLandscapePhone = 780f // 360 dp portrait phone, rotated
+        val rails = CaptureLayout.LANDSCAPE_RAIL_WIDTH_DP + CaptureLayout.LANDSCAPE_TOP_GROUP_WIDTH_DP
+        assertTrue(
+            "the connect rail and the top group must not overlap on the narrowest phone " +
+                "(${rails}dp of ${narrowestLandscapePhone}dp)",
+            rails <= narrowestLandscapePhone,
+        )
+        assertTrue(
+            "the control rail must clear an 88dp FAB and its end padding",
+            CaptureLayout.CONTROL_RAIL_MIN_DP >= 88f + 18f,
+        )
+        assertTrue(
+            "and the connect rail plus the control rail must still leave picture",
+            CaptureLayout.LANDSCAPE_RAIL_WIDTH_DP + CaptureLayout.CONTROL_RAIL_MIN_DP <
+                narrowestLandscapePhone,
+        )
+    }
 }

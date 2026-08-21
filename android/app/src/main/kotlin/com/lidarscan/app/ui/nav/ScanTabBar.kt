@@ -62,17 +62,41 @@ enum class ScanTab(val label: String, val icon: ImageVector) {
 }
 
 /**
- * Which tab a route lights.
+ * Which tab a route lights, or **null** for a destination that is not under
+ * any tab.
  *
  * This is the mockup's `TABOF` table, and it is the whole reason a secondary
  * screen can keep a plain back arrow: Review, Plan, Merge, RTK, the calibration
  * and connect wizards and the new-project flow are all *inside* Projects, so
  * they light Projects while showing their own back bar. Capture and Jobs light
  * themselves whether they were reached from the tab bar or from a project.
+ *
+ * ## ROUND 27 item 131 — Profile lights nothing
+ *
+ * The owner found the Profile page highlighting **Projects**, and the cause was
+ * this function's `else` branch: Profile is not in the table, so it inherited
+ * the Projects default that Review and Plan legitimately use.
+ *
+ * The item offered two answers — no tab, or the tab it was opened from — and
+ * asked for the standard-Compose-navigation-correct one. That is **no tab**.
+ * The `NavigationBar` contract in the official navigation-compose sample is
+ * `currentDestination.hierarchy.any { it.route == tab.route }`: selection is a
+ * statement that the current destination lives INSIDE that tab's graph, and
+ * Profile does not live inside Projects — it is a peer of it, reachable from
+ * the Projects hero's avatar today and from Settings' About row tomorrow. "The
+ * tab it was opened from" would make the highlight depend on the back stack,
+ * which is exactly the thing a tab bar must not do: the same page would light
+ * a different tab depending on how you got there.
+ *
+ * So the return type is nullable, and null means every capsule is unlit. The
+ * page keeps its own back arrow, which is the affordance that is actually true
+ * there.
  */
-fun tabForRoute(route: String?): ScanTab = when {
+fun tabForRoute(route: String?): ScanTab? = when {
     route == null -> ScanTab.PROJECTS
     route == Routes.SETTINGS -> ScanTab.SETTINGS
+    // ROUND 27 item 131: a sub-screen of no tab. See the header.
+    route == Routes.PROFILE -> null
     route == Routes.CAPTURE_NEW -> ScanTab.CAPTURE
     route == Routes.JOBS_PICK -> ScanTab.JOBS
     // ROUND 23 item 106(c): the project-less Mid-360 wizard is a Scan-tab
@@ -122,7 +146,8 @@ fun tabForRoute(route: String?): ScanTab = when {
  */
 @Composable
 fun ScanTabBar(
-    current: ScanTab,
+    /** ROUND 27 item 131: null while on a destination that is under no tab (Profile). */
+    current: ScanTab?,
     onSelect: (ScanTab) -> Unit,
     modifier: Modifier = Modifier,
 ) {

@@ -8,7 +8,7 @@ corrected 3D point cloud out the other end.
 
 <br clear="left">
 
-Current version: **0.9.11** (Android).
+Current version: **0.9.12** (Android).
 
 The app and this repository are both called **Ollidar**. The Android package
 (`com.lidarscan.app`), the `.lscan` files and the `Downloads/LidarScan/`
@@ -123,7 +123,8 @@ What's actually been run, on what, with what numbers — not marketing claims.
 
 | Hardware | Where tested | Key numbers |
 | --- | --- | --- |
-| **Google Pixel 8 Pro** (phone) | Field, primary test device | ARCore tracking ~30 Hz; phone IMU sustained at 399/400 Hz; factory camera↔IMU calibration read and in use |
+| **Google Pixel 8 Pro** (phone) | Field, primary test device | ARCore tracking ~30 Hz; phone IMU sustained at 399/400 Hz; factory camera↔IMU calibration read and in use; best recorded self-check 0.69 cm (scan-085) |
+| **OPPO CPH2499** (phone, Android 15) | Field, one outside user, 0.9.11 | **ARCore session fails — "the tracking camera stopped" (FatalException), repeatedly; no scan has completed on this device yet.** Under investigation. Believed to be vendor power management taking the camera back from ARCore; 0.9.12 detects the state, says so, and offers Retry / Send logs plus the battery-optimisation guidance. The same user reported the UI rendering "packed tight", which 0.9.12's responsive work addresses. |
 
 ### Computers
 
@@ -259,6 +260,18 @@ every tab, the viewer, Mid-360 and STL-27L setup, and troubleshooting.
   gravity and then locked for the scan; height colouring defaults to a Turbo
   ramp; and the Mid-360 wizard, the manual and this page now name which
   Ethernet adapter to buy.
+- **0.9.12** — the Scan tab is a laid-out page again while it is idle:
+  connection settings sit in the main flow instead of floating over the
+  preview, nothing overlays anything except warnings, and the tab bar
+  reserves its own space (and gives it back when a scan starts, which is also
+  when the screen goes minimal and hides everything you cannot act on). The
+  layout adapts to small phones and large text; the Advanced sheet gains a
+  **Connection** tab; the duplicate tracking status and device name are gone,
+  and so is the map chip. A failed **Process** now says so, with the reason,
+  and Review has a Process button where it always said one was. Height
+  colouring migrates existing scans to Turbo. And when ARCore's tracking
+  camera dies — which is what happens on the OPPO above — the app says so and
+  offers a retry instead of waiting forever.
 
 ---
 

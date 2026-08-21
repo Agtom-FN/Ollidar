@@ -157,6 +157,32 @@ object Wording {
     /** was: "saved — tap Process to retry" */
     const val SCAN_SAVED = "Scan saved."
 
+    // ── ROUND 27 item 134: the Review screen's own Process ──────────────────
+
+    /**
+     * The button the "Run Process on this project" paragraph has been naming
+     * since round 8, and which did not exist until round 27.
+     *
+     * It is the same word as [CARD_MENU_REPROCESS]'s and as
+     * [AUTO_PROCESS_FAILED]'s — deliberately. Three surfaces tell the operator
+     * to "tap Process"; if any of them spelled the button differently, the
+     * instruction would be a scavenger hunt.
+     */
+    const val REVIEW_PROCESS = "Process"
+
+    /** While it runs, when the job has not yet named its own stage. */
+    const val REVIEW_PROCESSING = "Working on your scan…"
+
+    /**
+     * A processing run that failed, with the engine's own reason.
+     *
+     * An error says what happened AND what to do — the whole of the law's third
+     * clause, and the whole of item 134(b): the run that prompted this round
+     * cleared its progress chip, said nothing, and left the operator on the
+     * same empty screen.
+     */
+    fun processFailed(why: String): String = "Processing failed: $why. Tap Process to retry."
+
     // ── the Advanced switch (item 97) ──────────────────────────────────────
 
     const val ADVANCED_TITLE = "Advanced features"
@@ -343,6 +369,8 @@ object Wording {
         EXPORT_ACTION,
         EXPORT_RUNNING,
         SCAN_SAVED,
+        REVIEW_PROCESS,
+        REVIEW_PROCESSING,
         ADVANCED_TITLE,
         SCAN_BUTTON,
         SCAN_BUTTON_RECORDING,
@@ -401,5 +429,7 @@ object Wording {
     val ERRORS: List<String> = listOf(
         AUTO_PROCESS_FAILED,
         exportFailed("no room on the phone"),
+        // ── ROUND 27 item 134 ──
+        processFailed("the recording is incomplete"),
     )
 }

@@ -25,6 +25,48 @@ import org.junit.Test
  */
 class TabNavSpecTest {
 
+    // ── ROUND 27 item 131 ──────────────────────────────────────────────────
+
+    /**
+     * **Item 131.** Profile lights NO tab.
+     *
+     * The owner found the Profile page highlighting Projects, and the cause was
+     * `tabForRoute`'s `else` branch — a default that Review, Plan and Merge
+     * legitimately use, inherited by a destination that is a peer of Projects
+     * rather than a child of it. The navigation-compose contract for a bottom
+     * bar is `currentDestination.hierarchy.any { it.route == tab.route }`:
+     * selection asserts that the current destination is INSIDE that tab's
+     * graph, and Profile is not inside any.
+     *
+     * The rejected alternative is pinned by the same test: "highlight the tab
+     * it was opened from" would make the same page light different tabs
+     * depending on the back stack, and a tab bar whose state depends on how you
+     * arrived is worse than one capsule left unlit.
+     */
+    @Test
+    fun `Profile is a sub-screen of no tab and lights none`() {
+        assertEquals(null, tabForRoute(Routes.PROFILE))
+    }
+
+    /**
+     * **Item 131.** And nothing else lost its tab in the process — the four
+     * tabs, and the project-scoped screens that legitimately light Projects.
+     */
+    @Test
+    fun `every other destination still lights the tab it belongs to`() {
+        assertEquals(ScanTab.PROJECTS, tabForRoute(Routes.PROJECTS))
+        assertEquals(ScanTab.CAPTURE, tabForRoute(Routes.CAPTURE_NEW))
+        assertEquals(ScanTab.JOBS, tabForRoute(Routes.JOBS_PICK))
+        assertEquals(ScanTab.SETTINGS, tabForRoute(Routes.SETTINGS))
+        assertEquals(ScanTab.CAPTURE, tabForRoute(Routes.MID360_SETUP))
+        assertEquals(ScanTab.CAPTURE, tabForRoute("project/abc/capture"))
+        assertEquals(ScanTab.JOBS, tabForRoute("project/abc/processing"))
+        // Review and the other project-scoped screens keep the Projects
+        // default, which is correct for them: they ARE inside Projects.
+        assertEquals(ScanTab.PROJECTS, tabForRoute("project/abc/review"))
+        assertEquals(ScanTab.PROJECTS, tabForRoute(null))
+    }
+
     private val start = Routes.PROJECTS
 
     @Test

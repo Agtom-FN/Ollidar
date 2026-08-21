@@ -2,6 +2,7 @@ package com.lidarscan.app.ui.projects
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import com.lidarscan.app.ui.theme.SemBad
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -143,16 +144,29 @@ fun ProjectsListRoute(
                     // ROUND 22 item 96: "Process again" reuses the SAME
                     // handle-less reprocess the seal's auto-process runs.
                     reprocess = { dir, onProgress ->
-                        // The StitchResult is deliberately discarded: the card
-                        // shows progress and then re-reads the project from
-                        // disk, so the numbers come from the manifest the
-                        // reprocess just wrote rather than from a value held in
-                        // memory by a screen the operator may have left.
-                        container.processingRepository.reprocessD6(
+                        // The StitchResult's NUMBERS are still deliberately
+                        // discarded: the card re-reads the project from disk,
+                        // so they come from the manifest the reprocess just
+                        // wrote rather than from a value held in memory by a
+                        // screen the operator may have left.
+                        //
+                        // ROUND 27 item 134(b): its VERDICT is not. A null
+                        // result or `ran = false` is a failed run, and until
+                        // this round that fact went nowhere — the chip cleared
+                        // and the operator was told nothing.
+                        val result = container.processingRepository.reprocessD6(
                             lscanDir = dir,
                             refineSeams = true,
                             onProgress = onProgress,
                         )
+                        if (result != null && result.ran) {
+                            null
+                        } else {
+                            Wording.processFailed(
+                                container.processingRepository.lastError()
+                                    .ifBlank { "the scan's recorded data may be incomplete" },
+                            )
+                        }
                     },
                     // ROUND 22 item 90: a job the operator started must not die
                     // because they left the tab.
@@ -253,6 +267,8 @@ fun ProjectsListRoute(
         // reason: the format row and the sheet are both on Review.
         onShareProject = onShare,
         onReprocessProject = viewModel::reprocessProject,
+        // ROUND 27 item 134(b): the failure line is dismissible.
+        onDismissProcessFailure = viewModel::dismissProcessFailure,
         onOpenDetails = if (com.lidarscan.core.SimpleMode.showsProjectDetailHub(advanced)) onOpenProject else null,
         selection = batchState.selection,
         batchRunning = batchState.running,
@@ -316,6 +332,7 @@ fun ProjectsListScreen(
     /** ROUND 23 item 104b — the ⋯ menu's new Share item. */
     onShareProject: (String) -> Unit = {},
     onReprocessProject: (String) -> Unit = {},
+    onDismissProcessFailure: (String) -> Unit = {},
     onOpenDetails: ((String) -> Unit)? = null,
     // ── ROUND 23 item 104c: selection mode ──────────────────────────────────
     /** The state machine's current value — see [ProjectSelection] in :core. */
@@ -486,6 +503,8 @@ fun ProjectsListScreen(
                             // because the batch refuses to start a second run
                             // and the reprocess refuses a second run per id.
                             progress = uiState.running[project.id] ?: batchRunning[project.id],
+                            failureNote = uiState.processFailures[project.id],
+                            onDismissFailure = { onDismissProcessFailure(project.id) },
                             progressLabel = if (uiState.running.containsKey(project.id)) {
                                 { percent -> Wording.fixingProgress(percent) }
                             } else {
@@ -781,6 +800,17 @@ private fun ProjectCard(
     progress: Float? = null,
     /** ROUND 23 item 104c: what the progress chip says — a reprocess and an export differ. */
     progressLabel: (Int) -> String = { percent -> Wording.fixingProgress(percent) },
+    /**
+     * ROUND 27 item 134(b) — why this card's last "Process again" failed, or
+     * null.
+     *
+     * A run that fails must leave something behind. Until this round the chip
+     * simply disappeared and the operator was returned to an unchanged card,
+     * which reads as "nothing happened" and is indistinguishable from a tap
+     * that never registered.
+     */
+    failureNote: String? = null,
+    onDismissFailure: () -> Unit = {},
     /** ROUND 23 item 104c: the list is in selection mode, so a tap picks. */
     selecting: Boolean = false,
     /** ROUND 23 item 104c: this card is in the selection. */
@@ -976,6 +1006,22 @@ private fun ProjectCard(
                     modifier = Modifier.testTag("projectCardJobChip"),
                 )
             }
+        }
+
+        // ROUND 27 item 134(b): and a job that FAILED is a line on the card,
+        // for exactly the same reason. Tappable away, because it is an answer
+        // to something the operator did and not a permanent state of the scan.
+        if (failureNote != null) {
+            Text(
+                failureNote,
+                style = MaterialTheme.typography.bodySmall,
+                color = SemBad,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 4.dp, end = 4.dp, top = 6.dp)
+                    .clickable(onClick = onDismissFailure)
+                    .testTag("projectCardProcessFailure"),
+            )
         }
 
         Row(

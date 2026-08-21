@@ -1,6 +1,6 @@
 # Ollidar — Quick Start
 
-App version 0.9.11. This page gets you one COIN-D6 scan on disk. For
+App version 0.9.12. This page gets you one COIN-D6 scan on disk. For
 everything else, see [USER_MANUAL.md](USER_MANUAL.md).
 
 (The app is called Ollidar. The repository, the Android package and the
@@ -24,15 +24,22 @@ deliberate, not a leftover.)
    prompt if Android asks for one.
 
 3. **Open Ollidar and tap the Scan tab** — the radar icon, second from the
-   left in the floating bar at the bottom. The selected tab's icon is orange.
+   left in the bar at the bottom. The selected tab's icon is orange.
 
-4. **Wait for the scanner to be found.** The connection panel finds it by
-   itself. If it says *"No scanner found. Plug it in, then Retry."*, unplug,
-   plug back in and tap **Retry**.
+4. **Wait for the scanner to be found.** The **connection section is part of
+   the Scan page** — under the preview, above the SCAN button — and it finds
+   the scanner by itself. Scroll it if there is more than fits. If it says
+   *"No scanner found. Plug it in, then Retry."*, unplug, plug back in and tap
+   **Retry**. (The same settings are also under **Advanced ⚙ › Connection**.)
 
 5. **Stand where the scan should start and press the big orange SCAN
    button.** If nothing happens, the app writes the reason on screen in one
    short sentence — usually *"Connect the scanner first."*
+
+   If a card says **Tracking camera stopped.** instead, position tracking
+   could not start — tap **Retry**, and if that does not hold, allow Ollidar
+   the camera in the background and turn battery optimisation off for it in
+   the phone's own Settings.
 
 6. **Hold still.** A panel counts through four stages:
    *New tracking session* → *Locking position tracking* → *Measuring the

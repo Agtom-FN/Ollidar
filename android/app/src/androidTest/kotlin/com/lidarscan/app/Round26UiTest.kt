@@ -81,16 +81,28 @@ class Round26UiTest {
             val rootWidth = root.semanticsOwner.rootSemanticsNode.size.width
             val box = viewport.boundsInRoot
 
-            assertEquals(
-                "item 124: the viewport spans the whole window width — no card inset",
-                rootWidth.toFloat(),
-                box.width,
-                2f,
+            // ── ROUND 27 item 136 SUPERSEDES ROUND 26 item 124 HERE ────────
+            //
+            // The owner's own session: *"Nothing should overlay except warning.
+            // … show the settings of connection in the main window and not
+            // overlay."* So the IDLE Scan tab — which is the only state an AVD
+            // can reach — is a laid-out page now, and its viewport is a framed
+            // preview inside a column rather than the whole window. Round 26's
+            // fullscreen claim survives for the state it was actually about: a
+            // RECORDING, where the picture is the product.
+            //
+            // The claim is therefore restated rather than deleted, and it is
+            // still a measurement: the preview takes the window's full usable
+            // width (only the page's own 10 dp gutters are removed) and sits
+            // BELOW the status band instead of under the status bar.
+            assertTrue(
+                "item 136: the preview takes the page's width (was ${box.width} of $rootWidth)",
+                box.width >= rootWidth * 0.9f,
             )
             assertTrue(
-                "item 124: the viewport starts at the top of the window, not below the status bar " +
+                "item 136: the preview is below the status band, not under the status bar " +
                     "(top was ${box.top})",
-                box.top <= 2f,
+                box.top > 2f,
             )
         }
     }
@@ -114,7 +126,17 @@ class Round26UiTest {
 
             composeRule.onNodeWithTag("recordButton").assertIsDisplayed()
             composeRule.onNodeWithTag("advancedButton").assertIsDisplayed()
-            composeRule.onNodeWithTag("mapModeChip").assertIsDisplayed()
+            // ROUND 27 item 140(a): the map-mode chip is GONE. The owner's own
+            // 0.9.11 session — *"The map indicatior seems useless"* — supersedes
+            // round 26's corner for it; the live-map switch keeps its home in
+            // the Capture sheet. Asserted as an absence rather than deleted, so
+            // the removal is a decision this suite records rather than a line
+            // somebody quietly dropped.
+            assertEquals(
+                "item 140(a): the map-mode chip is removed",
+                0,
+                composeRule.onAllNodesWithTag("mapModeChip").fetchSemanticsNodes().size,
+            )
             composeRule.onNodeWithTag("tutorialButton").assertIsDisplayed()
             composeRule.onNodeWithTag("liveViewSwitch").assertIsDisplayed()
             composeRule.onNodeWithTag("pointsCapturedValue").assertIsDisplayed()
@@ -123,17 +145,25 @@ class Round26UiTest {
             assertEquals("item 124: one tour button", 1, count("tutorialButton"))
             assertEquals("item 124: one scan button", 1, count("recordButton"))
 
-            val root = composeRule.onNodeWithTag("captureViewport").fetchSemanticsNode().boundsInRoot
+            // ── ROUND 27 item 136: the same claims, on a PAGE ──────────────
+            //
+            // Round 26 asserted four corners of a fullscreen viewport. The idle
+            // tab is a laid-out page now, so "corner of the picture" is not the
+            // right frame — but the SPATIAL claims that made those corners
+            // useful survive verbatim and are restated against the page: the
+            // gear is above and at the end, the scan button is below it and
+            // centred, and the `?` is off to the end of the scan button. The
+            // map-mode chip is gone with item 140(a), asserted above.
+            val page = composeRule.onNodeWithTag("captureViewport").fetchSemanticsNode()
+                .root!!.semanticsOwner.rootSemanticsNode.size
             val gear = composeRule.onNodeWithTag("advancedButton").fetchSemanticsNode().boundsInRoot
             val fab = composeRule.onNodeWithTag("recordButton").fetchSemanticsNode().boundsInRoot
-            val mapChip = composeRule.onNodeWithTag("mapModeChip").fetchSemanticsNode().boundsInRoot
             val help = composeRule.onNodeWithTag("tutorialButton").fetchSemanticsNode().boundsInRoot
 
-            assertTrue("the gear is in the top half", gear.center.y < root.center.y)
-            assertTrue("the gear is at the end edge", gear.center.x > root.center.x)
-            assertTrue("the scan button is in the bottom half", fab.center.y > root.center.y)
-            assertTrue("the map-mode chip is at the start edge", mapChip.center.x < fab.left)
-            assertTrue("the ? is at the end edge", help.center.x > fab.right)
+            assertTrue("the gear is in the top half", gear.center.y < page.height / 2f)
+            assertTrue("the gear is at the end edge", gear.center.x > page.width / 2f)
+            assertTrue("the scan button is in the bottom half", fab.center.y > page.height / 2f)
+            assertTrue("the ? is above the scan button's band", help.center.y < fab.top)
         }
     }
 
@@ -171,7 +201,7 @@ class Round26UiTest {
 
     /**
      * **Item 122.** The app calls itself Ollidar where the operator can see it,
-     * and the version footer is 0.9.11.
+     * and the version footer is 0.9.12.
      *
      * The footer is the strongest single check available on-device: it is the
      * one string that carries the name AND both version numbers, and it is read
@@ -195,8 +225,8 @@ class Round26UiTest {
                 ?.joinToString(" ")
                 .orEmpty()
             assertTrue("the footer names the app: \"$footer\"", footer.contains("Ollidar"))
-            assertTrue("the footer is this round's version: \"$footer\"", footer.contains("0.9.11"))
-            assertTrue("…and its code: \"$footer\"", footer.contains("911"))
+            assertTrue("the footer is this round's version: \"$footer\"", footer.contains("0.9.12"))
+            assertTrue("…and its code: \"$footer\"", footer.contains("912"))
 
             composeRule.onNodeWithTag("tab_projects").performClick()
         }

@@ -22,6 +22,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SheetState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -118,6 +120,10 @@ private fun SheetHead(title: String, hint: String) {
     }
 }
 
+
+/** ROUND 27 item 139 — the two halves of the Advanced sheet. */
+enum class AdvancedTab { SCAN, CONNECTION }
+
 /**
  * **Capture settings** (mockup v6/v7): the single entry point for view, AR and
  * display, opened from the 48 dp button on the viewport.
@@ -174,9 +180,29 @@ fun CaptureSettingsSheet(
     onColormapChange: (Colormap) -> Unit,
     onPointSizeChange: (Float) -> Unit,
     onLodChange: (Int) -> Unit,
+    /**
+     * ROUND 27 item 139 — **the Connection tab's contents**, supplied by the
+     * caller, or null for a host that has no connection to configure (the
+     * calibration wizard, the replay session).
+     *
+     * A slot rather than twenty more parameters: the connect flow is already a
+     * composable the Scan screen owns and draws in its own idle page (item
+     * 136b), and the owner's instruction is *"put the connection setting in the
+     * advance button too with seperate tab"* — **too**, not *instead*. Two
+     * doors, one implementation: whatever is in the main flow is literally the
+     * same call, passed here.
+     */
+    connection: (@Composable () -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
     val screenHeight = LocalConfiguration.current.screenHeightDp.dp
+    // ROUND 27 item 139: which half of the sheet is on screen. `rememberSaveable`
+    // so a rotation with the sheet open does not throw the operator back to
+    // Scan when they were reading Connection.
+    var tab: AdvancedTab by androidx.compose.runtime.saveable.rememberSaveable {
+        androidx.compose.runtime.mutableStateOf(AdvancedTab.SCAN)
+    }
+
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -188,7 +214,42 @@ fun CaptureSettingsSheet(
         modifier = Modifier.testTag("captureSettingsSheet"),
     ) {
         Column(Modifier.height(screenHeight * 0.74f)) {
-            SheetHead("Display", "A14 · live")
+            SheetHead(
+                if (tab == AdvancedTab.SCAN) "Display" else "Connection",
+                if (tab == AdvancedTab.SCAN) "A14 · live" else "sensor · cable · network",
+            )
+
+            // ── ROUND 27 item 139: the two halves ────────────────────────
+            if (connection != null) {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp)) {
+                    SegmentedPill(
+                        options = listOf(
+                            AdvancedTab.SCAN to "Scan",
+                            AdvancedTab.CONNECTION to "Connection",
+                        ),
+                        selected = tab,
+                        onSelect = { tab = it },
+                        height = ScanDims.SegmentTall,
+                        modifier = Modifier.testTag("advancedTabRow"),
+                    )
+                    Spacer(Modifier.height(10.dp))
+                }
+            }
+
+            if (tab == AdvancedTab.CONNECTION && connection != null) {
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 18.dp)
+                        .testTag("advancedConnectionPane"),
+                ) {
+                    connection()
+                    Spacer(Modifier.height(14.dp))
+                }
+                SheetFooter(onDismiss)
+                return@ModalBottomSheet
+            }
 
             // ── pinned: view mode ────────────────────────────────────────
             Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp)) {
@@ -310,6 +371,7 @@ fun CaptureSettingsSheet(
 
                 SheetRowLabel(
                     label = "Scanner tracking",
+                    hintTestTag = "scannerTrackingHint",
                     hint = "phone-tracked · read-only",
                     readout = arTrackingLabel,
                     readoutColor = when {
@@ -379,6 +441,9 @@ fun CaptureSettingsSheet(
                 // slider, the read-out and the manifest cannot disagree.
                 SheetRowLabel(
                     label = "Point size",
+                    // ROUND 27 item 130: this row and the scanner-tracking row
+                    // are the two the owner caught ellipsizing.
+                    hintTestTag = "pointSizeHint",
                     hint = "%.1f – %.0f px · 0.1 steps".format(
                         com.lidarscan.core.render.DisplayLimits.POINT_SIZE_MIN_PX,
                         com.lidarscan.core.render.DisplayLimits.POINT_SIZE_MAX_PX,

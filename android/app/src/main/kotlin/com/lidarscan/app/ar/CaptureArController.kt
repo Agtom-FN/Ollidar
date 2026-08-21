@@ -750,7 +750,29 @@ class CaptureArController(
      * one on the rare bad draw is much cheaper than a 2D scan.
      */
     override fun resetWorldFrame(attempts: Int): ResetResult {
-        if (session == null) return ResetResult(ok = false, attempts = 0, yieldedFrames = 0L)
+        // ── ROUND 27 item 143: a CLOSED session is a rebuild, not a refusal ──
+        //
+        // The owner's Pixel log, 18:10:22, one press after re-entering the Scan
+        // tab: `start gate: NO_POSES after 4000ms … rebuilding it once more
+        // (rebuilt=false tries=0)`. Zero tries — the rebuild the line claims to
+        // be doing never ran a single attempt, because of the guard that used
+        // to be on this line.
+        //
+        // The guard was correct when it was written: round 16's reset means
+        // "throw this session away and make a new one", and there was always a
+        // session to throw away. ROUND 25 changed that — leaving the Scan tab
+        // now CLOSES the session — so the sequence "leave the tab, come back,
+        // press Start immediately" reaches the NO_POSES gate with `session ==
+        // null`, and the one action that would have fixed it declined in
+        // silence and reported success-shaped nothing.
+        //
+        // "There is no session" is the strongest possible reason to build one.
+        // The loop below already begins with `close()`, which is a no-op on a
+        // null session, so the null case needs no special path — only
+        // permission to enter the loop.
+        if (session == null) {
+            Log.w(TAG, "world-frame reset: no session to reset — building one instead")
+        }
         val before = framesYielded.get()
         driveLock.lock()
         try {

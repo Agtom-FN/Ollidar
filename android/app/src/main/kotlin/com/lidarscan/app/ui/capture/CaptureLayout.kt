@@ -223,7 +223,115 @@ object CaptureLayout {
      * from the composables rather than guessed, and the reason it is one
      * constant is that BOTH orientations' rails are positioned from it.
      */
-    const val FLOATING_CONTROL_RESERVE_DP = 270f
+    const val FLOATING_CONTROL_RESERVE_DP = 270f // = CHROME_TOP_RESERVE_DP + CHROME_BOTTOM_RESERVE_DP
+
+    /**
+     * ROUND 27 item 129 — **the top band's floor, in dp.**
+     *
+     * The status pill, the gear and the RTK chip strip. Round 26 wrote this as
+     * a literal `96.dp` at the draw site and reserved it whether or not the
+     * pill was two rows or three; round 27 MEASURES the band instead (see
+     * `CaptureScreen`'s `topBandDp`) and keeps this only as the floor for the
+     * first frame, before the measurement has landed. A floor rather than the
+     * answer: the pill grows a third row for `LIVE VIEW OFF` and a fourth for
+     * the health read-out, and a constant that was right for two rows is what
+     * printed the connect flow through the chip strip.
+     */
+    const val CHROME_TOP_RESERVE_DP = 96f
+
+    /**
+     * ROUND 27 item 129 — **the bottom band's floor, in dp.**
+     *
+     * The 88 dp idle FAB, its breathing room and the 86 dp tab-bar clearance.
+     * Same rule as [CHROME_TOP_RESERVE_DP]: it is the first-frame floor, and
+     * the live number is the measured height of the control row, which changes
+     * when the tab bar hides and when the FAB grows to 96 dp for a recording.
+     */
+    const val CHROME_BOTTOM_RESERVE_DP = 174f
+
+    /**
+     * ROUND 27 item 129(a) — **the landscape bottom band's floor**, in dp.
+     *
+     * Landscape's bottom row is not portrait's. The FAB moves to the end rail,
+     * so what is left across the bottom is the map-mode and stream chips over
+     * the 86 dp tab-bar clearance. Reserving portrait's 174 dp there is not a
+     * collision risk (a floor never is) but it takes a quarter of the connect
+     * rail's total height on a phone that only has ~410 dp of it, which is the
+     * difference between the Retry links being on screen and not.
+     */
+    const val LANDSCAPE_BOTTOM_RESERVE_DP = 120f
+
+    /**
+     * ROUND 27 item 129(a) — **the landscape start rail.**
+     *
+     * The connect flow's own column, in dp. It is the round-8 340 dp column
+     * plus its 16 dp gutters: wide enough for the manual panel's two IP fields
+     * side by side, and narrow enough that the end half of the window is left
+     * for the picture and the control cluster.
+     */
+    const val LANDSCAPE_RAIL_WIDTH_DP = 356f
+
+    /**
+     * ROUND 27 item 129(a) — **the landscape top group.**
+     *
+     * In landscape the status pill, the gear and the RTK chip strip move to
+     * the TOP-END corner and take a fixed column there, because the start side
+     * from the status bar down belongs to the connect rail. A full-width top
+     * band in landscape is what drew `RAW · D6` and `NO GEOREF` straight
+     * through the connect flow.
+     */
+    const val LANDSCAPE_TOP_GROUP_WIDTH_DP = 360f
+
+    /**
+     * ROUND 27 item 129(a) — **the end rail the floating cluster owns**, in dp.
+     *
+     * The 88 dp FAB plus its 18 dp end padding and a 10 dp margin. Nothing
+     * else may draw in it: the `?` chip is inset by exactly this in landscape,
+     * which is what stops it sitting on top of the pause button, and the
+     * viewport's own corner chips take it as their end inset.
+     */
+    const val CONTROL_RAIL_MIN_DP = 116f
+
+    /**
+     * ROUND 27 item 129 — **the chrome band, from the two reserves.**
+     *
+     * The one piece of arithmetic the fullscreen layout actually needs and the
+     * one round 26 did not have: how tall the floating chrome may be given the
+     * window it is in and the two bands it must not draw under. Round 26
+     * capped the chrome at `screenHeight − 270` and then ALSO padded it down
+     * by 96 dp and by the status-bar inset at the draw site, so the column ran
+     * past the control cluster by exactly the insets — invisible to every test
+     * because every test asserts semantics.
+     *
+     * The budget still applies (it is what keeps a connected screen's chrome
+     * off the live view); this is the second ceiling, and the smaller of the
+     * two wins.
+     *
+     * @param availableHeightDp the window's own height — measured, not
+     *   `Configuration.screenHeightDp`, which excludes some insets on some
+     *   devices and is therefore the wrong number to subtract insets from.
+     */
+    fun chromeBandDp(
+        availableHeightDp: Float,
+        topReserveDp: Float,
+        bottomReserveDp: Float,
+        budgetDp: Float,
+    ): Float = minOf(budgetDp, availableHeightDp - topReserveDp - bottomReserveDp)
+        .coerceAtLeast(BAND_FLOOR_DP)
+
+    /**
+     * The floor on [chromeBandDp], in dp.
+     *
+     * Deliberately far below [CHROME_FLOOR_DP]. That constant is a wish — "the
+     * manual panel deserves 240 dp" — and in landscape on a phone there simply
+     * is not 240 dp between the status bar and the tab bar. A wish that
+     * overruns the control cluster is worse than a short column, because a
+     * short column SCROLLS and a collision does not. 120 dp is the scan-name
+     * field plus the auto-detect line plus its two links: enough that the
+     * column always shows something actionable and says, by scrolling, that
+     * there is more.
+     */
+    const val BAND_FLOOR_DP = 120f
 
     /**
      * The chrome's own floor. A tall enough screen makes

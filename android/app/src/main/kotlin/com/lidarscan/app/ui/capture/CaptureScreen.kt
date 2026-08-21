@@ -1,6 +1,7 @@
 package com.lidarscan.app.ui.capture
 
 import android.content.res.Configuration
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -9,6 +10,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,9 +24,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
@@ -53,6 +60,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -60,12 +69,25 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.layout.boundsInParent
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -169,6 +191,11 @@ fun CaptureRoute(
      * questions every other surface asks it.
      */
     advanced: Boolean = false,
+    /**
+     * ROUND 27 item 142(b) — the "Send logs" shortcut on the tracker-failure
+     * card. Null where there is no Profile to reach (the replay route).
+     */
+    onOpenProfile: (() -> Unit)? = null,
     /** ROUND 23 item 106(c): the Mid-360 wizard, with no project in front of it. */
     onOpenMid360Setup: (() -> Unit)? = null,
     /** ROUND 23 item 106(c): the device-level RTK screen. */
@@ -437,6 +464,26 @@ fun CaptureRoute(
     // presses Record would be exactly that.
     val dndScope = rememberCoroutineScope()
     var showDndExplainer by remember { mutableStateOf(false) }
+    // ── ROUND 27 item 133(b): ARMED on entry, ASKED at the first Start ──────
+    //
+    // Round 24 fired the explainer from the screen's `LaunchedEffect(Unit)`,
+    // and its stated reason was sound as far as it went: a permission dialog
+    // thrown up as the operator presses Record is the worst interruption this
+    // tab has. What it produced, though, was worse — a first-run operator opens
+    // the app, taps Scan, and before they have touched anything the system asks
+    // "Silence notifications while scanning?" about a scan that does not exist
+    // and a scanner that is not plugged in. A permission with no context is a
+    // permission that gets denied.
+    //
+    // So the CHECK still happens on entry (it is a settings read, and the
+    // amber `Notifications are not silenced.` line depends on it) and only the
+    // ASKING moves. The dialog is raised by the first Start press, where the
+    // sentence is finally about something the operator is doing, and BOTH of
+    // its buttons then continue into the start — "Not now" starts the scan
+    // immediately, and "Open settings" leaves for the system screen, which is a
+    // trip the operator chose. It is asked at most once either way
+    // (`dndAccessAsked` is persisted), so the second scan is never interrupted.
+    var dndAskArmed by remember { mutableStateOf(false) }
     val dndSettingsLauncher = rememberLauncherForActivityResult(
         // A special-access screen, not a runtime permission: the result code is
         // always RESULT_CANCELED, so the grant has to be RE-READ rather than
@@ -459,8 +506,16 @@ fun CaptureRoute(
                 granted = granted,
                 alreadyAsked = settings.dndAccessAsked,
             )
+            // ROUND 27 item 133(b), refined by the emulator: never over a
+            // REPLAY session. A replay is a developer's errand against a file —
+            // no walk, no tracker, nothing a notification buzz can shake — and
+            // the two smoke tests that drive it click Start exactly once and
+            // wait for a recording. An ask that intercepts that press is a
+            // dialog raised about a risk that does not exist, in front of the
+            // one path CI has for proving the decoder still works.
+            && !isReplay
         ) {
-            showDndExplainer = true
+            dndAskArmed = true
         }
     }
     if (showDndExplainer) {
@@ -470,6 +525,7 @@ fun CaptureRoute(
             onDismissRequest = {
                 showDndExplainer = false
                 dndScope.launch { container.settingsRepository.setDndAccessAsked() }
+                viewModel.startCapture()
             },
             title = { Text(com.lidarscan.core.capture.CaptureFocus.ASK_TITLE) },
             text = { Text(com.lidarscan.core.capture.CaptureFocus.ASK_BODY) },
@@ -488,8 +544,13 @@ fun CaptureRoute(
             dismissButton = {
                 TextButton(
                     onClick = {
+                        // ROUND 27 item 133(b): "Not now" answers the question
+                        // and then gets out of the way — the press that raised
+                        // this dialog was a press of SCAN, and it still has to
+                        // start a scan.
                         showDndExplainer = false
                         dndScope.launch { container.settingsRepository.setDndAccessAsked() }
+                        viewModel.startCapture()
                     },
                     modifier = Modifier.testTag("dndAskDismiss"),
                 ) { Text(com.lidarscan.core.capture.CaptureFocus.ASK_DISMISS) }
@@ -544,6 +605,50 @@ fun CaptureRoute(
             }
         }
     }
+
+    // ── ROUND 27 item 142: THE TRACKER CAN BE DEAD, AND MUST SAY SO ────────
+    //
+    // The first user outside the owner — an OPPO CPH2499 — opened this tab six
+    // times and never got a scan, because ColorOS handed ARCore the camera and
+    // then took it back, and the app's only reaction was hundreds of identical
+    // log lines. The rules are `ArTrouble` in `:core` (three seconds of a dead
+    // camera is a fault; a blink is not; a missing APK explains everything
+    // downstream of it); what lives here is the CLOCK and the three actions.
+    //
+    // `arErrorSince` is a plain remember rather than ViewModel state on
+    // purpose: it is a property of what this screen has been looking at, it
+    // must reset when the screen does, and a ViewModel that survives a tab hop
+    // would carry a stale fault across one.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var arErrorSince by remember { mutableStateOf<Long?>(null) }
+    val arStatusForTrouble by container.arController.status.collectAsStateWithLifecycle()
+    LaunchedEffect(arStatusForTrouble.arError, arStatusForTrouble.sessionRunning) {
+        arErrorSince = if (arStatusForTrouble.arError != null) {
+            arErrorSince ?: android.os.SystemClock.elapsedRealtime()
+        } else {
+            null
+        }
+    }
+    var arTroubleTick by remember { mutableStateOf(0L) }
+    LaunchedEffect(arErrorSince) {
+        // One tick a second while a failure is standing, so the three-second
+        // threshold arrives on its own rather than waiting for the next
+        // unrelated recomposition.
+        while (arErrorSince != null) {
+            arTroubleTick = android.os.SystemClock.elapsedRealtime()
+            kotlinx.coroutines.delay(500)
+        }
+    }
+    val arTrouble = com.lidarscan.core.capture.ArTrouble.kindFor(
+        availabilityReady = arStatusForTrouble.availability.canRunAr,
+        availabilityNeedsInstall =
+            arStatusForTrouble.availability == com.lidarscan.app.ar.ArAvailability.NEEDS_INSTALL,
+        availabilityUnsupported =
+            arStatusForTrouble.availability == com.lidarscan.app.ar.ArAvailability.UNSUPPORTED,
+        fatalSinceMillis = arErrorSince,
+        nowMillis = maxOf(arTroubleTick, android.os.SystemClock.elapsedRealtime()),
+    ).takeIf { viewModel.poseTrackingRequired }
+        ?: com.lidarscan.core.capture.ArTroubleKind.NONE
 
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val connectionState by viewModel.connectionState.collectAsStateWithLifecycle()
@@ -950,6 +1055,43 @@ fun CaptureRoute(
             offerDismissed = true
             tutorialScope.launch { container.settingsRepository.setTutorialOffered() }
         },
+        // ── ROUND 27 item 142(b) ────────────────────────────────────────
+        arTrouble = arTrouble,
+        onRetryAr = {
+            arErrorSince = null
+            container.arController.refreshAvailability()
+            dndScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+                container.arController.resetWorldFrame(
+                    attempts = com.lidarscan.app.ar.CaptureArController.RESET_ATTEMPTS,
+                )
+            }
+        },
+        onUpdateArServices = {
+            // The Play listing for Google Play Services for AR. `market://`
+            // first because it opens the store app directly; the https fallback
+            // is for a device with no store app, which is exactly the kind of
+            // device this card is for.
+            val ctx = context
+            val ok = runCatching {
+                ctx.startActivity(
+                    android.content.Intent(
+                        android.content.Intent.ACTION_VIEW,
+                        Uri.parse("market://details?id=com.google.ar.core"),
+                    ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+            }.isSuccess
+            if (!ok) {
+                runCatching {
+                    ctx.startActivity(
+                        android.content.Intent(
+                            android.content.Intent.ACTION_VIEW,
+                            Uri.parse("https://play.google.com/store/apps/details?id=com.google.ar.core"),
+                        ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                    )
+                }
+            }
+        },
+        onSendLogs = onOpenProfile,
         startTapRefusal = startTapRefusal,
         onDismissStartTapRefusal = viewModel::dismissStartTapRefusal,
         onStartRefused = viewModel::reportStartTapRefused,
@@ -1000,7 +1142,15 @@ fun CaptureRoute(
         // the bug this closes.
         arPosePump = { modifier -> ArPosePumpView(controller = container.arController, modifier = modifier) },
         onBack = onBack,
-        onStart = viewModel::startCapture,
+        // ROUND 27 item 133(b): the one place the deferred ask is raised.
+        onStart = {
+            if (dndAskArmed) {
+                dndAskArmed = false
+                showDndExplainer = true
+            } else {
+                viewModel.startCapture()
+            }
+        },
         onPause = viewModel::pauseCapture,
         onResume = viewModel::resumeCapture,
         onStop = viewModel::stopCapture,
@@ -1163,6 +1313,12 @@ fun CaptureScreen(
     onAcceptTutorialOffer: () -> Unit = {},
     onDismissTutorialOffer: () -> Unit = {},
     /** ROUND 23 item 101(b): the reason the last press could not start anything. */
+    /** ROUND 27 item 142(b): what is wrong with position tracking, if anything. */
+    arTrouble: com.lidarscan.core.capture.ArTroubleKind =
+        com.lidarscan.core.capture.ArTroubleKind.NONE,
+    onRetryAr: () -> Unit = {},
+    onUpdateArServices: () -> Unit = {},
+    onSendLogs: (() -> Unit)? = null,
     startTapRefusal: String? = null,
     onDismissStartTapRefusal: () -> Unit = {},
     onStartRefused: (String) -> Unit = {},
@@ -1373,7 +1529,18 @@ fun CaptureScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
-        Box(Modifier.fillMaxSize()) {
+        // ── ROUND 27 item 129: the window, MEASURED ────────────────────
+        //
+        // `BoxWithConstraints` rather than `Configuration.screenHeightDp`.
+        // The two are not the same number — the configuration height excludes
+        // some insets on some devices and includes them on others — and round
+        // 26 subtracted inset-shaped constants from the configuration height
+        // and then ALSO applied `statusBarsPadding()` at the draw site, which
+        // is how the chrome column ended up running past the control cluster
+        // by exactly the insets. Everything below is arithmetic on THIS box.
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val windowHeightDp = maxHeight
+            val windowWidthDp = maxWidth
             when (uiState) {
                 CaptureUiState.Loading -> Box(Modifier.fillMaxSize())
                 CaptureUiState.NotFound -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -1402,14 +1569,95 @@ fun CaptureScreen(
                     // Hiding it and keeping the reservation would leave the FAB
                     // stranded above a gap nothing draws in — round 25 item
                     // 120's mistake, one layer up.
-                    val tabBarHidden = live || starting
-                    val bottomClearance = if (tabBarHidden) 12.dp else ScanDims.TabBarClearance
+                    // ROUND 27 item 136(a): the tab bar RESERVES its space at
+                    // the shell (`LidarScanApp` insets the whole NavHost while
+                    // the bar is up and gives the space back the moment it
+                    // collapses), so this screen no longer pads for a bar that
+                    // is drawn over it. What is left here is the minimal
+                    // layout's own margin, which exists because the minimal
+                    // layout is the one place the bar is gone entirely.
+                    val bottomClearance = 12.dp
+                    // ── ROUND 27 item 129: the three bands, MEASURED ────
+                    //
+                    // Round 26 reserved 96 dp at the top and 174 dp at the
+                    // bottom as CONSTANTS, and then grew the status pill by a
+                    // row (`LIVE VIEW OFF`), added a `BackBar` for replay,
+                    // added an RTK chip strip below it and moved the health
+                    // read-out into the pill. Every one of those makes the
+                    // real band taller than the constant, and a constant that
+                    // is too small does not fail a test — it draws the connect
+                    // flow through the chip strip, which is what the owner saw.
+                    //
+                    // So each band now REPORTS its own bounds and the chrome
+                    // is laid out against the report. The constants survive as
+                    // first-frame floors (`CaptureLayout.CHROME_*_RESERVE_DP`),
+                    // which is all a constant can honestly be here: the very
+                    // first composition has no measurement yet, and a chrome
+                    // column that flashes 4 dp taller for one frame is not a
+                    // collision.
+                    //
+                    // `onGloballyPositioned` is hung FIRST in each chain, so
+                    // what is reported is the band's OUTER rectangle — its own
+                    // safe-area padding included — in this Box's coordinates.
+                    // Reported at the end of the chain it would be the content
+                    // box inside the padding, and the reserve would be short by
+                    // exactly the inset again.
+                    val density = LocalDensity.current
+                    // Landscape's rail applies `statusBarsPadding()` itself, so
+                    // the inset has to be counted into its reserve; portrait's
+                    // top reserve is the MEASURED band, which already contains
+                    // the inset because the band draws it.
+                    val statusBarTopDp = WindowInsets.statusBars
+                        .asPaddingValues().calculateTopPadding()
+                    // ROUND 27 item 129(a): the stream read-out's fact, hoisted
+                    // out of the viewport so the chip can be drawn in a corner
+                    // the viewport does not own.
+                    var hasSeenMappedPage by remember { mutableStateOf(false) }
+                    var topBandBottomPx by remember { mutableFloatStateOf(0f) }
+                    var bottomBandTopPx by remember { mutableFloatStateOf(0f) }
+                    var endRailLeftPx by remember { mutableFloatStateOf(0f) }
+                    val windowHeightPx = with(density) { windowHeightDp.toPx() }
+                    val windowWidthPx = with(density) { windowWidthDp.toPx() }
                     // The replay session is the one entry that still draws a
                     // `BackBar`, and it is 56 dp tall — so the band has to start
                     // below it or the chip row prints through the status pill.
                     // Found on the AVD's synthetic replay, which is the only
                     // place on an emulator where both are on screen at once.
-                    val chromeTopDp = 96.dp + if (isReplaySession) ScanDims.BackBar else 0.dp
+                    val topBandDp = with(density) { topBandBottomPx.toDp() }
+                        .coerceAtLeast(
+                            CaptureLayout.CHROME_TOP_RESERVE_DP.dp +
+                                if (isReplaySession) ScanDims.BackBar else 0.dp,
+                        )
+                    val bottomBandDp = with(density) { (windowHeightPx - bottomBandTopPx).toDp() }
+                        // The first-frame floor differs by orientation because
+                        // the BAND differs: in portrait the bottom row carries
+                        // the 88 dp FAB, and in landscape the FAB is on the end
+                        // rail and the row is two chips over the tab-bar
+                        // clearance. Using the portrait floor in landscape does
+                        // no harm to a collision — it is a floor — but it costs
+                        // the connect rail 54 dp of the ~200 dp it has, which on
+                        // a landscape phone is the difference between seeing the
+                        // Retry links and not.
+                        .coerceAtLeast(
+                            if (isLandscape) {
+                                CaptureLayout.LANDSCAPE_BOTTOM_RESERVE_DP.dp
+                            } else {
+                                CaptureLayout.CHROME_BOTTOM_RESERVE_DP.dp
+                            },
+                        )
+                    // The end rail the floating cluster owns in landscape. In
+                    // portrait the cluster is in the bottom band and owns no
+                    // column, so the rail is zero and the corner chips get
+                    // their ordinary 14 dp.
+                    val endRailDp = if (isLandscape) {
+                        with(density) { (windowWidthPx - endRailLeftPx).toDp() }
+                            .coerceAtLeast(CaptureLayout.CONTROL_RAIL_MIN_DP.dp)
+                    } else {
+                        0.dp
+                    }
+                    // Kept under its round-26 name because five call sites read
+                    // it; it is the measured band now rather than 96 dp.
+                    val chromeTopDp = topBandDp
 
                     // ROUND 26 item 124: the transport row is gone. Its five
                     // controls were a horizontal band that cost 80 dp of the
@@ -1417,6 +1665,75 @@ fun CaptureScreen(
                     // corners of it, and each one is a separate composable so a
                     // layout that re-anchors for landscape can move them
                     // independently instead of moving one rigid Row.
+                    // ── ROUND 27 item 136: ONE status band, TWO placements ─
+                    //
+                    // The same composable in the flow (idle) and floating over
+                    // the picture (recording). A second copy for the second
+                    // placement is how the two drift into saying different
+                    // things about the same session, which is half of item 138.
+                    val statusBand: @Composable (Boolean) -> Unit = { floating ->
+                        Column(Modifier.fillMaxWidth()) {
+                            if (isReplaySession) {
+                                BackBar(
+                                    title = project?.manifest?.name ?: "Capture — Replay",
+                                    subtitle = "${profile.displayName} · ${captureStateLabel(captureState)}",
+                                    onBack = onBack,
+                                )
+                            }
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.Top,
+                            ) {
+                                ScanStatusPill(
+                                    modifier = Modifier
+                                        .widthIn(max = 280.dp)
+                                        .testTag("scanStatusPill"),
+                                    sensor = sensor,
+                                    connected = connected,
+                                    captureState = captureState,
+                                    stats = stats,
+                                    trailLengthM = trailLengthM,
+                                    liveView = liveView,
+                                    health = health,
+                                    showHealth = true,
+                                    // ROUND 27 item 138: the ONE tracking
+                                    // status on this screen. It used to be
+                                    // said twice — a viewport chip AND the
+                                    // chip row — and the two are not even
+                                    // guaranteed to agree mid-transition.
+                                    poseState = poseState.takeIf { poseTrackingRequired && connected },
+                                    onOpenDiagnostics = { sheet = CaptureSheet.DIAGNOSTICS },
+                                )
+                                Spacer(Modifier.weight(1f))
+                                Spacer(Modifier.width(8.dp))
+                                ScanGearButton(onOpenAdvanced = { sheet = CaptureSheet.SETTINGS })
+                            }
+                            // The RTK/georeference chips keep their round-8
+                            // rule: shown when there is genuinely RTK to report.
+                            if (!floating || georefSource.isRtk || ntrip.receiving) {
+                                if (!compact || georefSource.isRtk || ntrip.receiving) {
+                                    Box(Modifier.padding(horizontal = 4.dp)) {
+                                        FixChipStrip(fix = fix, ntrip = ntrip, georefSource = georefSource)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ROUND 27 items 138 + 140(a): what stream is on screen, and
+                    // NOT which device it came from — the device is the pill's
+                    // to say, and saying it twice was the owner's "2 connected
+                    // device model showing". The map-mode chip that used to sit
+                    // beside this one is gone entirely (item 140(a)); the live
+                    // map switch keeps its home in the Capture sheet.
+                    val streamChip: @Composable () -> Unit = {
+                        StreamModeChip(
+                            liveMapEnabled = liveMapEnabled,
+                            liveMapRequested = liveMapRequested,
+                            hasSeenMappedPage = hasSeenMappedPage,
+                        )
+                    }
+
                     val controls: @Composable (Boolean) -> Unit = { vertical ->
                         ScanControlCluster(
                             vertical = vertical,
@@ -1442,17 +1759,36 @@ fun CaptureScreen(
                             // The chrome's two bands, handed to the viewport so
                             // its own corner chips draw inside the picture
                             // rather than under the floating controls.
+                            // ROUND 27 item 129(a): the chips get the bands
+                            // the chrome ACTUALLY occupies. In landscape the
+                            // start side is the connect rail from the status
+                            // bar down — a chip inset by 14 dp there is drawn
+                            // straight through the connect flow, which is what
+                            // `RAW · D6` did — and the end side is the control
+                            // rail the cluster owns.
                             chipInsets = androidx.compose.foundation.layout.PaddingValues(
-                                start = 14.dp,
-                                // Landscape parks the control cluster on the
-                                // END edge, so the health chip's bottom-end
-                                // corner is behind the SCAN button there and
-                                // nowhere near it in portrait. One number, one
-                                // branch, rather than a second chip position.
-                                end = if (isLandscape) 108.dp else 14.dp,
+                                start = if (isLandscape) {
+                                    CaptureLayout.LANDSCAPE_RAIL_WIDTH_DP.dp + 16.dp
+                                } else {
+                                    14.dp
+                                },
+                                end = if (isLandscape) endRailDp else 14.dp,
                                 top = chromeTopDp - 12.dp,
-                                bottom = bottomClearance + 52.dp,
+                                bottom = bottomBandDp + 8.dp,
                             ),
+                            // ROUND 27 item 129(a): the two read-outs the SCREEN
+                            // owns now. `No data` was a viewport chip in the
+                            // bottom-END corner, which in landscape is the
+                            // middle of the picture beside the SCAN button —
+                            // the owner's "stray chip floating mid-screen". It
+                            // lives in the status pill now. `RAW · D6` was the
+                            // bottom-START chip, which in landscape is inside
+                            // the connect rail; it joins the map-mode chip in
+                            // the bottom corner. Neither is deleted and neither
+                            // is duplicated: the viewport simply stops drawing
+                            // the two the screen has taken over.
+                            ownsStatusChips = false,
+                            onMappedPageSeen = { hasSeenMappedPage = it },
                             // ROUND 24 item 110(b): the tracking-lost step
                             // rings the viewport, because that is where the
                             // popup lands and what the operator is watching.
@@ -1510,6 +1846,22 @@ fun CaptureScreen(
                     // protect a viewport that is showing nothing worth protecting
                     // would be the wrong trade in both directions.
                     val loudBanners: @Composable () -> Unit = {
+                        // ── ROUND 27 item 142(b): THE TRACKER IS DEAD ───────
+                        //
+                        // First, above everything else this band carries, and
+                        // one of the two things item 136's overlay ban still
+                        // lets over the picture — because it is a warning, and
+                        // because the alternative is what the OPPO user got:
+                        // six attempts, no scan, and a progress line that never
+                        // stopped being hopeful.
+                        if (arTrouble != com.lidarscan.core.capture.ArTroubleKind.NONE) {
+                            ArTroubleCard(
+                                kind = arTrouble,
+                                onRetry = onRetryAr,
+                                onUpdate = onUpdateArServices,
+                                onSendLogs = onSendLogs,
+                            )
+                        }
                         // ── ROUND 24 item 110(b): the one-time offer ────────
                         //
                         // A card, not a dialog: round 5's rule is that a modal
@@ -1605,23 +1957,67 @@ fun CaptureScreen(
                         (mountTrimNote != null && !mountTrimNoteIsWarning)
                     val hints: @Composable () -> Unit = {
                         if (anyHint) {
-                            Column(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .heightIn(max = CaptureLayout.HINT_BAND_MAX_DP.dp)
-                                    .verticalScroll(rememberScrollState()),
-                            ) {
+                            // ROUND 27 item 129(b): NOT a 44 dp scroller inside
+                            // a scroller. `HINT_BAND_MAX_DP` was round 8's
+                            // answer to "six advisories must not eat the
+                            // viewport", and in the fullscreen layout the
+                            // CHROME COLUMN's own ceiling is that answer — it
+                            // bounds banners, connect flow and hints together,
+                            // which is the number that actually matters.
+                            // Nested, the cap did the opposite of its job: it
+                            // clipped `Allow Do Not Disturb in Settings` in the
+                            // middle of the sentence and ate the drag that
+                            // would have revealed the rest.
+                            Column(Modifier.fillMaxWidth().testTag("scanHintBand")) {
                                 // ROUND 23 item 101(b): the tap that was
                                 // refused, in the words the log used, for four
                                 // seconds. Amber and first, because it is the
                                 // answer to something the operator did one
                                 // second ago.
                                 if (startTapRefusal != null) {
+                                    // ── ROUND 27 item 132 ──────────────────
+                                    //
+                                    // The line is the SAME sentence in the same
+                                    // amber it has been since round 23 — the
+                                    // wording law owns the words and this round
+                                    // does not touch them. Two things are
+                                    // added, both about being SEEN rather than
+                                    // about saying more.
+                                    //
+                                    // It scrolls itself into view. The chrome
+                                    // column is bounded and scrollable (item
+                                    // 129), so the answer to a press can
+                                    // legitimately be below the fold — a
+                                    // refusal the operator has to go looking
+                                    // for is the same defect as no refusal at
+                                    // all.
+                                    //
+                                    // And it gets a ground and a hairline, so
+                                    // that at a glance it is a CARD that
+                                    // appeared rather than a grey line that
+                                    // changed colour. Still one line, still no
+                                    // modal, still dismissible by tapping it.
+                                    val refusalIntoView = remember { BringIntoViewRequester() }
+                                    LaunchedEffect(startTapRefusal) {
+                                        refusalIntoView.bringIntoView()
+                                    }
                                     Hint(
                                         startTapRefusal,
                                         color = SemWarn,
-                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
+                                        modifier = Modifier
+                                            .padding(horizontal = 10.dp, vertical = 3.dp)
+                                            .bringIntoViewRequester(refusalIntoView)
+                                            .background(
+                                                SemWarn.copy(alpha = 0.12f),
+                                                RoundedCornerShape(ScanDims.TileRadius),
+                                            )
+                                            .border(
+                                                1.dp,
+                                                SemWarn.copy(alpha = 0.55f),
+                                                RoundedCornerShape(ScanDims.TileRadius),
+                                            )
                                             .clickable(onClick = onDismissStartTapRefusal)
+                                            .padding(horizontal = 10.dp, vertical = 7.dp)
                                             .testTag("startTapRefusalNote"),
                                     )
                                 } else if (startBlockedReason != null) {
@@ -1746,7 +2142,10 @@ fun CaptureScreen(
                             preset = preset,
                             scanName = scanName.ifBlank { newScan?.autoName ?: project?.manifest?.name ?: "New scan" },
                             poseState = poseState,
-                            poseChipVisible = poseTrackingRequired && connected,
+                            // ROUND 27 item 138: the pill owns the tracking
+                            // status. This chip was the second of the owner's
+                            // "2 tracking status showing in the scan tab".
+                            poseChipVisible = false,
                             showCaptureChip = true,
                             onOpenCapture = { sheet = CaptureSheet.CAPTURE },
                             onOpenDiagnostics = { sheet = CaptureSheet.DIAGNOSTICS },
@@ -1764,7 +2163,9 @@ fun CaptureScreen(
                     // to protect, and it is what the emulator smoke test walks.
                     val fullChrome: @Composable () -> Unit = {
                         PreCaptureStrip(
-                            maxHeight = LocalConfiguration.current.screenHeightDp.dp * 0.46f,
+                            // ROUND 27 item 129: the chrome column above is the
+                            // one bounded scroller on this screen.
+                            maxHeight = androidx.compose.ui.unit.Dp.Unspecified,
                             autoName = newScan?.autoName,
                             scanName = scanName,
                             autoConnectState = autoConnectState,
@@ -1800,8 +2201,12 @@ fun CaptureScreen(
                             scanName = scanName,
                             poseState = poseState,
                             poseChipVisible = false,
-                            showCaptureChip = false,
-                            onOpenCapture = {},
+                            // ROUND 27 item 133(c): the sheet's one door, in
+                            // both states. See the `CaptureConfigSheet` call
+                            // site for how the duplicate-node problem round 26
+                            // avoided by hiding the chip is answered instead.
+                            showCaptureChip = true,
+                            onOpenCapture = { sheet = CaptureSheet.CAPTURE },
                             onOpenDiagnostics = { sheet = CaptureSheet.DIAGNOSTICS },
                             onOpenMid360Setup = onOpenMid360Setup,
                             onOpenRtk = onOpenRtk,
@@ -1827,162 +2232,94 @@ fun CaptureScreen(
                     // pushing it down the screen. A camera app that cannot find
                     // its camera shows a panel over the preview; it does not
                     // stop being a camera app.
-                    viewport(Modifier.fillMaxSize())
-
-                    // ── TOP: the merged status pill, and the gear ───────────
-                    Column(
-                        Modifier
-                            .align(Alignment.TopCenter)
-                            .fillMaxWidth()
-                            .statusBarsPadding(),
-                    ) {
-                        // The back bar survives only for the replay session,
-                        // which is the one entry into this screen with a real
-                        // parent. The tab's own back arrow went to Projects,
-                        // which the tab bar already does, and 56 dp of a
-                        // fullscreen live view is not free.
-                        if (isReplaySession) {
-                            BackBar(
-                                title = project?.manifest?.name ?: "Capture — Replay",
-                                subtitle = "${profile.displayName} · ${captureStateLabel(captureState)}",
-                                onBack = onBack,
-                            )
-                        }
-                        Row(
-                            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.Top,
-                        ) {
-                            // ROUND 26 item 124: ONE pill, four facts. The
-                            // sensor badge, the elapsed time, the point count
-                            // and the metres walked were four separate widgets
-                            // in three separate bands; a glance mid-walk wants
-                            // them in one place, and a fullscreen viewport has
-                            // exactly one place to put them.
-                            ScanStatusPill(
-                                modifier = Modifier.widthIn(max = 260.dp),
-                                sensor = sensor,
-                                connected = connected,
-                                captureState = captureState,
-                                stats = stats,
-                                trailLengthM = trailLengthM,
-                                liveView = liveView,
-                            )
-                            // A weighted SPACER, and the pill merely width-
-                            // capped. `weight(1f, fill = false)` on the pill
-                            // does not reserve the row — Compose places Row
-                            // children consecutively and simply does not use
-                            // the unfilled remainder — so the gear ended up
-                            // touching the pill instead of at the end edge.
-                            // Caught in landscape on the AVD, where the free
-                            // space is large enough to make it obvious.
-                            Spacer(Modifier.weight(1f))
-                            ScanGearButton(onOpenAdvanced = { sheet = CaptureSheet.SETTINGS })
-                        }
-                        // The RTK/georeference chips keep their round-8 rule:
-                        // shown when there is genuinely RTK to report.
-                        if (!compact || georefSource.isRtk || ntrip.receiving) {
-                            Box(Modifier.padding(horizontal = 4.dp)) {
-                                FixChipStrip(fix = fix, ntrip = ntrip, georefSource = georefSource)
-                            }
-                        }
-                    }
-
-                    // ── THE FLOATING CHROME ────────────────────────────────
+                    // ══ ROUND 27 item 136 — THE OVERLAY BAN ════════════════
                     //
-                    // Banners, the start card, the connect flow and the hint
-                    // band, in one scrollable column that is capped so it can
-                    // never cover the whole picture. In portrait it hangs off
-                    // the bottom of the top bar; in landscape it takes the
-                    // start rail, which is the round-8 340 dp column with the
-                    // viewport now behind it rather than beside it.
-                    val chromeMax = if (compact) {
-                        CaptureLayout.chromeMaxHeightDp(
-                            screenHeightDp = screenHeightDp,
-                            mountRow = mountRowVisible,
-                        ).dp
-                    } else {
-                        // Disconnected, the connect flow IS the screen's job —
-                        // see [CaptureLayout.connectFlowMaxHeightDp].
-                        CaptureLayout.connectFlowMaxHeightDp(screenHeightDp).dp
-                    }
-                    Column(
-                        Modifier
-                            .align(if (isLandscape) Alignment.TopStart else Alignment.TopCenter)
-                            .then(
-                                if (isLandscape) {
-                                    // Landscape's rail is a BAND, not a centred
-                                    // card: it runs from under the status pill
-                                    // down to just above the corner chips, so it
-                                    // can never print the connect flow through
-                                    // the map-mode chip (which is what a centred
-                                    // column did on the AVD) and it gets the
-                                    // whole height in between for the tallest
-                                    // thing this screen draws.
-                                    Modifier
-                                        .width(340.dp)
-                                        .fillMaxHeight()
-                                        .statusBarsPadding()
-                                        .padding(top = chromeTopDp + 8.dp, bottom = 132.dp)
-                                } else {
-                                    // Portrait is a band too, for the same
-                                    // reason: anchored under the status row and
-                                    // stopping above the control cluster, so the
-                                    // connect flow's last line cannot end up
-                                    // printed through the SCAN button.
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .statusBarsPadding()
-                                        .padding(top = chromeTopDp)
-                                        .heightIn(max = chromeMax)
-                                },
-                            )
-                            .verticalScroll(rememberScrollState())
-                            .padding(horizontal = 12.dp),
-                    ) {
-                        loudBanners()
-                        if (compact) compactChrome() else fullChrome()
-                        hints()
-                    }
-
-                    // ── BOTTOM: the corners, and the one dominant control ───
+                    // The owner, on 0.9.11: *"Nothing should overlay except
+                    // warning. … show the settings of connection in the main
+                    // window and not overlay."* That revises round 26's central
+                    // decision rather than tuning it, and it is the right
+                    // revision: item 124's argument for floating everything was
+                    // "a camera app shows a panel over the preview", and it is
+                    // true of a camera app that HAS a picture. With nothing on
+                    // the cable there is no picture — the viewport is empty
+                    // ground — so what round 26 actually shipped was a settings
+                    // form floating over a black rectangle, and every collision
+                    // item 129 lists is a consequence of two things competing
+                    // for pixels that a column would simply have divided.
                     //
-                    // Portrait: map-mode chip · FAB · '?' — the FAB centred
-                    // between the two corners, which is where a camera app's
-                    // shutter is and where a thumb lands without looking.
-                    // Landscape: the same cluster rotates to the end edge and
-                    // the two chips stay in the bottom corners, because a
-                    // corner is a corner in both orientations.
-                    if (isLandscape) {
-                        Column(
-                            Modifier
-                                .align(Alignment.CenterEnd)
-                                .navigationBarsPadding()
-                                .padding(end = 18.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
-                            controls(true)
-                        }
+                    // So the screen has TWO compositions and one predicate:
+                    //
+                    //  * **idle** — an ordinary laid-out page. A status band, a
+                    //    preview that takes the room left over, the connection
+                    //    section IN THE FLOW, and the controls in a band of
+                    //    their own. Nothing overlaps anything, by construction
+                    //    rather than by arithmetic.
+                    //  * **recording or starting** — minimal and fullscreen.
+                    //    The picture is the product now, so it takes the
+                    //    screen, and the only things on it are the status pill,
+                    //    the control cluster and whatever is warning you. This
+                    //    is round 26's layout, kept for the state it was right
+                    //    for.
+                    //
+                    // Warnings are the exception in both (`loudBanners`, the
+                    // tracking-loss popup, the refusal cue), which is exactly
+                    // the licence the owner granted.
+                    val minimal = live || starting
+                    // ── ROUND 27 item 136: the viewport MOVES, it is not rebuilt
+                    //
+                    // Start flips this screen from the idle page to the minimal
+                    // one, and the viewport is a different node in a different
+                    // subtree on either side of that flip. Compose's positional
+                    // identity would therefore DISPOSE the old one and compose a
+                    // new one — which for this composable means tearing down a
+                    // `GLSurfaceView`, a Filament renderer and, on a replay
+                    // session, the decode that has just been asked to start.
+                    // The emulator suite found it immediately and exactly:
+                    // `ReplayCaptureSmokeTest` clicked Start and then waited
+                    // twenty seconds for a point count that never left zero.
+                    //
+                    // `movableContentOf` is the tool for precisely this — the
+                    // same instance, with its state, relocated in the tree — and
+                    // `rememberUpdatedState` is what keeps the moved content
+                    // reading the CURRENT lambda rather than the one captured on
+                    // the first frame.
+                    val currentViewport by androidx.compose.runtime.rememberUpdatedState(viewport)
+                    val movableViewport = remember {
+                        androidx.compose.runtime.movableContentOf<Modifier> { m -> currentViewport(m) }
                     }
-                    Row(
-                        Modifier
-                            .align(Alignment.BottomCenter)
-                            .fillMaxWidth()
-                            .navigationBarsPadding()
-                            .padding(horizontal = 14.dp)
-                            .padding(bottom = bottomClearance),
-                        verticalAlignment = Alignment.Bottom,
-                    ) {
-                        MapModeChip(
-                            liveMapEnabled = liveMapEnabled,
-                            liveMapRequested = liveMapRequested,
-                            onClick = { sheet = CaptureSheet.CAPTURE },
+                    if (minimal) {
+                        MinimalScanLayout(
+                            isLandscape = isLandscape,
+                            bottomClearance = bottomClearance,
+                            endRailDp = endRailDp,
+                            onEndRailMeasured = { endRailLeftPx = it },
+                            onTopBandMeasured = { topBandBottomPx = it },
+                            onBottomBandMeasured = { bottomBandTopPx = it },
+                            viewport = movableViewport,
+                            statusBand = statusBand,
+                            controls = controls,
+                            loudBanners = loudBanners,
+                            hints = hints,
+                            streamChip = streamChip,
+                            tutorialChip = { TutorialChip(onOpenTutorial = onStartTutorial) },
                         )
-                        Spacer(Modifier.weight(1f))
-                        if (!isLandscape) {
-                            controls(false)
-                            Spacer(Modifier.weight(1f))
-                        }
-                        TutorialChip(onOpenTutorial = onStartTutorial)
+                    } else {
+                        IdleScanLayout(
+                            isLandscape = isLandscape,
+                            connected = compact,
+                            windowHeightDp = windowHeightDp,
+                            windowWidthDp = windowWidthDp,
+                            mountRowVisible = mountRowVisible,
+                            viewport = movableViewport,
+                            statusBand = statusBand,
+                            controls = controls,
+                            chrome = {
+                                loudBanners()
+                                if (compact) compactChrome() else fullChrome()
+                                hints()
+                            },
+                            tutorialChip = { TutorialChip(onOpenTutorial = onStartTutorial) },
+                        )
                     }
                 }
             }
@@ -2075,7 +2412,21 @@ fun CaptureScreen(
             presetCaution = presetCaution,
             onPresetChange = onPresetChange,
             onDismissPresetNote = onDismissPresetNote,
-            autoName = newScan?.autoName,
+            // ── ROUND 27 item 133(c) ────────────────────────────────────
+            //
+            // The config chip is the sheet's one owner now (the map-mode chip
+            // toggles instead of opening it), so the chip has to be offered on
+            // the DISCONNECTED screen too — otherwise removing the second door
+            // would have removed the only door there. Round 26's reason for not
+            // offering it stands and is answered rather than overruled: the
+            // sheet must not put a SECOND `scanNameField` or a second
+            // `manualLidarIpField` in the tree while the connect flow is already
+            // drawing them. So while the connect flow is on screen the sheet
+            // simply does not draw its duplicates — `autoName = null` drops the
+            // name field, and `connection` says where the controls are instead
+            // of repeating them. Everything the sheet uniquely owns (preset,
+            // profile, live map, live SLAM) is reachable in both states.
+            autoName = newScan?.autoName.takeIf { compact },
             scanName = scanName,
             onScanNameChange = onScanNameChange,
             // The profile is only settable while the project does not exist yet
@@ -2093,7 +2444,15 @@ fun CaptureScreen(
             liveSlamSupported = !sensor.isPhoneTrackedPushbroom,
             onLiveSlamChange = onLiveSlamChange,
             connection = {
-                if (autoConnectState != null) {
+                if (!compact && autoConnectState != null) {
+                    // The connect flow is on the screen BEHIND this sheet. A
+                    // second copy of it here is two `manualLidarIpField` nodes
+                    // and two "Retry" links driving one state.
+                    Hint(
+                        "The connect panel is on the screen behind this sheet.",
+                        color = InkFaint,
+                    )
+                } else if (autoConnectState != null) {
                     AutoDetectLine(
                         state = autoConnectState,
                         onRetry = onRetryAutoDetect,
@@ -2136,6 +2495,58 @@ fun CaptureScreen(
 
         CaptureSheet.SETTINGS -> CaptureSettingsSheet(
             sheetState = settingsSheetState,
+            // ── ROUND 27 item 139: the Connection tab ───────────────────────
+            //
+            // The owner: *"put the connection setting in the advance button too
+            // with seperate tab."* **Too** — so this is the same connect flow
+            // the idle page draws in its main column (item 136b), passed as a
+            // slot rather than reimplemented. Two doors, one implementation,
+            // one state; there is no second `manualLidarIpField` because there
+            // is no second panel, only a second place the same panel is called
+            // from — and the two are mutually exclusive, because opening this
+            // sheet covers the page that holds the other one.
+            //
+            // Null over a replay session: there is no device to connect.
+            connection = if (autoConnectState != null && !isReplaySession) {
+                {
+                    AutoDetectLine(
+                        state = autoConnectState,
+                        onRetry = onRetryAutoDetect,
+                        onShowManual = onShowManualEntry,
+                        onHideManual = onHideManualEntry,
+                    )
+                    ManualEntryPanel(
+                        devices = manualDevices,
+                        lidarIp = manualLidarIp,
+                        hostIp = manualHostIp,
+                        busy = autoConnectState.phase == CaptureAutoConnectState.Phase.CONNECTING,
+                        onDeviceConnect = onManualDeviceConnect,
+                        onLidarIpChange = onManualLidarIpChange,
+                        onHostIpChange = onManualHostIpChange,
+                        onMid360Connect = onManualMid360Connect,
+                        ownScroll = false,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        onOpenMid360Setup?.let {
+                            SecondaryPill(
+                                text = com.lidarscan.core.Wording.MID360_SETUP,
+                                height = 40.dp,
+                                onClick = it,
+                                modifier = Modifier.testTag("advancedMid360Chip"),
+                            )
+                        }
+                        SecondaryPill(
+                            text = "Diagnostics",
+                            height = 40.dp,
+                            onClick = { sheet = CaptureSheet.DIAGNOSTICS },
+                            modifier = Modifier.testTag("advancedDiagChip"),
+                        )
+                    }
+                }
+            } else {
+                null
+            },
             cameraMode = cameraMode,
             arAvailable = arAvailable,
             arTrackingLabel = arTrackingLabel(arAvailable, arTracking, cameraMode, keyframesEnabled, poseTrackingRequired),
@@ -2990,6 +3401,22 @@ private fun LoudBanner(
  */
 @Composable
 private fun PreCaptureStrip(
+    /**
+     * ROUND 27 item 129 — **the cap, and `Dp.Unspecified` for "the caller
+     * already bounds me".**
+     *
+     * Round 8 gave this strip its own ceiling and its own `verticalScroll`,
+     * which was right when it was one child of a non-scrolling capture column.
+     * Round 26 moved it INSIDE the floating chrome column, which is itself
+     * height-bounded and itself scrollable — and two scrollers on the same axis
+     * do not compose: the inner one swallows every drag, so the outer column
+     * cannot be scrolled at all, and the inner one clips at 46 % of the screen,
+     * which is exactly where the AVD cut the USB SCANNER panel in half.
+     *
+     * `Dp.Unspecified` means "I have a bounded, scrolling parent — lay out at
+     * my natural height and let it do the work". The mount-calibration wizard
+     * and the tests that host this strip directly still pass a real number.
+     */
     maxHeight: androidx.compose.ui.unit.Dp,
     autoName: String?,
     scanName: String,
@@ -3020,12 +3447,19 @@ private fun PreCaptureStrip(
     onSetMountReference: () -> Unit = {},
     onClearMountReference: () -> Unit = {},
 ) {
+    val ownScroll = maxHeight != androidx.compose.ui.unit.Dp.Unspecified
     Column(
         Modifier
             .fillMaxWidth()
-            .heightIn(max = maxHeight)
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 14.dp),
+            .then(
+                if (ownScroll) {
+                    Modifier.heightIn(max = maxHeight).verticalScroll(rememberScrollState())
+                } else {
+                    Modifier
+                },
+            )
+            .padding(horizontal = 14.dp)
+            .testTag("preCaptureStrip"),
     ) {
         if (autoName != null) {
             OutlinedTextField(
@@ -3057,6 +3491,9 @@ private fun PreCaptureStrip(
                     onLidarIpChange = onManualLidarIpChange,
                     onHostIpChange = onManualHostIpChange,
                     onMid360Connect = onManualMid360Connect,
+                    // ROUND 27 item 129: whoever bounds this strip bounds the
+                    // panel too. See `ownScroll`.
+                    ownScroll = ownScroll,
                 )
             }
         }
@@ -3288,16 +3725,39 @@ private fun ManualEntryPanel(
     onLidarIpChange: (String) -> Unit,
     onHostIpChange: (String) -> Unit,
     onMid360Connect: () -> Unit,
+    /**
+     * ROUND 27 item 129 — **the THIRD nested scroller.**
+     *
+     * `PreCaptureStrip` had one and the hint band had one; this panel had a
+     * `heightIn(max = 260.dp).verticalScroll(...)` of its own, and it is the
+     * one that actually cut the AVD's screenshot in half — "Connect Mid-360"
+     * sheared through the middle of its letters at exactly 260 dp, with no way
+     * to reach the rest, because a drag inside the panel was consumed by the
+     * panel and a drag on the column was consumed by the panel too.
+     *
+     * Three scrollers on one axis inside one another is not a layout, it is
+     * three layouts arguing. False means "my parent is a bounded scroller and
+     * owns the gesture", which is every fullscreen-Scan-tab call site; the
+     * Capture sheet, which hosts this panel inside a sheet of its own, keeps
+     * the cap.
+     */
+    ownScroll: Boolean = true,
 ) {
     var manualSerialSensor by rememberSaveable { mutableStateOf(SensorType.COIN_D6) }
     val shape = RoundedCornerShape(ScanDims.TileRadius)
     Column(
         Modifier
             .fillMaxWidth()
-            .heightIn(max = 260.dp)
+            .then(
+                if (ownScroll) {
+                    Modifier.heightIn(max = 260.dp)
+                } else {
+                    Modifier
+                },
+            )
             .background(MaterialTheme.colorScheme.surfaceContainer, shape)
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
-            .verticalScroll(rememberScrollState())
+            .then(if (ownScroll) Modifier.verticalScroll(rememberScrollState()) else Modifier)
             .padding(12.dp)
             .testTag("manualEntryPanel"),
     ) {
@@ -3402,6 +3862,17 @@ private fun CaptureViewport(
      */
     chipInsets: androidx.compose.foundation.layout.PaddingValues =
         androidx.compose.foundation.layout.PaddingValues(12.dp),
+    /**
+     * ROUND 27 item 129(a) — true when the VIEWPORT owns the stream and health
+     * read-outs (the calibration wizard's inset card, which has no chrome of
+     * its own to put them in), false on the fullscreen Scan tab, where the
+     * screen draws both in real corners. Never "draw them twice": the health
+     * chip's `captureHealthChip` tag is asserted by three suites and two nodes
+     * with that tag is an ambiguous selector, not a duplicated affordance.
+     */
+    ownsStatusChips: Boolean = true,
+    /** ROUND 27 item 129(a) — reports the polled stream state to whoever draws the chip. */
+    onMappedPageSeen: (Boolean) -> Unit = {},
     modifier: Modifier,
     connected: Boolean,
     isReplaySession: Boolean,
@@ -3470,6 +3941,11 @@ private fun CaptureViewport(
     // actually true.
     var pointCloudRenderer by remember { mutableStateOf<com.lidarscan.app.render.PointCloudRenderer?>(null) }
     var hasSeenMappedPage by remember { mutableStateOf(false) }
+    // ROUND 27 item 129(a): the SCREEN draws the stream chip now (in the
+    // bottom-start corner, beside the map-mode chip, out of the landscape
+    // connect rail). The poll stays here, because the renderer it polls is
+    // here; only the fact travels.
+    LaunchedEffect(hasSeenMappedPage) { onMappedPageSeen(hasSeenMappedPage) }
     // ROUND 5 AUDIT bugfix (task 2, multi-cycle recording): the same viewport
     // (and the same underlying PointCloudRenderer) survives a Stop -> Start
     // within one connect session, so this must re-arm for the SECOND
@@ -3615,8 +4091,12 @@ private fun CaptureViewport(
                 // bands, so the mini-map lands just above the control cluster —
                 // still bottom-centre, still the first thing under the thumb's
                 // eyeline, and no longer under the thumb itself.
+                // ROUND 27 item 129(a): the BOTTOM inset only. `chipInsets`
+                // is asymmetric in landscape (the start side is the connect
+                // rail, the end side is the control rail) and a bottom-CENTRE
+                // overlay padded by both is shoved sideways into the cluster.
                 modifier = Modifier.align(Alignment.BottomCenter)
-                    .padding(chipInsets)
+                    .padding(bottom = chipInsets.calculateBottomPadding())
                     .size(width = 108.dp, height = 84.dp),
             )
         }
@@ -3705,15 +4185,12 @@ private fun CaptureViewport(
         // Only once something is streaming: a tracking state on a viewport with no
         // sensor behind it is a status about a scan that is not happening. Short
         // labels, because this chip shares the top band with the camera control.
-        if (poseTrackingRequired && poseState != PoseTrackingState.NOT_REQUIRED && connected) {
-            ScanChip(
-                text = poseState.chipLabel,
-                color = poseState.chipColor,
-                showDot = true,
-                modifier = Modifier.align(Alignment.TopCenter).padding(chipInsets)
-                    .testTag("poseTrackingViewportChip"),
-            )
-        } else if (cameraMode == CameraMode.AR && arTrackingHint != null) {
+        // ROUND 27 item 138: the tracking chip that used to ride here is in the
+        // status pill now — one fact, one owner. What stays is the AR hint,
+        // which is a different sentence about a different thing (the camera's
+        // own advice: "point at a textured surface") and is only ever shown in
+        // AR mode.
+        if (cameraMode == CameraMode.AR && arTrackingHint != null) {
             ScanChip(
                 text = arTrackingHint,
                 color = SemWarn,
@@ -3733,35 +4210,26 @@ private fun CaptureViewport(
         // every D6 session on this tab). "RAW" now also covers the Light
         // preset's deliberate raw-only view, which is a choice rather than a
         // missing map — and it says so, so nobody reads it as a failure.
-        ScanChip(
-            text = when {
-                !liveMapEnabled -> "RAW · LIGHT PRESET"
-                !liveMapRequested -> "RAW · ${sensor.badgeLabel.uppercase()}"
-                hasSeenMappedPage -> "LIVE MAP · 3D"
-                else -> "BUILDING MAP…"
-            },
-            color = PoseBlue,
-            showDot = true,
-            modifier = Modifier.align(Alignment.BottomStart).padding(chipInsets)
-                .padding(start = 6.dp),
-        )
+        if (ownsStatusChips) {
+            StreamModeChip(
+                liveMapEnabled = liveMapEnabled,
+                liveMapRequested = liveMapRequested,
+                hasSeenMappedPage = hasSeenMappedPage,
+                modifier = Modifier.align(Alignment.BottomStart).padding(chipInsets)
+                    .padding(start = 6.dp),
+            )
+        }
 
         // ── bottom-right: the health chip, and the door to Diagnostics ──
         //
         // The chip's own ink is chip-sized; the 44 dp minimum comes from the
         // Box it sits in, so the target grows without the chip inflating.
-        val (healthLabel, healthColor) = healthReadout(health)
-        Box(
-            Modifier
-                .align(Alignment.BottomEnd)
-                .padding(chipInsets)
-                .height(ScanDims.Touch)
-                .clickable(role = Role.Button, onClick = onOpenDiagnostics)
-                .semantics { contentDescription = "Diagnostics — device health $healthLabel" }
-                .testTag("captureHealthChip"),
-            contentAlignment = Alignment.Center,
-        ) {
-            ScanChip(text = healthLabel, color = healthColor, modifier = Modifier.padding(horizontal = 6.dp))
+        if (ownsStatusChips) {
+            CaptureHealthChip(
+                health = health,
+                onOpenDiagnostics = onOpenDiagnostics,
+                modifier = Modifier.align(Alignment.BottomEnd).padding(chipInsets),
+            )
         }
 
         // ── ROUND 23 item 102: THE SECOND ADVANCED BUTTON IS GONE ───────────
@@ -4103,11 +4571,52 @@ private fun ScanFab(
     // press still cannot start anything, but it PULSES the start card instead
     // of vanishing into an inert control.
     val armed = connected && !stopping && !starting
+
+    // ── ROUND 27 item 132: A REFUSED PRESS IS ANSWERED, VISIBLY ────────────
+    //
+    // Round 23 item 101(b) made the button never inert and never silent: a
+    // press that cannot start anything still calls back, still logs, and still
+    // recolours the standing reason from grey to amber. On the AVD that turned
+    // out to be a four-word line, in 11 sp mono, six hundred pixels away from
+    // the thumb that just pressed — the owner pressed SCAN and, as far as the
+    // screen was concerned, nothing happened.
+    //
+    // What is added is deliberately NOT a dialog and NOT a toast: this screen's
+    // rule since round 5 is that a modal is the worst interruption on it, and a
+    // refusal is not an error worth a modal. The answer comes from the control
+    // that was pressed — a 400 ms damped shake and one haptic tick — which is
+    // the smallest thing that cannot be missed by someone looking at their own
+    // thumb. The wording is untouched; this is the same sentence, delivered.
+    var refusalTick by remember { mutableIntStateOf(0) }
+    val shake = remember { Animatable(0f) }
+    val haptics = LocalHapticFeedback.current
+    LaunchedEffect(refusalTick) {
+        if (refusalTick == 0) return@LaunchedEffect
+        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+        shake.snapTo(0f)
+        shake.animateTo(1f, tween(durationMillis = 420, easing = LinearEasing))
+    }
+
     Box(
         Modifier
             .size(if (live) 96.dp else 88.dp)
             // ROUND 24 item 110(b): the tour's first two steps ring this.
             .then(rememberTutorialAnchor(com.lidarscan.core.capture.TutorialAnchor.SCAN_BUTTON))
+            .graphicsLayer {
+                val p = shake.value
+                if (p > 0f && p < 1f) {
+                    // Two full cycles, amplitude decaying to nothing: a shake
+                    // that ENDS is a refusal; one that keeps going is a fault
+                    // light. The pulse rides the same envelope so the button
+                    // reads as recoiling rather than as vibrating in place.
+                    val envelope = 1f - p
+                    translationX = kotlin.math.sin(p * 4f * kotlin.math.PI.toFloat()) *
+                        envelope * 10.dp.toPx()
+                    val pulse = 1f + 0.05f * envelope
+                    scaleX = pulse
+                    scaleY = pulse
+                }
+            }
             .alpha(if (armed || live) 1f else 0.45f)
             .shadow(16.dp, CircleShape, ambientColor = Ember, spotColor = Ember)
             .background(Ember, CircleShape)
@@ -4120,7 +4629,16 @@ private fun ScanFab(
             .clickable(enabled = true, role = Role.Button) {
                 when {
                     live -> onStop()
-                    startBlockedReason != null -> onStartRefused(startBlockedReason)
+                    startBlockedReason != null -> {
+                        // ROUND 27 item 132: the same callback (so the log line
+                        // and the amber sentence are unchanged) plus the answer
+                        // the thumb can feel. The tick is a counter rather than
+                        // a boolean because the SECOND refused press must shake
+                        // again — a boolean that is already true recomposes
+                        // nothing, which is the classic version of this bug.
+                        refusalTick++
+                        onStartRefused(startBlockedReason)
+                    }
                     else -> onStart()
                 }
             }
@@ -4185,6 +4703,32 @@ private fun ScanStatusPill(
     trailLengthM: Float,
     liveView: Boolean,
     modifier: Modifier = Modifier,
+    /**
+     * ROUND 27 item 129(a) — the device-health read-out, or null when the
+     * caller does not own it.
+     *
+     * Round 26 hung this in the viewport's bottom-END corner. In portrait that
+     * is a real corner; in landscape it is the middle of the picture, one chip
+     * away from the SCAN button — the owner's "stray 'No data' chip floating
+     * mid-screen". A read-out belongs with the other read-outs, and this pill
+     * is where the other four already are.
+     */
+    health: DeviceHealth? = null,
+    /** ROUND 27 item 129(a) — draw the health chip in the pill at all. Null health still reads "No data". */
+    showHealth: Boolean = false,
+    /**
+     * ROUND 27 item 138 — **the one tracking status on this screen**, or null
+     * when there is nothing to say (no pose requirement, or nothing connected).
+     *
+     * The owner counted two. There were two: a `poseTrackingViewportChip` in
+     * the viewport's top-centre corner and a second pose chip inside
+     * `CaptureChipRow`, both alive on a connected D6, both derived from the
+     * same `poseState` but composed in different subtrees — so mid-transition
+     * they could even disagree for a frame. One fact, one owner, and the owner
+     * is the pill the operator already reads for everything else.
+     */
+    poseState: PoseTrackingState? = null,
+    onOpenDiagnostics: () -> Unit = {},
 ) {
     val live = captureState == CaptureState.RECORDING || captureState == CaptureState.PAUSED
     Column(
@@ -4240,7 +4784,439 @@ private fun ScanStatusPill(
                 maxLines = 1,
             )
         }
+        if (showHealth || poseState != null) {
+            Spacer(Modifier.height(3.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                if (poseState != null) {
+                    ScanChip(
+                        text = poseState.chipLabel,
+                        color = poseState.chipColor,
+                        showDot = true,
+                        modifier = Modifier.testTag("poseTrackingViewportChip"),
+                    )
+                }
+                if (showHealth) {
+                    CaptureHealthChip(health = health, onOpenDiagnostics = onOpenDiagnostics)
+                }
+            }
+        }
     }
+}
+
+/**
+ * ROUND 27 item 142(b) — **the card that would have saved the OPPO user six
+ * attempts.**
+ *
+ * Its whole job is to end the state where a dead camera and a slow start look
+ * identical. It is deliberately not a dialog (this tab's rule since round 5)
+ * and not a hint (a hint is a note; this is a fault), so it takes the shape of
+ * the loud band the save-failure banner already uses.
+ *
+ * The actions are what separate it from a message. **Retry** rebuilds the
+ * ARCore session outright — the same `resetWorldFrame` the start gate uses,
+ * which after item 143 will build one even when the old one is gone. **Update
+ * AR services** goes to the Play listing, because a missing APK is a problem
+ * this app cannot fix and the store can. **Send logs** is the Profile flow,
+ * because the honest position on a device nobody here owns is that the next
+ * step is a log.
+ *
+ * `UNSUPPORTED` gets no Retry, for round 27's own reason two items over: a
+ * button that must fail is worse than no button.
+ */
+@Composable
+private fun ArTroubleCard(
+    kind: com.lidarscan.core.capture.ArTroubleKind,
+    onRetry: () -> Unit,
+    onUpdate: () -> Unit,
+    onSendLogs: (() -> Unit)?,
+) {
+    val title = com.lidarscan.core.capture.ArTrouble.title(kind) ?: return
+    val detail = com.lidarscan.core.capture.ArTrouble.detail(kind)
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .background(SemWarn.copy(alpha = 0.12f), RoundedCornerShape(ScanDims.TileRadius))
+            .border(1.dp, SemWarn, RoundedCornerShape(ScanDims.TileRadius))
+            .padding(horizontal = 14.dp, vertical = 12.dp)
+            .testTag("arTroubleCard"),
+    ) {
+        Text(
+            title,
+            fontFamily = DisplayFontFamily,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 16.sp,
+            color = SemWarn,
+            modifier = Modifier.testTag("arTroubleTitle"),
+        )
+        if (detail != null) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag("arTroubleDetail"),
+            )
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (com.lidarscan.core.capture.ArTrouble.retryable(kind)) {
+                SecondaryPill(
+                    text = com.lidarscan.core.capture.ArTrouble.RETRY,
+                    height = 40.dp,
+                    onClick = onRetry,
+                    modifier = Modifier.testTag("arTroubleRetry"),
+                )
+            }
+            if (kind == com.lidarscan.core.capture.ArTroubleKind.NEEDS_INSTALL) {
+                SecondaryPill(
+                    text = com.lidarscan.core.capture.ArTrouble.NEEDS_INSTALL_ACTION,
+                    height = 40.dp,
+                    onClick = onUpdate,
+                    modifier = Modifier.testTag("arTroubleUpdate"),
+                )
+            }
+            onSendLogs?.let {
+                SecondaryPill(
+                    text = com.lidarscan.core.capture.ArTrouble.SEND_LOGS,
+                    height = 40.dp,
+                    onClick = it,
+                    modifier = Modifier.testTag("arTroubleSendLogs"),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * ROUND 27 item 136 — **the idle Scan page, laid out.**
+ *
+ * An ordinary column (portrait) or row (landscape). Nothing overlays anything,
+ * and that is the point: the owner's *"nothing should overlay except warning"*
+ * is satisfied by construction here rather than by the arithmetic item 129 had
+ * to add to keep four floating elements out of each other's rectangles.
+ *
+ * The proportions are round 8's, which come back into force exactly where they
+ * were right. `CaptureLayout.viewportMinHeightDp` is the live view's guaranteed
+ * share; the chrome gets what is left and SCROLLS inside it, so a connect flow
+ * longer than the window is a flick rather than a clipped sentence. On a
+ * DISCONNECTED screen the split is deliberately the other way round — there is
+ * no picture to protect, the tab's job is the connect flow, and the preview
+ * shrinks to a strip that still says "nothing on the cable".
+ *
+ * ## Item 135, on the same lines
+ *
+ * There is no fixed-dp composition in here that can collide. Every band is
+ * either weighted, wrapped or bounded-and-scrollable, the landscape rail is
+ * `min(356 dp, 46 % of the window)` rather than 356 dp flat, and the control
+ * column is a `wrapContentWidth` in a row that has already given the picture a
+ * weight. A 360 × 640 dp phone gets a smaller version of this page, not a
+ * broken one — asserted at that size by `Round27UiTest`.
+ */
+@Composable
+private fun IdleScanLayout(
+    isLandscape: Boolean,
+    /**
+     * ROUND 27 item 136 — which way the page splits.
+     *
+     * Round 8's rule and round 26's exception, both intact and now both drawn
+     * by the same column. **Connected**, the live view keeps its 60 %: the
+     * picture is the only thing that tells the operator whether the walk is
+     * working, and the chrome is one mount row and one chip row. **Not
+     * connected**, the trade inverts — there is no picture (the viewport is
+     * empty ground saying "connect a sensor") and the tab's whole job is the
+     * connect flow, so the preview shrinks to a strip that proves the viewport
+     * is alive and the connect flow gets the window.
+     */
+    connected: Boolean,
+    windowHeightDp: androidx.compose.ui.unit.Dp,
+    windowWidthDp: androidx.compose.ui.unit.Dp,
+    mountRowVisible: Boolean,
+    viewport: @Composable (Modifier) -> Unit,
+    statusBand: @Composable (Boolean) -> Unit,
+    controls: @Composable (Boolean) -> Unit,
+    chrome: @Composable () -> Unit,
+    tutorialChip: @Composable () -> Unit,
+) {
+    val chromeScroll = rememberScrollState()
+    // The chrome's own ceiling, so the preview is never squeezed to nothing on
+    // a short phone. `heightIn(max = …)` plus `weight` on the viewport is the
+    // whole of the responsive rule: whichever runs out first, both survive.
+    val chromeMaxDp = (
+        windowHeightDp.value - CaptureLayout.viewportMinHeightDp(
+            screenHeightDp = windowHeightDp.value,
+            mountRow = mountRowVisible,
+            appBar = false,
+        )
+        ).coerceAtLeast(CaptureLayout.BAND_FLOOR_DP).dp
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .testTag("scanIdlePage"),
+    ) {
+        // ROUND 27 items 135 + 136: in PORTRAIT the status band is a row across
+        // the top. In LANDSCAPE it goes inside the start rail instead, because
+        // a full-width band there costs ~120 dp of a 411 dp window — enough
+        // that the control column below it could not fit its own three buttons
+        // and the pause button was scrolled off the bottom of the screen. The
+        // owner's word for this class of thing on his OPPO is "packed tight".
+        if (!isLandscape) statusBand(false)
+        if (isLandscape) {
+            Row(Modifier.fillMaxWidth().weight(1f)) {
+                // ROUND 27 item 135: a share of the window, capped — not 356 dp
+                // on a phone that may only be 640 dp wide in landscape.
+                val railWidth = minOf(
+                    CaptureLayout.LANDSCAPE_RAIL_WIDTH_DP.dp,
+                    // Disconnected the rail is the screen's job, so it may take
+                    // more of the width; connected the picture wins.
+                    windowWidthDp * (if (connected) 0.38f else 0.52f),
+                )
+                Column(Modifier.width(railWidth).fillMaxHeight()) {
+                    // Pinned: the read-out does not scroll away from the flow
+                    // it is about.
+                    statusBand(false)
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .verticalScroll(chromeScroll)
+                            .padding(horizontal = 12.dp)
+                            .testTag("scanChromeColumn"),
+                    ) { chrome() }
+                }
+                Box(Modifier.weight(1f).fillMaxHeight().padding(horizontal = 8.dp)) {
+                    viewport(Modifier.fillMaxSize())
+                    Box(Modifier.align(Alignment.BottomEnd).padding(10.dp)) {
+                        tutorialChip()
+                    }
+                }
+                Column(
+                    Modifier
+                        .fillMaxHeight()
+                        .padding(horizontal = 10.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) { controls(true) }
+            }
+        } else {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .then(
+                        if (connected) {
+                            Modifier.weight(1f, fill = true)
+                        } else {
+                            // A strip, not a stage. `min` so a short phone does
+                            // not spend a third of itself on empty ground —
+                            // item 135's rule, applied to the one band that is
+                            // a fixed dp anywhere on this page.
+                            Modifier.height(minOf(200.dp, windowHeightDp * 0.24f))
+                        },
+                    )
+                    .padding(horizontal = 10.dp),
+            ) {
+                viewport(Modifier.fillMaxSize())
+                Box(Modifier.align(Alignment.BottomEnd).padding(10.dp)) { tutorialChip() }
+            }
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .then(
+                        if (connected) Modifier.heightIn(max = chromeMaxDp) else Modifier.weight(1f),
+                    )
+                    .verticalScroll(chromeScroll)
+                    .padding(horizontal = 12.dp)
+                    .testTag("scanChromeColumn"),
+            ) { chrome() }
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) { controls(false) }
+        }
+    }
+}
+
+/**
+ * ROUND 27 item 136 — **the recording page: round 26's fullscreen layout, kept
+ * for the state it was right for.**
+ *
+ * Here the argument item 124 made is simply true. There IS a picture, it is the
+ * only thing that tells the operator whether the walk is working, and the four
+ * controls a walking thumb needs belong on top of it rather than in a band that
+ * costs it 200 dp. What round 27 removes is everything that is not one of those
+ * four (item 137): no scan-name field, no re-zero, no New-capture chip, no
+ * preset chip, no connect flow — those are decisions taken before Start, and a
+ * decision you cannot act on is clutter over the only thing you can.
+ *
+ * What remains, exhaustively: the status pill (sensor · time · points · metres,
+ * plus tracking and health), the gear, the control cluster (STOP, pause, eye),
+ * the stream chip, the `?`, the coverage mini-map the viewport draws, and
+ * whatever is warning you.
+ */
+@Composable
+private fun androidx.compose.foundation.layout.BoxScope.MinimalScanLayout(
+    isLandscape: Boolean,
+    bottomClearance: androidx.compose.ui.unit.Dp,
+    endRailDp: androidx.compose.ui.unit.Dp,
+    onEndRailMeasured: (Float) -> Unit,
+    onTopBandMeasured: (Float) -> Unit,
+    onBottomBandMeasured: (Float) -> Unit,
+    viewport: @Composable (Modifier) -> Unit,
+    statusBand: @Composable (Boolean) -> Unit,
+    controls: @Composable (Boolean) -> Unit,
+    loudBanners: @Composable () -> Unit,
+    hints: @Composable () -> Unit,
+    streamChip: @Composable () -> Unit,
+    tutorialChip: @Composable () -> Unit,
+) {
+    viewport(Modifier.fillMaxSize())
+
+    Column(
+        Modifier
+            .align(if (isLandscape) Alignment.TopEnd else Alignment.TopCenter)
+            .onGloballyPositioned { onTopBandMeasured(it.boundsInParent().bottom) }
+            .then(
+                if (isLandscape) {
+                    Modifier
+                        .padding(end = endRailDp)
+                        .width(CaptureLayout.LANDSCAPE_TOP_GROUP_WIDTH_DP.dp)
+                } else {
+                    Modifier.fillMaxWidth()
+                },
+            )
+            .statusBarsPadding()
+            .testTag("scanTopBand"),
+    ) { statusBand(true) }
+
+    // The one licence the overlay ban grants: a warning, and the four-second
+    // answer to a press. Bounded and scrollable so six advisories at once
+    // cannot become a wall over the picture.
+    Column(
+        Modifier
+            .align(Alignment.TopCenter)
+            .fillMaxWidth()
+            .statusBarsPadding()
+            .padding(top = 104.dp)
+            .heightIn(max = 220.dp)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 12.dp)
+            .testTag("scanChromeColumn"),
+    ) {
+        loudBanners()
+        hints()
+    }
+
+    if (isLandscape) {
+        Column(
+            Modifier
+                .align(Alignment.CenterEnd)
+                .onGloballyPositioned { onEndRailMeasured(it.boundsInParent().left) }
+                .navigationBarsPadding()
+                .padding(end = 18.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) { controls(true) }
+    }
+    Row(
+        Modifier
+            .align(Alignment.BottomCenter)
+            .onGloballyPositioned { onBottomBandMeasured(it.boundsInParent().top) }
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(horizontal = 14.dp)
+            .padding(bottom = bottomClearance),
+        verticalAlignment = Alignment.Bottom,
+    ) {
+        streamChip()
+        Spacer(Modifier.weight(1f))
+        if (!isLandscape) {
+            controls(false)
+            Spacer(Modifier.weight(1f))
+        }
+        Box(Modifier.padding(end = if (isLandscape) endRailDp else 0.dp)) { tutorialChip() }
+    }
+}
+
+/**
+ * ROUND 27 item 129(a) — the health read-out and the door to Diagnostics.
+ *
+ * Lifted out of `CaptureViewport` so the SCREEN can place it (in the status
+ * pill) while the calibration wizard's inset card keeps it in a corner. One
+ * composable, so the two placements cannot drift into two chips that say
+ * different things — and exactly one `captureHealthChip` node in the tree,
+ * because three suites select on that tag and two nodes is an ambiguous
+ * selector rather than a duplicated affordance.
+ *
+ * The chip's own ink is chip-sized; the 44 dp minimum comes from the Box it
+ * sits in, so the target grows without the chip inflating.
+ */
+@Composable
+private fun CaptureHealthChip(
+    health: DeviceHealth?,
+    onOpenDiagnostics: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val (healthLabel, healthColor) = healthReadout(health)
+    Box(
+        modifier
+            .height(ScanDims.Touch)
+            .clickable(role = Role.Button, onClick = onOpenDiagnostics)
+            .semantics { contentDescription = "Diagnostics — device health $healthLabel" }
+            .testTag("captureHealthChip"),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        ScanChip(text = healthLabel, color = healthColor)
+    }
+}
+
+/**
+ * ROUND 27 item 129(a) — **what stream is on screen**, in the bottom-start
+ * corner beside the map-mode chip.
+ *
+ * ROUND 5 AUDIT bugfix, unchanged: `liveSlam` alone used to drive this label —
+ * true as soon as the OPERATOR asked for live SLAM/pushbroom, even while
+ * `StreamFilter.MAPPED_ONLY` was still falling back to raw pages because no
+ * mapped page had resolved yet. ROUND 6 keyed it off what is actually on
+ * screen, and "RAW" also covers the Light preset's deliberate raw-only view,
+ * which is a choice rather than a missing map — and it says so, so nobody
+ * reads it as a failure.
+ *
+ * What round 27 changed is only WHERE it is drawn. As a viewport chip it took
+ * the bottom-START corner, which in landscape is inside the connect rail: on
+ * the AVD it was printed straight through the manual-entry panel.
+ */
+@Composable
+private fun StreamModeChip(
+    liveMapEnabled: Boolean,
+    liveMapRequested: Boolean,
+    hasSeenMappedPage: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    ScanChip(
+        // ROUND 27 item 138: no device name here. The owner counted TWO
+        // connected-device models on this tab and this was the second — the
+        // status pill's badge is the sensor's one owner, and `RAW · D6` said it
+        // again three centimetres away, in a chip whose actual subject is the
+        // STREAM.
+        text = when {
+            !liveMapEnabled -> "RAW · LIGHT PRESET"
+            !liveMapRequested -> "RAW RETURNS"
+            hasSeenMappedPage -> "LIVE MAP · 3D"
+            else -> "BUILDING MAP…"
+        },
+        color = PoseBlue,
+        showDot = true,
+        modifier = modifier.testTag("streamModeChip"),
+    )
 }
 
 /**
@@ -4263,17 +5239,48 @@ private fun ScanGearButton(onOpenAdvanced: () -> Unit) {
 }
 
 /**
+ * ROUND 27 item 140(a) — **REMOVED from the screen, kept as the record of a
+ * decision.**
+ *
+ * The owner: *"The map indicatior seems useless."* He is right, and the reason
+ * is worth writing down rather than just deleting: the chip reported
+ * `liveMapEnabled`, which the operator sets once (via the preset, or the Live
+ * 3D map switch) and then never changes — so it is a chip that says the same
+ * word for an entire session. Round 27's item 133(c) had just made it a TOGGLE
+ * to give it a job; the owner's answer is that the job was not worth a corner
+ * of the picture either. The switch keeps its home in the Capture sheet, where
+ * its explanation is, and the corner goes back to being picture.
+ *
+ * The composable is left here, uncalled and private, only long enough to carry
+ * this note into the history; a future round that wants a live-map affordance
+ * on the viewport should read [StreamModeChip] first — that one reports what is
+ * actually on screen, which is the question an operator is really asking.
+ *
  * ROUND 26 item 124 — the bottom-START corner: what the live view is actually
  * drawing.
  *
- * A READ-OUT with a door, not a switch. `MAP` means the engine's pushbroom is
- * resolving the fan into a cloud; `SLICES` means the viewport is showing raw
- * returns because live mapping is off or the map is full. Flipping live SLAM
- * mid-walk is not a one-tap decision — round 6 item 21 is a whole round about
- * what happens when the two disagree — so the tap opens the Capture sheet
- * where the switch and its explanation live, and this corner only ever tells
- * the truth about the current state.
+ * `MAP` means the engine's pushbroom is resolving the fan into a cloud;
+ * `SLICES` means the viewport is showing raw returns because live mapping is
+ * off or the map is full.
+ *
+ * ## ROUND 27 item 133(c) — it is the switch now
+ *
+ * Round 26 shipped TWO doors to the same Capture sheet: this chip and the chip
+ * row's `captureConfigChip`. Round 26's argument for making this one a door was
+ * that "flipping live SLAM mid-walk is not a one-tap decision" — but that is an
+ * argument about `liveSlam`, the Mid-360 engine session, and this chip has
+ * never controlled it. What it reports is `liveMapEnabled`, which is a VIEW
+ * preference: whether the preview draws the resolved map or the raw fan. That
+ * genuinely is a one-tap decision, it changes nothing about what is recorded,
+ * and a chip that reads MAP / SLICES and opens a settings sheet is the one
+ * shape a toggle must not have.
+ *
+ * So the two doors get one owner each: this chip toggles, and the config chip —
+ * which is labelled for the sheet and lives in the chip row with the other
+ * sheet doors — opens the sheet. The explanation the sheet carries is not lost;
+ * it is still one tap away, on the row this chip is the shortcut for.
  */
+@Suppress("UnusedPrivateMember")
 @Composable
 private fun MapModeChip(liveMapEnabled: Boolean, liveMapRequested: Boolean, onClick: () -> Unit) {
     ScanChip(
@@ -4284,7 +5291,11 @@ private fun MapModeChip(liveMapEnabled: Boolean, liveMapRequested: Boolean, onCl
         },
         color = if (liveMapEnabled) ScanTeal else null,
         modifier = Modifier
-            .clickable(role = Role.Button, onClick = onClick)
+            .clickable(role = Role.Switch, onClick = onClick)
+            .semantics {
+                contentDescription =
+                    if (liveMapEnabled) "Live map on, showing the map" else "Live map off, showing raw slices"
+            }
             .testTag("mapModeChip"),
     )
 }

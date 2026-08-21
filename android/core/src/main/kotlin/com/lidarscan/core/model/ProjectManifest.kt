@@ -160,9 +160,21 @@ data class ProjectManifest(
     fun effectiveCaptureDefaults(): CaptureDefaults =
         captureDefaults ?: CaptureDefaults.forProfile(profile)
 
-    /** The project's own display parameters, or the profile's A14 preset if it predates B10. */
+    /**
+     * The project's own display parameters, or the profile's A14 preset if it
+     * predates B10 — **migrated on read** (ROUND 27 item 141).
+     *
+     * On read rather than by rewriting every `project.json` on upgrade: a
+     * migration pass over the scan library is a batch of file writes done for a
+     * colour, and the owner's library is the one thing in this app that must
+     * never be rewritten for a cosmetic reason. Reading is idempotent, and the
+     * stamp is written the next time the project is saved for a reason of its
+     * own.
+     */
     fun effectiveDisplayParams(): DisplayParams =
-        displayParams ?: com.lidarscan.core.render.profileDefaults(effectiveCaptureDefaults().displayProfile)
+        displayParams
+            ?.let { com.lidarscan.core.render.DisplayMigrations.migrate(it, it.migration).params }
+            ?: com.lidarscan.core.render.profileDefaults(effectiveCaptureDefaults().displayProfile)
 
     companion object {
         /**
