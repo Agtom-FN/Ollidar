@@ -1,4 +1,4 @@
-<img src="docs/img/app-icon.png" width="96" height="120" align="left" alt="Ollidar icon — a llama in a top hat emitting a lidar fan">
+<img src="docs/img/app-icon.png" width="96" height="100%" align="left" alt="Ollidar icon — a llama in a top hat emitting a lidar fan">
 
 # Ollidar
 
