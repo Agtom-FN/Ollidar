@@ -122,8 +122,8 @@ import com.lidarscan.app.ui.components.SegmentedPill
 import com.lidarscan.app.ui.components.Stat
 import com.lidarscan.app.ui.components.StatPanel
 import com.lidarscan.app.ui.theme.DisplayFontFamily
-import com.lidarscan.app.ui.components.AttitudeButtonSlot
-import com.lidarscan.app.ui.components.AttitudeIndicator
+import com.lidarscan.app.ui.components.PostureBubbleSlot
+import com.lidarscan.app.ui.components.PostureGhostIndicator
 import com.lidarscan.app.ui.theme.ScanBody
 import com.lidarscan.app.ui.theme.ScanCountdown
 import com.lidarscan.app.ui.components.ScanIconButton
@@ -1261,6 +1261,11 @@ fun CaptureRoute(
         lastScan = lastScan,
         onOpenLastScan = { onScanSealed?.invoke(it) },
         attitude = container.attitudeSource.attitude,
+        // ROUND 33 item 179(b): the hold-still card's one haptic tick, on the
+        // edge where the posture goes out of tolerance. Through the ViewModel
+        // and not straight to the player, because that is where the operator's
+        // "cues" setting is already read and armed once per session.
+        onPostureLost = viewModel::onPostureLost,
         // ROUND 28 item 155: the start sequence's terminal states.
         startBlock = startBlock,
         onStartBlockRetry = viewModel::retryStartAfterBlock,
@@ -1509,6 +1514,12 @@ fun CaptureScreen(
      */
     attitude: kotlinx.coroutines.flow.StateFlow<com.lidarscan.core.calib.HoldOrientation?> =
         kotlinx.coroutines.flow.MutableStateFlow(null),
+    /**
+     * ROUND 33 item 179(b): fired once each time the hold-still card's posture
+     * crosses from inside the tolerance to outside it. The recording strip has
+     * no equivalent, on purpose — see `CueKind.POSTURE_OFF`.
+     */
+    onPostureLost: () -> Unit = {},
     /** ROUND 28 item 155: the start sequence stopped and is asking. */
     startBlock: CaptureViewModel.StartBlock? = null,
     onStartBlockRetry: () -> Unit = {},
@@ -2702,6 +2713,7 @@ fun CaptureScreen(
                 // start orientation that does not exist yet at this point in
                 // the sequence.
                 attitude = attitude,
+                onPostureLost = onPostureLost,
                 onCancel = onDismissStartBlock,
             )
         }
@@ -4967,8 +4979,13 @@ internal fun ScanControlCluster(
     // display setting, it is pressed once a session if ever, and it was one of
     // three grey circles in two sizes that the walking operator had to tell
     // apart.
+    //
+    // ROUND 33 item 179(c): and what sits in it is now the two-axis bubble. At
+    // arm's length, mid-walk, a dot moving in a circle is the only thing that
+    // survives — the ghost's hint and its notch are for the card, where the
+    // operator is standing still and looking at the phone.
     val attitudeSlot: @Composable () -> Unit = {
-        AttitudeButtonSlot(attitude = attitude)
+        PostureBubbleSlot(attitude = attitude)
     }
     if (vertical) {
         Column(
@@ -5733,8 +5750,11 @@ private fun RecordingTelemetry(
  * something went wrong, and a jump is read as a glitch rather than as
  * information.
  *
- * The hold-still card carries the [AttitudeIndicator], because "hold still" is
- * precisely the instruction an attitude reading helps obey (item 168).
+ * The hold-still card carries the [PostureGhostIndicator], because "hold still"
+ * is precisely the instruction an attitude reading helps obey (item 168) — and
+ * ROUND 33 item 179(b) is why it is now a phone and not a needle: a rig can be
+ * square in the screen plane and aimed at the floor, and one axis could not say
+ * so.
  */
 @Composable
 private fun StartModalCard(
@@ -5781,10 +5801,16 @@ internal fun StartHoldModal(
     label: String,
     attitude: kotlinx.coroutines.flow.StateFlow<com.lidarscan.core.calib.HoldOrientation?>,
     onCancel: () -> Unit,
+    onPostureLost: () -> Unit = {},
 ) {
     StartModalCard {
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-            AttitudeIndicator(attitude = attitude, size = ScanDims.S6 + ScanDims.S1)
+            // ROUND 33 item 179(b): the owner-approved 3D phone ghost, which
+            // replaces round 28's single-axis dial IN THIS PLACEMENT. The card
+            // is where the posture is learned — before GO, standing still, with
+            // room for a picture of the phone and a word of correction — so it
+            // is the placement that gets the literal instrument and the hint.
+            PostureGhostIndicator(attitude = attitude, onPostureLost = onPostureLost)
         }
         Spacer(Modifier.height(ScanDims.S2))
         Text(

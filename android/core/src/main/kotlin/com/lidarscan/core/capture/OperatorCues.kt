@@ -96,6 +96,23 @@ enum class CueKind {
      * to a tracker that has just settled.
      */
     GO_START,
+
+    /**
+     * ROUND 33 item 179(b) — **the hold-still card's posture just went out of
+     * tolerance.**
+     *
+     * Fired ONCE, on the good→bad edge, from the one placement that has words
+     * on it. Like [GO_START] it is a confirmation of an event rather than a
+     * condition, so it never goes near [CueScheduler]: there is nothing to
+     * debounce, because the edge cannot repeat without the posture first coming
+     * back inside — the transition IS the debounce.
+     *
+     * The recording strip deliberately has no cue of its own. Item 179(c) is
+     * explicit about it: the walk already carries four patterns the operator is
+     * learning to tell apart through a pocket, and a fifth that fires on a hand
+     * wobble would devalue the four that mean something.
+     */
+    POSTURE_OFF,
 }
 
 /**
@@ -223,12 +240,33 @@ object CuePatterns {
         toneRepeats = 1,
     )
 
+    /**
+     * ROUND 33 item 179(b). ONE tick, at the GO_START amplitude and shorter
+     * than it, with the lowest tone in the table.
+     *
+     * It fires while the operator is standing still being told to hold still —
+     * the single moment in a capture when a shake costs the most (round 13
+     * measured what a heavy buzz does to a tracker that is settling), and the
+     * card he is holding already says the same thing in a word. So this is the
+     * smallest signal that can still be felt: it exists to move the eye to the
+     * ghost, not to carry the message itself.
+     */
+    val POSTURE_OFF = CuePattern(
+        kind = CueKind.POSTURE_OFF,
+        pattern = longArrayOf(0, 40),
+        amplitudes = intArrayOf(0, 130),
+        toneHz = 440,
+        toneMillis = 60,
+        toneRepeats = 1,
+    )
+
     fun of(kind: CueKind): CuePattern = when (kind) {
         CueKind.TRACKING_DEGRADED -> TRACKING_DEGRADED
         CueKind.SECTION_BREAK -> SECTION_BREAK
         CueKind.TOO_FAST -> TOO_FAST
         CueKind.PARALLAX_STARVED -> PARALLAX_STARVED
         CueKind.GO_START -> GO_START
+        CueKind.POSTURE_OFF -> POSTURE_OFF
     }
 }
 

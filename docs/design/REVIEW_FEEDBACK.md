@@ -6435,3 +6435,249 @@ restores the state a user arrives in and leaves round 29's assertion able to
 fail. **Proven under the failing precondition**: developer mode was armed by
 hand on `b4_test` and the whole suite run against it, twice red before the fix
 and green after.
+
+---
+
+## ROUND 33 (v0.9.18) — the posture indicator, from an approved prototype
+
+Round 30 gave the attitude instrument a source that moves. The owner used it,
+and came back with the next thing: one axis is not posture. A rig can be
+perfectly square in the screen plane and still be aimed at the floor, and the
+dial that round 28 drew and round 30 wired cannot say so — it reads roll and
+only roll, because that is all `AttitudeIndicator.reading` was ever given.
+
+The owner approved a prototype on 2026-08-22
+(`ollidar-posture-indicator.html`), and, as in round 32, its CSS keyframes are
+the specification rather than an illustration of one: the housings, the target
+frame, the tolerance ring, the colours, the motion and the correction arrow are
+all in it, animated, and the build is a transcription.
+
+### 179 — the 3D posture indicator
+
+> **APPROVED (2026-08-22):** Option 1 (3D phone ghost) in the hold-still card ·
+> Option 2 (bubble level) beside STOP while recording. Builds as the round
+> after v0.9.17.
+
+Both replace the round-30 single-axis dial **in their own placement**, and the
+split is the owner's: the card is where the posture is *learned*, before GO,
+with room for a literal picture of the phone and a word of correction; the
+recording strip is where it is *glanced at*, at arm's length, mid-walk, where
+only a dot moving in a circle survives.
+
+**(a) The feed gains pitch.** The 0.9.15 pipeline already filters the gravity
+DIRECTION — `LiveAttitude` smooths a unit vector precisely so that no angle
+wraps inside the filter — so pitch is not a second sensor, a second listener or
+a second time constant. It is the second angle of the vector that is already
+being smoothed, and it must come from exactly that vector: the same three-source
+priority (ARCore pose → the round-9 IMU's accelerometer → this feed's own
+`TYPE_GRAVITY`), the same 20 Hz publication throttle, the same collection at the
+leaf, and the same quadrant-awareness that makes a landscape hold's *level*
+landscape-level.
+
+**(b) Option 1 — the hold-still card.** A miniature 3D phone (rounded body,
+camera notch) drawn in Compose, tilted by `rotationX` = pitch and `rotationY` =
+roll with a camera distance so it has perspective, inside the existing circular
+housing enlarged to roughly 96 dp for the card, with a **dashed target frame**
+behind it. Green border and fill inside tolerance, amber outside, plus a
+**one-word correction hint** underneath when out — *Tilt forward.* / *Tilt
+back.* / *Level left.* / *Level right.*, the **dominant axis only**, never two
+instructions at once — and **one** haptic tick on the good→bad transition,
+through the existing cue channel and nothing new.
+
+**(c) Option 2 — the recording strip.** A two-axis bubble in the same 52 dp
+circular housing the pause button uses, so the row still reads pause · STOP ·
+instrument. The bubble's offset is a function of pitch and roll, clamped to the
+housing; a tolerance ring is drawn at the 10° radius; the bubble is green inside
+and amber outside with a soft glow. **No text and no haptics** — the recording
+strip already has its own cue vocabulary and a fifth buzz in it would be noise.
+
+**(d) One tolerance, one constant.** The 10° threshold stays exactly where it is
+(`AttitudeIndicator.AMBER_DEG`) and both indicators read it from there. Two
+copies of a threshold is how a ring and a colour come to disagree.
+
+**Reduced motion.** The indicators still MOVE — they are information, not
+decoration, and a posture indicator that holds still is a broken instrument, not
+a considerate one. What goes is the glow and the springs.
+
+**(e) Tests.** Pitch derivation in all four quadrants, mirroring the roll tests;
+the bubble's offset and clamp arithmetic; the dominant-axis hint selection; the
+tolerance transitions. Compose tests for both placements, against the
+**production** composables and a fake feed.
+
+**(f) Visual verification.** Both indicators photographed on the AVD through
+`adb emu sensor` injection at level, pitch-only 20°, roll-only 20° and a
+combined 25°, plus a screen recording of the card's ghost following a moving
+virtual sensor.
+
+### Resolution — 2026-08-22 (0.9.18, round 33)
+
+**The pitch decision, which is the whole of 179(a).** Round 30 put a filter on
+the gravity **direction** rather than on an angle, and the reason it gave was
+that an angle wraps and a unit vector does not. That choice is what made this
+round cheap: a unit vector has **two** angles in it, and the app was only
+reading one. So there is no second sensor, no second listener, no second time
+constant and no second throttle in this round — there is one more line in
+`StartOrientation.fromDeviceUp` (`HoldOrientation.kt:194`) and one more field on
+the value it already returned (`HoldOrientation.kt:119`).
+
+The line is `atan2(up.z, hypot(up.x, up.y))`, and both halves of that are
+decisions:
+
+* **`atan2`, not `asin(up.z)`.** `asin` measures against the vector's own
+  length, and this function's callers do not agree about length — an
+  accelerometer hands over 9.81 m/s², `LiveAttitude` hands over a normalised
+  direction, and `HoldOrientationTest` hands over literal `Vec3(0, 1, 0)`s.
+  `atan2` against the in-plane component is scale-free, needs no clamp, and
+  `pitchNeedsNoUnitVector` is that sentence as a test.
+* **Off the SCREEN NORMAL, not about the device's `+X`.** The screen normal is
+  the one axis a roll about `+Z` cannot move, so this pitch is **invariant
+  under the hold quadrant by construction** — a landscape hold leaning 20°
+  forward reads identically to a portrait hold leaning 20° forward, with no
+  branch anywhere, which is exactly the property that makes round 26's
+  deviation-from-square work for the roll. `pitchIsTheSameLeanInEveryQuadrant`
+  runs all four quadrants × four `SENSOR_ORIENTATION`s × five yaws × three
+  tilts and asserts one number.
+
+The pair is also **complete and non-redundant**: `hypot(x, y) = cos(pitch)`, so
+(pitch, screen-up-bearing) describes the whole vector, and `tiltFromFlatDeg` —
+which round 26 already shipped — is the unsigned complement, `90 − |pitch|`.
+That identity is a test rather than a comment, because two derivations of the
+same fact is how they come to differ by a degree.
+
+Sign convention, stated once and pinned: **positive is leaning BACK** — the top
+edge away from the operator, the screen tipped towards the sky, the rear sensor
+therefore aimed at the floor. Which is why the correction for a positive pitch
+is *"Tilt forward."*, exactly as the approved prototype's arrow reads.
+
+**Where the two axes become one number.** `PostureIndicator` (`:core`,
+`PostureIndicator.kt:47`) is a layer on top of round 28 rather than a
+replacement for it: the tolerance is `AttitudeIndicator.AMBER_DEG` **read, not
+copied** (`:54`, and there is a test whose entire body is that identity), and
+the roll is `AttitudeIndicator.deviationFromSquareDeg`, unchanged and
+unrestated. `offPostureDeg` is `hypot(pitch, roll)` and not `max(|pitch|,
+|roll|)` for two reasons that are the same reason: it is the angle between where
+the rig is pointing and where it should be, which does not care which way round
+the housing it is; and it is what makes the bubble's tolerance **ring** true,
+since a circle at the 10° radius is the boundary if and only if the test is
+radial. The consequence is the case the old dial could not see and the owner
+would have photographed: **8° and 8° are each legal and the posture is not.**
+
+`offPostureDeg` for a pitch of zero **is** round 28's `offSquareDeg`, digit for
+digit — asserted across six rolls — which is why the instrument's spoken
+description did not have to change and three rounds of emulator assertions on
+`"Rig N degrees off square"` stay honest.
+
+**179(b), the card.** `PostureGhostIndicator`
+(`app/ui/components/PostureIndicator.kt:144`), in `StartHoldModal`
+(`CaptureScreen.kt:5813`). A 96 dp housing, a dashed target frame that never
+moves, and a phone with a camera notch — the notch is not decoration, it is what
+tells the operator which end is up while the thing is tilting. `rotationX` is
+the pitch and `rotationY` the roll, which swings the LOW edge towards the
+viewer so the ghost falls the way the hand does. The hint under it is the
+**dominant axis only** and there is no reserved blank line for it: a permanently
+empty row under a green instrument reads as something that failed to load.
+
+**One number in this round was measured rather than derived**, and it is the
+camera. The prototype is `perspective: 400px` over a 104 px phone — 3.85 phone
+heights — and Compose's `cameraDistance` is denominated in neither dp nor px in
+any documented way. Both readings were built and photographed on the AVD:
+`ghostHeight.toPx() * 3.85` (≈700) came back **orthographic**, a 20° lean
+photographed as a 6 % vertical squash with the top and bottom edges the same
+width to the pixel. `9f` tapers the ghost about 6 % across its height at 20°,
+which measures back to roughly four phone heights — the prototype's look. The
+constant carries that paragraph and the screenshots are the evidence.
+
+**The tick, and why it is an edge.** `CueKind.POSTURE_OFF`
+(`OperatorCues.kt:115`) — one 40 ms tick at the gentlest amplitude in the
+table, fired from the composable that holds the reading
+(`PostureIndicator.kt:177`) through `CaptureViewModel.onPostureLost`
+(`:3057`), which is where the operator's cues setting is already armed once per
+session. It never goes near `CueScheduler`, because the transition **is** the
+debounce: the edge cannot repeat without the posture first coming back inside.
+`theTickFiresOnTheEdgeAndNotOnEveryPublication` walks a rig from 14° to 16.5°
+and back down and asserts **one** tick, which at 20 Hz is the difference
+between an instrument and a rattle. The recording strip gets no cue at all —
+the walk already carries four patterns the operator is learning to tell apart
+through a pocket, and a fifth that fired on a hand wobble would devalue the
+four that mean something.
+
+**179(c), the strip.** `PostureBubbleSlot` (`:300`), in the same 52 dp trough
+the pause button uses (`CaptureScreen.kt:4988`), so the row still reads
+pause · STOP · instrument. The offset is computed in `:core`
+(`PostureIndicator.bubbleOffset`, `:185`) from the housing's own pixels, so the
+arithmetic is unit tested against the numbers the Canvas actually draws with:
+10° lands **exactly** on the ring in any direction, and past that the vector is
+clamped **radially**, which keeps the bubble whole inside the housing at every
+bearing and keeps its direction honest while it is pegged. Two signs carry the
+design: the bubble **drops** when the rig leans back, because it marks where the
+sensor is aimed; and it moves to the **low** side when the rig banks, the way a
+ball rolls downhill.
+
+**Reduced motion, and the one place this round disagrees with being polite.**
+The indicators still move. An indicator is information, and one that holds still
+is a broken instrument rather than a considerate one. What goes is the glow and
+the spring: `postureSpec` (`:392`) becomes a zero-length tween and the bubble's
+halo is not drawn. Photographed both ways —
+`uishots7/179-reduced-motion-compare.png` is the same bubble with and without
+its glow, and the reduced-motion card at 20° still tilted.
+
+**The dial is gone rather than left lying about.** Both of its placements were
+replaced, so `app/ui/components/AttitudeIndicator.kt` is **deleted**. Two
+instruments that both claim to be the attitude indicator is precisely the drift
+this codebase argues against everywhere else. `AttitudeIndicator` in `:core` —
+the angle mapping, the threshold, the deviation-from-square — is untouched and
+is now read by `PostureIndicator` instead of by a Canvas.
+
+**Numbers.** Engine **untouched**; ABI stays **12**; `ctest` **8/8** (246.2 s,
+`mid360_sim_e2e` 203.6 s of it). `:core` unit **1146 / 0** (was 1119: +18
+`PostureIndicatorTest`, +4 `HoldOrientationTest`, +3 `LiveAttitudeTest`, +2
+`LiveAttitudeFeedTest`). `:app` unit **278 / 0** (unchanged — the new logic is
+all in `:core`, which is where it was put so that it could be). Emulator:
+**74 tests, 0 failures, 2 assumed-skipped** on `b4_test` (was 71; +3
+`Round33PostureTest`), one undisturbed run, `BUILD SUCCESSFUL in 3m 27s`.
+VERSION 0.9.18; versionCode **918** / versionName **0.9.18** /
+`application-label:'Ollidar'` verified by `aapt2 dump badging` on
+`dist/Ollidar-0.9.18-918.apk`.
+
+**The photographs, which are the deliverable for 179(f).** `uishots7/`, all
+driven by `adb emu sensor set acceleration` against round 30's own harness —
+which composes the **production** card and the **production** control row, so
+these are pictures of the screen the owner opens.
+
+| shot | acceleration (x:y:z) | what it shows |
+|---|---|---|
+| `179-hold-card-level` | `0:9.81:0` | ghost square in the dashed frame, **green**, no hint |
+| `179-hold-card-pitch20` | `0:9.2185:3.3552` | dead level in the screen plane and aimed 20° at the floor — the case the old dial could not see. Amber, top edge tapered away, **"Tilt forward."** |
+| `179-hold-card-roll20` | `3.3552:9.2185:0` | 20° of bank, amber, **"Level right."** |
+| `179-hold-card-combined25-amber` | `2.3859:8.9044:3.3552` | 20° back and 15° over = 25° off posture; **one** instruction, the dominant axis |
+| `179-recording-strip-level` | `0:9.81:0` | pause · STOP · bubble, green and centred, glowing |
+| `179-recording-strip-pitch20` | `0:9.2185:3.3552` | the bubble dropped, amber |
+| `179-recording-strip-roll20` | `3.3552:9.2185:0` | the bubble to the low side, amber |
+| `179-recording-strip-combined25-amber` | `2.3859:8.9044:3.3552` | down and left together, pegged at the housing |
+| `179-reduced-motion-*` | the same four | the same readings with the glow and the springs gone |
+
+`uishots7/posture.mp4` is the 10 s film: 11.0 s of recording over a wall-clock
+sweep — level, a lean back and home, a bank and home, then both at once —
+classified frame by frame as `GGG…AAA…GGG…AAA…GGG…AAA`, which is the sweep it
+was driven with. It is 55 frames for 11 seconds, because the emulator's
+`screenrecord` drops frames badly under a software renderer; the app's own
+publication rate is 20 Hz and unaffected.
+
+**One thing the film taught, and it is not about this app.** A first cut swept a
+two-second circle at 22° and came back **green through it**. The AVD's fused
+`android.sensor.gravity` is itself a low-pass over the injected acceleration,
+and a tilt that returns inside half a second averages away before it reaches the
+app at all. The sweep was slowed to about 15°/s. Worth writing down because the
+same physics applies to the operator: the instrument reports a gravity estimate,
+and a gravity estimate has a time constant.
+
+**What is NOT proven, plainly.** Everything above is the emulator and the JVM.
+**The ARCore branch still has never run on hardware** — round 30's caveat,
+unchanged, and now it carries a second angle: `aCameraPoseCarriesTheLeanAsWell
+AsTheRoll` pins the pose path against round 26's own decoder in all four
+quadrants, and the one line joining it to reality is still exercised only on a
+phone. The **haptic** is proved as a decision (`cuesArmed`, one call, one edge)
+and not as a buzz: an AVD has no vibrator, so the tick's amplitude and length
+are a pattern in a table until the owner feels one. And the camera distance is
+tuned against **this renderer**; on a hardware GPU the perspective may read a
+little stronger, which is the direction that costs nothing.

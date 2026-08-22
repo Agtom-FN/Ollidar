@@ -108,6 +108,96 @@ class HoldOrientationTest {
         assertEquals(25.0, tilted.tiltFromFlatDeg, 1e-9)
     }
 
+    // --- 1b. ROUND 33 item 179(a): the OTHER angle of the same vector ------
+
+    @Test
+    fun `pitch is the elevation of the same vector, and positive means leaning back`() {
+        // Upright: world-up lies in the screen plane, so there is no elevation.
+        assertEquals(0.0, StartOrientation.fromDeviceUp(Vec3(0.0, 1.0, 0.0)).screenPitchDeg, 1e-9)
+
+        // Screen facing the SKY — the phone lying on its back on a table. World
+        // up is straight out of the screen (+Z), which is the extreme of
+        // "leaning back": the top edge has gone away from the operator and the
+        // rear camera is aimed at the floor.
+        assertEquals(90.0, StartOrientation.fromDeviceUp(Vec3(0.0, 0.0, 1.0)).screenPitchDeg, 1e-9)
+
+        // Face down: the other extreme.
+        assertEquals(-90.0, StartOrientation.fromDeviceUp(Vec3(0.0, 0.0, -1.0)).screenPitchDeg, 1e-9)
+
+        // And a real hold: 25 degrees back, held portrait.
+        val back = StartOrientation.fromDeviceUp(
+            Vec3(0.0, Math.cos(Math.toRadians(25.0)), Math.sin(Math.toRadians(25.0))),
+        )
+        assertEquals(25.0, back.screenPitchDeg, 1e-9)
+        assertEquals(DeviceOrientation.PORTRAIT, back.orientation)
+        assertEquals("the in-plane bearing is untouched by the lean", 0.0, back.screenUpAngleDeg, 1e-9)
+    }
+
+    @Test
+    fun `pitch needs no unit vector, because it is an atan2 and not an asin`() {
+        // The callers do not agree about magnitude: an accelerometer hands over
+        // 9.81 m/s squared and the filter hands over a normalised direction. A
+        // pitch derived by asin against the vector's own length would be right
+        // for one of them and quietly wrong for the other.
+        val raw = StartOrientation.fromDeviceUp(
+            Vec3(0.0, 9.81 * Math.cos(Math.toRadians(31.0)), 9.81 * Math.sin(Math.toRadians(31.0))),
+        )
+        assertEquals(31.0, raw.screenPitchDeg, 1e-9)
+    }
+
+    @Test
+    fun `pitch and tilt-from-flat are one fact, so they can never disagree`() {
+        // `tiltFromFlatDeg` is the unsigned complement of the pitch: it is how
+        // far off flat, and the pitch is which way. Round 26 already shipped the
+        // first; item 179 needed the sign, and taking it from a second
+        // derivation would be how the two come to differ by a degree.
+        for (deg in listOf(-88.0, -47.0, -12.0, 0.0, 12.0, 47.0, 88.0)) {
+            val r = Math.toRadians(deg)
+            val got = StartOrientation.fromDeviceUp(Vec3(0.0, Math.cos(r), Math.sin(r)))
+            assertEquals("pitch at $deg", deg, got.screenPitchDeg, 1e-9)
+            assertEquals(
+                "tilt-from-flat at $deg",
+                90.0 - abs(deg),
+                got.tiltFromFlatDeg,
+                1e-9,
+            )
+        }
+    }
+
+    @Test
+    fun `pitch is the same lean in every quadrant, at every yaw and every camera mounting`() {
+        // The mirror of the roll's quadrant test above, and the property that
+        // lets item 179's ghost have no branch in it: a roll turns the phone
+        // about the screen's own normal, and the screen's normal is the one axis
+        // that rotation cannot move. So a landscape hold leaning 20 degrees
+        // forward reads exactly like a portrait hold leaning 20 degrees forward,
+        // which is what makes "Tilt back." true in all four holds.
+        for (orientation in DeviceOrientation.entries) {
+            for (sensorDeg in listOf(0, 90, 180, 270)) {
+                for (yaw in listOf(0.0, 37.1, 134.0, -51.6, 179.0)) {
+                    for (tilt in listOf(90.0, 70.0, 55.0)) {
+                        val hold = StartOrientation.syntheticHold(orientation, sensorDeg, yaw, tilt)
+                        val got = StartOrientation.classify(hold, sensorDeg)
+                        // `syntheticHold` pitches the device forward by
+                        // `90 - tilt` about its own X, i.e. the top edge towards
+                        // the operator, which is the negative sense.
+                        assertEquals(
+                            "pitch for $orientation at sensor $sensorDeg, yaw $yaw, tilt $tilt",
+                            -(90.0 - tilt),
+                            got.screenPitchDeg,
+                            1e-6,
+                        )
+                        assertEquals(
+                            "quadrant survives the lean",
+                            orientation,
+                            got.orientation,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     // --- 2. the classifier, through the whole ARCore chain -----------------
 
     @Test

@@ -104,6 +104,82 @@ class LiveAttitudeFeedTest {
         assertEquals(0.0, f.attitude.value!!.screenUpAngleDeg, 0.01)
     }
 
+    // ── ROUND 33 item 179(a): pitch travels the same three roads ──────────
+
+    @Test
+    fun everySourceDeliversPitchAndNotJustRoll() {
+        // Item 179(a) asks for the second axis on the SAME priority, not on a
+        // path of its own. Each of the three inputs in turn, each leaning the
+        // rig 24 degrees back, and each must reach the instrument as a posture.
+        val leanBack = { magnitude: Double ->
+            val r = Math.toRadians(24.0)
+            Triple(0.0, magnitude * cos(r), magnitude * sin(r))
+        }
+
+        val gravity = feed()
+        gravity.acquire()
+        val (gx, gy, gz) = leanBack(g)
+        val end = now + 4_000L
+        while (now <= end) {
+            gravity.onGravity(gx, gy, gz, fused = true)
+            now += 10
+        }
+        assertEquals(24.0, gravity.attitude.value!!.screenPitchDeg, 0.5)
+
+        val imu = feed()
+        imu.acquire()
+        imu.onImuFeedStarted()
+        val imuEnd = now + 6_000L
+        while (now <= imuEnd) {
+            imu.onImuAccel(gx, gy, gz)
+            now += 3
+        }
+        assertEquals(24.0, imu.attitude.value!!.screenPitchDeg, 0.5)
+
+        val pose = feed()
+        pose.acquire()
+        val attitude = StartOrientation.syntheticHold(
+            DeviceOrientation.PORTRAIT,
+            sensorOrientationDeg = 90,
+            tiltFromFlatDeg = 66.0,
+        )
+        val poseEnd = now + 4_000L
+        while (now <= poseEnd) {
+            pose.onCameraPose(attitude, 90, tracking = true)
+            now += 30
+        }
+        assertEquals(-24.0, pose.attitude.value!!.screenPitchDeg, 0.5)
+    }
+
+    @Test
+    fun aPoseThatStopsArrivingHandsTheLeanBackToGravityToo() {
+        // The asymmetry round 30 argued for, now with something to lose: a rig
+        // leaning 30 degrees while ARCore goes quiet must not freeze at 30. It
+        // is the same bug as the frozen needle, one axis over.
+        val f = feed()
+        f.acquire()
+        val pose = StartOrientation.syntheticHold(
+            DeviceOrientation.PORTRAIT,
+            sensorOrientationDeg = 90,
+            tiltFromFlatDeg = 60.0,
+        )
+        var end = now + 2_000L
+        while (now <= end) {
+            f.onCameraPose(pose, 90, tracking = true)
+            now += 30
+        }
+        assertEquals(-30.0, f.attitude.value!!.screenPitchDeg, 0.5)
+
+        // ARCore stops. Past the deadline, gravity gets the instrument back.
+        now += LiveAttitudeFeed.POSE_PRIORITY_MS + 50
+        end = now + 4_000L
+        while (now <= end) {
+            f.onGravity(0.0, g, 0.0, fused = true)
+            now += 10
+        }
+        assertEquals("the lean stayed frozen on a dead pose stream", 0.0, f.attitude.value!!.screenPitchDeg, 0.5)
+    }
+
     // ── The IMU hand-off ──────────────────────────────────────────────────
 
     @Test

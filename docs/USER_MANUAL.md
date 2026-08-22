@@ -1,6 +1,6 @@
 # Ollidar — User Manual
 
-App version 0.9.17 (Android). Written for the owner and for field testers.
+App version 0.9.18 (Android). Written for the owner and for field testers.
 If you only want a first scan, read [QUICK_START.md](QUICK_START.md) instead.
 
 The app is called **Ollidar** as of 0.9.11. The repository, the Android
@@ -257,14 +257,19 @@ At the bottom of the Scan screen:
 - the running numbers: points · points per second · duration · file size.
 - **Pause** — a circle to the left of the big button. Dimmed where pause does
   not work (Mid-360, replay).
-- the **attitude dial** — a circle to the right of STOP, drawn only while a
-  scan is live. A ring, two fixed side ticks, and a needle that tips with the
-  phone. It reads how far off square you are holding the rig, **not** your
-  absolute roll: held squarely in portrait *or* landscape the needle is level,
-  and it goes amber past 10°. **Live from 0.9.15** — before that it was fed the
-  roll measured at the start of the scan and never moved. A phone lying flat
-  has no readable angle, and the dial then shows a ring with no needle rather
-  than a guess.
+- the **posture bubble** — a circle to the right of STOP, drawn only while a
+  scan is live. A cross-hair, a thin ring, and a bubble that drifts off centre
+  as you tilt: **keep the bubble inside the ring**. It carries both axes at
+  once — sideways lean and forward/back lean — and it is green inside the ring
+  and amber outside it. The ring is the same 10° tolerance the dial used.
+  Sideways lean is measured off square, **not** as absolute roll: held squarely
+  in portrait *or* landscape the bubble is centred. A phone lying flat has no
+  readable posture, and the circle is then empty rather than showing a guess.
+
+  **New in 0.9.18.** Up to 0.9.17 this was a one-axis needle, so a rig held
+  perfectly square but aimed at the floor read as fine. (The needle itself only
+  became live in 0.9.15 — before that it was fed the roll measured at the start
+  of the scan and never moved.)
 - the **big orange button**. It says **SCAN** while idle, **STOP** while
   recording, **CANCEL** during the start sequence. A dot means idle, a square
   means live.
@@ -307,9 +312,13 @@ seconds and *"usually 4–8 s"*. It steps through four stages, marking them
 3. **Measuring the mount — hold still** — *"Hold the phone still in your
    scanning pose…"*, then *"Steady… 0.4° and improving. Keep holding."*
    Instruction: **"Stand still exactly as you will scan. The walk starts at
-   GO."** Usually 1–2 seconds. The same **attitude dial** sits at the top of
-   this card, live, so you can square the rig up while you are being told to
-   hold it still.
+   GO."** Usually 1–2 seconds. A **little 3D phone** sits at the top of this
+   card, live, inside a dashed target frame: it tilts exactly as your hand
+   does, and it is green while your posture is inside the 10° tolerance and
+   amber outside it. When it goes amber it says the one thing to do about it —
+   *Tilt forward.*, *Tilt back.*, *Level left.* or *Level right.* — and the
+   phone gives one short tick. **New in 0.9.18**; before that this was the
+   one-axis needle.
 
    Two things this stage can say instead, and both are the app protecting
    the scan rather than misbehaving:
@@ -758,7 +767,7 @@ developer-only items moved behind the seven-tap unlock.
 
 **The version footer**
 
-At the very bottom: `Ollidar v0.9.17 (build 917)`. **Tap it seven times**
+At the very bottom: `Ollidar v0.9.18 (build 918)`. **Tap it seven times**
 to unlock a **Developer** section, and seven more to lock it away again. The
 counter resets when you re-lock, so a single stray tap afterwards does not
 re-open it.

@@ -285,6 +285,74 @@ class LiveAttitudeTest {
         }
     }
 
+    // ── ROUND 33 item 179(a): pitch, out of the same filter ───────────────
+
+    @Test
+    fun bothAxesComeOutOfTheOneSmoothedVector() {
+        // The claim item 179(a) rests on: pitch cost this round no sensor, no
+        // listener and no second time constant, because it is the elevation of
+        // the direction the filter is already smoothing. Feed a hand that is
+        // both rolled and leaning and both angles must come back.
+        val filter = LiveAttitude()
+        val pitchRad = Math.toRadians(22.0)
+        val rollRad = Math.toRadians(-16.0)
+        // World-up for a phone rolled by `roll` in the screen plane and leaning
+        // back by `pitch`: the in-plane part shrinks by cos(pitch), which is
+        // exactly what makes the two angles a complete description of a unit
+        // vector rather than two overlapping ones.
+        val x = g * cos(pitchRad) * sin(rollRad)
+        val y = g * cos(pitchRad) * cos(rollRad)
+        val z = g * sin(pitchRad)
+        var t = 0L
+        repeat(400) {
+            filter.onDeviceUp(x, y, z, t, LiveAttitude.TAU_FUSED_MS)
+            t += 10
+        }
+        val hold = filter.hold!!
+        assertEquals(22.0, hold.screenPitchDeg, 0.05)
+        assertEquals(-16.0, hold.screenUpAngleDeg, 0.05)
+
+        val posture = filter.posture
+        assertTrue(posture.known)
+        assertEquals(22.0, posture.pitchDeg, 0.05)
+        assertEquals(-16.0, posture.rollDeg, 0.05)
+        assertTrue("27 degrees off posture is past the tolerance", posture.beyondTolerance)
+        assertEquals(PostureIndicator.HINT_TILT_FORWARD, posture.hint)
+    }
+
+    @Test
+    fun theFilterSmoothsPitchWithTheSameTimeConstantAndTheSameThrottle() {
+        // Not a second filter path: one publication rate, one time constant per
+        // stream, and the pitch arrives on the same emission the roll does.
+        val filter = LiveAttitude()
+        assertNotNull("the first sample publishes immediately", filter.onDeviceUp(0.0, g, 0.0, 0L))
+        assertNull("a second sample inside the throttle must not publish", filter.onDeviceUp(0.0, 0.0, g, 10L))
+        // Filtered in all the same: the reading has begun to move even though
+        // nothing was published for it.
+        assertTrue(filter.hold!!.screenPitchDeg > 0.0)
+        assertNotNull(filter.onDeviceUp(0.0, 0.0, g, 60L))
+    }
+
+    @Test
+    fun aCameraPoseCarriesTheLeanAsWellAsTheRoll() {
+        // The ARCore branch, which no emulator has ever run: a pose for a phone
+        // held 30 degrees off flat must decode to a 60-degree lean, in the same
+        // sense round 26's own decoder gives it.
+        for (orientation in DeviceOrientation.values()) {
+            val pose = StartOrientation.syntheticHold(orientation, 90, yawDeg = 12.0, tiltFromFlatDeg = 30.0)
+            val expected = StartOrientation.classify(pose, 90)
+            val filter = LiveAttitude()
+            var t = 0L
+            repeat(200) {
+                filter.onCameraPose(pose, 90, t)
+                t += 10
+            }
+            val hold = filter.hold!!
+            assertEquals("$orientation", expected.screenPitchDeg, hold.screenPitchDeg, 0.1)
+            assertEquals("$orientation", -60.0, hold.screenPitchDeg, 0.1)
+        }
+    }
+
     @Test
     fun cosineAndSineAgreeWithTheDecodersOwnConvention() {
         // A guard on this file's own helper: if `upright()` ever disagreed with

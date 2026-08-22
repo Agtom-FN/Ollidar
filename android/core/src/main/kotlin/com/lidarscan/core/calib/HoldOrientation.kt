@@ -93,6 +93,30 @@ data class HoldOrientation(
      * right. 0° is portrait, +90° is landscape-left.
      */
     val screenUpAngleDeg: Double,
+    /**
+     * ROUND 33 item 179(a) — **the other angle of the same vector.**
+     *
+     * How far the screen has fallen back from vertical, degrees, `[-90, +90]`:
+     * the elevation of world-up out of the screen plane, `atan2(z, hypot(x, y))`
+     * of the very vector [screenUpAngleDeg] is the in-plane bearing of. Zero is
+     * a phone held upright; **positive is leaning BACK** — the top edge away
+     * from the operator, the screen tipped towards the sky and the rear camera
+     * therefore aimed DOWN; negative is leaning forward. ±90° is flat on a
+     * table, face up and face down respectively.
+     *
+     * Two properties of that definition are the reason it is this and not a
+     * device roll about `+X`:
+     *
+     *  * it is **invariant under the hold quadrant**, because the screen normal
+     *    is the one axis a roll about `+Z` does not move — so a landscape hold's
+     *    pitch is the same physical lean as a portrait hold's, with no branch,
+     *    exactly as [screenUpAngleDeg]'s deviation-from-square is;
+     *  * together with [screenUpAngleDeg] it is a **complete** description of
+     *    the up vector — `hypot(x, y) = cos(pitch)` — so the pair adds no third
+     *    degree of freedom and can never disagree with [tiltFromFlatDeg], which
+     *    is its unsigned complement: `tiltFromFlat = 90 − |pitch|`.
+     */
+    val screenPitchDeg: Double,
     /** How far off flat the phone is, degrees: 90° = perfectly upright, 0° = face up or down. */
     val tiltFromFlatDeg: Double,
     val confident: Boolean,
@@ -162,6 +186,12 @@ object StartOrientation {
         // Surface.ROTATION_90 turns in, which is what makes the table below
         // read the same way as Android's own constants.
         val angleDeg = Math.toDegrees(atan2(up.x, up.y))
+        // ROUND 33 item 179(a): the elevation of the SAME vector out of the
+        // screen plane. atan2 against the in-plane length rather than asin
+        // against the magnitude, so it needs no unit vector and no clamp — the
+        // callers that pass a raw 9.81 m/s² gravity sample get the same answer
+        // as the ones that pass a normalised one.
+        val pitchDeg = Math.toDegrees(atan2(up.z, horizontal))
         val orientation = when {
             !confident -> DeviceOrientation.PORTRAIT
             angleDeg >= -QUADRANT_HALF_WIDTH_DEG && angleDeg < QUADRANT_HALF_WIDTH_DEG ->
@@ -172,7 +202,7 @@ object StartOrientation {
                 DeviceOrientation.LANDSCAPE_RIGHT
             else -> DeviceOrientation.PORTRAIT_REVERSE
         }
-        return HoldOrientation(orientation, angleDeg, tiltDeg, confident)
+        return HoldOrientation(orientation, angleDeg, pitchDeg, tiltDeg, confident)
     }
 
     /** [fromDeviceUp] of [worldUpInDevice] — the whole chain, one call. */

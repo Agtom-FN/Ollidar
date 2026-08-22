@@ -11,7 +11,7 @@ corrected 3D point cloud out the other end.
 
 <br clear="left">
 
-Current version: **0.9.17** (Android).
+Current version: **0.9.18** (Android).
 
 The app and this repository are both called **Ollidar**. The Android package
 (`com.lidarscan.app`), the `.lscan` files and the `Downloads/LidarScan/`

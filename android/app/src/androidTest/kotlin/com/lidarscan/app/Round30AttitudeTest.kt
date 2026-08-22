@@ -117,6 +117,11 @@ class Round30AttitudeTest {
     private fun upright(angleDeg: Double) = HoldOrientation(
         orientation = DeviceOrientation.PORTRAIT,
         screenUpAngleDeg = angleDeg,
+        // ROUND 33 item 179(a): the instrument reads two axes now, and this
+        // suite's subject is the WIRE — so its holds are pitch-zero on purpose.
+        // `offPostureDeg` for a pure roll is round 28's number unchanged, which
+        // is why every assertion below reads exactly as it did in 0.9.15.
+        screenPitchDeg = 0.0,
         tiltFromFlatDeg = 90.0,
         confident = true,
     )
@@ -142,11 +147,11 @@ class Round30AttitudeTest {
         // Round 26's orientation detection, in the instrument: a landscape hold
         // is level, not 90 degrees wrong. This is what makes the card usable in
         // the hold the owner actually uses.
-        source.value = HoldOrientation(DeviceOrientation.LANDSCAPE_LEFT, 90.0, 90.0, true)
+        source.value = HoldOrientation(DeviceOrientation.LANDSCAPE_LEFT, 90.0, 0.0, 90.0, true)
         composeRule.waitForIdle()
         assertEquals("Rig level", needleDescription())
 
-        source.value = HoldOrientation(DeviceOrientation.LANDSCAPE_LEFT, 130.0, 90.0, true)
+        source.value = HoldOrientation(DeviceOrientation.LANDSCAPE_LEFT, 130.0, 0.0, 90.0, true)
         composeRule.waitForIdle()
         assertEquals("Rig 40 degrees off square", needleDescription())
 

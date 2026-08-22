@@ -3041,6 +3041,23 @@ class CaptureViewModel(
     @Volatile
     private var cuesArmed: Boolean = true
 
+    /**
+     * ROUND 33 item 179(b) — **one tick when the hold-still card's posture goes
+     * out of tolerance.**
+     *
+     * Called from the instrument itself, which is the only thing that knows
+     * where the edge is: it holds the live 20 Hz reading, and pushing that
+     * stream up here so the ViewModel could re-detect the same crossing would
+     * be a second copy of a decision that is already made and already tested.
+     *
+     * What belongs here, and the whole reason this is not a direct call to the
+     * player, is [cuesArmed] — the operator's cues setting, read once per
+     * session on the hint ticker (round 11) rather than per event.
+     */
+    fun onPostureLost() {
+        if (cuesArmed) playCue(com.lidarscan.core.capture.CueKind.POSTURE_OFF)
+    }
+
     private var lastStatsSampleMillis = 0L
     private var lastStatsSamplePoints = 0L
 

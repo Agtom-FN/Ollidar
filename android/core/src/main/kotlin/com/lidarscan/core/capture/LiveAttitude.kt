@@ -89,6 +89,18 @@ class LiveAttitude {
         get() = hold?.let { AttitudeIndicator.reading(it.screenUpAngleDeg, it.confident) }
             ?: AttitudeIndicator.UNKNOWN
 
+    /**
+     * ROUND 33 item 179(a) — the same smoothed vector, read as **posture**.
+     *
+     * Both angles come off one filtered direction, which is the whole reason
+     * pitch cost this round no sensor: [HoldOrientation.screenUpAngleDeg] is
+     * its bearing in the screen plane and [HoldOrientation.screenPitchDeg] its
+     * elevation out of it, and `fromDeviceUp` derives them in the same three
+     * lines from the same normalised `up`.
+     */
+    val posture: PostureIndicator.Reading
+        get() = PostureIndicator.reading(hold)
+
     /** Forgets the filter state. Called when the feed is released, so a re-entry never shows a stale needle. */
     fun reset() {
         seeded = false
