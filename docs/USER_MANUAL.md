@@ -1,6 +1,6 @@
 # Ollidar — User Manual
 
-App version 0.9.15 (Android). Written for the owner and for field testers.
+App version 0.9.16 (Android). Written for the owner and for field testers.
 If you only want a first scan, read [QUICK_START.md](QUICK_START.md) instead.
 
 The app is called **Ollidar** as of 0.9.11. The repository, the Android
@@ -182,7 +182,19 @@ and This phone.
 
 The selector matters because both sensors are the same class of USB-serial
 device at different speeds, so auto-detect has to guess and you do not. If
-auto-detect names the wrong one, come here and say which it is.
+auto-detect names the wrong one, come here and say which it is — **and from
+0.9.16 that choice is what the capture runs as, full stop.** Picking a sensor
+here releases whatever the app had already connected to and reopens the port
+at the sensor you named. Before 0.9.16 the port was still held by the earlier
+connection, the reopen was refused by the operating system, and the wrong
+sensor kept running underneath a failure message.
+
+A third line can appear from 0.9.16:
+
+- **"Can't tell which scanner this is. Pick D6 or STL-27L below, then
+  Connect."** — the port answered with fragments of both protocols and the app
+  refused to guess. The selector is the first control in the panel that opens
+  with this line.
 
 There is no self-test step. *"Points on screen mean it works."*
 
@@ -739,16 +751,32 @@ developer-only items moved behind the seven-tap unlock.
 
 **The version footer**
 
-At the very bottom: `Ollidar v0.9.12 (build 912)`. **Tap it seven times**
+At the very bottom: `Ollidar v0.9.16 (build 916)`. **Tap it seven times**
 to unlock a **Developer** section, and seven more to lock it away again. The
 counter resets when you re-lock, so a single stray tap afterwards does not
 re-open it.
 
 Developer holds: the per-capture debug log switch, the capture-log card (path,
 size, last line, Export log, Clear), the D6 sensor-latency slider, the
-simulated-engine switch, "Replay synthetic capture", and the read-only
-workflow-profile reference. None of it is needed for scanning. For getting a
-log to someone, **Profile › Send logs** is the better door.
+simulated-engine switch, "Replay synthetic capture", the **Connection debug**
+sweep, and the read-only workflow-profile reference. None of it is needed for
+scanning. For getting a log to someone, **Profile › Send logs** is the better
+door.
+
+**What Developer mode records about a serial scanner (0.9.16).** With it on,
+every serial port the app opens writes one `[net-debug]` line carrying the
+device's `vid:pid`, its product string, the baud it was opened at, and **the
+first 64 bytes it actually sent**, as hex. Every probe attempt writes another
+line with the counters it decided on — for the D6, how many `AA 55` pairs, how
+many complete frames and how many correctly chained; for the STL-27L, how many
+`54 2C` headers and how many survived the CRC.
+
+That is deliberately the raw evidence rather than a verdict. `54 2C ...` at
+921600 is an STL-27L; `AA 55` with a sane length byte at 230400 is a COIN-D6;
+printable ASCII is a GNSS receiver on the same connector; all zeros is the
+cable or the wrong speed. None of those can be told apart from "No scanner
+found." If a scanner is not recognised, turn Developer mode on, plug it in
+once, and send the log.
 
 ---
 
@@ -990,6 +1018,37 @@ appears — when Android on that phone resolves the deep link.
 > place, and the app can select an STL-27L. The C ABI did not change for it
 > (it is still 12), so an engine and an app from the same build always agree.
 
+### What changed in 0.9.16, and why
+
+The first real STL-27L was connected to the app on 2026-08-22. It did not
+work, in three separate ways, and all three are fixed here. **The owner's
+retest is this section's bench validation** — nothing below has been seen on
+hardware; it has been proved against byte-exact synthetic streams through the
+same code the phone runs.
+
+**1. Auto-detect called it a COIN-D6.** The D6 probe used to accept the two
+bytes `AA 55` appearing anywhere in its 1.5-second listening window. That
+window is about 34,500 bytes, so those two bytes turn up in roughly **41% of
+pure noise** — and an STL-27L's 921600 stream read at the D6's 230400 is
+exactly that kind of noise, dense in alternating bits. The probe now requires
+four complete, well-formed D6 frames with at least one correctly chained pair.
+A real COIN-D6 clears that in about 40 milliseconds; noise does not clear it.
+
+**2. Choosing STL-27L by hand did nothing.** The auto-detect probe leaves the
+port open when it identifies a sensor, and the manual connect then tried to
+reopen the same port at a different speed without releasing it first. Android
+refuses that, so the manual choice failed and the wrongly-detected D6 kept
+running. A manual pick now releases the previous connection before reopening.
+
+**3. Nothing in the log said what had happened.** See §9's Developer-mode
+note: `vid:pid`, the first 64 bytes off the wire, and the counters each probe
+decided on.
+
+There is also a new honest answer where there used to be a wrong one: when the
+port produces fragments of **both** protocols and neither reaches its bar, the
+app says *"Can't tell which scanner this is"* and asks, instead of claiming
+whichever probe ran first.
+
 ### What it is
 
 The LDROBOT STL-27L is a 360° spinning DTOF lidar — the same *kind* of sensor
@@ -1035,6 +1094,19 @@ result against reality before trusting any measurement. Then read the
 driver's counters (bad-CRC packets, malformed packets, resyncs) from the Diag
 chip: a healthy link should show a CRC pass rate at or above 99%.
 
+**Do this on the very first scan, not the tenth.** A mirrored room is the one
+failure on this list that looks completely correct: walls in the right places,
+distances that measure sensibly, and everything reflected. If the door is on
+the wrong side of the resulting scan, the sensor sweeps the other way and the
+one-line `invert_angle` change is the whole fix — nothing else about the scan
+needs to be re-derived, and no scan taken before the change is salvageable by
+any other means.
+
+**Before that scan, turn Developer mode on** (§9). If the first plug-in does
+not produce a live preview, the `[net-debug]` line with the first 64 bytes is
+what tells us whether the phone saw LD-series packets at all — and that is the
+difference between a protocol problem, a speed problem and a cable.
+
 ---
 
 ## 14. Troubleshooting
@@ -1058,6 +1130,21 @@ button is never a mystery.
 - For a Mid-360, this is an Ethernet problem, not a USB one — go to §12.
 - **Enter manually** lets you pick the serial device directly, or type the
   Mid-360's addresses.
+
+### The app found the wrong scanner
+
+Open **Enter manually**, pick the right one on the **D6 / STL-27L** selector,
+choose the device and tap **Connect**. From 0.9.16 that choice binds: the app
+releases whatever it had connected, reopens the port at the sensor you named,
+and the log records `sensor: <name> (manual)`.
+
+If the line above the panel reads *"Can't tell which scanner this is"*, the
+app has already decided not to guess. Same answer: pick one.
+
+If picking the right one still does not produce points, turn Developer mode on
+(§9), unplug and re-plug once, and send the log. The `[net-debug]` line with
+the device's `vid:pid` and its first 64 bytes is what identifies the device
+without it being in the room.
 
 ### Tracking keeps dropping
 

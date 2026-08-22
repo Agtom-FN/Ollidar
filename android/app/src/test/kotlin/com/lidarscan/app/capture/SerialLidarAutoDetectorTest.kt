@@ -26,6 +26,15 @@ import org.junit.Test
  * device list as a lambda: no `UsbManager`, no `UsbSerialDriver`, no
  * Robolectric. The production wiring is
  * `SerialLidarAutoDetector.fromRegistry`.
+ *
+ * ## ROUND 31 item 176(b) — what this suite gained
+ *
+ * The ordering above is unchanged and still enforced. What is new is the
+ * verdict at the BOTTOM of the ladder: a port that gave partial evidence for
+ * both lidars and was claimed by neither is now **ambiguous**, not empty, and
+ * the operator is told so and asked. Round 25 had no such state, which is a
+ * large part of why its answer to "is this a D6 or an STL-27L" was whichever
+ * rung ran first.
  */
 class SerialLidarAutoDetectorTest {
 
@@ -69,7 +78,7 @@ class SerialLidarAutoDetectorTest {
         val asked = CopyOnWriteArrayList<SensorType>()
         val d = detector(
             steps = arrayOf(
-                FakeStep(SensorType.COIN_D6, asked) { SerialProbeOutcome.Declined },
+                FakeStep(SensorType.COIN_D6, asked) { SerialProbeOutcome.Declined() },
                 FakeStep(SensorType.STL27L, asked) { SerialProbeOutcome.Identified(it) },
             ),
         )
@@ -90,7 +99,7 @@ class SerialLidarAutoDetectorTest {
         val d = detector(
             paths = listOf("/dev/bus/usb/001/007"),
             steps = arrayOf(
-                FakeStep(SensorType.COIN_D6, mutableListOf()) { SerialProbeOutcome.Declined },
+                FakeStep(SensorType.COIN_D6, mutableListOf()) { SerialProbeOutcome.Declined() },
                 FakeStep(SensorType.STL27L, mutableListOf()) { SerialProbeOutcome.Identified(it) },
             ),
         )
@@ -108,8 +117,8 @@ class SerialLidarAutoDetectorTest {
         val asked = CopyOnWriteArrayList<SensorType>()
         val d = detector(
             steps = arrayOf(
-                FakeStep(SensorType.COIN_D6, asked) { SerialProbeOutcome.Declined },
-                FakeStep(SensorType.STL27L, asked) { SerialProbeOutcome.Declined },
+                FakeStep(SensorType.COIN_D6, asked) { SerialProbeOutcome.Declined() },
+                FakeStep(SensorType.STL27L, asked) { SerialProbeOutcome.Declined() },
             ),
         )
 
@@ -159,6 +168,78 @@ class SerialLidarAutoDetectorTest {
 
         assertNull(runBlocking { d.detect() })
         assertTrue(asked.isEmpty())
+    }
+
+    // ── ROUND 31 item 176(b): the ambiguous port ─────────────────────────────
+
+    @Test
+    fun `two rungs declining WITH partial evidence is ambiguous, and says so instead of claiming one`() {
+        val d = detector(
+            steps = arrayOf(
+                FakeStep(SensorType.COIN_D6, mutableListOf()) {
+                    SerialProbeOutcome.Declined(evidence = "frames=2 chained=0", sawPartialMatch = true)
+                },
+                FakeStep(SensorType.STL27L, mutableListOf()) {
+                    SerialProbeOutcome.Declined(evidence = "packets=1", sawPartialMatch = true)
+                },
+            ),
+        )
+
+        // Nothing is claimed — claiming either is exactly the round-25 failure
+        // with a different sensor on the losing end.
+        assertNull(runBlocking { d.detect() })
+        assertEquals(SerialLidarAutoDetector.AMBIGUOUS_MESSAGE, d.lastFailureMessage)
+        // And the sentence has to name the tap. The picker it points at is the
+        // first control in the panel that opens under it.
+        assertTrue(d.lastFailureMessage!!.contains("D6"))
+        assertTrue(d.lastFailureMessage!!.contains("STL-27L"))
+    }
+
+    @Test
+    fun `one partial match is not ambiguous — an empty port must stay empty`() {
+        val d = detector(
+            steps = arrayOf(
+                FakeStep(SensorType.COIN_D6, mutableListOf()) {
+                    SerialProbeOutcome.Declined(evidence = "frames=1", sawPartialMatch = true)
+                },
+                FakeStep(SensorType.STL27L, mutableListOf()) { SerialProbeOutcome.Declined() },
+            ),
+        )
+
+        assertNull(runBlocking { d.detect() })
+        assertNull("one rung's fragments are not a disagreement", d.lastFailureMessage)
+    }
+
+    @Test
+    fun `an ambiguous verdict does not survive into the next run`() {
+        val ambiguous: (String) -> SerialProbeOutcome = { SerialProbeOutcome.Declined(sawPartialMatch = true) }
+        val d = SerialLidarAutoDetector(
+            attachedDevicePaths = { listOf(PORT) },
+            ladder = listOf(
+                FakeStep(SensorType.COIN_D6, mutableListOf(), ambiguous),
+                FakeStep(SensorType.STL27L, mutableListOf(), ambiguous),
+            ),
+        )
+        runBlocking { d.detect() }
+        assertEquals(SerialLidarAutoDetector.AMBIGUOUS_MESSAGE, d.lastFailureMessage)
+
+        // The operator unplugs the confusing device and taps Retry. A sticky
+        // message would tell them to pick a sensor that is no longer there.
+        val cleared = SerialLidarAutoDetector(
+            attachedDevicePaths = { emptyList() },
+            ladder = emptyList(),
+        )
+        assertNull(runBlocking { cleared.detect() })
+        assertNull(cleared.lastFailureMessage)
+    }
+
+    @Test
+    fun `a detector that found something has no failure message`() {
+        val d = detector(
+            steps = arrayOf(FakeStep(SensorType.COIN_D6, mutableListOf()) { SerialProbeOutcome.Identified(it) }),
+        )
+        assertNotNull(runBlocking { d.detect() })
+        assertNull(d.lastFailureMessage)
     }
 
     @Test

@@ -304,6 +304,26 @@ data class SerialProbeRecord(
         const val OUTCOME_IDENTIFIED = "identified"
         const val OUTCOME_DECLINED = "declined"
         const val OUTCOME_UNUSABLE = "unusable"
+
+        /**
+         * ROUND 31 item 176(b) — neither serial lidar could be told apart on
+         * this port, so nothing was claimed and the operator was asked. A
+         * distinct outcome rather than two `declined` lines, because "declined
+         * with nothing there" and "declined with evidence for both" are
+         * different faults and the second one is the interesting one.
+         */
+        const val OUTCOME_AMBIGUOUS = "ambiguous"
+
+        /**
+         * ROUND 31 item 176(c) — not a verdict at all: a port was opened, and
+         * this line carries its `VID:PID` so a device that never streams a
+         * byte is still identifiable in a field log. See
+         * `com.lidarscan.app.usb.SerialFirstBytesTrace`.
+         */
+        const val OUTCOME_PORT_OPEN = "port-open"
+
+        /** ROUND 31 item 176(c) — the first 64 bytes the device actually sent, as hex. */
+        const val OUTCOME_FIRST_BYTES = "first-bytes"
     }
 }
 

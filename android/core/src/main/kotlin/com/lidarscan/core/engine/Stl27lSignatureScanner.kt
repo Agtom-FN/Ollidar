@@ -194,6 +194,33 @@ object Stl27lSignatureScanner {
     fun containsSignature(carry: Byte?, chunk: ByteArray, len: Int): Boolean =
         validPacketCount(carry, chunk, len) > 0
 
+    /**
+     * ROUND 31 item 176(b) — how many bare `54 2C` pairs are in this chunk,
+     * **for the log and never for the verdict.**
+     *
+     * This is deliberately the weak test the class doc spends its first
+     * section explaining is not good enough: at 921 600 a probe window is
+     * expected to contain about two of these against pure noise. It is counted
+     * anyway, alongside [validPacketCount], because the pair of numbers is the
+     * diagnosis. `542c=3 packets=0` says "the CRC gate refused three
+     * coincidences", which is the probe working; `542c=0 packets=0` says
+     * nothing LD-shaped was on the wire at all, which is a cable, a baud or a
+     * dead device. One number cannot tell those apart.
+     *
+     * Same `carry` convention as [validPacketCount].
+     */
+    fun headerPairCount(carry: Byte?, chunk: ByteArray, len: Int): Int {
+        if (len <= 0) return 0
+        var count = 0
+        if (carry == HEADER_BYTE && chunk[0] == VER_LEN_BYTE) count++
+        var i = 0
+        while (i < len - 1) {
+            if (chunk[i] == HEADER_BYTE && chunk[i + 1] == VER_LEN_BYTE) count++
+            i++
+        }
+        return count
+    }
+
     /** The byte to remember as [validPacketCount]'s next `carry`, i.e. the chunk's last byte. */
     fun lastByteOrNull(chunk: ByteArray, len: Int): Byte? = if (len > 0) chunk[len - 1] else null
 

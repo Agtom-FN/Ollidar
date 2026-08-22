@@ -267,7 +267,7 @@ class Round26UiTest {
 
     /**
      * **Item 122.** The app calls itself Ollidar where the operator can see it,
-     * and the version footer is 0.9.13.
+     * and the version footer is the version this APK was actually built at.
      *
      * The footer is read from `BuildConfig`, so a stale APK fails this rather
      * than passing quietly.
@@ -297,8 +297,22 @@ class Round26UiTest {
                 .getOrNull(androidx.compose.ui.semantics.SemanticsProperties.Text)
                 ?.joinToString(" ")
                 .orEmpty()
-            assertTrue("the footer is this round's version: \"$footer\"", footer.contains("0.9.15"))
-            assertTrue("…and its code: \"$footer\"", footer.contains("915"))
+            // ROUND 31: read from `BuildConfig` rather than a literal that had
+            // to be hand-edited every round (0.9.13 → 0.9.15 → …, and this
+            // round it was the one file the version bump missed). The
+            // assertion does not weaken: `BuildConfig.VERSION_NAME` comes from
+            // the VERSION file through Gradle, so what is being proved is
+            // still "this footer reads the BUILD's version", which is exactly
+            // what catches a stale APK. What it stops proving is "somebody
+            // remembered to edit this line", which was never the point.
+            assertTrue(
+                "the footer is this build's version (${BuildConfig.VERSION_NAME}): \"$footer\"",
+                footer.contains(BuildConfig.VERSION_NAME),
+            )
+            assertTrue(
+                "…and its code (${BuildConfig.VERSION_CODE}): \"$footer\"",
+                footer.contains(BuildConfig.VERSION_CODE.toString()),
+            )
 
             composeRule.onNodeWithTag("tab_projects").performClick()
         }

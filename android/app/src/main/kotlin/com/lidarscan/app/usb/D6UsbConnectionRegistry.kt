@@ -106,6 +106,45 @@ class D6UsbConnectionRegistry(context: Context) {
      * like a sensor that is present and silent rather than like an error.
      */
     fun open(driver: UsbSerialDriver, baud: Int = BAUD_RATE): D6SerialConnection {
+        // ══════════════════════════════════════════════════════════════════
+        // ROUND 31 item 176(a) — **THE BUG THE OWNER HIT, IN ONE LINE.**
+        //
+        // This method used to open the device and overwrite the map entry
+        // without ever letting go of the connection that entry already held.
+        // Every caller before round 25 opened a port that was closed, so it
+        // never mattered. Item 119 created the caller for which it does:
+        //
+        //   1. auto-detect's D6 rung identifies (wrongly, pre-176(b)) and
+        //      LEAVES THE PORT OPEN at 230 400 with its reader thread running
+        //      — that is `D6AutoProbe`'s documented contract;
+        //   2. the operator sees "COIN-D6", opens the Advanced sheet, picks
+        //      STL-27L and taps Connect;
+        //   3. `openSerialPortByPath` lands here with baud = 921 600.
+        //
+        // `findDrivers()` hands back a FRESH `UsbSerialDriver` every call, so
+        // the new port object's own "Already open" guard does not fire. What
+        // fires instead is one level down: `usbManager.openDevice` returns a
+        // second `UsbDeviceConnection`, and `CommonUsbSerialPort.open` then
+        // calls `claimInterface(iface, force = true)` on an interface the
+        // first connection still holds. `force` only detaches KERNEL drivers;
+        // against another claim in the same process usbfs answers EBUSY, and
+        // the port throws `IOException("Could not claim interface 0")`.
+        //
+        // That exception became `Result.failure` in `openSerialPortByPath`,
+        // which `CaptureViewModel.connectManualSerialLidar` deliberately turns
+        // into a connect with `transportHint = null` so the reason reaches the
+        // UI — and the D6 session the operator was trying to REPLACE was still
+        // connected and streaming underneath it. From the operator's chair:
+        // "even manual selection is not adopted."
+        //
+        // The fix is that a re-open is a re-open. Releasing the previous
+        // connection first is also simply correct on its own terms: the old
+        // reader thread would otherwise keep running, keep pushing bytes into
+        // whatever device id the engine had, and never be reachable again once
+        // the map entry was overwritten.
+        // ══════════════════════════════════════════════════════════════════
+        close(driver.device.deviceName)
+
         val connection = usbManager.openDevice(driver.device)
             ?: error("UsbManager.openDevice returned null for ${driver.device.deviceName}")
         val port = driver.ports.first()

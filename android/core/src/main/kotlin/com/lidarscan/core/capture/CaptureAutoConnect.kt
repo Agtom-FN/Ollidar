@@ -37,6 +37,23 @@ data class AutoDetection(
 interface SensorAutoDetector {
     val sensor: SensorType
     suspend fun detect(): AutoDetection?
+
+    /**
+     * ROUND 31 item 176(b) — **why the last [detect] found nothing, when the
+     * detector knows something more useful than "nothing".**
+     *
+     * Null by default and null for almost every run: the honest answer to "no
+     * sensor answered" is usually [CaptureAutoConnectController.NOTHING_FOUND]
+     * and nothing else. The case this exists for is the AMBIGUOUS one — a
+     * serial port that produced partial evidence for *both* lidars and was
+     * claimed by neither. That is not "no scanner found", it is "I cannot tell
+     * which of these two it is", and the operator's next move (pick one in the
+     * panel that is already opening underneath the line) is different.
+     *
+     * Read only when every detector has come back empty; see
+     * [CaptureAutoConnectController.start].
+     */
+    val lastFailureMessage: String? get() = null
 }
 
 /**
@@ -93,7 +110,13 @@ class CaptureAutoConnectController(
                 // says what happened, and Retry is still one tap.
                 _state.value = CaptureAutoConnectState(
                     phase = CaptureAutoConnectState.Phase.FAILED,
-                    message = NOTHING_FOUND,
+                    // ROUND 31 item 176(b): a detector that knows something
+                    // more specific than "nothing found" gets to say it. The
+                    // first non-null wins — there is at most one, because only
+                    // the serial ladder sets it and there is only one of those
+                    // (`SerialLidarAutoDetector`'s "why one detector and not
+                    // two racing ones").
+                    message = detectors.firstNotNullOfOrNull { it.lastFailureMessage } ?: NOTHING_FOUND,
                     manualEntryOpen = true,
                 )
                 return@launch

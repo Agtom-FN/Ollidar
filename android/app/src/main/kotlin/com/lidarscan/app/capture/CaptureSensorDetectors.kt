@@ -6,6 +6,7 @@ import com.lidarscan.app.net.EthernetMonitor
 import com.lidarscan.app.usb.D6AutoProbe
 import com.lidarscan.app.usb.D6AutoProbeResult
 import com.lidarscan.app.usb.D6UsbConnectionRegistry
+import com.lidarscan.app.usb.SerialFirstBytesTrace
 import com.lidarscan.app.usb.Stl27lAutoProbe
 import com.lidarscan.app.usb.Stl27lAutoProbeResult
 import com.lidarscan.core.capture.AutoDetection
@@ -14,6 +15,8 @@ import com.lidarscan.core.model.SensorType
 import com.lidarscan.core.net.Mid360DetectionResult
 import com.lidarscan.core.net.Mid360Detector
 import com.lidarscan.core.net.SerialProbeRecord
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * ROUND 5: the Android halves of [SensorAutoDetector] — the two probes the
@@ -43,11 +46,32 @@ import com.lidarscan.core.net.SerialProbeRecord
  * without a USB stack anywhere near it.
  */
 sealed interface SerialProbeOutcome {
-    /** This step's sensor answered, and its port is open and ready for the engine. */
-    data class Identified(val devicePath: String) : SerialProbeOutcome
+    /**
+     * ROUND 31 item 176(b) — the counters this rung decided on, in one line,
+     * for the `[net-debug]` log. Empty when the rung never got as far as
+     * reading.
+     */
+    val evidence: String
 
-    /** The port opened and was read; nothing of this step's shape arrived. Try the next step. */
-    data object Declined : SerialProbeOutcome
+    /** This step's sensor answered, and its port is open and ready for the engine. */
+    data class Identified(
+        val devicePath: String,
+        override val evidence: String = "",
+    ) : SerialProbeOutcome
+
+    /**
+     * The port opened and was read; nothing of this step's shape arrived. Try
+     * the next step.
+     *
+     * ROUND 31 item 176(b) — [sawPartialMatch] means "something of my sensor's
+     * shape WAS here and I refused it for want of enough of it". Two rungs
+     * declining with partial matches is the AMBIGUOUS port: neither may be
+     * claimed, and the operator has to say which it is.
+     */
+    data class Declined(
+        override val evidence: String = "",
+        val sawPartialMatch: Boolean = false,
+    ) : SerialProbeOutcome
 
     /**
      * The port could not be used at all — permission refused, or it would not
@@ -55,7 +79,10 @@ sealed interface SerialProbeOutcome {
      * permission, and re-prompting the operator once per sensor is exactly the
      * dialog storm auto-detect exists to avoid.
      */
-    data class Unusable(val reason: String) : SerialProbeOutcome
+    data class Unusable(
+        val reason: String,
+        override val evidence: String = "",
+    ) : SerialProbeOutcome
 }
 
 /** One rung of the serial ladder: "open the port at MY baud and tell me if MY sensor is there." */
@@ -155,7 +182,23 @@ class SerialLidarAutoDetector(
      */
     override val sensor: SensorType = SensorType.COIN_D6
 
+    /**
+     * ROUND 31 item 176(b) — set when the ladder finished with an AMBIGUOUS
+     * port, cleared at the top of every run.
+     *
+     * `CaptureAutoConnectController` reads it only when every detector has
+     * come back empty, and prints it instead of "No scanner found." — because
+     * "I cannot tell which of these two lidars this is" asks the operator for
+     * a different action than "nothing is plugged in", and the panel with the
+     * D6 / STL-27L picker in it is already opening underneath the line.
+     */
+    @Volatile
+    private var ambiguityMessage: String? = null
+
+    override val lastFailureMessage: String? get() = ambiguityMessage
+
     override suspend fun detect(): AutoDetection? {
+        ambiguityMessage = null
         val paths = runCatching { attachedDevicePaths() }.getOrDefault(emptyList())
         if (paths.size != 1) {
             // Item 118 amendment: "wrong number of serial devices" is itself a
@@ -174,6 +217,10 @@ class SerialLidarAutoDetector(
         val devicePath = paths.first()
 
         try {
+            // ROUND 31 item 176(b): the rungs that declined WITH partial
+            // evidence. Two of them is the ambiguous port.
+            val partial = mutableListOf<SensorType>()
+
             for (step in ladder) {
                 // Each rung is recorded as it finishes, in order, because the
                 // ORDER is half the diagnosis: an Unusable on rung 1 stops the
@@ -181,20 +228,41 @@ class SerialLidarAutoDetector(
                 // rather than "declined".
                 when (val outcome = step.probe(devicePath)) {
                     is SerialProbeOutcome.Identified -> {
-                        note(step, devicePath, SerialProbeRecord.OUTCOME_IDENTIFIED)
+                        note(step, devicePath, SerialProbeRecord.OUTCOME_IDENTIFIED, outcome.evidence)
                         return detectionFor(step.sensor, outcome.devicePath)
                     }
 
-                    SerialProbeOutcome.Declined -> {
-                        note(step, devicePath, SerialProbeRecord.OUTCOME_DECLINED)
+                    is SerialProbeOutcome.Declined -> {
+                        note(step, devicePath, SerialProbeRecord.OUTCOME_DECLINED, outcome.evidence)
+                        if (outcome.sawPartialMatch) partial += step.sensor
                         // next rung, at the next baud
                     }
 
                     is SerialProbeOutcome.Unusable -> {
-                        note(step, devicePath, SerialProbeRecord.OUTCOME_UNUSABLE, outcome.reason)
+                        note(
+                            step,
+                            devicePath,
+                            SerialProbeRecord.OUTCOME_UNUSABLE,
+                            listOf(outcome.reason, outcome.evidence).filter { it.isNotBlank() }.joinToString(" · "),
+                        )
                         return null
                     }
                 }
+            }
+
+            if (partial.size > 1) {
+                // Neither rung reached its bar and BOTH saw real fragments of
+                // their protocol. Claiming either would be the round-25
+                // failure again with a different sensor on the losing end, so
+                // nothing is claimed and the operator is asked — which is a
+                // real answer, not a shrug, and it says so on screen.
+                ambiguityMessage = AMBIGUOUS_MESSAGE
+                ConnectionDebugTrace.noteSerialProbe(
+                    sensor = "serial-ladder",
+                    devicePath = devicePath,
+                    outcome = SerialProbeRecord.OUTCOME_AMBIGUOUS,
+                    detail = "partial evidence for ${partial.joinToString(" and ") { it.displayName }}",
+                )
             }
             return null
         } finally {
@@ -232,6 +300,15 @@ class SerialLidarAutoDetector(
 
     companion object {
         /**
+         * ROUND 31 item 176(b). Under the wording law: one short sentence, no
+         * jargon, and it names the exact next tap. The picker it points at is
+         * the FIRST control in the panel that opens underneath this line, so
+         * "below" is literally true rather than a direction to hunt in.
+         */
+        const val AMBIGUOUS_MESSAGE: String =
+            "Can't tell which scanner this is. Pick D6 or STL-27L below, then Connect."
+
+        /**
          * The production ladder, wired to a real [D6UsbConnectionRegistry].
          *
          * A factory rather than a constructor default so the class itself has
@@ -265,10 +342,14 @@ class D6ProbeStep(
         val driver = registry.findDrivers().firstOrNull { it.device.deviceName == devicePath }
             ?: return SerialProbeOutcome.Unusable("$devicePath is no longer attached")
         return when (val result = probe.probe(driver)) {
-            is D6AutoProbeResult.Identified -> SerialProbeOutcome.Identified(result.devicePath)
-            D6AutoProbeResult.NotIdentified -> SerialProbeOutcome.Declined
-            D6AutoProbeResult.PermissionDenied -> SerialProbeOutcome.Unusable("USB permission denied")
-            is D6AutoProbeResult.Error -> SerialProbeOutcome.Unusable(result.message)
+            is D6AutoProbeResult.Identified ->
+                SerialProbeOutcome.Identified(result.devicePath, result.evidence)
+            is D6AutoProbeResult.NotIdentified ->
+                SerialProbeOutcome.Declined(result.evidence, result.sawPartialMatch)
+            is D6AutoProbeResult.PermissionDenied ->
+                SerialProbeOutcome.Unusable("USB permission denied", result.evidence)
+            is D6AutoProbeResult.Error ->
+                SerialProbeOutcome.Unusable(result.message, result.evidence)
         }
     }
 }
@@ -285,10 +366,14 @@ class Stl27lProbeStep(
         val driver = registry.findDrivers().firstOrNull { it.device.deviceName == devicePath }
             ?: return SerialProbeOutcome.Unusable("$devicePath is no longer attached")
         return when (val result = probe.probe(driver)) {
-            is Stl27lAutoProbeResult.Identified -> SerialProbeOutcome.Identified(result.devicePath)
-            Stl27lAutoProbeResult.NotIdentified -> SerialProbeOutcome.Declined
-            Stl27lAutoProbeResult.PermissionDenied -> SerialProbeOutcome.Unusable("USB permission denied")
-            is Stl27lAutoProbeResult.Error -> SerialProbeOutcome.Unusable(result.message)
+            is Stl27lAutoProbeResult.Identified ->
+                SerialProbeOutcome.Identified(result.devicePath, result.evidence)
+            is Stl27lAutoProbeResult.NotIdentified ->
+                SerialProbeOutcome.Declined(result.evidence, result.sawPartialMatch)
+            is Stl27lAutoProbeResult.PermissionDenied ->
+                SerialProbeOutcome.Unusable("USB permission denied", result.evidence)
+            is Stl27lAutoProbeResult.Error ->
+                SerialProbeOutcome.Unusable(result.message, result.evidence)
         }
     }
 }
@@ -389,5 +474,15 @@ suspend fun openSerialPortByPath(
         val granted = registry.requestPermission(driver)
         if (!granted) return Result.failure(IllegalStateException("USB permission denied for $devicePath"))
     }
-    return runCatching { registry.open(driver, baud) }.map { }
+    // ROUND 31 item 176(c): the manual path never reads a byte itself — the
+    // engine's own reader does that after connect — so this is the only chance
+    // to put the device's USB identity in the log. A manual STL-27L connect
+    // that goes on to stream nothing is then still diagnosable: vid:pid says
+    // whether the phone even enumerated the adapter the owner thinks it did.
+    SerialFirstBytesTrace(driver, SerialFirstBytesTrace.SENSOR_MANUAL, baud).noteOpen()
+    // ROUND 31 item 176(a): `registry.open` now releases any connection this
+    // path already had (see its comment — that release is the whole fix), and
+    // that release joins a reader thread. Off the caller's dispatcher, which
+    // is `viewModelScope`, which is Main.
+    return withContext(Dispatchers.IO) { runCatching { registry.open(driver, baud) }.map { } }
 }

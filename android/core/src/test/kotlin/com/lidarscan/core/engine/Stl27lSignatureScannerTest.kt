@@ -216,6 +216,39 @@ class Stl27lSignatureScannerTest {
         assertFalse(D6SignatureScanner.containsSignature(null, stlChunk, stlChunk.size))
     }
 
+    // --- ROUND 31 item 176(b): the evidence counter -------------------------
+
+    @Test
+    fun `headerPairCount counts the coincidences the CRC then throws away`() {
+        // The pair of numbers IS the diagnosis. `542c=2048 packets=0` says the
+        // CRC gate refused 2048 coincidences, which is the probe working;
+        // `542c=0 packets=0` says nothing LD-shaped reached the phone at all,
+        // which is a cable, a divisor or a dead device. Neither reading is
+        // available from a single boolean.
+        val impostor = ByteArray(4096) { i -> if (i % 2 == 0) 0x54 else 0x2C }
+        assertEquals(2048, Stl27lSignatureScanner.headerPairCount(null, impostor, impostor.size))
+        assertEquals(0, Stl27lSignatureScanner.validPacketCount(null, impostor, impostor.size))
+    }
+
+    @Test
+    fun `headerPairCount honours the carry byte, exactly as validPacketCount does`() {
+        val chunk = bytes(0x2C, 0x00, 0x00)
+        assertEquals(1, Stl27lSignatureScanner.headerPairCount(0x54.toByte(), chunk, chunk.size))
+        assertEquals(0, Stl27lSignatureScanner.headerPairCount(null, chunk, chunk.size))
+    }
+
+    @Test
+    fun `a real packet stream counts one header per packet`() {
+        val stream = packet(startAngleCentiDeg = 0) +
+            packet(startAngleCentiDeg = 200, endAngleCentiDeg = 400) +
+            packet(startAngleCentiDeg = 400, endAngleCentiDeg = 600)
+        assertEquals(3, Stl27lSignatureScanner.validPacketCount(null, stream, stream.size))
+        assertTrue(
+            "every real packet contributes a header pair, plus any coincidences inside the payload",
+            Stl27lSignatureScanner.headerPairCount(null, stream, stream.size) >= 3,
+        )
+    }
+
     @Test
     fun `ASCII-only NMEA-shaped bytes (a GNSS receiver) never match`() {
         // Contains 'T' (0x54) followed by ',' (0x2C) on purpose — the exact

@@ -389,4 +389,70 @@ class CaptureAutoConnectControllerTest {
         advanceUntilIdle()
         assertEquals(CaptureAutoConnectState.Phase.FAILED, c.state.value.phase)
     }
+
+    // ── ROUND 31 item 176(b): a detector that knows more than "nothing" ──────
+
+    /** A detector that finds nothing but can explain why — the ambiguous serial port. */
+    private class ExplainingDetector(
+        override val sensor: SensorType,
+        override val lastFailureMessage: String?,
+    ) : SensorAutoDetector {
+        override suspend fun detect(): AutoDetection? = null
+    }
+
+    @Test
+    fun `a detector's own failure message replaces the generic one`() = runTest {
+        // "No scanner found" would be a lie here: a scanner IS found, and the
+        // ladder cannot tell which of two it is. The operator's next move is a
+        // tap on the picker, not a hunt for a cable.
+        val c = CaptureAutoConnectController(
+            listOf(ExplainingDetector(SensorType.COIN_D6, "Can't tell which scanner this is.")),
+            { Result.success(Unit) },
+            this,
+        )
+        c.start()
+        advanceUntilIdle()
+
+        assertEquals(CaptureAutoConnectState.Phase.FAILED, c.state.value.phase)
+        assertEquals("Can't tell which scanner this is.", c.state.value.message)
+        // The panel with the picker in it still opens with the line, exactly as
+        // round 5's "nothing found flows straight into manual entry" does.
+        assertTrue(c.state.value.manualEntryOpen)
+    }
+
+    @Test
+    fun `detectors with nothing to add leave the generic message alone`() = runTest {
+        val c = CaptureAutoConnectController(
+            listOf(
+                ExplainingDetector(SensorType.COIN_D6, null),
+                FakeDetector(SensorType.MID360, null),
+            ),
+            { Result.success(Unit) },
+            this,
+        )
+        c.start()
+        advanceUntilIdle()
+
+        assertEquals(CaptureAutoConnectController.NOTHING_FOUND, c.state.value.message)
+    }
+
+    @Test
+    fun `a detector that FOUND something never has its failure message read`() = runTest {
+        // Guards the ordering: `lastFailureMessage` is consulted only on the
+        // all-empty path, so a stale message from a previous run cannot appear
+        // over a successful detection.
+        val c = CaptureAutoConnectController(
+            listOf(
+                ExplainingDetector(SensorType.STL27L, "stale ambiguity from a previous retry"),
+                FakeDetector(SensorType.COIN_D6, d6),
+            ),
+            { Result.success(Unit) },
+            this,
+        )
+        c.start()
+        advanceUntilIdle()
+
+        assertEquals(CaptureAutoConnectState.Phase.PREVIEW, c.state.value.phase)
+        assertNull(c.state.value.message)
+    }
 }

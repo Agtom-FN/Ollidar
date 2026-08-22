@@ -5834,3 +5834,260 @@ and `PhoneImuRecorder`'s two new calls are one line each, but no recording has
 run through them off a real D6. And the deliberate non-change: **the
 disconnected page's landscape variant is still round 27's layout**, exactly as
 item 170's resolution says it should be.
+
+---
+
+## ROUND 31 (v0.9.16) — the STL-27L's first hardware contact, and the three ways it failed
+
+The owner plugged a real LDROBOT STL-27L into the Pixel on 2026-08-22. Round
+25 shipped that sensor "code-complete against the published protocol, bench
+test pending". The bench test happened. It failed three times over, and the
+third failure is the one that matters, because it was supposed to be the
+*mitigation* for the first two.
+
+### 176 — STL-27L: first hardware contact failed
+
+Owner, in three parts:
+
+**(a) auto-detect did not find it.** **(b) the app treated it as a D6.**
+**(c) even manual selection of STL-27L was "still not adopted"** — the capture
+went on running the D6 path.
+
+(a) and (b) are one fault with two faces, and round 25's own report predicted
+it in as many words: *"a D6 cannot be misread as an STL-27L, but the reverse
+isn't proven — the D6 probe accepts any adjacent `AA 55`… about 1 chance in
+65 536 per byte offset, across roughly 34 kB of a 1.5 s window. A
+misidentification there is genuinely possible."* It then named the manual
+picker as the escape hatch and shipped. (c) is the escape hatch being broken
+too, which is the part that turns a known limitation into a dead end: there
+was no way, from inside the app, to make it use the sensor that was attached.
+
+The three fixes this round owes:
+
+**(a) MANUAL SELECTION MUST BIND.** Trace the path from the picker to the
+engine's `add_device` and find where the choice is lost. An explicit STL-27L
+selection must open the STL-27L driver, full stop, and say so in the log.
+
+**(b) DETECTION.** Make the D6 probe strict — a real D6 frame structure rather
+than any adjacent `AA 55` — and give the STL-27L probe an equal footing.
+Classify by which protocol validates; when neither does and both left
+fragments, **ask the operator** rather than claiming whichever probe ran
+first. Log the evidence under developer mode.
+
+**(c) BENCH REALITY.** No STL-27L exists on this Mac. Validate with byte-exact
+synthetic streams through the real app-side decision code, document what
+changed in the manual's STL-27L section, and add a developer-mode line the
+owner can send back — `VID:PID` plus the first 64 bytes off the wire — so a
+failed retest is readable from a log instead of guessed at. And check that
+round 25's mirrored-scan warning (`invert_angle`) is still in front of the
+owner before his first real scan.
+
+### Resolution — 2026-08-22 (0.9.16, round 31)
+
+**176(a) — the root cause, and it is one line's absence.**
+
+`D6UsbConnectionRegistry.open` (`android/app/src/main/kotlin/com/lidarscan/
+app/usb/D6UsbConnectionRegistry.kt:108`) opened the device and overwrote its
+`openConnections[path]` entry **without ever releasing the connection that
+entry already held.** Every caller before round 25 opened a port that was
+closed, so it never mattered. Item 119 created the caller for which it does:
+
+1. auto-detect's D6 rung identifies — wrongly — and **leaves the port open**
+   at 230 400 with its reader thread running. That is `D6AutoProbe`'s
+   documented contract and it is what makes the hand-off to the engine free.
+2. The operator sees "COIN-D6", opens the Advanced sheet, picks STL-27L, taps
+   Connect.
+3. `openSerialPortByPath` → `registry.open(driver, 921600)`.
+
+`findDrivers()` returns a **fresh** `UsbSerialDriver` on every call, so the new
+port object's own "Already open" guard does not fire. What fires is one level
+down: `usbManager.openDevice` hands back a second `UsbDeviceConnection`, and
+`CommonUsbSerialPort.open` then calls `claimInterface(iface, force = true)` on
+an interface the first connection still holds. `force` only detaches *kernel*
+drivers; against another claim inside the same process usbfs answers EBUSY and
+the port throws `IOException("Could not claim interface 0")`.
+
+That exception became `Result.failure` in `openSerialPortByPath`, which
+`CaptureViewModel.connectManualSerialLidar` **deliberately** turns into a
+connect with `transportHint = null` so the reason reaches the UI — and the D6
+session the operator was trying to replace was still connected and streaming
+underneath the failure line. From the operator's chair: *"still not adopted."*
+
+Note what was **not** wrong, because a round spent looking in the wrong place
+is the cost of not writing this down. The picker writes the right value
+(`CaptureScreen.kt:4242` passes `manualSerialSensor` to `onDeviceConnect`);
+the ViewModel carries it (`CaptureViewModel.kt:1037`); `SerialLidarBaud`
+returns 921 600 for it; `RealEngineBridge.connect` routes an `STL27L` target
+down the serial path with `DeviceKind.STL27L` and the right baud. **Every line
+of round 25's item-119 wiring was correct.** The selection was not dropped by
+any of it — it was dropped by a USB port that could not be reopened, in a file
+item 119 barely touched.
+
+Two changes:
+
+* `D6UsbConnectionRegistry.open` now `close(devicePath)`s first. A re-open is
+  a re-open. This is also simply correct on its own terms: the old reader
+  thread would otherwise keep pushing bytes into whatever device id the engine
+  held, unreachable forever once the map entry was overwritten.
+* `CaptureViewModel.connectManualSerialLidar` releases the engine before it
+  reopens the port — `engineBridge.disconnect()`, guarded on `CaptureState
+  .IDLE` so a manual re-pick can never tear down a RECORDING session. Without
+  it the engine would have kept its first `scan_engine_add_device` and gained
+  a second, with two readers on one port.
+
+And the log line the owner asked for, on both paths, in one shape:
+`[session] sensor: LDROBOT STL-27L (manual)` / `… (auto)`. One `grep` for
+`[session] sensor:` now answers "what did this capture open, and did a human
+choose it" — the question the 2026-08-22 log could not be asked.
+
+**176(b) — the D6 probe was a coin flip, and now it is not.**
+
+The old test was `containsSignature`: were the bytes `AA 55` adjacent anywhere
+in the window. A 1.5 s window at 230 400 8N1 is ~34 500 bytes, so against
+uniform noise the expected count is ~0.53 and the chance of **at least one**
+is about **41 %**. That is not a probe. And the traffic it was judging is not
+noise — it is a 921 600 stream sampled at a quarter of its bit rate, which is
+dense in alternating-bit runs, which is what `AA` and `55` are.
+
+`D6FrameScanner` (new, `:core`) reads the actual frame layout from
+`d6_parser.h` and requires **four complete well-formed frames** — `AA 55`,
+`LSN >= 1`, the constant check bit set in *both* angle low bytes — **plus at
+least one chained pair**, a frame whose successor begins at exactly
+`10 + 3*LSN` bytes later and is also well-formed. Roughly 1 false header per
+262 000 offsets, so ~0.13 expected per window; four of them is ~1 in 10^5, and
+requiring one to be chained is ~5 in 10^7. A real COIN-D6 emits ~100 packets/s
+and clears the bar in ~40 ms of a 1500 ms window, so the sensor with all the
+field history pays nothing.
+
+**The D6's checksum is deliberately NOT part of the bar**, and that is a
+decision rather than an omission. Its 16-bit XOR has *two surviving readings*
+of an untranslatable spec figure (`ChecksumVariant::kVendorSdk` vs
+`kSpecLiteral`); the engine ships both and picks between them at runtime from
+live counters. Duplicating a contested checksum into Kotlin and then gating
+the one detection path with field history on it would trade a proven weakness
+for an unproven one — a D6 that failed the Kotlin copy would just stop being
+found, in the field, silently. Structure is not in dispute; the checksum is
+checked where it can be judged against real counters.
+
+Streaming, not chunk-local: a D6 frame is up to 775 bytes and a USB read hands
+over 4 KB at arbitrary boundaries, so the round-25 one-byte carry (all a
+two-byte preamble ever needed) could not see a split frame. `D6FrameScanner`
+keeps a bounded residual and is fed chunk by chunk.
+
+The STL-27L probe already had the stronger gate — `54 2C` **and** a matching
+CRC8-0x4D over the 47-byte packet, four packets — mirroring the engine's
+`discovery::Stl27lSniffer::kPacketsToIdentify`. It was not loosened. What it
+gained is `headerPairCount`: the bare `54 2C` tally, recorded **for the log
+and never for the verdict**, because `542c=3 packets=0` ("the CRC refused
+three coincidences") and `542c=0 packets=0` ("nothing LD-shaped was on the
+wire") are different faults and one number cannot separate them.
+
+**The ambiguous port.** Both rungs declining *with fragments of their own
+protocol* is now a named outcome: nothing is claimed, `[net-debug]` records
+`ambiguous`, and the strip says **"Can't tell which scanner this is. Pick D6
+or STL-27L below, then Connect."** — under the wording law, naming the exact
+tap, above a panel whose first control is that picker. Carried through
+`SensorAutoDetector.lastFailureMessage`, a defaulted `null` property the
+controller reads only when every detector has come back empty.
+
+**What was NOT done, and why.** The item asked to "try both, classify by which
+validates". The ladder still **short-circuits on rung 1**: it does not reopen
+a port at 921 600 after a D6 has already answered on it. Running rung 2
+unconditionally would mean closing and re-claiming the interface of a working,
+correctly-identified COIN-D6 on every single connect — churn on the one path
+every recorded scan in `captures/` came through, to disambiguate a case the
+strict probe has already made ~10^-7 likely. The classification the item wants
+is achieved by making rung 1 honest rather than by making rung 2 always run,
+and the ambiguity verdict covers the case that remains. Saying so here rather
+than quietly declining to do it.
+
+**176(c) — evidence, since there is no hardware.**
+
+`SerialFirstBytesTrace` writes one `[net-debug]` line per port open: `vid:pid`,
+the OS product string, the baud, and **the first 64 bytes the device actually
+sent**, as hex. Developer-mode gated (`ConnectionDebugTrace.enabled`), and
+rate-limited *structurally* — one instance per open, one line per instance, so
+a reader thread delivering 200 chunks a second still writes one line and there
+is no clock to get wrong. The manual connect path, which never reads a byte
+itself, writes the identity half (`port-open`), so a device that streams
+nothing is still identifiable.
+
+Validation, all byte-exact, no hardware:
+
+* `D6FrameScannerTest` (`:core`, 12) — synthetic D6 frames identify, including
+  split across 7-byte reads and at the 255-sample maximum; **a whole probe
+  window of seeded xorshift noise is refused, and the same buffer is asserted
+  to make the round-25 probe say yes**; an STL-27L stream is refused at its own
+  baud and at the D6's; `LSN = 0` and a cleared angle check bit are refused.
+  The mis-clocked stream is an explicit UART model — ten bits per byte, start
+  and stop included, sampled every fourth bit — over byte-exact LD packets.
+  Deterministic; the noise seed is pinned and the docstring says why (most
+  seeds give a window round 25 would have *declined*, which would prove
+  nothing).
+* `SerialLadderByteExactTest` (`:app`, 6) — the **whole ladder**, driven by
+  bytes, with rungs whose answers come from `D6AutoProbe.classify` /
+  `Stl27lAutoProbe.classify`. Those share their counters-to-verdict mapping
+  with the live `probe()` (extracted to `verdict()`), so this is not a test of
+  a copy. A D6 is found on rung 1; **an STL-27L is found as an STL-27L**; rung
+  1 refuses the mis-clocked stream; an empty port is not called ambiguous.
+* `CaptureStl27lManualConnectTest` (`:app`, 8, was 4) — the round-25 tests all
+  started from a ViewModel that had never connected, which **is not the state
+  the picker is used in**. The new ones start from a *wrong* auto-detect and
+  assert the ORDER: `disconnect` → `open@921600` → `connect:STL27L`. The
+  recording bridge also refuses a serial target with a null transport hint, as
+  `RealEngineBridge` does, so a fake cannot let this suite pass a build the
+  phone would fail.
+* `SerialLidarAutoDetectorTest` (`:app`, 12, was 8) and
+  `CaptureAutoConnectControllerTest` (`:core`, +3) — the ambiguity verdict, its
+  non-stickiness across a retry, and that a detector which *found* something
+  never has its failure message read.
+
+**The angle convention is still in front of the owner.** `Stl27lConfig
+::invert_angle` and the mirrored-scan risk were already in the manual's §13;
+round 31 strengthens the instruction from "check it" to *"do this on the very
+first scan, not the tenth"*, with the reason stated plainly — a mirrored room
+is the one failure on the list that looks entirely correct.
+
+**One more thing the strict probe had to not break.** The chain requirement
+assumes packets sit back to back, and they normally do — but `d6::kSpeedAdjA` /
+`kSpeedAdjB` (`FE` / `FF`) filler is emitted *"before the rotation
+stabilises"*, which is exactly when a probe that runs on plug-in is listening.
+A filler-separated window chains nowhere, and the first cut of this gate would
+have refused a perfectly healthy COIN-D6 on a cold plug-in. So the bar is four
+frames **with** a chain, **or** `FRAMES_WITHOUT_CHAIN` = **twelve** without
+one. Twelve is not a weaker bar, it is a differently-shaped one: ~0.13 false
+headers are expected per window, so twelve is a Poisson tail near 10^-20. Both
+halves are pinned — a filler-separated D6 identifies with `chained == 0`
+asserted to be zero, and both impostor streams are asserted to stay under
+twelve frames.
+
+**Numbers.** Engine **untouched**; ABI stays **12**; `ctest` **8/8**. `:core`
+unit **1085 / 0** (was 1065; +14 `D6FrameScannerTest`, +3
+`CaptureAutoConnectControllerTest`, +3 `Stl27lSignatureScannerTest`). `:app`
+unit **265 / 0** (was 251; +6 `SerialLadderByteExactTest`, +4
+`SerialLidarAutoDetectorTest`, +4 `CaptureStl27lManualConnectTest`). Emulator:
+**66 tests, 0 failures, 2 assumed-skipped** on `b4_test`, one undisturbed run,
+`BUILD SUCCESSFUL in 3m 23s`. VERSION 0.9.16; versionCode **916** /
+versionName **0.9.16** / `application-label:'Ollidar'` verified by `aapt2 dump
+badging` on `dist/Ollidar-0.9.16-916.apk`.
+
+**One connected test changed, and it is worth naming.** `Round26UiTest
+.theAppIsCalledOllidar` pinned the footer against a **hand-edited literal**
+(`0.9.15`), which is why the version bump broke it — the same trap every round
+since 26. It now reads `BuildConfig.VERSION_NAME` / `VERSION_CODE`, which come
+from the VERSION file through Gradle. The assertion does not weaken: what it
+proves is still "this footer reads the BUILD's version", which is what catches
+a stale APK. What it stops proving is "somebody remembered to edit this line",
+which was never the point.
+
+**What is NOT proven, said plainly. No STL-27L, and no COIN-D6, is attached to
+this machine.** Every stream above is synthetic. The three seams a synthetic
+stream cannot reach are `UsbSerialDriver`, `registry.open`, and the reader
+loop — which is to say, the exact three the owner's session broke on. The
+`claimInterface` diagnosis is read from usb-serial-for-android's source and
+Android's usbfs behaviour, not from a stack trace off the phone: nobody
+captured one, because developer mode was off and there was nothing in the log
+to capture. **The owner's retest is this round's bench validation**, and
+176(c)'s first-64-bytes line exists precisely so that if it fails again, the
+next round starts from what the device sent rather than from what it ought to
+have sent.

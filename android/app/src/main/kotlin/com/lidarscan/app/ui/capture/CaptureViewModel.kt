@@ -967,6 +967,13 @@ class CaptureViewModel(
                     engineBridge.connect(
                         EngineTarget(detection.sensor, transportHint = detection.transportHint),
                     ).onSuccess {
+                        // ROUND 31 item 176(a): the counterpart of the manual
+                        // path's line, in the same shape, so one grep for
+                        // `[session] sensor:` in a field log answers "what did
+                        // this capture actually open, and did a human choose
+                        // it or did the ladder?" — the question the owner's
+                        // 2026-08-22 report could not be answered from.
+                        logEvent(LOG_TAG_SESSION, "sensor: ${detection.sensor.displayName} (auto)")
                         // The detected sensor decides what the new project will
                         // be created as, and (for a Mid-360) which addresses get
                         // written into its manifest at Start.
@@ -1041,9 +1048,47 @@ class CaptureViewModel(
         val controller = autoConnect ?: return
         val baud = com.lidarscan.core.engine.SerialLidarBaud.forSensorOrNull(sensor) ?: return
         val label = "${sensor.displayName} · ${device.label}"
+        // ROUND 31 item 176(a). The owner's line, verbatim: even manual
+        // selection was "still not adopted". This is the log line that makes
+        // the next field report answerable in one grep — it is written BEFORE
+        // the open, so a manual connect that then fails still leaves proof
+        // that the operator's choice reached this far.
+        logEvent(LOG_TAG_SESSION, "sensor: ${sensor.displayName} (manual)")
         viewModelScope.launch {
+            // ══════════════════════════════════════════════════════════════
+            // ROUND 31 item 176(a), the second half of the fix.
+            //
+            // The manual picker exists to OVERRIDE an auto-detect that guessed
+            // wrong, so the overwhelmingly common case is that the engine is
+            // already connected — to the wrong sensor, on the very port this
+            // is about to reopen at a different baud. Leaving that in place
+            // was two bugs at once: the old `D6SerialConnection`'s reader
+            // thread kept pushing bytes into the engine's existing device id,
+            // and `scan_engine_add_device` would have been called a second
+            // time without the first device ever being removed.
+            //
+            // `disconnect()` is the bridge's own teardown and already does
+            // exactly the right things in the right order (stop capture, drop
+            // the health poll, close the registry's connection for the last
+            // path, `nativeRemoveDevice`, stop the event pump). Guarded on
+            // IDLE because a manual re-pick must never be able to tear down a
+            // RECORDING session — the panel is a pre-capture surface and this
+            // keeps that true even if a future layout puts it somewhere else.
+            // ══════════════════════════════════════════════════════════════
+            if (engineBridge.captureState.value == CaptureState.IDLE &&
+                engineBridge.connectionState.value != ConnectionState.DISCONNECTED
+            ) {
+                logEvent(LOG_TAG_SESSION, "manual pick: releasing the previous connection first")
+                runCatching { engineBridge.disconnect() }
+                    .onFailure { logEvent(LOG_TAG_SESSION, "manual pick: disconnect threw: ${it.message}") }
+            }
             val opened = runCatching { openSerialPort(device.path, baud) }.getOrElse { Result.failure(it) }
             if (opened.isFailure) {
+                logEvent(
+                    LOG_TAG_SESSION,
+                    "sensor: ${sensor.displayName} (manual) — port would not open at $baud: " +
+                        (opened.exceptionOrNull()?.message ?: "unknown"),
+                )
                 controller.connectManually(
                     com.lidarscan.core.capture.AutoDetection(
                         sensor = sensor,

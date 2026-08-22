@@ -5,6 +5,7 @@ package com.lidarscan.app.ui.capture
 import com.lidarscan.core.capture.AutoDetection
 import com.lidarscan.core.capture.CaptureAutoConnectState
 import com.lidarscan.core.capture.SensorAutoDetector
+import com.lidarscan.core.engine.EngineTarget
 import com.lidarscan.core.engine.FakeEngineBridge
 import com.lidarscan.core.engine.SerialLidarBaud
 import com.lidarscan.core.model.SensorType
@@ -23,6 +24,7 @@ import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -41,6 +43,20 @@ import org.junit.Test
  *
  * Harness is rounds 23–25's: one real `CaptureViewModel` on a JVM, with the
  * USB layer replaced by a lambda that records what it was asked for.
+ *
+ * ## ROUND 31 item 176(a) — what round 25 did not test, and the owner found
+ *
+ * Every test below started from a ViewModel that had never connected to
+ * anything. That is not the state the picker is used in. The picker exists to
+ * OVERRIDE an auto-detect that guessed wrong, so by the time a finger reaches
+ * it the engine is already connected — to the wrong sensor, on the very port
+ * the manual connect is about to reopen at a different baud. Round 25 never
+ * put a ViewModel in that state, so nothing noticed that the previous
+ * connection was never released; on hardware, `claimInterface` then refused
+ * the second open and the manual choice died as a `Result.failure`.
+ *
+ * The `alreadyConnected…` tests below are that state, and they are the
+ * regression fence.
  */
 class CaptureStl27lManualConnectTest {
 
@@ -58,6 +74,8 @@ class CaptureStl27lManualConnectTest {
     @Before fun setUp() { Dispatchers.setMain(Dispatchers.Unconfined) }
 
     @After fun tearDown() {
+        calls.clear()
+        openFailure = null
         built.forEach { it.shutDownForTest() }
         built.clear()
         engineScope.cancel()
@@ -78,6 +96,50 @@ class CaptureStl27lManualConnectTest {
         override suspend fun detect(): AutoDetection? = null
     }
 
+    /**
+     * ROUND 31 item 176(a) — auto-detect getting it WRONG, which is the only
+     * situation the manual picker is ever used in. Answers COIN-D6 on the port
+     * the operator is about to say is an STL-27L.
+     */
+    private class WrongD6Detector : SensorAutoDetector {
+        override val sensor = SensorType.COIN_D6
+        override suspend fun detect(): AutoDetection = AutoDetection(
+            sensor = SensorType.COIN_D6,
+            transportHint = DEVICE.path,
+            label = "COIN-D6 · ${DEVICE.label}",
+        )
+    }
+
+    /**
+     * ROUND 31 item 176(a): records the bridge calls in order, because the
+     * ORDER is the fix. Releasing the previous connection has to happen
+     * BEFORE the port is reopened at the new baud — the other way round is
+     * what the phone was doing, and it is what threw.
+     */
+    private class RecordingBridge(scope: CoroutineScope, val calls: MutableList<String>) :
+        FakeEngineBridge(scope) {
+        override suspend fun connect(target: EngineTarget): Result<Unit> {
+            calls += "connect:${target.sensor.name}:${target.transportHint}"
+            // The one behaviour of `RealEngineBridge.connect` this suite
+            // depends on and `FakeEngineBridge` does not have: a serial
+            // sensor with no device path is REFUSED, with the sensor named.
+            // `connectManualSerialLidar` relies on exactly that to carry a
+            // failed port-open into the UI, so a fake that connects happily to
+            // null would let this suite pass a build the phone cannot run.
+            if (target.transportHint == null && SerialLidarBaud.isSerial(target.sensor)) {
+                return Result.failure(
+                    IllegalArgumentException("${target.sensor.displayName} connect needs a device path"),
+                )
+            }
+            return super.connect(target)
+        }
+
+        override suspend fun disconnect() {
+            calls += "disconnect"
+            super.disconnect()
+        }
+    }
+
     private fun tempRoot(): File = File.createTempFile("item119vm", "").let {
         it.delete(); it.mkdirs(); it
     }
@@ -85,18 +147,25 @@ class CaptureStl27lManualConnectTest {
     /** Every (path, baud) pair the manual path asked the USB layer to open. */
     private val opened = CopyOnWriteArrayList<Pair<String, Int>>()
 
-    private fun newVm(): CaptureViewModel {
+    /** Bridge calls in the order they were made, for the round-31 ordering assertions. */
+    private val calls = CopyOnWriteArrayList<String>()
+
+    /** Set by a test to make the port refuse to open. */
+    @Volatile private var openFailure: String? = null
+
+    private fun newVm(detector: SensorAutoDetector = SilentDetector()): CaptureViewModel {
         val series = AtomicInteger(0)
         val vm = CaptureViewModel(
-            engineBridge = FakeEngineBridge(engineScope),
+            engineBridge = RecordingBridge(engineScope, calls),
             projectStore = FileProjectStore(tempRoot(), appVersion = "test"),
-            autoDetectors = listOf(SilentDetector()),
+            autoDetectors = listOf(detector),
             claimSeriesNumber = { series.incrementAndGet() },
             peekSeriesNumber = { series.get() + 1 },
             attachedSerialDevices = { listOf(DEVICE) },
             openSerialPort = { path, baud ->
+                calls += "open:$path@$baud"
                 opened += path to baud
-                Result.success(Unit)
+                openFailure?.let { Result.failure(IllegalStateException(it)) } ?: Result.success(Unit)
             },
         )
         built += vm
@@ -165,6 +234,99 @@ class CaptureStl27lManualConnectTest {
         awaitPreview(vm)
 
         assertTrue(vm.poseTrackingRequired)
+    }
+
+    // ── ROUND 31 item 176(a): the manual pick, from the state it is used in ──
+
+    @Test
+    fun `an STL-27L pick over a wrong D6 auto-detect releases the port first, then binds`() = runBlocking {
+        val vm = newVm(WrongD6Detector())
+        // Auto-detect gets it wrong, exactly as it did on the owner's Pixel.
+        awaitPreview(vm)
+        assertEquals(SensorType.COIN_D6, vm.sensor.value)
+        calls.clear()
+        opened.clear()
+
+        vm.connectManualSerialLidar(DEVICE, SensorType.STL27L)
+        val state = awaitPreview(vm)
+
+        // THE FIX, as an ordering assertion: the previous connection is
+        // released before the port is reopened at 921600. Without the
+        // disconnect the port is still claimed and the real `registry.open`
+        // throws "Could not claim interface 0" here.
+        assertEquals(
+            listOf(
+                "disconnect",
+                "open:${DEVICE.path}@${SerialLidarBaud.STL27L}",
+                "connect:STL27L:${DEVICE.path}",
+            ),
+            calls.toList(),
+        )
+        // And the choice is what the session IS, not merely what was tapped.
+        assertEquals(SensorType.STL27L, state.detection?.sensor)
+        assertEquals(SensorType.STL27L, vm.sensor.value)
+        assertTrue(vm.poseTrackingRequired)
+    }
+
+    @Test
+    fun `picking the SAME sensor as a wrong auto-detect still rebinds cleanly`() = runBlocking {
+        // The operator confirming the guess must not be a special case: the
+        // port is released and reopened at the same baud, and nothing stacks.
+        val vm = newVm(WrongD6Detector())
+        awaitPreview(vm)
+        calls.clear()
+
+        vm.connectManualSerialLidar(DEVICE, SensorType.COIN_D6)
+        awaitPreview(vm)
+
+        assertEquals(
+            listOf(
+                "disconnect",
+                "open:${DEVICE.path}@${SerialLidarBaud.COIN_D6}",
+                "connect:COIN_D6:${DEVICE.path}",
+            ),
+            calls.toList(),
+        )
+    }
+
+    @Test
+    fun `a manual pick on a disconnected engine does not invent a disconnect`() = runBlocking {
+        val vm = newVm()
+        calls.clear()
+
+        vm.connectManualSerialLidar(DEVICE, SensorType.STL27L)
+        awaitPreview(vm)
+
+        assertEquals(
+            listOf("open:${DEVICE.path}@${SerialLidarBaud.STL27L}", "connect:STL27L:${DEVICE.path}"),
+            calls.toList(),
+        )
+    }
+
+    @Test
+    fun `a port that will not open fails as the picked sensor, never as a D6`() = runBlocking {
+        // The failure the owner actually saw. It must still name the STL-27L:
+        // a failure attributed to the sensor the operator did NOT pick is how
+        // "manual selection is not adopted" reads from the outside.
+        val vm = newVm()
+        openFailure = "Could not claim interface 0"
+
+        vm.connectManualSerialLidar(DEVICE, SensorType.STL27L)
+        val state = withTimeout(5_000) {
+            var st = vm.autoConnectState!!.value
+            while (st.phase != CaptureAutoConnectState.Phase.FAILED) {
+                delay(10)
+                st = vm.autoConnectState!!.value
+            }
+            st
+        }
+
+        assertEquals(SensorType.STL27L, state.detection?.sensor)
+        assertTrue(state.detection?.label?.contains("STL-27L") == true)
+        // The engine was never handed a device path, so it refused rather than
+        // silently connecting to whatever was there.
+        assertNull(state.detection?.transportHint)
+        openFailure = null
     }
 
     private companion object {
