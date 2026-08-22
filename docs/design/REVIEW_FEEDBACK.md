@@ -5189,32 +5189,27 @@ that `cmd uimode night no` changes the system and not this app — `ThemeMode.DA
 is the shipped default, which round 27 recorded and this round's first sweep
 re-discovered the hard way.
 
+
 ---
 
-## ROUND 28 HOTFIX — the emulator line above was wrong, and what was actually true
+## ROUND 28 HOTFIX — the emulator line above, corrected
 
-**The correction.** The round-28 resolution reported `Emulator **60**`. That run
-never happened. The connected suite did not reach 60 once in the whole round: it
-died at **test 17**, `Round13ProcessScanTest.processing_scan030_puts_five_pieces_into_one_frame`,
-with `Instrumentation run failed due to Process crashed.` Every failure after it
-in those logs is collateral — the process was gone, so the remaining 43 tests
-were never run and never reported. The number was written from what the suite
-was expected to do, not from a run that finished.
+**What the line said, and why it was wrong.** The resolution above reported
+`Emulator **60**`. No such run existed when it was written. Across the whole
+round the connected suite never once reached 60: the logs end at **test 17**,
+`Round13ProcessScanTest.processing_scan030_puts_five_pieces_into_one_frame`,
+with `Instrumentation run failed due to Process crashed.` Everything reported
+after that point is collateral — the app process was gone, so the remaining 43
+tests never ran. The number was written from what the suite was expected to do.
 
-**True history: crashed at 17 → root cause → 60 reached → four real failures →
-fixed → green.**
+**True history: crashed at 17 → root-caused as harness contention → suite
+reached 60 → four real failures surfaced in the back half → repaired → 60/60.**
 
-**The crash was not a crash.** No tombstone was written (`/data/tombstones` is
-empty under `adb root`), no Java exception reached `logcat -b crash`, and no
-Filament PANIC or ASSERT reached the main buffer. The prime suspect going in was
-item 154's render work — the E-1 height-axis fix in `points.mat` and
-`PointCloudRenderer` — because test 17 is the only path that loads a large
-processed cloud. **That suspicion was wrong, and the render work is innocent:**
-`Round13ProcessScanTest` never touches the renderer. It is a pure JNI test that
-drives `nativeProcReprocessD6` and decodes `StitchResult`, and not one file on
-that path changed this round.
+### 1. The "crash" was not a crash
 
-What the system log actually says, at the moment of every death:
+No tombstone (`/data/tombstones` empty under `adb root`), no Java exception in
+`logcat -b crash`, no Filament PANIC or ASSERT in the main buffer. The kill
+reason is in the system log, identically at every death:
 
 ```
 ActivityManager: Force stopping com.lidarscan.app.debug user=-1: installPackageLI
@@ -5223,80 +5218,125 @@ ActivityManager: Crash of app com.lidarscan.app.debug running instrumentation ..
 Zygote  : Process 16168 exited due to signal 9 (Killed)
 ```
 
-`installPackageLI` is **`pm install` of the app APK by a second, concurrent
-`connectedDebugAndroidTest`**. Installing over a running package force-stops it,
-so the in-flight instrumentation is SIGKILLed and AGP reports the only thing it
-can see: `Process crashed.` The sibling symptom is the same collision from the
-other end — a run killed at **test 1** by the *previous* run's UTP teardown
-(`deletePackageX`, `uninstall_after_test: true`).
+`installPackageLI` is `pm install` of the app APK by a **second, overlapping
+`connectedDebugAndroidTest`**; installing over a running package force-stops it,
+and the in-flight instrumentation is SIGKILLed. AGP can only report what it
+sees: `Process crashed.` The mirror-image symptom is a run killed at **test 1**
+by the previous run's UTP teardown (`deletePackageX`, `uninstall_after_test`).
+Both were operator-induced — runs killed mid-suite and relaunched on top of each
+other, not a defect in the app.
 
-**Why always test 17.** `processing_scan030_puts_five_pieces_into_one_frame`
-takes **~190 s** on `b4_test` — it stitches five sections and 78 421 points
-through the real engine, and it is by a wide margin the longest test in the
-suite. Runs were being launched every 2–3 minutes. Test 17 was simply the one
-always in flight when the next run's `pm install` landed. The device log records
-it starting **eight times and finishing zero**. Run it alone, undisturbed, and it
-passes in 191.8 s.
+**Why always test 17.** That test stitches five sections and 78 421 points
+through the real engine and takes **~190 s** on `b4_test` — by a wide margin the
+longest in the suite. Runs were being relaunched every two to three minutes, so
+test 17 was simply the one always in flight when the next `pm install` landed.
+The device log records it **starting eight times and finishing zero**. Run
+undisturbed it passes in **191.8 s** (class 2/2 green).
 
-So the "ship blocker" was the **test harness contending with itself on one AVD**,
-not a defect in the app, the engine or the renderer. Nothing was reverted; item
-154's axis fix and its 18 JVM tests stand as written.
+**The render work is innocent.** Item 154's E-1 height-axis fix — `world.z` →
+`world.y` in `points.mat`, `combinedBounds*[HeightRange.AXIS]` in
+`PointCloudRenderer`, the on-growth re-apply and the degenerate guard — was the
+prime suspect and is not the cause: `Round13ProcessScanTest` never touches the
+renderer. It drives `nativeProcReprocessD6` over JNI and decodes `StitchResult`,
+and no file on that path changed this round. **Nothing was reverted.** The axis
+pair stands as written and `HeightRangeTest`'s 18 tests, including the pin that
+fails if the axis goes back to 2, are green.
 
-**What the crash had been hiding.** With the suite finally able to run past 17,
-four genuine failures surfaced in the back half — tests 29 to 58, which had not
-executed once all round. None is crash-related; all four are round-28 changes
-whose assertions were never observed:
+### 2. What the process death had been hiding
 
-* `Round24UiTest.settingsProfileRowOpensTheSamePage` — Settings gained its
+With the suite able to run past 17 for the first time, a clean run reached 60/60
+and reported **four genuine failures** in tests 29–58 — a stretch that had not
+executed once all round. Each was reproduced in isolation, so none is flakiness:
+
+* **`Round24UiTest.settingsProfileRowOpensTheSamePage`** — Settings gained its
   DISPLAY / SCANNING / STORAGE sections, so the ABOUT block carrying the Profile
-  row now starts ~1500 px down a 2400 px screen. `settingsScreen` scrolls, so
+  row now begins ~1500 px down a 2400 px screen. `settingsScreen` scrolls, so
   the row stayed composed and `onNodeWithTag` still found it; `performClick`
-  then tapped off-screen coordinates and nothing happened. Fixed by
+  then tapped off-screen coordinates, nothing happened, and the failure
+  surfaced 15 s later as "Profile never opened". Repaired with
   `performScrollTo()` — what this file's own `app_version_footer` assertions
   already do.
-* `Round24UiTest.theAvatarOpensAProfilePageThatCanSendLogs` — item 165 rebuilt
-  the disclosure lines as children of `SupportRow`, whose `Row` is `clickable`;
-  `clickable` merges descendants, so those `Text`s stopped standing as their own
-  nodes in the merged tree. The page is correct — a `uiautomator` dump puts the
-  privacy line at y 394–435 of 2400. Fixed by querying `useUnmergedTree = true`.
-* `Round26UiTest.theScanControlsFloatInTheCorners` — two of item 158's removals
-  (the `?` FAB and the `0 pts` readout) were asserted against a page the bench
-  never renders. §D.1's idle page is the `compact && !isLandscape` branch, and
-  `compact` is `useCompactChrome(connected, …)`; **no D6 connects to an
-  emulator**, so the AVD falls to round 27's `IdleScanLayout`, which still draws
-  both. The eye did leave both pages because it moved to the Advanced sheet, a
-  shared surface. Assertions rescoped to what the disconnected page is, and to
-  the uniqueness property the test's own header says matters — a *second*
+* **`Round24UiTest.theAvatarOpensAProfilePageThatCanSendLogs`** — item 165
+  rebuilt the two disclosure lines as children of `SupportRow`, whose `Row` is
+  `clickable`; `clickable` merges descendants, so those `Text`s stopped standing
+  as nodes of their own in the merged tree. The page itself is correct — a
+  `uiautomator` dump puts the privacy line at y 394–435 of 2400. Repaired by
+  asking the unmerged tree.
+* **`Round26UiTest.theScanControlsFloatInTheCorners`** — two of item 158's three
+  removals were asserted against a page this bench never renders. §D.1's idle
+  page is the `compact && !isLandscape` branch and `compact` is
+  `useCompactChrome(connected, …)`; **no D6 connects to an emulator**, so the
+  AVD falls to round 27's `IdleScanLayout`, which still draws the corner `?` and
+  the `0 pts` readout. The eye genuinely left both pages because it moved into
+  the Advanced sheet, a shared surface. Assertions rescoped to the page under
+  test and to the uniqueness the test's own header calls for — a *second*
   `tutorialButton` would break `Round24UiTest`'s six-step tour.
-* `Round27UiTest.theAdvancedSheetDoesNotEllipsizeItsValues` — item 130's
+* **`Round27UiTest.theAdvancedSheetDoesNotEllipsizeItsValues`** — item 130's
   "taller than 1.4 labels" was a proxy for "wrapped rather than ellipsised",
-  valid while label and hint shared one line. Item 167 restacked `SheetRowLabel`
-  into a weighted column, so the hint gets the full row width and
-  `1.0 – 8 px · 0.1 steps` fits on one line honestly — and a one-line hint is
-  no longer distinguishable by height from a truncated one. The anti-ellipsis
-  property is structural now (that `Text` carries no `maxLines` and no
-  `overflow`), so the test asserts item 167's property instead: the hint is a
-  whole line tall and sits strictly **below** its label rather than printed
-  through it, which is the defect item 167 actually fixed.
+  sound while label and hint shared one line. Item 167 restacked
+  `SheetRowLabel` into a weighted column, so the hint takes the full row width
+  and `1.0 – 8 px · 0.1 steps` fits one line honestly — and a one-line hint is
+  no longer distinguishable by height from a truncated one, so the proxy stopped
+  measuring anything. The anti-ellipsis property is structural now (that `Text`
+  carries no `maxLines` and no `overflow`), so the test asserts item 167's own
+  property instead: the hint is a whole line tall and sits strictly **below**
+  its label rather than printed through it — the defect item 167 actually fixed.
 
-**Open, and an owner call rather than a hotfix's.** Item 158 removed the corner
-`?` and the zero-valued point readout from §D.1's connected idle page only. On
-the disconnected page — the one an emulator, and anyone without a rig plugged
-in, actually sees — both are still drawn. Whether they should also leave there
-is a visible change to the screen the owner opens first, so it is reported
-rather than taken.
+Only `androidTest` sources were touched. No shipped UI was changed by this
+hotfix, and the three harness repairs the resolution above describes — the
+point-count parser, the sheet-window sampling, and the tolerant Stop — stand
+unchanged.
 
-**Numbers, from runs that finished.** Engine **untouched**; ABI stays **12**.
-`:core` **999**, `:app` unit **251** — unchanged, since only androidTest files
-were edited. Emulator: `Round13ProcessScanTest` **2/2** alone (191.8 s for the
-big one), then the full suite **60/60, 0 failures** on `b4_test`. VERSION 0.9.13;
+### 3. The height gradient is now proven on a device
+
+The resolution above lists the E-1 colour fix under *"What is NOT proven"*: 18
+JVM tests and the axis pin, but **"not been seen rendering a gradient on a
+device"**. It has been now. The obstacle was never the renderer — it was that
+nobody had put a real cloud in front of it. `captures/scan-030.lscan` (the
+owner's 2026-08-18 walk) was staged into `getExternalFilesDir(null)/Projects`
+and opened in Review on `b4_test`:
+
+* **`15b-height-live.png`** — 78.4 K pts, `Colour → Height`: the floor draws
+  deep Turbo blue and rises through indigo to cyan at the ceiling. A gradient,
+  not the flat dark indigo the owner photographed.
+* **`15c/15d-height-processed*.png`** — the same cloud after **Process this
+  scan** ran on the AVD: five pieces aligned, the ceiling at the top of the ramp
+  in deep red, the walked path drawn beside it.
+
+Two side notes this corrects. `Process this scan` **does** work on an emulator —
+the round-28 note that "Review cannot post-process on an AVD" was about the
+bundled *synthetic* container, not a real one; scan-030 processed in ~3 minutes
+and reported *"5 pieces aligned — height spread 0.82 → 0.27 m"*, the same
+numbers `Round13ProcessScanTest` asserts (0.820 → 0.271, first piece moved
+0.52 m). And staging a project by hand needs
+`chown -R <app-uid>:ext_data_rw` after the push, or the store lists nothing:
+files pushed by `adb` are owned by `shell` and the app cannot read them.
+
+### 4. Open, and an owner call rather than a hotfix's
+
+Item 158 removed the corner `?` and the zero-valued point readout from §D.1's
+**connected** idle page only. On the disconnected page — what an emulator, and
+anyone without a rig plugged in, actually sees — both are still drawn. Whether
+they should also leave there is a visible change to the screen the owner opens
+first, so it is reported rather than taken.
+
+### 5. Numbers, from runs that finished
+
+Engine **untouched**; ABI stays **12**. `:core` **999 / 0 failures**; `:app`
+unit **251 / 0** — unchanged, since only `androidTest` files were edited;
+`HeightRangeTest` **18 / 0** and `ColormapLutTest` **12 / 0**. Emulator:
+`Round13ProcessScanTest` **2/2** alone, then the full connected suite
+**60/60, 0 failures** on `b4_test` (`BUILD SUCCESSFUL in 13m 20s`;
+`TestRunner: run finished: 60 tests, 0 failed, 0 ignored`). VERSION 0.9.13;
 versionCode **913** / versionName **0.9.13** / `application-label:'Ollidar'`
-verified by `aapt2 dump badging`.
+verified by `aapt2 dump badging` on `dist/Ollidar-0.9.13-913.apk`.
 
-**The operational rule this round paid for.** One AVD serves one
-`connectedDebugAndroidTest` at a time. A second invocation does not queue — its
-`pm install` kills whatever is mid-test, and its `uninstall_after_test` teardown
-kills whatever started after it. Before launching a connected run, check for a
-live one (`adb logcat` for `installPackageLI` / `start instr`, and the Gradle
-daemon list) and wait for it. A suite whose longest test is three minutes cannot
-survive a neighbour that relaunches every two.
+### 6. The operational rule this round paid for
+
+One AVD serves one `connectedDebugAndroidTest` at a time. A second invocation
+does not queue: its `pm install` kills whatever is mid-test, and its
+`uninstall_after_test` teardown kills whatever started after it. Killing a run
+mid-suite and relaunching has the same effect. Before starting a connected run,
+check for a live one — `adb logcat` for `installPackageLI` / `start instr`, plus
+the Gradle daemon list — and wait for it. A suite whose longest test is three
+minutes cannot survive a neighbour that relaunches every two.
