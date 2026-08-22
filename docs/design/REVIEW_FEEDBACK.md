@@ -5664,3 +5664,173 @@ Downloads copy `DownloadsExporterTest` still covers on the device. And the whole
 of item 170 is verified against a **disconnected** page and a **replay** session,
 because no D6 connects to an emulator — the connected idle page with a real
 sensor on the cable is still only reachable on the owner's phone.
+
+## ROUND 30 (v0.9.15) — the owner's 0.9.13 field report: the instrument that does not move
+
+### 175 — the attitude indicator does not move
+
+> Owner field report, 0.9.13 on the Pixel: the mini attitude instrument —
+> round 28 item 168's, the one beside STOP and inside the hold-still card —
+> **does not move with the phone.**
+
+Round 28 built that instrument carefully and tested the wrong half. Its angle
+mapping is `AttitudeIndicator` in `:core` with its own unit tests, and the
+mapping is right: deviation from the nearest square hold, so a landscape hold
+reads level; amber past 10°; no needle at all when the phone is too flat for a
+screen-plane angle to mean anything. Every one of those tests passes against a
+literal angle handed to it.
+
+Nothing ever handed it a *changing* angle. The Scan screen passed
+`startOrientation?.screenUpAngleDeg` (`CaptureScreen.kt:1241`), and
+`startOrientation` is round 26 item 125(b) — whose own KDoc says, in as many
+words, *"a property OF THE CAPTURE, not of the current device attitude: it is
+written once, at the moment the mount reference is settled … Nothing re-derives
+it mid-walk."* It is written at one line in the whole app
+(`CaptureViewModel.kt:4344`, inside `runStartHoldStage`'s completion) and
+cleared at one more. So the instrument was fed a **constant**, twice over:
+
+* **in the hold-still card it was `null`** — the card is on screen *during* the
+  hold, and the hold orientation does not exist until the hold finishes, so the
+  one placement whose entire instruction is *hold still* drew a ring with no
+  needle for the whole of it and then vanished;
+* **in the recording strip it was frozen** at whatever the rig's roll happened
+  to be at the instant the mount trim settled, for the rest of the walk.
+
+That is the report, exactly. The needle does not move because there is nothing
+moving in it.
+
+**What it must be fed, in order.** ARCore's pose attitude while a session is
+tracking — it is already flowing through the hold and the whole recording, it is
+fused against gyro and vision, and its world is gravity-aligned. Failing that,
+the gravity vector: from the round-9 phone IMU's accelerometer while that stream
+is running (it registers at 400 Hz for the densifier already, so a second
+subscription on the same physical sensor would be a duplicate), and otherwise
+from a listener of the instrument's own — which is the hold-still card's case,
+because `startPhoneImu()` does not run until after the hold.
+
+**And what it must cost.** 15–30 Hz into Compose state, low-passed so the needle
+is steady rather than twitching once per footfall, amber past the existing
+threshold, correct in both placements and in all four quadrants of round 26's
+orientation detection, and **nothing at all** when neither placement is on
+screen — a listener held by an idle Scan tab is a battery bug shipped to fix a
+cosmetic one.
+
+*(Also on the list and deliberately NOT touched: the disconnected page's
+landscape variant still draws round 27's layout. That is by design — item 170's
+resolution is explicit that only portrait was unified.)*
+
+### Resolution — 2026-08-22 (0.9.15, round 30)
+
+**The root cause, stated once.** The instrument was correct and unconnected.
+`CaptureScreen.kt:1241` read `startOrientation?.screenUpAngleDeg` and passed it
+down to both placements; `CaptureViewModel._startOrientation` is assigned at
+exactly one line in the app (`:4344`, inside `runStartHoldStage`'s completion
+block) and cleared at one more. So the hold-still card — which is on screen
+*before* that line runs — always saw `null`, and the recording strip always saw
+one number. Nothing in the chain was broken; there was simply no chain. The
+round-28 unit tests could not have caught it, because every one of them hands
+`AttitudeIndicator.reading` a literal angle, which is the one thing the app was
+never doing.
+
+**The fix is a source, not a repair.** Three new objects, and the size of each
+is the argument for where it lives.
+
+* **`LiveAttitude` (`:core`)** — the filter. It smooths a **direction**, not an
+  angle, and that is the whole of its design: an angle filter has a seam at
+  ±180° and a phone held upside down sits on it, so one hand-tremble would sweep
+  the needle the long way round the dial. There is no seam in a unit vector. The
+  angle is derived afterwards through `StartOrientation.fromDeviceUp` — round
+  26's own quadrant decoder, reused rather than restated, which is what makes a
+  landscape hold's *level* landscape-level in all four quadrants with no branch
+  anywhere. Two time constants, because there are two kinds of input: **150 ms**
+  for streams the platform has already fused (`TYPE_GRAVITY`, an ARCore pose)
+  and **400 ms** for a raw accelerometer, where a 2 Hz walking gait would
+  otherwise put a twitch on the dial once per footfall. Publication is throttled
+  to **50 ms — 20 Hz**, inside the specified 15–30 Hz; every sample is still
+  filtered, only its visibility is throttled, which is the rule
+  `PhoneImuRecorder.publishStatusOccasionally` already follows.
+* **`LiveAttitudeFeed` (`:core`)** — the rules. Which of three streams wins, and
+  when a sensor is held at all. It is in `:core` because every rule in it can be
+  wrong in a way a screenshot cannot show: a listener that outlives the screen,
+  or an instrument that goes deaf when ARCore stops tracking, both photograph
+  perfectly.
+* **`DeviceAttitudeSource` (`:app`)** — a `SensorManager`, a `HandlerThread`,
+  and which sensor to pick. 120 lines, no decisions.
+
+**The priority, and a deliberate asymmetry in it.** ARCore's pose wins while a
+session is tracking; the round-9 phone IMU's accelerometer — already registered
+at 400 Hz for the densifier, so free — is next; this feed's own `TYPE_GRAVITY`
+listener is last and is the hold-still card's case, because `startPhoneImu()`
+does not run until *after* the hold. The IMU's claim is a **flag**
+(`start`/`stop` are a deterministic pair) and while it is set no second
+accelerometer is opened on the same physical sensor. ARCore's claim is a
+**200 ms deadline on samples only, and never touches the registration** — a
+tracking session can stop delivering with no notification at all (round 27 item
+142 is an entire item about that), and a sensor released because ARCore was
+talking would go silent the moment it stopped, which is this round's bug wearing
+a new hat. `LiveAttitudeFeedTest.aPoseThatStopsArrivingHandsTheInstrumentBackToGravity`
+is that sentence as a measurement.
+
+**Lifecycle, and what it costs when nobody is looking.** `CaptureScreen`'s
+`attitudeWanted` is `startHold != null || RECORDING || PAUSED` — the predicate
+for "either placement is on screen" — in a `DisposableEffect` shaped exactly
+like the ARCore session lease above it, ref-counted so the two placements can
+overlap during the hand-off at Start without either switching the other off. An
+idle Scan tab, the Projects list and a backgrounded app hold **no listener, no
+thread and no state**; the last release resets the filter and publishes `null`,
+so re-entering a screen can never show the needle where it was left.
+
+**One Compose decision worth naming.** The screen passes a `StateFlow`, not a
+`Double?`, and it is collected **at the leaf** inside `AttitudeIndicator`.
+Collecting a 20 Hz flow in `CaptureRoute` would recompose the whole Scan screen
+twenty times a second in order to rotate a 34 dp line.
+
+**What the emulator proved that the JVM could not.** `Round30AttitudeTest`
+composes the **production** `StartHoldModal` and `ScanControlCluster` — not
+copies — against the real `AppContainer.attitudeSource`, so `SensorManager` →
+`LiveAttitudeFeed` → `StateFlow` → needle is closed end to end on a device. The
+AVD turned out to expose an AOSP fused `android.sensor.gravity` on top of the
+Goldfish accelerometer, so the shots settle in well under a second. Seven
+screenshots in `scratchpad/uishots5/`, all driven by
+`adb emu sensor set acceleration`:
+
+| shot | acceleration (x:y:z) | what it shows |
+|---|---|---|
+| `175-hold-card-level` | `0:9.81:0` | needle level, brand orange |
+| `175-hold-card-plus7-below-threshold` | `1.196:9.737:0` | tipped 7°, still orange — the threshold is visible |
+| `175-hold-card-plus15` | `2.539:9.477:0` | tipped 15°, **amber** (the round-28 threshold is 10°) |
+| `175-hold-card-plus40-amber` | `6.306:7.515:0` | tipped 40°, amber |
+| `175-hold-card-landscape-square-level` | `9.81:0:0` | the device rotated and the needle reads **level** — a landscape hold's level is landscape-level |
+| `175-recording-strip-level` | `0:9.81:0` | the second placement, level: pause · STOP · dial |
+| `175-recording-strip-plus40-amber` | `6.306:7.515:0` | the same row, amber at 40° |
+
+The `theHoldCardStaysUpForTheScreenshots` harness is `Assume`d off unless a run
+asks for it by name (`-e attitudeShots 1`), because a test that idles for
+45 seconds has no business in a suite that runs on every push; when it does run
+it asserts the needle visited at least three distinct readings, so a session that
+produced identical screenshots fails rather than being filed. It takes
+`-e attitudeShotsPlacement strip` to swap the card for the recording row, so one
+harness photographs both placements and neither has a second copy of the wiring
+under it.
+
+**Numbers.** Engine **untouched**; ABI stays **12**; `ctest` **8/8**. `:core`
+**1065 / 0** (was 1035 — 15 in `LiveAttitudeTest`, 15 in `LiveAttitudeFeedTest`).
+`:app` unit **251 / 0** (unchanged — the new logic is all in `:core`, which is
+where it was put so that it could be). Emulator: **66 tests, 0 failures, 2
+assumed-skipped** on `b4_test` (was 61/0/1; +4 in `Round30AttitudeTest`, one of
+which is the screenshot harness), one undisturbed run, `BUILD SUCCESSFUL in
+3m 25s`. VERSION 0.9.15; versionCode **915** / versionName **0.9.15** /
+`application-label:'Ollidar'` verified by `aapt2 dump badging`.
+
+**What is NOT proven, said plainly.** **The ARCore branch of the priority has
+never run on hardware.** No emulator has an ARCore session, so every AVD shot
+above is the gravity path; `onCameraPose` is pinned by `LiveAttitudeTest
+.aCameraPoseDecodesToTheSameHoldTheStartOrientationDoes` (it lands where round
+26's `classify` lands, in all four quadrants) and by four feed tests for the
+priority, and the one line joining it to reality — `CaptureArController
+.publishPose`'s `onAttitude?.invoke` — is exercised only on a phone. The same is
+true of the round-9 IMU hand-off: `LiveAttitudeFeedTest` proves the state machine
+and `PhoneImuRecorder`'s two new calls are one line each, but no recording has
+run through them off a real D6. And the deliberate non-change: **the
+disconnected page's landscape variant is still round 27's layout**, exactly as
+item 170's resolution says it should be.

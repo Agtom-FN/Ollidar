@@ -396,6 +396,23 @@ class CaptureArController(
      */
     var onTrackingLost: ((String) -> Unit)? = null
 
+    /**
+     * ROUND 30 item 175 — **the live attitude tap.**
+     *
+     * `q_world_from_camera` for every accepted frame, with the rear camera's
+     * `SENSOR_ORIENTATION` and whether ARCore is actually tracking. Set by
+     * [com.lidarscan.app.di.AppContainer] to [DeviceAttitudeSource.onCameraPose].
+     *
+     * A callback rather than a constructor dependency for the same reason
+     * [onTrackingLost] is one: this controller is app-lifetime and knows
+     * nothing about the UI, and the instrument is a reader of the pose stream,
+     * not a participant in it. It is invoked inside [publishPose], which the
+     * frame loop already wraps in `runCatching`, so a sink that throws cannot
+     * take the pose pump down with it.
+     */
+    @Volatile
+    var onAttitude: ((Quat, Int?, Boolean) -> Unit)? = null
+
     /** ROUND 15 item 54. Reset by [resetSections]; read for the seal summary. */
     private val healedBreaks = java.util.concurrent.atomic.AtomicInteger(0)
     private val unhealedBreaks = java.util.concurrent.atomic.AtomicInteger(0)
@@ -1020,6 +1037,10 @@ class CaptureArController(
         posesAccepted.incrementAndGet()
         lastPoseElapsedMillis = android.os.SystemClock.elapsedRealtime()
         motion.add(sample)
+        // ROUND 30 item 175: the attitude instrument's best source, taken at
+        // the one place every pose passes exactly once — the same argument
+        // `sections` is here for.
+        onAttitude?.invoke(orientation, _status.value.cameraProbe?.sensorOrientationDeg, tracking)
         // ROUND 7: a relocalization moves ARCore's world frame under the
         // pushbroom. Record it here, where every pose passes exactly once.
         // ROUND 15 item 54: HEAL FIRST, THEN PUSH.

@@ -1,6 +1,6 @@
 # Ollidar — User Manual
 
-App version 0.9.14 (Android). Written for the owner and for field testers.
+App version 0.9.15 (Android). Written for the owner and for field testers.
 If you only want a first scan, read [QUICK_START.md](QUICK_START.md) instead.
 
 The app is called **Ollidar** as of 0.9.11. The repository, the Android
@@ -245,6 +245,14 @@ At the bottom of the Scan screen:
 - the running numbers: points · points per second · duration · file size.
 - **Pause** — a circle to the left of the big button. Dimmed where pause does
   not work (Mid-360, replay).
+- the **attitude dial** — a circle to the right of STOP, drawn only while a
+  scan is live. A ring, two fixed side ticks, and a needle that tips with the
+  phone. It reads how far off square you are holding the rig, **not** your
+  absolute roll: held squarely in portrait *or* landscape the needle is level,
+  and it goes amber past 10°. **Live from 0.9.15** — before that it was fed the
+  roll measured at the start of the scan and never moved. A phone lying flat
+  has no readable angle, and the dial then shows a ring with no needle rather
+  than a guess.
 - the **big orange button**. It says **SCAN** while idle, **STOP** while
   recording, **CANCEL** during the start sequence. A dot means idle, a square
   means live.
@@ -287,7 +295,9 @@ seconds and *"usually 4–8 s"*. It steps through four stages, marking them
 3. **Measuring the mount — hold still** — *"Hold the phone still in your
    scanning pose…"*, then *"Steady… 0.4° and improving. Keep holding."*
    Instruction: **"Stand still exactly as you will scan. The walk starts at
-   GO."** Usually 1–2 seconds.
+   GO."** Usually 1–2 seconds. The same **attitude dial** sits at the top of
+   this card, live, so you can square the rig up while you are being told to
+   hold it still.
 
    Two things this stage can say instead, and both are the app protecting
    the scan rather than misbehaving:

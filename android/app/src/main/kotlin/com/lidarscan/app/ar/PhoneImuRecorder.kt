@@ -97,6 +97,20 @@ class PhoneImuRecorder(
         { handle, quat -> ScanEngineNative.nativeSetImuExtrinsics(handle, quat) },
     /** Seam for tests: the delivery-time clock the timestamp domain is checked against. */
     private val elapsedRealtimeNanos: () -> Long = { SystemClock.elapsedRealtimeNanos() },
+    /**
+     * ROUND 30 item 175 — the attitude instrument's feed, when this stream is
+     * the one running.
+     *
+     * This class already registers `TYPE_ACCELEROMETER` at the fastest rate the
+     * device allows, on its own thread, for the whole of every recording. The
+     * instrument beside the STOP button needs a gravity direction and nothing
+     * else; handing it a copy of a sample that has already been delivered costs
+     * one virtual call per accel event and saves a second registration on the
+     * same physical sensor. [DeviceAttitudeSource] registers its own listener
+     * only while this one is NOT running, which is why [start] and [stop] tell
+     * it so.
+     */
+    private val attitudeSink: DeviceAttitudeSource? = null,
 ) : SensorEventListener {
 
     private val sensorManager: SensorManager? =
@@ -225,11 +239,16 @@ class PhoneImuRecorder(
             "phone IMU started: handle=$handle gyro=${gyro.name} minDelay=${gyro.minDelay}us " +
                 "(ceiling ${"%.0f".format(sensorCeilingHz(gyro))} Hz) accel=${accel.name}",
         )
+        // ROUND 30 item 175: only once the registration actually succeeded —
+        // claiming the feed and then not delivering it would leave the
+        // instrument with no source at all.
+        if (accelOk) attitudeSink?.onImuFeedStarted()
     }
 
     /** Idempotent; safe to call from the seal path whether or not [start] ever ran. */
     fun stop() {
         engineHandle = 0L
+        attitudeSink?.onImuFeedStopped()
         sensorManager?.unregisterListener(this)
         thread?.quitSafely()
         thread = null
@@ -249,7 +268,13 @@ class PhoneImuRecorder(
 
     override fun onSensorChanged(event: SensorEvent) {
         when (event.sensor?.type) {
-            Sensor.TYPE_ACCELEROMETER -> merger.onAccel(event.timestamp, event.values[0], event.values[1], event.values[2])
+            Sensor.TYPE_ACCELEROMETER -> {
+                merger.onAccel(event.timestamp, event.values[0], event.values[1], event.values[2])
+                // ROUND 30 item 175. After the merger, never instead of it:
+                // the densifier owns this stream and the instrument is a
+                // passenger on it.
+                attitudeSink?.onImuAccel(event.values[0], event.values[1], event.values[2])
+            }
             Sensor.TYPE_GYROSCOPE -> onGyroEvent(event)
             else -> Unit
         }

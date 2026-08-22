@@ -767,7 +767,6 @@ fun CaptureRoute(
     // ROUND 28 items 155 + 158.
     val lastScan by viewModel.lastScan.collectAsStateWithLifecycle()
     val startBlock by viewModel.startBlock.collectAsStateWithLifecycle()
-    val startOrientation by viewModel.startOrientation.collectAsStateWithLifecycle()
     val noDataAlert by viewModel.noDataAlert.collectAsStateWithLifecycle()
     val noPoseAlert by viewModel.noPoseAlert.collectAsStateWithLifecycle()
     val sectionHint by viewModel.sectionHint.collectAsStateWithLifecycle()
@@ -934,6 +933,28 @@ fun CaptureRoute(
                 container.arController.endSessionUse(sessionLease.getAndSet(null))
             }
         }
+    }
+
+    // ── ROUND 30 item 175: the attitude instrument's feed, and only then ────
+    //
+    // The same shape as the session lease above, on the predicate that decides
+    // whether either placement of the instrument is drawn at all: the
+    // hold-still card (`startHold != null`, `StartHoldModal`) and the recording
+    // control strip (`live`, `ScanControlCluster`). Nothing else in the app
+    // draws a needle, so nothing else needs a gravity listener — an idle Scan
+    // tab, the Projects list and a backgrounded app all cost exactly zero.
+    //
+    // `DisposableEffect` rather than a collector: `acquire`/`release` are
+    // ref-counted, and a screen leaving by a tab switch, by back, or by process
+    // rebuild all end in the same `onDispose`. The ARCore pose tap is wired
+    // once in `AppContainer` and is itself a no-op while nothing is acquired,
+    // so there is one lifecycle here and not two.
+    val attitudeWanted = startHold != null ||
+        captureState == CaptureState.RECORDING ||
+        captureState == CaptureState.PAUSED
+    DisposableEffect(attitudeWanted) {
+        if (attitudeWanted) container.attitudeSource.acquire()
+        onDispose { if (attitudeWanted) container.attitudeSource.release() }
     }
 
     // ROUND 5.3 (item 18): the screen stays awake while a capture is running.
@@ -1238,7 +1259,7 @@ fun CaptureRoute(
         // Projects row lands — one destination for "open this scan".
         lastScan = lastScan,
         onOpenLastScan = { onScanSealed?.invoke(it) },
-        startOrientationRollDeg = startOrientation?.screenUpAngleDeg,
+        attitude = container.attitudeSource.attitude,
         // ROUND 28 item 155: the start sequence's terminal states.
         startBlock = startBlock,
         onStartBlockRetry = viewModel::retryStartAfterBlock,
@@ -1471,10 +1492,22 @@ fun CaptureScreen(
     /** Opens [lastScan] in Review. */
     onOpenLastScan: (String) -> Unit = {},
     /**
-     * ROUND 28 item 168: the gravity-derived roll of the current hold, for the
-     * attitude instrument. Null where there is no attitude (no ARCore, replay).
+     * ROUND 28 item 168 + **ROUND 30 item 175**: the attitude instrument's
+     * source, as a flow rather than as a value.
+     *
+     * Round 28 passed `startOrientation?.screenUpAngleDeg` here — round 26 item
+     * 125(b)'s **property of the capture**, written once when the mount hold
+     * settles and, by its own KDoc, "left alone for the rest of the capture".
+     * The instrument was therefore fed a constant: nothing at all while the
+     * hold-still card was up, and one frozen angle for the whole walk. It did
+     * not move on the owner's Pixel because there was nothing moving in it.
+     *
+     * A `StateFlow` rather than a `Double?` so the 20 Hz read is scoped to the
+     * two composables that draw a needle. Collecting it up here would recompose
+     * the whole Scan screen twenty times a second to turn a 34 dp line.
      */
-    startOrientationRollDeg: Double? = null,
+    attitude: kotlinx.coroutines.flow.StateFlow<com.lidarscan.core.calib.HoldOrientation?> =
+        kotlinx.coroutines.flow.MutableStateFlow(null),
     /** ROUND 28 item 155: the start sequence stopped and is asking. */
     startBlock: CaptureViewModel.StartBlock? = null,
     onStartBlockRetry: () -> Unit = {},
@@ -1877,7 +1910,7 @@ fun CaptureScreen(
                             onPause = onPause,
                             onResume = onResume,
                             onStop = onStop,
-                            rollDeg = startOrientationRollDeg,
+                            attitude = attitude,
                         )
                     }
 
@@ -2663,9 +2696,11 @@ fun CaptureScreen(
                 fraction = fraction,
                 label = hold.progress?.label ?: "Hold still",
                 // ROUND 28 item 168: the attitude instrument, inside the card
-                // that is telling him to hold still. `startOrientation` is the
-                // gravity-derived roll round 26 item 125(b) already computes.
-                rollDeg = startOrientationRollDeg,
+                // that is telling him to hold still — and ROUND 30 item 175,
+                // which is what finally makes it move: the live feed, not the
+                // start orientation that does not exist yet at this point in
+                // the sequence.
+                attitude = attitude,
                 onCancel = onDismissStartBlock,
             )
         }
@@ -4808,7 +4843,7 @@ private fun TrajectoryTrailOverlay(
  * the phone reaches the FAB in either orientation (item 125(a)).
  */
 @Composable
-private fun ScanControlCluster(
+internal fun ScanControlCluster(
     vertical: Boolean,
     captureState: CaptureState,
     connected: Boolean,
@@ -4835,8 +4870,9 @@ private fun ScanControlCluster(
     onPause: () -> Unit,
     onResume: () -> Unit,
     onStop: () -> Unit,
-    /** ROUND 28 item 168: the gravity-derived roll, for the attitude instrument. */
-    rollDeg: Double? = null,
+    /** ROUND 28 item 168 + ROUND 30 item 175: the live attitude, for the instrument. */
+    attitude: kotlinx.coroutines.flow.StateFlow<com.lidarscan.core.calib.HoldOrientation?> =
+        kotlinx.coroutines.flow.MutableStateFlow(null),
 ) {
     val recording = captureState == CaptureState.RECORDING
     val paused = captureState == CaptureState.PAUSED
@@ -4930,15 +4966,15 @@ private fun ScanControlCluster(
     // display setting, it is pressed once a session if ever, and it was one of
     // three grey circles in two sizes that the walking operator had to tell
     // apart.
-    val attitude: @Composable () -> Unit = {
-        AttitudeButtonSlot(rollDeg = rollDeg)
+    val attitudeSlot: @Composable () -> Unit = {
+        AttitudeButtonSlot(attitude = attitude)
     }
     if (vertical) {
         Column(
             verticalArrangement = Arrangement.spacedBy(ScanDims.S3),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            if (live) attitude()
+            if (live) attitudeSlot()
             fab()
             if (live) secondaries()
         }
@@ -4949,7 +4985,7 @@ private fun ScanControlCluster(
         ) {
             if (live) secondaries()
             fab()
-            if (live) attitude()
+            if (live) attitudeSlot()
         }
     }
 }
@@ -5728,18 +5764,26 @@ private fun StartModalCard(
     }
 }
 
-/** §D.3's hold-still card: attitude, title, countdown, progress, Cancel. */
+/**
+ * §D.3's hold-still card: attitude, title, countdown, progress, Cancel.
+ *
+ * `internal` rather than private for ROUND 30 item 175's emulator suite, which
+ * composes **this** card — not a copy of it — against the real
+ * `AppContainer.attitudeSource` so the AVD's virtual accelerometer drives the
+ * production needle end to end. A screenshot of a reimplementation would prove
+ * nothing about the screen the owner opens.
+ */
 @Composable
-private fun StartHoldModal(
+internal fun StartHoldModal(
     secondsLeft: Int,
     fraction: Float,
     label: String,
-    rollDeg: Double?,
+    attitude: kotlinx.coroutines.flow.StateFlow<com.lidarscan.core.calib.HoldOrientation?>,
     onCancel: () -> Unit,
 ) {
     StartModalCard {
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-            AttitudeIndicator(rollDeg = rollDeg, size = ScanDims.S6 + ScanDims.S1)
+            AttitudeIndicator(attitude = attitude, size = ScanDims.S6 + ScanDims.S1)
         }
         Spacer(Modifier.height(ScanDims.S2))
         Text(

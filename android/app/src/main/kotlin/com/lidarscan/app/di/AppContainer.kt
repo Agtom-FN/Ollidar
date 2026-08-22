@@ -384,7 +384,20 @@ class AppContainer(context: Context) {
         controller.attachDiagnosticSink { line ->
             captureLog.log(com.lidarscan.app.debug.CaptureLog.TAG_AR, line)
         }
+        // ROUND 30 item 175: the attitude instrument's first-choice source.
+        controller.onAttitude = { q, sensorOrientationDeg, tracking ->
+            attitudeSource.onCameraPose(q, sensorOrientationDeg, tracking)
+        }
     }
+
+    /**
+     * ROUND 30 item 175: **where the attitude instrument's needle gets its
+     * number.** App-lifetime, like [arController] and [phoneImuRecorder] and
+     * for the same reason — it holds a `SensorManager` — but it registers
+     * nothing at all until the Scan screen says one of the instrument's two
+     * placements is on screen.
+     */
+    val attitudeSource = com.lidarscan.app.ar.DeviceAttitudeSource(appContext)
 
     /**
      * ROUND 11 (owner item 43): one cue player for the process, like the
@@ -410,7 +423,12 @@ class AppContainer(context: Context) {
      * registers listeners only between `start`/`stop`, so an idle app costs
      * nothing.
      */
-    val phoneImuRecorder = com.lidarscan.app.ar.PhoneImuRecorder(appContext)
+    val phoneImuRecorder = com.lidarscan.app.ar.PhoneImuRecorder(
+        appContext,
+        // ROUND 30 item 175: while this stream is running it IS the attitude
+        // feed, so the instrument never opens a second accelerometer.
+        attitudeSink = attitudeSource,
+    )
 
     /**
      * B7: the device-level, per-bracket calibration store (WIZARD.md §3 —

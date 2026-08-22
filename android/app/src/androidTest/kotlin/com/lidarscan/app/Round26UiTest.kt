@@ -297,8 +297,8 @@ class Round26UiTest {
                 .getOrNull(androidx.compose.ui.semantics.SemanticsProperties.Text)
                 ?.joinToString(" ")
                 .orEmpty()
-            assertTrue("the footer is this round's version: \"$footer\"", footer.contains("0.9.14"))
-            assertTrue("…and its code: \"$footer\"", footer.contains("914"))
+            assertTrue("the footer is this round's version: \"$footer\"", footer.contains("0.9.15"))
+            assertTrue("…and its code: \"$footer\"", footer.contains("915"))
 
             composeRule.onNodeWithTag("tab_projects").performClick()
         }

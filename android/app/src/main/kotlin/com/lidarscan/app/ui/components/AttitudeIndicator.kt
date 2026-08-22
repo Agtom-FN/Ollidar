@@ -17,8 +17,11 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.lidarscan.app.ui.theme.ScanColors
+import com.lidarscan.core.calib.HoldOrientation
 import com.lidarscan.core.capture.AttitudeIndicator as Attitude
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * ROUND 28 item 168 — **the mini attitude indicator.**
@@ -134,15 +137,48 @@ fun AttitudeIndicator(
 }
 
 /**
+ * ROUND 30 item 175 — **the same instrument, wired to a source that moves.**
+ *
+ * Round 28's indicator took a `Double?` and the Scan screen handed it round 26
+ * item 125(b)'s START orientation: a value written once when the mount hold
+ * settles and, by its own KDoc, "left alone for the rest of the capture". So on
+ * the owner's Pixel the needle was null through the hold-still card and frozen
+ * for the whole walk — an instrument fed a constant, which is exactly what "it
+ * does not move" describes.
+ *
+ * The flow is collected **here**, at the leaf, and not in `CaptureRoute`: the
+ * source publishes at 20 Hz, and a read at the route would recompose the entire
+ * Scan screen twenty times a second to rotate a 34 dp line. Reading it inside
+ * the instrument scopes the invalidation to the instrument.
+ *
+ * `null` from the source means no reading at all — before the first sample, or
+ * after the feed is released — and draws the ring with no needle, which is the
+ * same honesty the `confident` flag buys.
+ */
+@Composable
+fun AttitudeIndicator(
+    attitude: StateFlow<HoldOrientation?>,
+    modifier: Modifier = Modifier,
+    size: Dp = 40.dp,
+) {
+    val hold by attitude.collectAsStateWithLifecycle()
+    AttitudeIndicator(
+        rollDeg = hold?.screenUpAngleDeg,
+        modifier = modifier,
+        confident = hold?.confident ?: false,
+        size = size,
+    )
+}
+
+/**
  * The recording row's housing for [AttitudeIndicator] — the same 52 dp circular
  * trough the pause button sits in, so the two mirror each other either side of
  * the STOP button exactly as the mockup draws them.
  */
 @Composable
 fun AttitudeButtonSlot(
-    rollDeg: Double?,
+    attitude: StateFlow<HoldOrientation?>,
     modifier: Modifier = Modifier,
-    confident: Boolean = true,
 ) {
     Box(
         modifier
@@ -150,6 +186,6 @@ fun AttitudeButtonSlot(
             .background(ScanColors.trough, CircleShape),
         contentAlignment = androidx.compose.ui.Alignment.Center,
     ) {
-        AttitudeIndicator(rollDeg = rollDeg, confident = confident, size = 34.dp)
+        AttitudeIndicator(attitude = attitude, size = 34.dp)
     }
 }
