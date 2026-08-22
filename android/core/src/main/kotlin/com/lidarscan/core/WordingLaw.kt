@@ -35,6 +35,24 @@ package com.lidarscan.core
  * and only the >25-word paragraphs are trimmed). RTK, the calibration wizard
  * and the Mid-360 preflight are for someone who has chosen to be there, and
  * "CRS" is the right word to use with them.
+ *
+ * ROUND 28 item 169 — **and a tab-bar screen can never claim that pass.**
+ *
+ * The exemption used to be a sentence in this comment and nothing else, so
+ * "advanced" meant whatever the author of a given screen decided it meant. What
+ * it came to mean in practice: the Jobs tab printed *"the queue runs one job at
+ * a time — that is A15's design, not a limit of this screen"* — a word this
+ * very file lists in [JARGON] — on a screen sitting in the **primary tab bar**,
+ * which no ordinary operator opted into. The law named the word and the
+ * exemption let it through.
+ *
+ * So the exemption is now a property of a **screen classification** rather than
+ * of a string, and the classification is a closed type: [TabBarScreen] and
+ * [AdvancedScreen] are disjoint, [TabBarScreen.jargonChecked] is a constant
+ * `true` that no member can override, and there is no constructor anywhere that
+ * lets a fifth tab appear with the lighter pass. A screen cannot argue itself
+ * into the exemption; it can only be one of the four the tab bar reaches, or
+ * not.
  */
 object WordingLaw {
 
@@ -57,6 +75,70 @@ object WordingLaw {
     val JARGON: List<String> = listOf(
         "§", "A12", "A15", "RANSAC", "CRS", "ECEF",
     )
+
+    // ── ROUND 28 item 169: who a sentence is talking to ────────────────────
+
+    /**
+     * Where a sentence is shown — the only thing that decides whether the
+     * lighter pass applies.
+     *
+     * Deliberately **not** a boolean flag on the string and **not** an open
+     * interface: the two implementations below are the whole world, and they
+     * are disjoint. See this file's header for what the flag version cost.
+     */
+    sealed interface Screen {
+        /** Is [JARGON] rejected here? */
+        val jargonChecked: Boolean
+
+        /** The longest a single operator-facing sentence may be here. */
+        val maxWords: Int
+    }
+
+    /**
+     * The four screens the primary tab bar reaches. **No exemption exists for
+     * these**, and none can be added: [jargonChecked] is a constant, not a
+     * constructor parameter, so a fifth tab cannot be declared with the lighter
+     * pass the way Jobs effectively was.
+     */
+    enum class TabBarScreen : Screen {
+        PROJECTS,
+        SCAN,
+        JOBS,
+        SETTINGS,
+        ;
+
+        override val jargonChecked: Boolean get() = true
+        override val maxWords: Int get() = WordingLaw.MAX_DETAIL_WORDS
+    }
+
+    /**
+     * A screen the operator had to go looking for. RTK, the calibration wizard
+     * and the Mid-360 preflight: "CRS" is the right word to use with someone
+     * who navigated here on purpose, and a 25-word paragraph is a paragraph
+     * they asked for.
+     */
+    enum class AdvancedScreen : Screen {
+        RTK,
+        MOUNT_CALIBRATION,
+        MID360_PREFLIGHT,
+        ;
+
+        override val jargonChecked: Boolean get() = false
+        override val maxWords: Int get() = WordingLaw.MAX_ADVANCED_WORDS
+    }
+
+    /**
+     * Everything wrong with [text] when shown on [screen] — empty means it
+     * passes. A list rather than a boolean because a failing test that names
+     * the offending word is the difference between a fix and a bisect.
+     */
+    fun violations(text: String, screen: Screen): List<String> = buildList {
+        val n = wordCount(text)
+        if (n > screen.maxWords) add("$n words (max ${screen.maxWords})")
+        if (screen.jargonChecked) jargonIn(text).forEach { add("jargon: $it") }
+    }
+
+    fun passes(text: String, screen: Screen): Boolean = violations(text, screen).isEmpty()
 
     /** Whitespace-separated tokens that are not purely punctuation. */
     fun words(text: String): List<String> =

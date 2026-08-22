@@ -61,9 +61,11 @@ class Round27ProcessHonestyTest {
     @Test
     fun `the state that says Run Process offers Process`() {
         // This is the exact state the AVD reproduced: a Mid-360 container with
-        // no resolved cloud, whose `loadMessage` is "No cloud in memory. Run
-        // Process on this project…". Until round 27 there was no Process
-        // control anywhere on the screen.
+        // no resolved cloud. Until round 27 there was no Process control
+        // anywhere on the screen; round 28 item 163's rule then cut the
+        // paragraph beside it from 25 words naming `odometry` and `raw returns`
+        // to "Building the map takes a few minutes." The state is the same
+        // one — the words above the button are not what this test pins.
         assertTrue(state(ReviewLoad.FAILED).canProcess)
     }
 

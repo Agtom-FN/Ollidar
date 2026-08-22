@@ -165,18 +165,54 @@ class Round24UiTest {
             composeRule.onNodeWithTag("projectsAvatar").performClick()
             composeRule.waitUntil(timeoutMillis = 15_000) { has("profileScreen") }
 
+            // ── ROUND 28 item 165 ───────────────────────────────────────
+            //
+            // The "This phone" table is the review's best-built pattern in the
+            // app and §D.8 keeps it verbatim — it also ABSORBS the Projects
+            // header breakdown item 151 deleted, which is the `Georef` row
+            // below. What left is `profileEngineAbi`: the table is four facts
+            // about the phone, and the engine's ABI is a fact about the app's
+            // build. It lives in Settings › Developer › Engine now, and it is
+            // still in the bundle `Send diagnostics` uploads.
             composeRule.onNodeWithTag("profileDeviceCard").assertExists()
             composeRule.onNodeWithTag("profileAppVersion").assertExists()
-            composeRule.onNodeWithTag("profileEngineAbi").assertExists()
+            composeRule.onNodeWithTag("profileDeviceModel").assertExists()
             composeRule.onNodeWithTag("profileStorage").assertExists()
             composeRule.onNodeWithTag("profileScanCount").assertExists()
+            composeRule.onNodeWithTag("profileGeoreferenced").assertExists()
 
-            composeRule.onNodeWithTag("feedbackPrivacyNote").assertIsDisplayed()
+            // ROUND 28 HOTFIX — `useUnmergedTree`. Item 165 rebuilt these two
+            // lines as children of `SupportRow`, whose whole `Row` is now
+            // `clickable`; `clickable` carries `mergeDescendants = true`, so in
+            // the MERGED tree these `Text`s no longer stand as nodes of their
+            // own with their own bounds. The disclosure is on screen — a
+            // `uiautomator` dump of this page puts it at y 394–435 of 2400,
+            // second line of the first card — so the app is right and the QUERY
+            // was what item 165 moved. Asking the unmerged tree asks about the
+            // `Text` this assertion has always meant.
+            composeRule.onNodeWithTag("feedbackPrivacyNote", useUnmergedTree = true)
+                .assertIsDisplayed()
             // With no cloud server configured — which is the AVD, and the
             // owner's phone — the page must SAY it will open the share sheet
             // before the tap, not discover it afterwards.
-            composeRule.onNodeWithTag("feedbackRouteNote").assertIsDisplayed()
+            composeRule.onNodeWithTag("feedbackRouteNote", useUnmergedTree = true)
+                .assertIsDisplayed()
             composeRule.onNodeWithTag("sendLogsButton").assertIsDisplayed()
+
+            // ── ROUND 28 item 165, findings F1/F2/F3 ────────────────────────
+            //
+            // The page used to be ONE card with two unrelated tasks, four
+            // labels and two duplicated words: titled "Send logs", containing a
+            // button "Send logs", then a field whose only label was the
+            // placeholder "Send feedback", then a permanently-disabled button
+            // "Send feedback" at about 2:1 contrast, which reads as broken
+            // rather than as waiting for input.
+            //
+            // Composition is a SHEET now, with a persistent label and a Primary
+            // that enables on input — so the field and its button are one tap
+            // in, and this test taps.
+            composeRule.onNodeWithTag("sendFeedbackRow").performClick()
+            composeRule.waitUntil(timeoutMillis = 15_000) { has("feedbackSheet") }
             composeRule.onNodeWithTag("feedbackField").assertExists()
             composeRule.onNodeWithTag("sendFeedbackButton").assertExists()
         }
@@ -350,7 +386,17 @@ class Round24UiTest {
             awaitProjectsTab()
             composeRule.onNodeWithTag("tab_settings").performClick()
             composeRule.waitUntil(timeoutMillis = 15_000) { has("settingsScreen") }
-            composeRule.onNodeWithTag("settingsProfileRow").performClick()
+            // ROUND 28 HOTFIX: §D.x gave Settings its DISPLAY / SCANNING /
+            // STORAGE sections, and the ABOUT block that carries this row now
+            // starts around 1500 px down a 2400 px screen. `settingsScreen` is
+            // a `Column` with `verticalScroll`, so every row stays COMPOSED and
+            // `onNodeWithTag` still finds this one — `performClick` then
+            // dispatched a tap at off-screen coordinates, nothing happened, and
+            // the failure surfaced 15 s later on the wait below as "Profile
+            // never opened" rather than as "the row was not on screen". Scroll
+            // first, which is what the operator does and what this file's own
+            // `app_version_footer` assertions have always done.
+            composeRule.onNodeWithTag("settingsProfileRow").performScrollTo().performClick()
             composeRule.waitUntil(timeoutMillis = 15_000) { has("profileScreen") }
             composeRule.onNodeWithTag("sendLogsButton").assertIsDisplayed()
         }

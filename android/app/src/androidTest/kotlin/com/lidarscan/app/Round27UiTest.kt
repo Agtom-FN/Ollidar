@@ -10,6 +10,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -110,14 +111,25 @@ class Round27UiTest {
         // screen where the pill's end edge and the eye button's top edge shared
         // pixels — a test that measures a child of the thing that collides is a
         // test that reports the collision as clear.
+        //
+        // ROUND 28 item 158: the idle page's furniture CHANGED, and the sweep
+        // is written against whichever set is on screen rather than being
+        // rewritten for one of them. `scanStatusPill` is the disconnected /
+        // landscape page's floating pill; `scanStatusBar` is the connected
+        // page's flat bar. The eye, the `?` and the map-mode chip are gone from
+        // both — an absent tag is skipped here and asserted as an ABSENCE in
+        // `Round26UiTest`, so their removal is recorded in exactly one place.
         boundsOrNull("scanStatusPill")?.let { "status pill" to it },
-        boundsOrNull("advancedButton")?.let { "gear" to it },
+        boundsOrNull("scanStatusBar")?.let { "status bar" to it },
+        boundsOrNull("advancedButton")?.let { "advanced" to it },
+        boundsOrNull("lastScanCard")?.let { "last scan card" to it },
         boundsOrNull("recordButton")?.let { "SCAN button" to it },
         boundsOrNull("pauseButton")?.let { "pause" to it },
+        boundsOrNull("attitudeIndicator")?.let { "attitude" to it },
         boundsOrNull("liveViewSwitch")?.let { "eye" to it },
-        boundsOrNull("mapModeChip")?.let { "map-mode chip" to it },
         boundsOrNull("streamModeChip")?.let { "stream chip" to it },
         boundsOrNull("tutorialButton")?.let { "? chip" to it },
+        boundsOrNull("tutorialOffer")?.let { "tutorial banner" to it },
         boundsOrNull("scanTabBar")?.let { "tab bar" to it },
     ).toMap()
 
@@ -135,6 +147,11 @@ class Round27UiTest {
     fun theHealthReadOutLivesInsideTheStatusPill() {
         ActivityScenario.launch(MainActivity::class.java).use {
             openScanTab()
+            // ROUND 28 item 158: on the connected page there is no pill and no
+            // health chip — the readiness rows carry the same facts, and item
+            // 158's whole argument is that a chip which never varies is not a
+            // read-out. The claim is only meaningful where the pill exists.
+            org.junit.Assume.assumeTrue(has("scanStatusPill") && has("captureHealthChip"))
             val pill = bounds("scanStatusPill")
             val health = bounds("captureHealthChip")
             assertTrue(
@@ -202,7 +219,10 @@ class Round27UiTest {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 scenario.onActivity { it.requestedOrientation = orientation }
                 openScanTab()
-                val root = composeRule.onNodeWithTag("captureViewport").fetchSemanticsNode()
+                // ROUND 28 item 158: the connected idle page composes no live
+                // viewport — there is nothing in it before Start. The window is
+                // measured from a node that is on EVERY variant of this page.
+                val root = composeRule.onNodeWithTag("recordButton").fetchSemanticsNode()
                     .root!!.semanticsOwner.rootSemanticsNode.size
                 val chrome = bounds("scanChromeColumn")
                 assertTrue(
@@ -278,8 +298,17 @@ class Round27UiTest {
                 // idle page puts the same composable in the flow and tags only
                 // the pill. Measure whichever is present — the claim is about
                 // the status band's ink either way.
-                val band = boundsOrNull("scanTopBand") ?: bounds("scanStatusPill")
-                for (control in listOf("recordButton", "pauseButton", "liveViewSwitch", "tutorialButton")) {
+                val band = boundsOrNull("scanTopBand")
+                    ?: boundsOrNull("scanStatusPill")
+                    // ROUND 28 item 158: the connected idle page's flat bar.
+                    ?: bounds("scanStatusBar")
+                for (control in listOf(
+                    "recordButton",
+                    "pauseButton",
+                    "liveViewSwitch",
+                    "tutorialButton",
+                    "attitudeIndicator",
+                )) {
                     val r = boundsOrNull(control) ?: continue
                     assertTrue(
                         "orientation=$orientation: the top band $band overlaps \"$control\" $r",
@@ -297,7 +326,7 @@ class Round27UiTest {
             openScanTab()
             val chrome = bounds("scanChromeColumn")
             val fab = bounds("recordButton")
-            val root = composeRule.onNodeWithTag("captureViewport").fetchSemanticsNode()
+            val root = composeRule.onNodeWithTag("recordButton").fetchSemanticsNode()
                 .root!!.semanticsOwner.rootSemanticsNode.size
             assertTrue(
                 "the connect rail starts at the start edge (left=${chrome.left})",
@@ -371,7 +400,15 @@ class Round27UiTest {
             openScanTab()
             composeRule.onNodeWithTag("scanIdlePage").assertIsDisplayed()
             val bar = bounds("scanTabBar")
-            for (tag in listOf("scanChromeColumn", "recordButton", "scanStatusPill", "captureViewport")) {
+            for (tag in listOf(
+                "scanChromeColumn",
+                "recordButton",
+                "scanStatusPill",
+                // ROUND 28 item 158: the connected page's own two.
+                "scanStatusBar",
+                "lastScanCard",
+                "captureViewport",
+            )) {
                 val r = boundsOrNull(tag) ?: continue
                 assertTrue(
                     "item 136(a): \"$tag\" $r must not draw under the tab bar $bar",
@@ -399,12 +436,16 @@ class Round27UiTest {
                 composeRule.onAllNodesWithTag("poseTrackingViewportChip", useUnmergedTree = true)
                     .fetchSemanticsNodes().size <= 1,
             )
-            assertEquals(
-                "exactly one status pill",
-                1,
-                composeRule.onAllNodesWithTag("scanStatusPill", useUnmergedTree = true)
-                    .fetchSemanticsNodes().size,
-            )
+            // ROUND 28 item 158: the idle page states its status ONCE, and
+            // which component does it depends on which page is up — the
+            // disconnected/landscape pill or the connected page's flat bar.
+            // Exactly one of them, exactly once, is the claim item 138 was
+            // always making; before this round the pill was the only candidate.
+            val pills = composeRule.onAllNodesWithTag("scanStatusPill", useUnmergedTree = true)
+                .fetchSemanticsNodes().size
+            val bars = composeRule.onAllNodesWithTag("scanStatusBar", useUnmergedTree = true)
+                .fetchSemanticsNodes().size
+            assertEquals("exactly one status component (pill=$pills bar=$bars)", 1, pills + bars)
             // Item 140(a): and the map chip is gone from the picture entirely.
             assertEquals(
                 "item 140(a): the map-mode chip is removed",
@@ -479,10 +520,39 @@ class Round27UiTest {
                     .getUnclippedBoundsInRoot()
                 val hint = hintBox.bottom - hintBox.top
                 val label = labelBox.bottom - labelBox.top
+                // ── ROUND 28 HOTFIX: item 167 replaced what this measures ────
+                //
+                // Item 130's original shape was a `Row` with the label and the
+                // hint SIDE BY SIDE, so the hint got whatever width was left
+                // over and a real hint had to wrap to survive. "Taller than 1.4
+                // labels" was a sound proxy for "wrapped rather than
+                // ellipsised" — while that was the layout.
+                //
+                // Item 167 rebuilt `SheetRowLabel` because the two weighted
+                // children were overlapping: it is a weighted COLUMN now, label
+                // above hint, readout right-aligned beside them. The hint gets
+                // the full row width, so `1.0 – 8 px · 0.1 steps` fits on one
+                // line honestly — and a one-line hint is now indistinguishable
+                // BY HEIGHT from a truncated one, which is to say the old proxy
+                // stopped measuring anything.
+                //
+                // The anti-ellipsis property itself is structural now: that
+                // `Text` carries no `maxLines` and no `overflow`, so it cannot
+                // ellipsise. What CAN regress — and did ship once, printing
+                // `how the cloud is framed` straight through `VIEW` — is the
+                // stacking. So this asserts item 167's property instead: the
+                // hint is a whole line tall (not collapsed to nothing) and it
+                // sits strictly BELOW its label rather than through it.
                 assertTrue(
-                    "item 130: \"$tag\" must be allowed to wrap — it is $hint tall " +
-                        "beside a $label label, which is one clipped line",
-                    hint > label * 1.4f,
+                    "item 167: \"$tag\" collapsed — it is $hint tall beside a " +
+                        "$label label, so it drew less than a line",
+                    hint > label * 0.6f,
+                )
+                assertTrue(
+                    "item 167: \"$tag\" overlaps its own label — hint top " +
+                        "${hintBox.top} is above label bottom ${labelBox.bottom}, " +
+                        "which is the text-through-text defect item 167 fixed",
+                    hintBox.top >= labelBox.bottom - 1.dp,
                 )
             }
         }
@@ -499,6 +569,13 @@ class Round27UiTest {
      * flag comes from, and `TabNavSpecTest` pins it to null for Profile. What
      * this test adds is that the page is REACHABLE and still has its own way
      * back — a sub-screen with no tab must not also have no back arrow.
+     *
+     * ROUND 28 item 165 (review finding F4) finishes what item 131 started.
+     * Round 27 was right that Profile lights nothing, and it left the visible
+     * consequence: a full tab bar with **no tab active**, four inert glyphs and
+     * 64 dp of chrome whose entire content is "you are not in any of these".
+     * The bar is HIDDEN on Profile now, and the back arrow — which item 131
+     * already required — is the affordance that is actually true there.
      */
     @Test
     fun profileIsASubScreenWithItsOwnWayBack() {
@@ -510,7 +587,12 @@ class Round27UiTest {
             composeRule.waitUntil(timeoutMillis = 15_000) {
                 runCatching { has("profileScreen") }.getOrDefault(false)
             }
-            composeRule.onNodeWithTag("scanTabBar").assertIsDisplayed()
+            assertEquals(
+                "item 165: a bar with no tab active is hidden, not drawn inert",
+                0,
+                composeRule.onAllNodesWithTag("scanTabBar").fetchSemanticsNodes().size,
+            )
+            composeRule.onNodeWithTag("profileBack").assertIsDisplayed()
             assertEquals(
                 "Profile lights no tab",
                 null,

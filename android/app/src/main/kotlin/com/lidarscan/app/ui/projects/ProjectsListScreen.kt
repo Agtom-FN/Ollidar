@@ -1,49 +1,49 @@
 package com.lidarscan.app.ui.projects
 
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.clickable
-import com.lidarscan.app.ui.theme.SemBad
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Sort
+import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -57,11 +57,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.em
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
@@ -71,26 +67,33 @@ import com.lidarscan.app.ui.components.AvatarButton
 import com.lidarscan.app.ui.components.HeroHeader
 import com.lidarscan.app.ui.components.Hint
 import com.lidarscan.app.ui.components.PrimaryPill
+import com.lidarscan.app.ui.components.ScanCard
 import com.lidarscan.app.ui.components.ScanChip
 import com.lidarscan.app.ui.components.ScanDims
-import com.lidarscan.app.ui.theme.sensorBadgeColor
-import com.lidarscan.app.ui.theme.DisplayFontFamily
-import com.lidarscan.app.ui.theme.InkFaint
-import com.lidarscan.app.ui.theme.MonoMeta
-import com.lidarscan.app.ui.theme.PoseBlue
-import com.lidarscan.app.ui.theme.ScanTeal
-import com.lidarscan.app.ui.theme.SemGood
-import com.lidarscan.app.ui.theme.SemWarn
+import com.lidarscan.app.ui.components.ScanEmptyState
+import com.lidarscan.app.ui.components.ScanIconButton
+import com.lidarscan.app.ui.components.ScanRow
+import com.lidarscan.app.ui.components.ScanRowCard
+import com.lidarscan.app.ui.components.StatusDot
+import com.lidarscan.app.ui.components.deviates
+import com.lidarscan.app.ui.components.modalValue
+import com.lidarscan.app.ui.theme.ScanBody
+import com.lidarscan.app.ui.theme.ScanColors
+import com.lidarscan.app.ui.theme.ScanMeta
+import com.lidarscan.app.ui.theme.ScanMetaCaps
+import com.lidarscan.app.ui.theme.ScanTitle
 import com.lidarscan.core.Wording
+import com.lidarscan.core.model.ProjectManifest
 import com.lidarscan.core.model.SensorType
+import com.lidarscan.core.model.WorkflowProfile
 import com.lidarscan.core.projects.BatchAction
 import com.lidarscan.core.projects.ProjectActionWording
 import com.lidarscan.core.projects.ProjectSelection
 import com.lidarscan.core.projects.ProjectSort
 import com.lidarscan.core.projects.ProjectsLayout
 import com.lidarscan.core.projects.ProjectsView
+import com.lidarscan.core.render.PointCountFormat
 import com.lidarscan.core.store.Project
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 @Composable
@@ -112,14 +115,14 @@ fun ProjectsListRoute(
     onNewScan: () -> Unit,
     onSettings: () -> Unit,
     /**
-     * ROUND 22 item 96 — the card's ⋯ › Export. Export lives on the Review
+     * ROUND 22 item 96 — the row's ⋯ › Export. Export lives on the Review
      * screen now (the "Details, jobs & export" hub is gone from Simple mode),
      * so this opens Review with its export row already unfolded rather than
-     * duplicating the export UI on a card.
+     * duplicating the export UI on a row.
      */
     onExport: (String) -> Unit = onOpenReview,
     /**
-     * ROUND 23 item 104b — the card's ⋯ › Share. Same destination as Export:
+     * ROUND 23 item 104b — the row's ⋯ › Share. Same destination as Export:
      * Review is where the Share button and the format row both live.
      */
     onShare: (String) -> Unit = onExport,
@@ -135,17 +138,15 @@ fun ProjectsListRoute(
             initializer {
                 ProjectsListViewModel(
                     projectStore = container.projectStore,
-                    // ROUND 9 (owner item 33): the scan library hides 0-point
-                    // strays by default. Settings › Scans has the switch and a
-                    // one-tap cleanup that deletes them for good.
-                    keepEmptyScans = {
-                        container.settingsRepository.settings.first().keepEmptyScans
-                    },
+                    // ROUND 28 item 162: no `keepEmptyScans` any more. The list
+                    // shows every scan, empties included — see the ViewModel's
+                    // header and finding P1j.
+                    //
                     // ROUND 22 item 96: "Process again" reuses the SAME
                     // handle-less reprocess the seal's auto-process runs.
                     reprocess = { dir, onProgress ->
                         // The StitchResult's NUMBERS are still deliberately
-                        // discarded: the card re-reads the project from disk,
+                        // discarded: the row re-reads the project from disk,
                         // so they come from the manifest the reprocess just
                         // wrote rather than from a value held in memory by a
                         // screen the operator may have left.
@@ -182,7 +183,7 @@ fun ProjectsListRoute(
     // A second ViewModel rather than more fields on ProjectsListViewModel: that
     // one also backs the project PICKER, and it deliberately knows nothing
     // about AppContainer, a Context or the export pipeline. This one owns the
-    // selection, the per-card job progress and the batch run; both are read by
+    // selection, the per-row job progress and the batch run; both are read by
     // the same screen. Nothing in ui/nav changes — the route already has the
     // container.
     val batchViewModel: ProjectBatchViewModel = viewModel(
@@ -297,26 +298,40 @@ fun ProjectsListRoute(
                 // The id is a fallback, not a display name: if the scan is not
                 // in the list yet, saying "Scan saved." with no name is still
                 // true, and inventing one would not be.
-                ?.let { name -> "${'$'}{Wording.SCAN_SAVED} ${'$'}name" }
+                ?.let { name -> "${Wording.SCAN_SAVED} $name" }
                 ?: Wording.SCAN_SAVED
         },
     )
 }
 
 /**
- * ROUND 5 (item 8): the Projects tab is **the list of projects plus a preview of
- * the selected scan**, and nothing else.
+ * ROUND 28 item 162 (§D.5) — **66 rows that differ from each other.**
  *
- * What that changed: tapping a card no longer navigates away — it *selects*, and
- * the card expands into an inline preview (a bigger cloud, the capture's own
- * numbers) right where it sits. The "New scan" pill is gone: creating scans is
- * the Capture tab's only job now (item 8), so the empty state points there rather
- * than duplicating it.
+ * The owner's screenshot of this tab is the review's worst finding by count:
+ * 66 cards, ~140 dp each, carrying **198 identical chips** (`D6`, `QUICK SCAN`,
+ * `GEOREF ✓` on every one), no thumbnail, a decorative chevron next to a `⋯`,
+ * and a header line that truncated to `2 empt…`. Every card was the loudest
+ * possible drawing of the facts all 66 scans share, and none of the facts that
+ * separate them. Four changes, and they are all the same change:
  *
- * Two quiet doors survive inside the selected card, and they are deliberate: the
- * **viewer** (Review) is the full-fidelity version of the preview this tab is for,
- * and **details** is where processing, export, calibration and merge live. Both
- * are about a scan that already exists; neither creates one.
+ *  1. **The thumbnail is back** (P1c), 56 dp at the row's leading edge.
+ *     Reversing round 25 item 114 — the tile is the strongest differentiator
+ *     the app has and `CloudThumbnail` never stopped rendering it.
+ *  2. **The chip law** (§C.4): a chip is drawn only where a value deviates
+ *     from the mode of the visible set. 198 chips become one or two.
+ *  3. **A quality mark, right-aligned** (P1b) — see [ProjectRowGrade], which
+ *     also documents the one thing that is honestly not knowable from disk.
+ *  4. **Empty scans are shown** (P1j), not hidden behind a footnote that
+ *     always truncated. Seven of the owner's seventy-four are empty.
+ *
+ * Plus §C.4's shape: a 72 dp [ScanRow] inside one [ScanRowCard] instead of a
+ * 140 dp card, which is roughly twice as many scans per screen, and the
+ * decorative chevron is gone (P1e — the row is tappable; the `⋯` stays; never
+ * both).
+ *
+ * What did NOT change: a tap opens the scan (round 22 item 96), a long-press
+ * enters selection (round 23 item 104c), and the ⋯ menu is still the four
+ * things Simple mode's removed hub was used for.
  */
 @Composable
 fun ProjectsListScreen(
@@ -337,7 +352,7 @@ fun ProjectsListScreen(
     // ── ROUND 23 item 104c: selection mode ──────────────────────────────────
     /** The state machine's current value — see [ProjectSelection] in :core. */
     selection: ProjectSelection = ProjectSelection.EMPTY,
-    /** project id → 0..1 for a BATCH job running against that card. */
+    /** project id → 0..1 for a BATCH job running against that row. */
     batchRunning: Map<String, Float> = emptyMap(),
     /** True from the first job of a batch to the last. */
     batchBusy: Boolean = false,
@@ -363,12 +378,12 @@ fun ProjectsListScreen(
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
     // The group Delete confirm. ROUND 23 item 104c is explicit that moving
     // delete out of the long-press must not become an accidental-delete
-    // regression: the dialog is the same one the card's ⋯ › Delete opens, it
+    // regression: the dialog is the same one the row's ⋯ › Delete opens, it
     // just names a count instead of a scan.
     var showBatchDeleteConfirm by remember { mutableStateOf(false) }
     // ROUND 8 (item 31): adopt the just-sealed scan ONCE, keyed on the id.
     // Keyed rather than run on every composition because the user must stay in
-    // charge afterwards: collapsing the card and having it spring back open on
+    // charge afterwards: collapsing the row and having it spring back open on
     // the next recomposition would be worse than not highlighting it at all.
     // `LaunchedEffect(id)` also means returning to this tab later does not
     // re-select a scan the operator has since dismissed.
@@ -378,16 +393,20 @@ fun ProjectsListScreen(
     // ROUND 24 item 108: one sort, memoised on the two things it depends on.
     // Sorting inside the `items {}` lambda would re-sort on every scroll frame.
     val shown = remember(uiState.projects, sort) { ProjectsView.sorted(uiState.projects, sort) }
+    // ROUND 28 item 149 — the norms of the set being displayed, computed once
+    // per list rather than per row. This is the whole of the chip law's cost.
+    val norms = remember(shown) { RowNorms.of(shown) }
+
     Column(
         Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            .background(ScanColors.page)
             .statusBarsPadding()
             .navigationBarsPadding(),
     ) {
         HeroHeader(
             title = Wording.APP_NAME,
-            subtitle = aggregateLine(uiState.projects, uiState.hiddenEmptyCount),
+            subtitle = aggregateLine(uiState.projects),
             trailing = {
                 AvatarButton(
                     icon = Icons.Filled.Person,
@@ -426,9 +445,9 @@ fun ProjectsListScreen(
         savedNotice?.let { notice ->
             Hint(
                 notice,
-                color = SemGood,
+                color = ScanColors.good,
                 modifier = Modifier
-                    .padding(horizontal = 20.dp, vertical = 4.dp)
+                    .padding(horizontal = ScanDims.ScreenMargin, vertical = ScanDims.S1)
                     .testTag("scanSavedNotice"),
             )
         }
@@ -438,9 +457,9 @@ fun ProjectsListScreen(
         batchMessage?.let { message ->
             Hint(
                 message,
-                color = InkFaint,
+                color = ScanColors.inkMute,
                 modifier = Modifier
-                    .padding(horizontal = 20.dp, vertical = 4.dp)
+                    .padding(horizontal = ScanDims.ScreenMargin, vertical = ScanDims.S1)
                     .testTag("batchMessage"),
             )
         }
@@ -459,74 +478,38 @@ fun ProjectsListScreen(
             )
         }
 
-        // Weighted so the list gets the height LEFT OVER under the hero,
-        // not the full screen height (which would run the last card under the
-        // floating tab bar).
+        // Weighted so the list gets the height LEFT OVER under the hero. The
+        // tab bar is level 0 and opaque now (§C.5), so it reserves its own
+        // space and the list's only bottom inset is `TabBarClearance` —
+        // finding P1h's guillotined last card was the floating bar overlapping
+        // a list that had asked for the full screen height.
         Box(Modifier.fillMaxWidth().weight(1f)) {
             when {
-                uiState.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-                }
+                // §C.6: a skeleton, never a centred spinner. The list has a
+                // known shape before it has content, so it can be drawn.
+                uiState.loading -> ProjectsSkeleton()
 
-                uiState.projects.isEmpty() -> EmptyProjectsState(uiState.hiddenEmptyCount, onNewScan)
+                uiState.projects.isEmpty() -> EmptyProjectsState(onNewScan)
 
-                // ── ROUND 24 item 108: the SAME card, in one or two columns ──
-                //
-                // `LazyVerticalGrid` with `GridCells.Fixed(1)` is a LazyColumn
-                // with extra words, so the two layouts are one call site and
-                // one card: everything round 23 built — selection, the ⋯ menu,
-                // the progress chip, tap-opens-viewer — works in the gallery
-                // because it is not a second implementation of a card, it is
-                // the same one with a shorter thumbnail.
-                else -> LazyVerticalGrid(
+                layout == ProjectsLayout.GALLERY -> LazyVerticalGrid(
                     columns = GridCells.Fixed(ProjectsView.columns(layout)),
-                    modifier = Modifier.fillMaxSize().testTag(
-                        if (layout == ProjectsLayout.GALLERY) "projectsGallery" else "projectsList",
-                    ),
+                    modifier = Modifier.fillMaxSize().testTag("projectsGallery"),
                     contentPadding = PaddingValues(
-                        start = 16.dp,
-                        end = 16.dp,
-                        top = 2.dp,
+                        start = ScanDims.ScreenMargin,
+                        end = ScanDims.ScreenMargin,
+                        top = ScanDims.S1,
                         bottom = ScanDims.TabBarClearance,
                     ),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(ScanDims.ItemGap),
+                    horizontalArrangement = Arrangement.spacedBy(ScanDims.ItemGap),
                 ) {
                     items(shown, key = { it.id }) { project ->
-                        ProjectCard(
-                            gallery = layout == ProjectsLayout.GALLERY,
+                        ProjectGalleryCard(
                             project = project,
+                            deviation = norms.deviation(project.manifest),
                             selected = selectedId == project.id,
-                            // ROUND 23 item 104c: a reprocess chip and an export
-                            // chip are the same chip. Whichever job is running
-                            // against this card owns it; they cannot both run,
-                            // because the batch refuses to start a second run
-                            // and the reprocess refuses a second run per id.
-                            progress = uiState.running[project.id] ?: batchRunning[project.id],
-                            failureNote = uiState.processFailures[project.id],
-                            onDismissFailure = { onDismissProcessFailure(project.id) },
-                            progressLabel = if (uiState.running.containsKey(project.id)) {
-                                { percent -> Wording.fixingProgress(percent) }
-                            } else {
-                                { percent -> ProjectActionWording.exportingProgress(percent) }
-                            },
                             selecting = selection.isActive,
                             checked = selection.contains(project.id),
-                            // ── ROUND 22 item 96: a tap OPENS THE SCAN ───────
-                            //
-                            // ROUND 5 made a tap "select and preview in place",
-                            // which meant looking at a scan properly took a tap,
-                            // a read of two quiet text buttons, and a second tap
-                            // on the right one. The owner's simplification asks
-                            // for the obvious thing: the card is the scan, so
-                            // tapping it opens it. Selection still happens (the
-                            // seal→Projects handoff and the Jobs tab both read
-                            // it), it just no longer competes with opening.
-                            //
-                            // ROUND 23 item 104c: **while selecting, a tap
-                            // picks.** That is the one mode in which the card is
-                            // not a door, and it is the reason ProjectSelection
-                            // refuses to start a selection from a tap.
                             onClick = {
                                 if (selection.isActive) {
                                     onToggleSelection(project.id)
@@ -535,43 +518,97 @@ fun ProjectsListScreen(
                                     onOpenReview(project.id)
                                 }
                             },
-                            // ROUND 23 item 104c: long-press ENTERS selection
-                            // mode and picks this card. It used to open the
-                            // delete confirm; delete is now in the ⋯ menu (where
-                            // it has been since round 22) AND in the selection
-                            // bar, so nothing lost a route — a destructive
-                            // action simply stopped being the only thing a
-                            // long-press could mean.
                             onLongClick = { onEnterSelection(project.id) },
-                            onExport = { onExportProject(project.id) },
-                            onShare = { onShareProject(project.id) },
-                            onReprocess = { onReprocessProject(project.id) },
-                            onOpenDetails = onOpenDetails?.let { open -> { open(project.id) } },
-                            onDelete = { onDeleteProject(project.id) },
                         )
                     }
-                    item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
-                        Spacer(Modifier.height(2.dp))
-                        Hint(
-                            // ROUND 22 item 98. Was: "Tap a scan to preview it ·
-                            // long-press to delete · new scans start in the
-                            // Capture tab." — three instructions in one line,
-                            // two of which describe behaviour item 96 changed
-                            // (a tap opens now; delete is in the ⋯ menu, where
-                            // it is discovered rather than explained).
-                            // ROUND 23 item 104c: and one line for the mode
-                            // that a gesture alone cannot advertise.
-                            Wording.PROJECTS_LIST_HINT + "\n" +
-                                ProjectActionWording.SELECTION_HINT +
-                                if (uiState.hiddenEmptyCount > 0) {
-                                    "\n" + Wording.PROJECTS_EMPTY_HIDDEN
-                                } else {
-                                    ""
-                                },
-                            color = InkFaint,
-                            modifier = Modifier.padding(horizontal = 4.dp).testTag("projectsListHint"),
+                    item(span = { GridItemSpan(maxLineSpan) }) { ListHint() }
+                }
+
+                // ── §C.4: THE ROW, and one card holding all of them ─────────
+                //
+                // One `ScanRowCard` in one lazy item rather than a card per
+                // scan: hairlines between siblings is what a list of the same
+                // kind of thing looks like, and 66 separately bordered slabs
+                // with 14 dp between them is finding P1f (and most of P1g —
+                // white cards at 1.08:1 on the page, held together by a
+                // hairline they each drew for themselves).
+                else -> LazyColumn(
+                    modifier = Modifier.fillMaxSize().testTag("projectsList"),
+                    contentPadding = PaddingValues(
+                        start = ScanDims.ScreenMargin,
+                        end = ScanDims.ScreenMargin,
+                        top = ScanDims.S1,
+                        bottom = ScanDims.TabBarClearance,
+                    ),
+                ) {
+                    item(key = "rows") {
+                        ScanRowCard(
+                            rows = shown.map { project ->
+                                {
+                                    ProjectScanRow(
+                                        project = project,
+                                        deviation = norms.deviation(project.manifest),
+                                        selected = selectedId == project.id,
+                                        // ROUND 23 item 104c: a reprocess chip
+                                        // and an export chip are the same chip.
+                                        // Whichever job is running against this
+                                        // row owns it; they cannot both run,
+                                        // because the batch refuses to start a
+                                        // second run and the reprocess refuses
+                                        // a second run per id.
+                                        progress = uiState.running[project.id]
+                                            ?: batchRunning[project.id],
+                                        progressLabel = if (uiState.running.containsKey(project.id)) {
+                                            { percent -> Wording.fixingProgress(percent) }
+                                        } else {
+                                            { percent -> ProjectActionWording.exportingProgress(percent) }
+                                        },
+                                        failureNote = uiState.processFailures[project.id],
+                                        onDismissFailure = { onDismissProcessFailure(project.id) },
+                                        selecting = selection.isActive,
+                                        checked = selection.contains(project.id),
+                                        // ── ROUND 22 item 96: a tap OPENS ────
+                                        //
+                                        // ROUND 5 made a tap "select and preview
+                                        // in place", which meant looking at a
+                                        // scan properly took a tap, a read of
+                                        // two quiet text buttons, and a second
+                                        // tap on the right one. The row is the
+                                        // scan, so tapping it opens it.
+                                        //
+                                        // ROUND 23 item 104c: **while selecting,
+                                        // a tap picks.** That is the one mode in
+                                        // which the row is not a door.
+                                        onClick = {
+                                            if (selection.isActive) {
+                                                onToggleSelection(project.id)
+                                            } else {
+                                                onSelectProject(project.id)
+                                                onOpenReview(project.id)
+                                            }
+                                        },
+                                        // ROUND 23 item 104c: long-press ENTERS
+                                        // selection mode and picks this row. It
+                                        // used to open the delete confirm;
+                                        // delete is in the ⋯ menu and in the
+                                        // selection bar, so nothing lost a
+                                        // route — a destructive action simply
+                                        // stopped being the only thing a
+                                        // long-press could mean.
+                                        onLongClick = { onEnterSelection(project.id) },
+                                        onExport = { onExportProject(project.id) },
+                                        onShare = { onShareProject(project.id) },
+                                        onReprocess = { onReprocessProject(project.id) },
+                                        onOpenDetails = onOpenDetails?.let { open ->
+                                            { open(project.id) }
+                                        },
+                                        onDelete = { onDeleteProject(project.id) },
+                                    )
+                                }
+                            },
                         )
                     }
+                    item(key = "hint") { ListHint() }
                 }
             }
         }
@@ -581,7 +618,7 @@ fun ProjectsListScreen(
         AlertDialog(
             shape = RoundedCornerShape(ScanDims.DialogRadius),
             onDismissRequest = { showBatchDeleteConfirm = false },
-            // The SAME dialog the single-card Delete opens — same title, same
+            // The SAME dialog the single-row Delete opens — same title, same
             // body, same confirm word. Only the count in front of it is new.
             title = { Text("${Wording.DELETE_TITLE} (${selection.count})") },
             text = { Text(Wording.DELETE_BODY) },
@@ -601,13 +638,496 @@ fun ProjectsListScreen(
     }
 }
 
+// ── the chip law, as this screen applies it ─────────────────────────────────
+
+/** True when this scan carries a coordinate reference system worth naming. */
+internal val ProjectManifest.isGeoreferenced: Boolean
+    get() = crsEpsg != null && crsEpsg != 0
+
+/**
+ * ROUND 28 item 162 / finding P1a — **the one thing a row's chip may say.**
+ *
+ * Four candidate deviations, in the order the operator would want to be told
+ * about them, and **at most one is drawn**. That cap is deliberate: three chips
+ * per row is the defect this item exists to remove, and a row that deviated in
+ * two ways would quietly grow the chip row back. The rest of a scan's metadata
+ * is one tap away on Review, which is where a scan gets read rather than
+ * scanned past.
+ */
+internal enum class RowDeviation { RECOVERED, SENSOR, PROFILE, GEOREF_PRESENT, GEOREF_MISSING }
+
+/**
+ * The modal sensor / profile / georeferencing of the **loaded, visible** list.
+ *
+ * The mode, not a hard-coded default: in a fleet of 66 D6 scans the `D6` chip
+ * says nothing and must vanish, and in a mixed fleet it says something and must
+ * appear. Neither case needs a rule written about it. See
+ * [com.lidarscan.app.ui.components.modalValue], which also decides that a tie
+ * is not a norm.
+ */
+internal data class RowNorms(
+    val sensor: SensorType?,
+    val profile: WorkflowProfile?,
+    val georeferenced: Boolean?,
+) {
+    fun deviation(manifest: ProjectManifest): RowDeviation? = when {
+        // ROUND 6 (owner item 20): a capture whose app-side metadata was
+        // destroyed by the pre-0.3.0 `manifest.json` collision with the
+        // engine's own container manifest, and which `FileProjectStore` rebuilt
+        // so it is listable again. Its POINTS are intact; its name/sensor/
+        // profile are a reconstruction, and saying so is the difference between
+        // honest recovery and a quiet lie. It outranks the others because it is
+        // the one that says "do not trust the rest of this row".
+        manifest.recovered -> RowDeviation.RECOVERED
+        deviates(manifest.sensor, sensor) -> RowDeviation.SENSOR
+        deviates(manifest.profile, profile) -> RowDeviation.PROFILE
+        deviates(manifest.isGeoreferenced, georeferenced) ->
+            if (manifest.isGeoreferenced) RowDeviation.GEOREF_PRESENT else RowDeviation.GEOREF_MISSING
+        else -> null
+    }
+
+    companion object {
+        fun of(projects: List<Project>): RowNorms = ofManifests(projects.map { it.manifest })
+
+        /**
+         * The manifests are the whole input, so this is where the law is
+         * actually written — and it is what the JVM test drives, because a
+         * fleet of 66 scans should be assertable without 66 directories on a
+         * disk.
+         */
+        fun ofManifests(manifests: List<ProjectManifest>): RowNorms = RowNorms(
+            sensor = modalValue(manifests.map { it.sensor }),
+            profile = modalValue(manifests.map { it.profile }),
+            georeferenced = modalValue(manifests.map { it.isGeoreferenced }),
+        )
+    }
+}
+
+/** The deviation chip, in the semantic §C.3 gives it. Read-only, never a control. */
+@Composable
+private fun DeviationChip(manifest: ProjectManifest, deviation: RowDeviation) {
+    when (deviation) {
+        RowDeviation.RECOVERED ->
+            ScanChip(text = "RECOVERED", color = ScanColors.warn, showDot = true)
+        // ROUND 25 item 119: an exhaustive lookup, not an `else`. The `else`
+        // painted the new STL-27L in the D6's teal.
+        RowDeviation.SENSOR -> ScanChip(
+            text = manifest.sensor.badgeLabel.uppercase(),
+            color = ScanColors.current.sensor(manifest.sensor),
+            showDot = true,
+        )
+        // A workflow profile is a fact, not a semantic state, so it is ink-mute
+        // — the accent law allows orange twice per screen and both are spent.
+        RowDeviation.PROFILE -> ScanChip(
+            text = manifest.profile.displayName.uppercase(),
+            color = ScanColors.inkMute,
+            showDot = true,
+        )
+        RowDeviation.GEOREF_PRESENT ->
+            ScanChip(text = "GEOREF", color = ScanColors.good, showDot = true)
+        // Amber, not red: nothing failed, but in a library where everything
+        // else carries a CRS this one will not line up with the others, and
+        // that is worth noticing before an export rather than after.
+        RowDeviation.GEOREF_MISSING ->
+            ScanChip(text = "NO GEOREF", color = ScanColors.warn, showDot = true)
+    }
+}
+
+/**
+ * ROUND 28 item 162 / finding P1b — the quality mark: a semantic dot and a
+ * Meta Caps code, right-aligned.
+ *
+ * `FAIR` resolves to ink-mute rather than amber on purpose (see
+ * `ScanColorScheme.grade`): FAIR is the norm in this fleet, and a wall of amber
+ * is the same defect as a wall of chips.
+ */
+@Composable
+private fun GradeMark(code: String) {
+    val tint = ScanColors.current.grade(code)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(ScanDims.S1),
+        modifier = Modifier.testTag("projectRowGrade"),
+    ) {
+        StatusDot(tint)
+        Text(text = code, style = ScanMetaCaps, color = tint, maxLines = 1)
+    }
+}
+
+// ── the row ─────────────────────────────────────────────────────────────────
+
+/**
+ * §C.4's ROW, carrying one scan.
+ *
+ * ```
+ * ┌──┐ Scan-085-2026-08-21-1803              ⋯
+ * │▩ │ 46.5 K pts · Aug 21            ● FAIR
+ * └──┘
+ * ```
+ *
+ * 72 dp instead of the ~140 dp `ProjectCard` it replaces (P1f), a 56 dp cloud
+ * tile at the leading edge (P1c), no chevron (P1e — the row is tappable and the
+ * `⋯` is its only affordance), and no chip unless this scan actually differs
+ * from the set (P1a).
+ *
+ * The progress and failure lines hang **below** the row inside the same slot
+ * rather than inside it: a 72 dp row has no third line, and a job's progress is
+ * a temporary statement about the row, not part of what the scan is.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ProjectScanRow(
+    project: Project,
+    deviation: RowDeviation?,
+    selected: Boolean,
+    /** ROUND 22 item 96: 0..1 while a job started from this row runs; null otherwise. */
+    progress: Float? = null,
+    /** ROUND 23 item 104c: what the progress line says — a reprocess and an export differ. */
+    progressLabel: (Int) -> String = { percent -> Wording.fixingProgress(percent) },
+    /**
+     * ROUND 27 item 134(b) — why this row's last "Process again" failed, or
+     * null.
+     *
+     * A run that fails must leave something behind. Until that round the chip
+     * simply disappeared and the operator was returned to an unchanged card,
+     * which reads as "nothing happened" and is indistinguishable from a tap
+     * that never registered.
+     */
+    failureNote: String? = null,
+    onDismissFailure: () -> Unit = {},
+    /** ROUND 23 item 104c: the list is in selection mode, so a tap picks. */
+    selecting: Boolean = false,
+    /** ROUND 23 item 104c: this row is in the selection. */
+    checked: Boolean = false,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit = {},
+    onExport: () -> Unit,
+    onShare: () -> Unit = {},
+    onReprocess: () -> Unit,
+    /** ROUND 22 item 97: non-null only with Advanced on. */
+    onOpenDetails: (() -> Unit)? = null,
+    onDelete: () -> Unit,
+) {
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+    val manifest = project.manifest
+    val grade = ProjectRowGrade.of(manifest)
+
+    Column {
+        ScanRow(
+            modifier = Modifier
+                // A picked row is a 12 % primary wash rather than a 2 dp
+                // border: rows share their edges with their neighbours, so a
+                // border on one is a border between two, and "which of these am
+                // I about to export" still has to be answerable at arm's
+                // length.
+                .background(
+                    when {
+                        checked -> ScanColors.primary.copy(alpha = 0.12f)
+                        selected -> ScanColors.primary.copy(alpha = 0.06f)
+                        else -> androidx.compose.ui.graphics.Color.Transparent
+                    },
+                )
+                .combinedClickable(
+                    onClick = onClick,
+                    onLongClick = onLongClick,
+                    onLongClickLabel = ProjectActionWording.SELECT_LABEL,
+                )
+                .testTag(
+                    when {
+                        checked -> "projectCardChecked"
+                        selected -> "projectCardSelected"
+                        else -> "projectCard"
+                    },
+                ),
+            minHeight = ScanDims.RowWithThumb,
+            title = manifest.name,
+            // ROUND 28 item 162 (P1j): an empty scan is still a scan the
+            // operator has to find and delete, so it is in the list — but its
+            // name is ink-mute, because there is nothing in it to open.
+            titleColor = if (manifest.isEmptyScan) ScanColors.inkMute else null,
+            detail = metaLine(project),
+            leading = {
+                if (selecting) {
+                    Icon(
+                        if (checked) Icons.Filled.CheckCircle else Icons.Outlined.RadioButtonUnchecked,
+                        contentDescription = null,
+                        tint = if (checked) ScanColors.primaryInk else ScanColors.inkFaint,
+                        modifier = Modifier
+                            .size(ScanDims.S6)
+                            .testTag(if (checked) "projectCardTick" else "projectCardUntick"),
+                    )
+                }
+                ProjectThumbnail(
+                    project = project,
+                    cornerRadius = ScanDims.S2,
+                    // Tagged so the emulator can assert item 162's reversal of
+                    // item 114: the list must now draw one of these per row.
+                    modifier = Modifier.size(ScanDims.Thumb).testTag("projectPreview"),
+                )
+            },
+            trailing = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(ScanDims.S2),
+                ) {
+                    deviation?.let { DeviationChip(manifest, it) }
+                    grade?.let { GradeMark(it) }
+                    RowMenu(
+                        onExport = onExport,
+                        onShare = onShare,
+                        onReprocess = onReprocess,
+                        onOpenDetails = onOpenDetails,
+                        onDelete = { showDeleteConfirm = true },
+                    )
+                }
+            },
+        )
+
+        // ROUND 22 item 96: a running job is visible on the row, because Simple
+        // mode has no Jobs screen to go and look at. §C.6: a determinate load is
+        // an inline 4 dp bar under a Meta label naming the stage, never a
+        // spinner where a percentage exists.
+        if (progress != null) {
+            Column(
+                Modifier.fillMaxWidth().padding(
+                    start = ScanDims.CardPadding,
+                    end = ScanDims.CardPadding,
+                    bottom = ScanDims.S2,
+                ),
+            ) {
+                Text(
+                    progressLabel((progress * 100).toInt()),
+                    style = ScanMeta,
+                    color = ScanColors.inkMute,
+                    modifier = Modifier.testTag("projectCardJobChip"),
+                )
+                Spacer(Modifier.height(ScanDims.S1))
+                LinearProgressIndicator(
+                    progress = { progress },
+                    modifier = Modifier.fillMaxWidth().height(ScanDims.S1),
+                    color = ScanColors.primary,
+                    trackColor = ScanColors.trough,
+                )
+            }
+        }
+
+        // ROUND 27 item 134(b): and a job that FAILED is a line on the row, for
+        // exactly the same reason. Tappable away, because it is an answer to
+        // something the operator did and not a permanent state of the scan.
+        if (failureNote != null) {
+            Text(
+                failureNote,
+                style = ScanBody,
+                color = ScanColors.bad,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onDismissFailure)
+                    .padding(
+                        start = ScanDims.CardPadding,
+                        end = ScanDims.CardPadding,
+                        bottom = ScanDims.S2,
+                    )
+                    .testTag("projectCardProcessFailure"),
+            )
+        }
+    }
+
+    if (showDeleteConfirm) {
+        DeleteScanDialog(
+            onDismiss = { showDeleteConfirm = false },
+            onConfirm = {
+                showDeleteConfirm = false
+                ProjectPreviewCache.invalidate(project.id)
+                onDelete()
+            },
+        )
+    }
+}
+
+/**
+ * ── ROUND 22 item 96: the per-row ⋯ menu ────────────────────────────────────
+ *
+ * Export, Share, Process again and Delete — the things Simple mode's removed
+ * "Details, jobs & export" hub was actually used for, on the row they are
+ * about. Delete was a long-press from ROUND 5, which is a gesture the list hint
+ * had to TEACH; a menu is found.
+ */
+@Composable
+private fun RowMenu(
+    onExport: () -> Unit,
+    onShare: () -> Unit,
+    onReprocess: () -> Unit,
+    onOpenDetails: (() -> Unit)?,
+    onDelete: () -> Unit,
+) {
+    var menuOpen by remember { mutableStateOf(false) }
+    Box {
+        ScanIconButton(
+            icon = Icons.Filled.MoreVert,
+            contentDescription = "More actions",
+            onClick = { menuOpen = true },
+            modifier = Modifier.testTag("projectCardMenu"),
+        )
+        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+            DropdownMenuItem(
+                text = { Text(Wording.CARD_MENU_EXPORT) },
+                onClick = { menuOpen = false; onExport() },
+                modifier = Modifier.testTag("cardMenuExport"),
+            )
+            // ROUND 23 item 104b: Share, next to Export, because the owner's
+            // report is that BOTH vanished — and a menu that offers only "save
+            // it where you cannot browse to it" is half an answer.
+            DropdownMenuItem(
+                text = { Text(ProjectActionWording.SHARE_ACTION) },
+                onClick = { menuOpen = false; onShare() },
+                modifier = Modifier.testTag("cardMenuShare"),
+            )
+            DropdownMenuItem(
+                text = { Text(Wording.CARD_MENU_REPROCESS) },
+                onClick = { menuOpen = false; onReprocess() },
+                modifier = Modifier.testTag("cardMenuReprocess"),
+            )
+            onOpenDetails?.let { open ->
+                DropdownMenuItem(
+                    text = { Text("Details") },
+                    onClick = { menuOpen = false; open() },
+                    modifier = Modifier.testTag("cardMenuDetails"),
+                )
+            }
+            DropdownMenuItem(
+                text = { Text(Wording.CARD_MENU_DELETE) },
+                onClick = { menuOpen = false; onDelete() },
+                modifier = Modifier.testTag("cardMenuDelete"),
+            )
+        }
+    }
+}
+
+/**
+ * ROUND 22 item 98. Was: 'Delete "<name>"?' over "This permanently deletes the
+ * .lscan project directory, including any captured streams. This can't be
+ * undone." — the on-disk format and the word "streams" are facts about the
+ * implementation, not about what the operator is about to lose.
+ *
+ * ROUND 16 item 61: dialogs inherited the theme's pill radius too.
+ */
+@Composable
+private fun DeleteScanDialog(onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    AlertDialog(
+        shape = RoundedCornerShape(ScanDims.DialogRadius),
+        onDismissRequest = onDismiss,
+        title = { Text(Wording.DELETE_TITLE) },
+        text = { Text(Wording.DELETE_BODY) },
+        confirmButton = {
+            TextButton(onClick = onConfirm) { Text(ProjectActionWording.DELETE_ACTION) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+// ── the gallery ─────────────────────────────────────────────────────────────
+
+/**
+ * ROUND 24 item 108's second layout, kept as **a card with a picture** — the
+ * one thing §C.4 still allows a card to be for.
+ *
+ * ROUND 28 item 162 rebuilds it on the new tokens (`ScanCard`, the type scale,
+ * `ScanDims`) and applies the same chip law and the same grade mark the row
+ * uses, so the two layouts say the same things about a scan and differ only in
+ * how much of the picture they show. The thumbnail is sized by aspect ratio
+ * rather than a fixed height: a 2-column card is half as wide, and a height in
+ * dp made it a letterbox on a wide phone and a square on a narrow one.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ProjectGalleryCard(
+    project: Project,
+    deviation: RowDeviation?,
+    selected: Boolean,
+    selecting: Boolean,
+    checked: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
+    val manifest = project.manifest
+    val grade = ProjectRowGrade.of(manifest)
+    ScanCard(
+        modifier = Modifier
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick,
+                onLongClickLabel = ProjectActionWording.SELECT_LABEL,
+            )
+            .testTag(
+                when {
+                    checked -> "projectCardChecked"
+                    selected -> "projectCardSelected"
+                    else -> "projectCard"
+                },
+            ),
+        borderColor = if (checked || selected) ScanColors.primaryInk else null,
+        contentPadding = PaddingValues(ScanDims.S3),
+    ) {
+        Box {
+            ProjectThumbnail(
+                project = project,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    // ROUND 5 (item 8): the preview IS the selection — a
+                    // selected card gives its cloud more height, enough to read
+                    // the shape of a scan, instead of opening another screen.
+                    .aspectRatio(if (selected) 1f else 1.5f)
+                    .testTag("projectPreview"),
+            )
+            if (selecting) {
+                Icon(
+                    if (checked) Icons.Filled.CheckCircle else Icons.Outlined.RadioButtonUnchecked,
+                    contentDescription = null,
+                    tint = if (checked) ScanColors.primaryInk else ScanColors.inkFaint,
+                    modifier = Modifier
+                        .padding(ScanDims.S2)
+                        .size(ScanDims.S6)
+                        .testTag(if (checked) "projectCardTick" else "projectCardUntick"),
+                )
+            }
+        }
+        Spacer(Modifier.height(ScanDims.S2))
+        Text(
+            text = manifest.name,
+            style = ScanTitle,
+            color = if (manifest.isEmptyScan) ScanColors.inkMute else ScanColors.ink,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            text = metaLine(project),
+            style = ScanMeta,
+            color = ScanColors.inkMute,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (deviation != null || grade != null) {
+            Spacer(Modifier.height(ScanDims.S1))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(ScanDims.S2),
+            ) {
+                deviation?.let { DeviationChip(manifest, it) }
+                grade?.let { GradeMark(it) }
+            }
+        }
+    }
+}
+
+// ── chrome ──────────────────────────────────────────────────────────────────
+
 /**
  * ROUND 23 item 104c — **the selection bar.**
  *
  * Count on the left, the three group actions on the right, and an X that is the
- * only way out of the mode. Delete is last and carries the theme's error tint:
- * it is the one action here that cannot be undone, and it is the one that used
- * to be what a long-press did by itself.
+ * only way out of the mode. Delete is last and carries the `bad` tint: it is
+ * the one action here that cannot be undone, and it is the one that used to be
+ * what a long-press did by itself.
  *
  * The actions are disabled while a batch runs rather than hidden — a bar whose
  * buttons vanish mid-run reads as the app having lost the selection.
@@ -624,64 +1144,69 @@ private fun SelectionBar(
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 4.dp)
-            .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(ScanDims.CardRadius))
-            .padding(horizontal = 6.dp, vertical = 4.dp)
+            .padding(horizontal = ScanDims.ScreenMargin, vertical = ScanDims.S1)
+            .background(ScanColors.card, RoundedCornerShape(ScanDims.CardRadius))
+            .padding(horizontal = ScanDims.S1)
             .testTag("selectionBar"),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(ScanDims.S1),
     ) {
-        IconButton(onClick = onClose, modifier = Modifier.testTag("selectionClose")) {
-            Icon(
-                Icons.Filled.Close,
-                contentDescription = ProjectActionWording.SELECTION_CLOSE,
-                tint = MaterialTheme.colorScheme.onSurface,
-            )
-        }
+        ScanIconButton(
+            icon = Icons.Filled.Close,
+            contentDescription = ProjectActionWording.SELECTION_CLOSE,
+            onClick = onClose,
+            modifier = Modifier.testTag("selectionClose"),
+        )
         Text(
             text = selection.title(),
-            fontFamily = DisplayFontFamily,
-            fontWeight = FontWeight.SemiBold,
-            fontSize = 15.sp,
-            color = MaterialTheme.colorScheme.onSurface,
+            style = ScanTitle,
+            color = ScanColors.ink,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f).testTag("selectionCount"),
         )
-        IconButton(onClick = onExport, enabled = !busy, modifier = Modifier.testTag("selectionExport")) {
-            Icon(
-                Icons.Filled.IosShare,
-                contentDescription = Wording.CARD_MENU_EXPORT,
-                tint = MaterialTheme.colorScheme.onSurface,
-            )
-        }
-        IconButton(onClick = onShare, enabled = !busy, modifier = Modifier.testTag("selectionShare")) {
-            Icon(
-                Icons.Filled.Share,
-                contentDescription = ProjectActionWording.SHARE_ACTION,
-                tint = MaterialTheme.colorScheme.onSurface,
-            )
-        }
-        IconButton(onClick = onDelete, enabled = !busy, modifier = Modifier.testTag("selectionDelete")) {
-            Icon(
-                Icons.Filled.Delete,
-                contentDescription = ProjectActionWording.DELETE_ACTION,
-                tint = MaterialTheme.colorScheme.error,
-            )
-        }
+        ScanIconButton(
+            icon = Icons.Filled.IosShare,
+            contentDescription = Wording.CARD_MENU_EXPORT,
+            onClick = onExport,
+            enabled = !busy,
+            modifier = Modifier.testTag("selectionExport"),
+        )
+        ScanIconButton(
+            icon = Icons.Filled.Share,
+            contentDescription = ProjectActionWording.SHARE_ACTION,
+            onClick = onShare,
+            enabled = !busy,
+            modifier = Modifier.testTag("selectionShare"),
+        )
+        ScanIconButton(
+            icon = Icons.Filled.Delete,
+            contentDescription = ProjectActionWording.DELETE_ACTION,
+            onClick = onDelete,
+            enabled = !busy,
+            tint = ScanColors.bad,
+            modifier = Modifier.testTag("selectionDelete"),
+        )
     }
 }
 
 /**
  * ROUND 24 item 108 — **one row, two controls, no menu bar.**
  *
- * A layout toggle on the left and a sort menu on the right, in 40 dp, above a
- * list the operator came here to read. Two deliberate choices:
+ * ROUND 28 finding P1i: the two controls were not the same kind of thing. A
+ * bare unlabelled grid glyph sat on the left in a 48 dp `IconButton`, an
+ * icon+label sat on the right in an 8 dp-padded `Row`, and the two texts did
+ * not share a baseline. They are now **one composable used twice** — icon,
+ * gap, label, one height, one alignment — which is the only way two controls
+ * end up on one baseline and stay there.
  *
- *  * **The layout is a toggle, not a menu.** There are two layouts. A menu for
- *    a binary is a tap and a read where a tap would do, and the icon shows the
- *    layout you would GET rather than the one you are in — which is what a
- *    toggle's icon means everywhere else on a phone.
- *  * **The sort is a menu showing its current value.** Three options with real
- *    names ("Newest", "A–Z", "Z–A"), and the current one is on the row, because
- *    "why is this scan at the top" must be answerable without opening anything.
+ * The two decisions round 24 argued and this round keeps:
+ *
+ *  * **The layout is a toggle, not a menu.** There are two layouts, and the
+ *    label names the layout you would GET rather than the one you are in —
+ *    which is what a toggle means everywhere else on a phone.
+ *  * **The sort shows its current value.** "why is this scan at the top" must
+ *    be answerable without opening anything.
  */
 @Composable
 private fun ProjectsControlRow(
@@ -694,49 +1219,30 @@ private fun ProjectsControlRow(
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = 18.dp, vertical = 2.dp)
+            .padding(horizontal = ScanDims.S2)
             .testTag("projectsControlRow"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(
+        ControlButton(
+            icon = if (layout == ProjectsLayout.GALLERY) {
+                Icons.AutoMirrored.Filled.ViewList
+            } else {
+                Icons.Filled.GridView
+            },
+            label = ProjectsView.layoutActionLabel(layout),
             onClick = { onLayoutChange(ProjectsView.toggled(layout)) },
             modifier = Modifier.testTag("projectsLayoutToggle"),
-        ) {
-            Icon(
-                // The icon of the layout a tap would GIVE you, which is what a
-                // toggle means: in the list, offer the grid.
-                if (layout == ProjectsLayout.GALLERY) {
-                    Icons.AutoMirrored.Filled.ViewList
-                } else {
-                    Icons.Filled.GridView
-                },
-                contentDescription = ProjectsView.layoutActionLabel(layout),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        )
         Spacer(Modifier.weight(1f))
         Box {
-            Row(
-                Modifier
-                    .clickable(onClick = { sortMenuOpen = true })
-                    .padding(horizontal = 8.dp, vertical = 8.dp)
-                    .testTag("projectsSortButton"),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    Icons.Filled.Sort,
-                    contentDescription = ProjectsView.SORT_LABEL,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.height(18.dp),
-                )
-                Spacer(Modifier.padding(horizontal = 3.dp))
-                Text(
-                    sort.label,
-                    style = MonoMeta,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.testTag("projectsSortValue"),
-                )
-            }
+            ControlButton(
+                icon = Icons.Filled.Sort,
+                label = sort.label,
+                contentDescription = ProjectsView.SORT_LABEL,
+                onClick = { sortMenuOpen = true },
+                labelTestTag = "projectsSortValue",
+                modifier = Modifier.testTag("projectsSortButton"),
+            )
             DropdownMenu(expanded = sortMenuOpen, onDismissRequest = { sortMenuOpen = false }) {
                 ProjectSort.entries.forEach { option ->
                     DropdownMenuItem(
@@ -750,416 +1256,159 @@ private fun ProjectsControlRow(
     }
 }
 
-private fun aggregateLine(projects: List<Project>, hiddenEmptyCount: Int = 0): String {
-    // ROUND 9 (item 33): the hidden strays are named here rather than left to be
-    // discovered — "2 projects" on a phone with five directories on it would be
-    // the app quietly disagreeing with the file manager.
-    val hidden = if (hiddenEmptyCount > 0) " · $hiddenEmptyCount empty hidden" else ""
-    // ROUND 23: the operator's word is "scan" everywhere else on this screen
-    // (item 98 renamed the empty state and the card menu in round 22 and left
-    // this line saying "projects"). One vocabulary.
-    if (projects.isEmpty()) return "no scans yet$hidden"
-    val georeferenced = projects.count { it.manifest.crsEpsg != null && it.manifest.crsEpsg != 0 }
-    val totalPoints = projects.sumOf { it.manifest.pointCountEstimate ?: 0L }
-    val pts = when {
-        totalPoints >= 1_000_000 -> "%.1f M points".format(totalPoints / 1_000_000.0)
-        totalPoints > 0 -> "%,d points".format(totalPoints)
-        else -> "no points yet"
+/** One control on the layout/sort row: icon, gap, label, 48 dp, one baseline. */
+@Composable
+private fun ControlButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    contentDescription: String? = null,
+    labelTestTag: String? = null,
+) {
+    Row(
+        modifier
+            .defaultMinSize(minHeight = ScanDims.Touch)
+            .clickable(onClick = onClick)
+            .padding(horizontal = ScanDims.S2),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(ScanDims.IconGap),
+    ) {
+        Icon(
+            icon,
+            contentDescription = contentDescription ?: label,
+            tint = ScanColors.inkMute,
+            modifier = Modifier.size(ScanDims.S6),
+        )
+        Text(
+            label,
+            style = ScanBody,
+            color = ScanColors.inkMute,
+            maxLines = 1,
+            modifier = if (labelTestTag != null) Modifier.testTag(labelTestTag) else Modifier,
+        )
     }
-    return "${projects.size} project${if (projects.size == 1) "" else "s"} · " +
-        "$georeferenced georeferenced · $pts$hidden"
 }
 
 /**
- * One project card: thumbnail, title with a chevron, the chip row, and a mono
- * meta line.
- *
- * Delete moved from a trash `IconButton` in the title row to a long-press. The
- * icon was a permanently visible destructive control sitting one thumb-width
- * from the card's own tap target, and the redesign's card has no room for it
- * next to the title — the confirmation dialog it opens is unchanged, so the
- * safety of the action did not move, only its discoverability, which the hint
- * under the list states outright.
+ * §C.6's indeterminate load: skeleton rows at 12 % ink, never a centred
+ * spinner. The list's shape is known before its content is, so it is drawn —
+ * and the screen does not jump when the projects arrive.
  */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ProjectCard(
-    project: Project,
-    selected: Boolean,
-    /**
-     * ROUND 24 item 108 — **drawn in the 2-column gallery.**
-     *
-     * Three differences and no fourth: a shorter thumbnail (a 2-column card is
-     * half as wide, so the same 108 dp would be a letterbox), the chip row
-     * trimmed to the sensor badge, and a smaller title. Everything that is a
-     * BEHAVIOUR — the tap, the long-press, the ⋯ menu, the selection tick, the
-     * progress chip — is identical, because it is the same composable.
-     */
-    gallery: Boolean = false,
-    /** ROUND 22 item 96: 0..1 while a job started from this card runs; null otherwise. */
-    progress: Float? = null,
-    /** ROUND 23 item 104c: what the progress chip says — a reprocess and an export differ. */
-    progressLabel: (Int) -> String = { percent -> Wording.fixingProgress(percent) },
-    /**
-     * ROUND 27 item 134(b) — why this card's last "Process again" failed, or
-     * null.
-     *
-     * A run that fails must leave something behind. Until this round the chip
-     * simply disappeared and the operator was returned to an unchanged card,
-     * which reads as "nothing happened" and is indistinguishable from a tap
-     * that never registered.
-     */
-    failureNote: String? = null,
-    onDismissFailure: () -> Unit = {},
-    /** ROUND 23 item 104c: the list is in selection mode, so a tap picks. */
-    selecting: Boolean = false,
-    /** ROUND 23 item 104c: this card is in the selection. */
-    checked: Boolean = false,
-    onClick: () -> Unit,
-    onLongClick: () -> Unit = {},
-    onExport: () -> Unit,
-    onShare: () -> Unit = {},
-    onReprocess: () -> Unit,
-    /** ROUND 22 item 97: non-null only with Advanced on. */
-    onOpenDetails: (() -> Unit)? = null,
-    onDelete: () -> Unit,
-) {
-    var showDeleteConfirm by remember { mutableStateOf(false) }
-    var menuOpen by remember { mutableStateOf(false) }
-    val shape = RoundedCornerShape(ScanDims.CardRadius)
-    val manifest = project.manifest
-    // ROUND 25 item 114. The card asks `:core` rather than deciding: one
-    // layout fact, one place, one unit test.
-    val showThumbnail = ProjectsView.showsThumbnail(
-        if (gallery) ProjectsLayout.GALLERY else ProjectsLayout.LIST,
-    )
-
+private fun ProjectsSkeleton() {
     Column(
         Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceContainer, shape)
-            .border(
-                // A picked card is outlined in the primary colour and 2 dp, so
-                // "which of these am I about to export" is answerable at arm's
-                // length rather than by reading a small tick.
-                if (checked) 2.dp else 1.dp,
-                when {
-                    checked -> MaterialTheme.colorScheme.primary
-                    selected -> MaterialTheme.colorScheme.primary
-                    else -> MaterialTheme.colorScheme.outlineVariant
-                },
-                shape,
-            )
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = onLongClick,
-                onLongClickLabel = ProjectActionWording.SELECT_LABEL,
-            )
-            .padding(10.dp)
-            .testTag(
-                when {
-                    checked -> "projectCardChecked"
-                    selected -> "projectCardSelected"
-                    else -> "projectCard"
-                },
-            ),
+            .padding(horizontal = ScanDims.ScreenMargin, vertical = ScanDims.S1)
+            .testTag("projectsSkeleton"),
+        // `Hair` is a border width, never a spacing value (§C.1), so the
+        // skeleton separates its rows on the 4 dp grid like everything else.
+        verticalArrangement = Arrangement.spacedBy(ScanDims.S1),
     ) {
-        // ROUND 5 (item 8): the preview IS the selection. A selected card gives
-        // its cloud twice the height — enough to read the shape of a scan —
-        // instead of opening another screen to do it.
-        //
-        // ROUND 25 item 114: **only in the gallery.** The list row draws no
-        // preview at all — see `ProjectsView.showsThumbnail`. The round-5
-        // selection-expands-the-preview behaviour therefore only exists where
-        // there is a preview to expand; in the list, selection is the 2 dp
-        // primary border and nothing else, which is all it has needed since
-        // round 22 made a tap open the viewer directly.
-        if (showThumbnail) {
-            ProjectThumbnail(
-                project = project,
-                // Tagged so item 114 is assertable on the emulator: the list
-                // must draw ZERO of these and the gallery at least one. An
-                // absence with no name is not something a test can check.
-                modifier = Modifier
+        repeat(6) {
+            Box(
+                Modifier
                     .fillMaxWidth()
-                    .height(if (selected) 180.dp else 96.dp)
-                    .testTag("projectPreview"),
+                    .height(ScanDims.RowWithThumb)
+                    .background(
+                        ScanColors.ink.copy(alpha = 0.12f),
+                        RoundedCornerShape(ScanDims.S2),
+                    ),
             )
         }
-
-        Row(
-            // With no preview above it the title row IS the top of the card, so
-            // its 11 dp gap from the thumbnail becomes 1 dp of breathing room
-            // from the card's own padding. This is the "tighter rows" half of
-            // item 114 — dropping the image and keeping the spacing it needed
-            // would leave a list of tall empty cards.
-            Modifier.fillMaxWidth().padding(
-                start = 4.dp,
-                end = 4.dp,
-                top = if (showThumbnail) 11.dp else 1.dp,
-            ),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (selecting) {
-                Icon(
-                    if (checked) Icons.Filled.CheckCircle else Icons.Outlined.RadioButtonUnchecked,
-                    contentDescription = null,
-                    tint = if (checked) MaterialTheme.colorScheme.primary else InkFaint,
-                    modifier = Modifier
-                        .height(18.dp)
-                        .padding(end = 2.dp)
-                        .testTag(if (checked) "projectCardTick" else "projectCardUntick"),
-                )
-                Spacer(Modifier.padding(horizontal = 3.dp))
-            }
-            Text(
-                text = manifest.name,
-                fontFamily = DisplayFontFamily,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = if (gallery) 14.sp else 17.sp,
-                letterSpacing = (-0.015).em,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
-            )
-            Spacer(Modifier.padding(horizontal = 3.dp))
-            if (!gallery) {
-                Icon(
-                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = null,
-                    tint = InkFaint,
-                    modifier = Modifier.height(16.dp),
-                )
-            }
-            // ── ROUND 22 item 96: the per-card ⋯ menu ────────────────────────
-            //
-            // Export, Process again and Delete — the three things Simple mode's
-            // removed "Details, jobs & export" hub was actually used for, on
-            // the card they are about. Delete was a long-press since ROUND 5,
-            // which is a gesture the list hint had to TEACH; a menu is found.
-            Box {
-                IconButton(
-                    onClick = { menuOpen = true },
-                    modifier = Modifier.testTag("projectCardMenu"),
-                ) {
-                    Icon(
-                        Icons.Filled.MoreVert,
-                        contentDescription = "More actions",
-                        tint = InkFaint,
-                    )
-                }
-                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    DropdownMenuItem(
-                        text = { Text(Wording.CARD_MENU_EXPORT) },
-                        onClick = { menuOpen = false; onExport() },
-                        modifier = Modifier.testTag("cardMenuExport"),
-                    )
-                    // ROUND 23 item 104b: Share, next to Export, because the
-                    // owner's report is that BOTH vanished — and a menu that
-                    // offers only "save it where you cannot browse to it" is
-                    // half an answer.
-                    DropdownMenuItem(
-                        text = { Text(ProjectActionWording.SHARE_ACTION) },
-                        onClick = { menuOpen = false; onShare() },
-                        modifier = Modifier.testTag("cardMenuShare"),
-                    )
-                    DropdownMenuItem(
-                        text = { Text(Wording.CARD_MENU_REPROCESS) },
-                        onClick = { menuOpen = false; onReprocess() },
-                        modifier = Modifier.testTag("cardMenuReprocess"),
-                    )
-                    onOpenDetails?.let { open ->
-                        DropdownMenuItem(
-                            text = { Text("Details") },
-                            onClick = { menuOpen = false; open() },
-                            modifier = Modifier.testTag("cardMenuDetails"),
-                        )
-                    }
-                    DropdownMenuItem(
-                        text = { Text(Wording.CARD_MENU_DELETE) },
-                        onClick = { menuOpen = false; showDeleteConfirm = true },
-                        modifier = Modifier.testTag("cardMenuDelete"),
-                    )
-                }
-            }
-        }
-
-        // ROUND 22 item 96: a running job is a chip on the card, because Simple
-        // mode has no Jobs screen to go and look at.
-        if (progress != null) {
-            Row(
-                Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                CircularProgressIndicator(
-                    progress = { progress },
-                    modifier = Modifier.height(14.dp),
-                    color = MaterialTheme.colorScheme.primary,
-                    strokeWidth = 2.dp,
-                )
-                Text(
-                    progressLabel((progress * 100).toInt()),
-                    style = MonoMeta,
-                    color = InkFaint,
-                    modifier = Modifier.testTag("projectCardJobChip"),
-                )
-            }
-        }
-
-        // ROUND 27 item 134(b): and a job that FAILED is a line on the card,
-        // for exactly the same reason. Tappable away, because it is an answer
-        // to something the operator did and not a permanent state of the scan.
-        if (failureNote != null) {
-            Text(
-                failureNote,
-                style = MaterialTheme.typography.bodySmall,
-                color = SemBad,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 4.dp, end = 4.dp, top = 6.dp)
-                    .clickable(onClick = onDismissFailure)
-                    .testTag("projectCardProcessFailure"),
-            )
-        }
-
-        Row(
-            Modifier.fillMaxWidth().padding(
-                start = 4.dp,
-                end = 4.dp,
-                top = if (showThumbnail) 8.dp else 6.dp,
-            ),
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
-        ) {
-            ScanChip(
-                text = manifest.sensor.badgeLabel.uppercase(),
-                // ROUND 25 item 119: an exhaustive lookup, not an `else`.
-                // The `else` painted the new STL-27L in the D6's teal.
-                color = sensorBadgeColor(manifest.sensor),
-                showDot = true,
-            )
-            if (!gallery) {
-                ScanChip(
-                    text = manifest.profile.displayName.uppercase(),
-                    showDot = true,
-                )
-            }
-            // ROUND 6 (owner item 20): a capture whose app-side metadata was
-            // destroyed by the pre-0.3.0 `manifest.json` collision with the
-            // engine's own container manifest, and which `FileProjectStore`
-            // rebuilt so it is listable again. Its POINTS are intact; its
-            // name/sensor/profile are a reconstruction, and saying so is the
-            // difference between honest recovery and a quiet lie.
-            if (manifest.recovered) {
-                ScanChip(text = "RECOVERED", color = SemWarn, showDot = true)
-            }
-            if (manifest.crsEpsg != null && manifest.crsEpsg != 0) {
-                ScanChip(text = "GEOREF ✓", color = SemGood, showDot = true)
-            }
-        }
-
-        Text(
-            text = metaLine(project),
-            style = MonoMeta,
-            color = InkFaint,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(
-                start = 4.dp,
-                end = 4.dp,
-                top = if (showThumbnail) 9.dp else 6.dp,
-                bottom = if (showThumbnail) 3.dp else 1.dp,
-            ),
-        )
-
-        // ROUND 22 item 96: the two quiet doors are gone. "Open in viewer" is
-        // what a tap does now, and "Details, jobs & export" is the hub Simple
-        // mode removes — its three real uses are in the ⋯ menu above. Neither
-        // screen is deleted: with Advanced on, ProjectDetail is back in
-        // navigation exactly as it is today (see SimpleMode).
-    }
-
-    if (showDeleteConfirm) {
-        AlertDialog(
-            // ROUND 16 item 61: dialogs inherited the theme's pill too.
-            shape = RoundedCornerShape(ScanDims.DialogRadius),
-            onDismissRequest = { showDeleteConfirm = false },
-            // ROUND 22 item 98. Was: 'Delete "<name>"?' over "This permanently
-            // deletes the .lscan project directory, including any captured
-            // streams. This can't be undone." — the on-disk format and the word
-            // "streams" are facts about the implementation, not about what the
-            // operator is about to lose.
-            title = { Text(Wording.DELETE_TITLE) },
-            text = { Text(Wording.DELETE_BODY) },
-            confirmButton = {
-                TextButton(onClick = {
-                    showDeleteConfirm = false
-                    ProjectPreviewCache.invalidate(project.id)
-                    onDelete()
-                }) { Text("Delete") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDeleteConfirm = false }) { Text("Cancel") }
-            },
-        )
     }
 }
 
-/** The mono meta line: points · created · EPSG, in the mockup's order. */
+/**
+ * ROUND 22 item 98 + ROUND 23 item 104c: what a tap does, and the one mode a
+ * gesture alone cannot advertise.
+ *
+ * ROUND 28 item 162 drops the third line ("Some empty scans are hidden.") —
+ * nothing is hidden any more, so there is nothing to footnote.
+ */
+@Composable
+private fun ListHint() {
+    Hint(
+        Wording.PROJECTS_LIST_HINT + "\n" + ProjectActionWording.SELECTION_HINT,
+        color = ScanColors.inkMute,
+        modifier = Modifier
+            .padding(horizontal = ScanDims.S1, vertical = ScanDims.S3)
+            .testTag("projectsListHint"),
+    )
+}
+
+/**
+ * ROUND 28 item 151 — **ONE clause.**
+ *
+ * This built four — "66 projects · 65 georeferenced · 8.1 M points · 2 empty
+ * hidden" — and `HeroHeader` renders its subtitle at `maxLines = 1, overflow =
+ * Ellipsis`. That is not "might truncate on a small phone"; it is guaranteed
+ * truncation on every device that exists, and what the owner saw was
+ * `2 empt…` (finding P1d).
+ *
+ * The other three clauses are not deleted, they are *relocated*: item 165 moves
+ * the breakdown to Profile's "This phone" table, which already had SCANS and
+ * STORAGE rows waiting for exactly this. A table has room for four facts; a
+ * one-line subtitle has room for one.
+ *
+ * The fourth clause is gone outright — item 162 stops hiding empty scans, so
+ * there is nothing left to footnote.
+ */
+private fun aggregateLine(projects: List<Project>): String {
+    if (projects.isEmpty()) return Wording.PROJECTS_EMPTY_TITLE
+    return "${projects.size} scan${if (projects.size == 1) "" else "s"}"
+}
+
+/**
+ * The row's second line: points, then the date.
+ *
+ * ROUND 28 item 150: this was the CORRECT adaptive formatter, and the Review
+ * header twelve files away had a broken one. It moved to `PointCountFormat` in
+ * `:core` so there is one of it, and item 162 gives an empty scan its own words
+ * (`Empty — no points`) rather than printing `0 pts`.
+ *
+ * Item 162 also drops the `EPSG 32650` clause that used to end this line. It
+ * was the same value on 65 of the owner's 66 rows — the chip law's definition
+ * of noise — and the one scan that lacks it now says so with a chip, which is
+ * the only place that fact is worth a pixel.
+ */
 private fun metaLine(project: Project): String {
     val m = project.manifest
-    val points = m.pointCountEstimate?.let {
-        when {
-            it >= 1_000_000 -> "%.1f M pts".format(it / 1_000_000.0)
-            it >= 1_000 -> "%.1f K pts".format(it / 1_000.0)
-            else -> "$it pts"
-        }
-    } ?: "no capture"
+    val points = PointCountFormat.rowClause(m.pointCountEstimate)
     val created = com.lidarscan.app.ui.common.formatCreatedDate(m.createdAtEpochMillis)
-    val epsg = m.crsEpsg?.takeIf { it != 0 }?.let { "EPSG $it" }
-    return listOfNotNull(points, created, epsg).joinToString(" · ")
+    return "$points · $created"
 }
 
+/**
+ * §C.6's empty state, one way everywhere: a 32 dp ink-faint icon, a ≤6-word
+ * title, a ≤12-word body and one Primary naming the fix. **No card.**
+ *
+ * ROUND 28 item 162 drops the "Some empty scans are hidden." note this used to
+ * carry: with the filter gone, "No scans yet" cannot be a lie on a phone that
+ * holds nothing but strays — there is no such phone any more, because the
+ * strays are in the list.
+ */
 @Composable
-private fun EmptyProjectsState(hiddenEmptyCount: Int, onNewScan: () -> Unit) {
-    Box(
-        Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 24.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-                text = Wording.PROJECTS_EMPTY_TITLE,
-                fontFamily = DisplayFontFamily,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 22.sp,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Spacer(Modifier.height(10.dp))
+private fun EmptyProjectsState(onNewScan: () -> Unit) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        ScanEmptyState(
+            icon = Icons.Outlined.Layers,
+            title = Wording.PROJECTS_EMPTY_TITLE,
             // ROUND 22 item 98. Was 26 words naming two products and a tab.
-            Hint(Wording.PROJECTS_EMPTY_HINT)
-            // ROUND 9 (item 33): "No projects yet" would be a lie on a phone
-            // holding nothing BUT empty strays, so the empty state says which
-            // kind of empty it is.
-            if (hiddenEmptyCount > 0) {
-                Spacer(Modifier.height(10.dp))
-                Hint(
-                    Wording.PROJECTS_EMPTY_HIDDEN,
-                    color = InkFaint,
-                    modifier = Modifier.testTag("hiddenEmptyScansNote"),
+            body = Wording.PROJECTS_EMPTY_HINT,
+            action = {
+                // The one exception to "Projects never creates a scan": with no
+                // projects at all, a tab that only says "go somewhere else" is
+                // a dead end, so this is a shortcut TO the Scan tab, not a
+                // second way to create a project.
+                PrimaryPill(
+                    text = Wording.PROJECTS_EMPTY_ACTION,
+                    icon = Icons.Filled.Add,
+                    onClick = onNewScan,
+                    modifier = Modifier.testTag("newScanButton"),
                 )
-            }
-            Spacer(Modifier.height(22.dp))
-            // The one exception to "Projects never creates a scan": with no
-            // projects at all, a tab that only says "go somewhere else" is a dead
-            // end, so this is a shortcut TO the Capture tab, not a second way to
-            // create a project.
-            PrimaryPill(
-                text = Wording.PROJECTS_EMPTY_ACTION,
-                icon = Icons.Filled.Add,
-                onClick = onNewScan,
-                modifier = Modifier.testTag("newScanButton"),
-            )
-        }
+            },
+        )
     }
 }

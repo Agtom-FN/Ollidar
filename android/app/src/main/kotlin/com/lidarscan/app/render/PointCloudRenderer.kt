@@ -29,6 +29,7 @@ import com.lidarscan.core.render.ColormapLut
 import com.lidarscan.core.render.FollowCamera
 import com.lidarscan.core.render.FollowCameraConfig
 import com.lidarscan.core.render.GpuPageBudget
+import com.lidarscan.core.render.HeightRange
 import com.lidarscan.core.render.PointSizeMode
 import com.lidarscan.core.render.UpAxis
 import java.nio.ByteBuffer
@@ -387,6 +388,15 @@ class PointCloudRenderer(
     private val combinedBoundsMax = floatArrayOf(0f, 0f, 0f)
     private var haveBounds = false
 
+    /**
+     * The height range last written to the material, or null if none has been —
+     * the memo [refreshAutoHeightRange] compares against so a growing cloud
+     * costs two float compares a frame instead of two `setParameter` calls.
+     * Cleared wherever [haveBounds] is, because a range remembered from the
+     * previous source would suppress the first refresh of the next one.
+     */
+    private var appliedHeightRange: HeightRange.Range? = null
+
     fun attach(surfaceView: SurfaceView) {
         this.surfaceView = surfaceView
         FilamentLoader.ensureInitialized()
@@ -514,6 +524,7 @@ class PointCloudRenderer(
         pageStreams.clear()
         mappedPageSeen = false
         haveBounds = false
+        appliedHeightRange = null
         // ROUND 22 item 91 (iv): with no pages left, every retired shared index
         // buffer is now unreferenced and can go.
         drainRetiredIndexBuffers()
@@ -578,14 +589,14 @@ class PointCloudRenderer(
      * `engine/tests/test_pushbroom.cpp`'s synthetic wall — test-fixture geometry,
      * not a frame any device ever produces — so it is not what the renderer sees.
      *
-     * Known inconsistency, deliberately NOT changed here: [applyDynamicMaterialParams]'s
-     * HEIGHT auto-range reads `combinedBounds*[2]`, i.e. **z**, as the height
-     * axis. Under the Y-up convention established above that is the wrong
-     * component, and A14's "the caller refreshes those two fields from the real
-     * data range" would then be auto-ranging colour over a horizontal axis. It is
-     * flagged rather than fixed because it is a visible colour-mapping behaviour
-     * change on the Review screen, which is another workstream's surface this
-     * round; it is reported upward instead.
+     * **ROUND 28 item 154 closed the inconsistency this comment used to flag.**
+     * [applyDynamicMaterialParams]'s HEIGHT auto-range read `combinedBounds*[2]`
+     * — z — as the height axis, and `points.mat` normalised and clipped on
+     * `world.z` to match, so all three agreed with each other and disagreed with
+     * the frame above. The reasoning here was right and the deferral was the
+     * mistake: the owner's Review screenshot came back a flat dark indigo cloud,
+     * which is exactly what auto-ranging colour over a horizontal axis looks
+     * like. All three sites now spell [HeightRange.AXIS], which is 1.
      */
     private val followCamera = FollowCamera(FollowCameraConfig(upAxis = UpAxis.Y_UP))
 
@@ -820,6 +831,11 @@ class PointCloudRenderer(
         // index buffer may now be unreferenced.
         drainRetiredIndexBuffers()
         haveBounds = false
+        // ROUND 28 item 154: the memo goes with the bounds it memoises. A stream
+        // filter change can drop every page above the operator's head, and a
+        // remembered range would keep colouring the survivors against a ceiling
+        // that is no longer in the cloud.
+        appliedHeightRange = null
     }
 
     /**
@@ -1192,6 +1208,68 @@ class PointCloudRenderer(
         gpu.vertexBuffer.setBufferAt(engine, 0, tinted, 0, gpu.uploaded * POINT_STRIDE_BYTES)
     }
 
+    /**
+     * The one place the shader's `valueMin`/`valueMax` are decided, so the
+     * load-time application and the live refresh below cannot drift apart.
+     *
+     * **ROUND 28 item 154, the second half.** Two bugs met on these two lines.
+     * The axis was wrong ([HeightRange.AXIS] — see the [followCamera] header for
+     * the whole derivation and for the note this round finally acted on), and
+     * the range was never guarded: `combinedBounds*` at the moment the first
+     * page lands is a single page's box, which for the first slice of a walk is
+     * a few millimetres tall. Dividing colour across that put every point on the
+     * ramp's floor just as surely as the wrong axis did, and neither failure
+     * throws — [HeightRange.resolve] answers both, falling back to the manual
+     * range when the bounds are not finite and to a mid-ramp window when they
+     * are finite but flat. `CloudThumbnail.normalise` is the precedent for
+     * guarding rather than trusting a computed span.
+     */
+    private fun resolveScalarRange(
+        dp: com.lidarscan.core.render.DisplayParams,
+        s: com.lidarscan.core.render.ScalarColorParams,
+    ): HeightRange.Range {
+        val manual = HeightRange.Range(s.manualMin, s.manualMax)
+        if (!s.autoRange || dp.colorMode != ColorMode.HEIGHT || !haveBounds) return manual
+        return HeightRange.resolve(
+            combinedBoundsMin[HeightRange.AXIS],
+            combinedBoundsMax[HeightRange.AXIS],
+            manual,
+        )
+    }
+
+    /**
+     * Re-applies the HEIGHT auto-range as the cloud grows — ROUND 28 item 154,
+     * the third half.
+     *
+     * Before this, `valueMin`/`valueMax` were written only when something called
+     * a setter: a colormap change, a point-size change, surface creation. A live
+     * capture calls none of those while the operator walks, so the range the
+     * shader held was the range of whatever pages existed the last time a
+     * control was touched — correct for one frame and progressively wronger for
+     * every frame after, until the operator happened to tap something. On the
+     * Review screen, where a whole saved cloud streams in page by page after the
+     * screen has already applied its params once, it was wrong for the entire
+     * session.
+     *
+     * Not applied every frame: [HeightRange.needsReapply] gates on the bounds
+     * having actually moved by more than 2 % of the applied span, which is where
+     * the choice of trigger is argued (bounds, not point count — the count is a
+     * proxy that is wrong in both directions).
+     */
+    private fun refreshAutoHeightRange() {
+        val mi = materialInstance ?: return
+        val dp = displayParams ?: return
+        if (!haveBounds) return
+        val s = dp.activeScalar
+        if (!s.autoRange || dp.colorMode != ColorMode.HEIGHT) return
+        val current = resolveScalarRange(dp, s)
+        val applied = appliedHeightRange
+        if (applied != null && !HeightRange.needsReapply(applied, current)) return
+        appliedHeightRange = current
+        mi.setParameter("valueMin", current.min)
+        mi.setParameter("valueMax", current.max)
+    }
+
     private fun applyDynamicMaterialParams() {
         val mi = materialInstance ?: return
         mi.setParameter("colorMode", shaderColorMode())
@@ -1233,9 +1311,10 @@ class PointCloudRenderer(
         // fields ... from the real data range". For height, the source is the
         // combined page bounds — the same numbers `PageView::bounds_min/max`
         // expose and this renderer already tracks for the follow camera.
-        val autoHeight = s.autoRange && dp.colorMode == ColorMode.HEIGHT && haveBounds
-        mi.setParameter("valueMin", if (autoHeight) combinedBoundsMin[2] else s.manualMin)
-        mi.setParameter("valueMax", if (autoHeight) combinedBoundsMax[2] else s.manualMax)
+        val range = resolveScalarRange(dp, s)
+        appliedHeightRange = range
+        mi.setParameter("valueMin", range.min)
+        mi.setParameter("valueMax", range.max)
         mi.setParameter("gamma", s.gamma)
         mi.setParameter("invert", if (s.invert) 1 else 0)
         mi.setParameter("brightness", s.brightness)
@@ -1736,6 +1815,9 @@ class PointCloudRenderer(
         }
 
         reapEvictedPages(seenPageIds)
+        // After the bounds accumulator has seen this frame's pages, and before
+        // stats are published — ROUND 28 item 154.
+        refreshAutoHeightRange()
         publishRecentGeometry()
         refreshCoverageTints(src, System.currentTimeMillis())
         lastStats = PointCloudRenderStats(resident, pagesDrawn, haveBounds, mappedPageSeen)

@@ -103,22 +103,24 @@ object ProjectsView {
     fun columns(layout: ProjectsLayout): Int = if (layout == ProjectsLayout.GALLERY) 2 else 1
 
     /**
-     * ROUND 25 item 114 — **does this layout draw the lidar preview?**
+     * ROUND 28 item 162 — **retired, and the reasoning it carried is why.**
      *
-     * Owner: the LIST row loses its preview image; the GALLERY keeps it. That
-     * is not an arbitrary split, it is what the two layouts are FOR. A gallery
-     * is thumbnail-first — remove the thumbnail and it is a list with fewer
-     * words per card. A list is name-first, and a 108 dp preview above every
-     * row means four scans fill a phone screen and finding the one you want is
-     * scrolling, not reading.
+     * Round 25 item 114 wrote: *"a list is name-first, and a 108 dp preview
+     * above every row means four scans fill a phone screen and finding the one
+     * you want is scrolling, not reading."* That is correct, and it is an
+     * argument against a 108 dp preview **above** a row — which is what the
+     * card was. It was applied as an argument against the thumbnail, and it
+     * took with it the single strongest differentiator between 66 otherwise
+     * identical rows, leaving text and three chips that were the same on every
+     * one of them.
      *
-     * It lives here rather than as an `if (gallery)` in the composable for the
-     * same reason [columns] does: round 24's property is that there is exactly
-     * ONE `ProjectCard` and the layout supplies its differences, so each
-     * difference has to be a named, testable fact rather than a condition
-     * spelled out at the draw site.
+     * §D.5's row is 72 dp with a 56 dp tile at its LEADING edge, so the
+     * thumbnail costs no height at all — four scans per screen became roughly
+     * twice as many *with* the picture. The predicate had one remaining
+     * property, that the fact be named and testable rather than an `if
+     * (gallery)` at the draw site, and that property is preserved: there is no
+     * condition to name any more, because both layouts draw one.
      */
-    fun showsThumbnail(layout: ProjectsLayout): Boolean = layout == ProjectsLayout.GALLERY
 
     /** The layout the toggle switches TO — one control, two states, no menu. */
     fun toggled(layout: ProjectsLayout): ProjectsLayout =

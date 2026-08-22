@@ -4769,3 +4769,534 @@ the 3D viewport keeps its black ground in both themes by design, and the amber
 advisory ink is close to its contrast floor on light — noted, not fixed. And the
 132 shake is a 400 ms animation: the screenshot proves the amber card and the
 scroll-into-view, not the motion.
+
+---
+
+## ROUND 28 (v0.9.13) — FULL UI REDESIGN: the design review, the mockups, and the twelve functional bugs
+
+The owner commissioned a professional design review of v0.9.12 against his own
+five phone screenshots, the 0.9.11/0.9.12 emulator sets and a 2,449-line,
+74-scan field log; then a pixel-level mockup of every screen, which he reviewed
+and approved with seven explicit corrections. Both documents are the source of
+truth for this round: the review supplies the design system (§C), the per-screen
+specs (§D), the twelve located functional bugs (§E) and the build order (§F);
+the mockups supply the visual target with final tokens, both themes.
+
+The review's verdict, restated so it is in this log and not only in an artifact:
+*the app has a real design system, it was designed dark-only, and it is bypassed
+on every screen.* `Color.kt` defines ~30 dark tokens and **6** light ones; every
+semantic colour is declared "theme-invariant" and reused unchanged on white,
+where it measures **1.56:1 to 3.06:1**. The owner runs his phone in light mode.
+Everything he called "amateur" descends from that plus one more fact: the
+card-vs-page contrast is **1.08:1** light and **1.11:1** dark, so a card cannot
+be seen as a card, so every panel was given a border *and* a shadow to be
+visible at all. "Floating card soup" is not a style choice; it is a workaround
+for a colour bug.
+
+### Foundations
+
+**144 — the light theme is an unfinished port, and it is the largest defect in
+the app.** Nine tokens (`SemGood`, `SemWarn`, `CoverageAmber`, `SemBad`,
+`ScanTeal`, `PoseBlue`, `ScanSand`, `Ember`-as-text, `InkMute`) are drawn
+unchanged on white. `CoverageAmber` at **1.68:1** is the worst case and it is
+not decorative: it paints *"No scanner found. Plug it in, then Retry."* — a
+critical error message the operator cannot read on a white phone. The fix is not
+"make it darker"; it is a light column for every semantic role, hue and
+saturation preserved and only lightness moved, so a `FAIR` badge is recognisably
+the same amber in both themes and legible in both.
+
+**145 — the warning containers are computed over a dark constant.**
+`SemWarnContainer = SemWarn.over(Panel, 0.14f)` where `Panel = #1A2027`. In the
+light theme that renders a **dark olive box on a white page**. Round 25 item 116
+introduced these containers to stop the tracking-lost popup inventing its own
+dialect, and the derivation was the right instinct — a token change to `SemWarn`
+must move its container with it — but it derived against a *constant* instead of
+against the theme. Containers must resolve at composition time.
+
+**146 — the surface ladder has no rungs.** Card `#FFFFFF` on page `#F4F6F8` is
+1.08:1; dark `#1A2027` on `#12161B` is 1.11:1; the border `#D3DAE1` on white is
+1.41:1. The ground drops (`#ECEFF3` / `#0E1216`), the card stays, and the border
+rises to **1.58:1 on white**, which is what actually makes a card read as a
+card.
+
+**147 — three floating layers, and the owner's own rule broken by his own tab
+bar.** The rule was "only warnings and the scan FAB may float". Violating it:
+the status card, the `?` FAB, the gear button, and the floating capsule tab bar
+(which also guillotines the last Projects row and steals 16 dp of width from
+every screen). Two elevation levels, and exactly three things may use the
+floating one.
+
+**148 — the export toast is unreadable in both themes, and it is one missing
+token.** `ProcessingScreen.kt:202` overrides `containerColor` and not
+`contentColor`; Material falls back to `SnackbarDefaults.contentColor` =
+`inverseOnSurface`; `LightColors` never defines it, so light lands on M3's
+near-white `#F4EFF4` over `#E8ECF0` = **1.05:1**, and dark lands on near-black
+over `#222A33` = 1.25:1. Not an alpha bug and not a z-order bug — a hole in the
+scheme. The same hole explains the off-palette lavender on Review's selected
+`PLY` chip: an un-restyled `FilterChip` inheriting an undefined
+`secondaryContainer`. Fill every missing `LightColors` role so no component can
+find the hole again.
+
+### Small kills
+
+**149 — 198 chips carrying zero information.** `ProjectsListScreen.kt:1038–1057`
+renders sensor, profile and georef chips unconditionally: 66 rows × 3 identical
+chips, in a fleet where every scan is D6 + Quick scan + georeferenced. **A chip
+may only be drawn when its value differs from the norm for the set being
+displayed.** Compute the modal value over the visible collection; draw a chip
+only on deviations. 198 chips become ~4, and the two genuinely unusual scans
+become visible for the first time. Chips also stop being tappable, which
+dissolves item 152 structurally.
+
+**150 — one number, two sources, and one of them formats wrong.**
+`ReviewScreen.kt:464` divides unconditionally by 1e6 with `"%.1f M pts"`, so
+46,500 points render as **`0.0 M pts`** — on the headline screen. Meanwhile the
+floating viewport chip reads the *loaded cloud* and says `52,041 pts`. Two
+defects: a formatter (Projects already has a correct adaptive K/M one — extract
+it, share it, delete Review's) and a source disagreement (the loaded cloud wins
+over the manifest estimate; the chip is deleted anyway).
+
+**151 — a header subtitle that cannot fit on any phone.** `aggregateLine()`
+builds four clauses and `HeroHeader` renders `maxLines = 1`. It is not "might
+truncate on a small device", it is *guaranteed* truncation everywhere. One
+clause; the breakdown moves to Profile's This-phone table, which already has
+`SCANS` and `STORAGE` rows waiting for it.
+
+**152 — a 24 dp tap target that declares a 44 dp minimum.** `ScanUi.kt:306`
+gives `ScanChip` an `onClick` at `padding(horizontal = 9, vertical = 4)`.
+Resolved by item 149 rather than by padding: a chip is a state, not a control.
+
+**153 — the display migration has a write path it never stamped.** Round 27 item
+141 migrated a persisted height grayscale to Turbo on read and stamped
+`DisplayParams` so it happens once. Review writes display params too, and that
+path did not stamp — so a project saved from Review could be re-migrated, or
+worse, saved unstamped and re-read as if it had never been migrated.
+
+### Functional
+
+**154 — the point cloud renders monochrome, and the height axis is the reason.**
+The owner's Review screenshot shows a flat dark indigo cloud with `HEIGHT`
+selected — the exact signature of a degenerate height range mapping every point
+to `t = 0`. The trace found the axis: `points.mat` normalises against **z**
+where the app's world-up is **y**, and `PointCloudRenderer` feeds the shader
+`bounds[2]` (z) for the same reason. A cloud walked at one height has almost no
+z span in that frame, so `zMax − zMin ≈ 0` and every point lands on the ramp's
+floor. Four fixes, together: the shader's axis, the clip pair that shares it,
+the bounds index, per-frame/on-growth re-application of the autorange (a live
+cloud grows, and a range computed at load is wrong by the second frame), and a
+degenerate-span guard — `CloudThumbnail.kt:238` already has that guard and is
+the precedent.
+
+**155 — the start sequence is silent for 20 seconds and then records into a
+state it already knows is bad.** The log, 21:01:22 → 21:01:42: `start gate:
+waiting for tracking … blocker=NO_POSES` → 4 s timeout → rebuild → still blocked
+→ `start hold: waiting for a steady hold` → `TIMED OUT after 10000 ms` → falls
+back to the persisted trim and **starts**. Four milliseconds after recording
+begins: `tracking_degraded`, `stop walking, hold still`. Underneath the whole
+20 s, `gate refused FAILED … the tracking camera stopped (FatalException)`
+repeats about sixty times a second. A hard failure was presented as a wait. A
+`FatalException` must abort the start immediately with the error card, and a
+gate that ends `NO_POSES` must not fall through — a degraded scan is offered as
+an explicit **Start anyway**, never a surprise. This is where the `POOR` grades
+and the seven `points=0` scans come from, and it is measurable as abandonment:
+on the evening of 08-21 there were **15** `scan tab entered` events and **3**
+scans.
+
+**156 — merely looking at the Scan tab discards the operator's settings.** Every
+tab entry logs `new capture: per-scan state cleared, settings back to defaults`,
+including the twelve of fifteen that were abandoned within seconds. Navigation
+must not be destructive. Clear per-scan state on **scan start**.
+
+**157 — the connect flow is clipped mid-sentence.** *"Pick the scanner on this
+cable."* is guillotined by the transport row: the scrollable chrome band has no
+bottom padding for the controls that overlay it.
+
+### Screens
+
+**158 — Scan idle: half the screen is an empty dark rectangle.** Round 27 item
+136 gated the 60 % viewport floor on `connected`; the owner's rig **is**
+connected and **not recording**, so the app reserves 60 % of its first screen
+for a picture that does not exist. The condition tests the wrong thing — "is a
+sensor attached" instead of "is there anything to draw". Keyed on *recording*,
+the space becomes a real LAST SCAN card (thumbnail, name, points, duration,
+grade) and three readiness rows that each state their own state and carry their
+own fix. Zero chips, zero pills, one FAB. Removed with destinations: `00:00` /
+`0 pts` / `0.0 m` (deleted — never render a zero-valued readout), three status
+chips (into the status bar and the Tracking row), the mount pill and Re-zero
+(into the Mount row), the scan-name pill (deleted — auto-named), `Diag` and the
+`?` FAB and the live-view eye (into the Advanced sheet), `New capture` (deleted
+— item 156 makes it a lie either way).
+
+**159 — recording does not simplify for the one state where the operator cannot
+read.** Same duplicated status band, same six-control row, while walking. One
+telemetry strip in tabular mono, the viewport, an advisory line that *inserts*
+rather than reserves, and two controls. Round 8's ≥60 % rule is kept exactly.
+
+**160 — the start modals.** Named, bounded, abortable: every stage says which
+stage and how long is left. Hold-still and hard-failure are the same card size,
+per the owner's mockup note.
+
+**161 — Review gives 44 % of the screen to the thing it exists to show.** Five
+stacked control rows — colormap chips, Share + Export, five permanent format
+chips, a caption — permanently consume ~25 %, plus ~300 px of dead ground below
+them. Format is chosen once per export; it is a sheet, not a toolbar. Colormap
+is a display setting; it belongs in the display sheet that already exists. The
+cloud goes to ~72 %.
+
+**162 — Projects deleted the one thing that differentiated 66 rows.** Round 25
+item 114 removed thumbnails from list view while `CloudThumbnail.kt` still
+exists and the gallery still uses it. Meanwhile the field that actually differs
+between the owner's scans — the seal `grade` — never reaches the card at all,
+and the seven scans that sealed with zero points are *hidden* behind a truncated
+header clause. 72 dp rows with thumbnails, grade as a semantic dot plus Meta
+Caps, empty scans shown so they can be deleted, chips only on deviation.
+
+**163 — Jobs looks like a different app because it is built as a document.**
+Hero, prose, icon tiles, paragraphs — and a **62-word engineering confession in
+error red** (`Mid-360 LIO pipeline`, `pushbroom`, `trajectory`, `ARCore pose
+stream`, `the engine cannot write yet`) against a six-word instruction law.
+Nothing failed: the message means "this scan type is already final", and red
+tells the operator their scan is broken. `bad` means an operation failed and the
+operator lost something; "not applicable" is `ink-mute`. Jobs becomes a
+read-only queue — running, done, failed + reason + Retry — and every
+work-launching control moves to where the user already is when they want it
+(Review's ⋯ and Export sheet). The paragraph's content survives as five words in
+a disabled row: *"Already final. Processed while you walked."*
+
+**164 — the first card in Settings is a raw filesystem path.** Two mono lines of
+`/storage/emulated/0/Android/data/...`, above the first section header, with no
+section of its own: maximum jargon in the most prominent position. Orange is
+spent on three passive section headers (accent inflation), the version string
+renders at ~1.5:1, and only one row of five has a chevron. Grouped rows in one
+card per section, neutral labels, chevrons only where something navigates.
+
+**165 — Profile: one card, two unrelated tasks, four labels, two duplicated
+words.** Titled "Send logs", containing a button "Send logs", then a field whose
+only label is the placeholder "Send feedback", then a permanently disabled
+button "Send feedback". Split into two rows with one job each. The This-phone
+table is kept **verbatim** — the review names it the best-built pattern in the
+app and the model for THE ROW everywhere — and it absorbs the Projects header
+stats from item 151.
+
+**166 — the tutorial offer displaces the user's actual task.** On a
+disconnected first run it is injected inline into the Scan scroll, pushing the
+connect flow below the fold where item 157 then clips it. One dismissable line
+under the status bar, never displacing content.
+
+**167 — two typographic voices arguing inside one row.** `MonoLabel` (10 sp,
+0.14 em, uppercase) is the default chip style, so *nouns* get instrument-panel
+treatment — `QUICK SCAN`, `MOUNT SET`, `HEIGHT`, `NO ROVER` — beside `Idle`,
+`Re-zero`, `New capture` in sentence-case Space Grotesk. Tracking is for codes,
+not words. Four sizes; `MonoLabel`, `MonoValue`, `MonoTabular`, `MonoMeta` and
+`SheetSectionLabel` collapse into **Meta** and **Meta Caps**; `tnum` is on for
+every number, always. The rule: if a person would say it out loud it is sentence
+case; if a person would spell it out (`D6`, `EPSG 32650`, `PLY`, `FAIR`, `REC`)
+it is Meta Caps.
+
+**168 — the icon language, decided by the owner against the mockups.** Tabs:
+Projects = Layers, Scan = Radar (unchanged), Jobs = Work outline, Settings =
+Menu, all four at one size on one baseline. Buttons: Measure = the horizontal
+ruler, Display = the contrast half-circle, and **Advanced = three vertical
+faders** — a custom vector, because the stock `Tune` is horizontal and the whole
+point of the change is that scan-local settings must not look like the Settings
+tab. Icon buttons get full ink colour, ~2 dp strokes and a 6 % circular wash in
+both themes, which is the other half of the dark-mode invisibility the owner
+reported. And a new instrument: a mini **attitude indicator** — neutral ring,
+side ticks, an orange horizon needle that rotates with device roll and goes
+amber past a tilt threshold — beside the STOP button while recording and inside
+the hold-still card, because the one thing the operator cannot see while walking
+is whether he is holding the rig level.
+
+**169 — the wording law is switched off on a tab-bar screen.** `WordingLaw`
+exempts "advanced screens" from the `JARGON` check; `JARGON` explicitly lists
+`"A15"`; and `ProcessingScreen.kt:178` prints *"that is A15's design, not a
+limit of this screen"*. The law names the word and the exemption lets it
+through, on a screen one tap from Scan that no ordinary operator opted into. No
+screen reachable from the primary tab bar gets the lighter pass.
+
+### Resolution — 2026-08-22 (0.9.13, round 28)
+
+**The shape of the round.** Foundations first and alone (items 144–148), because
+§F is right that nothing else looks correct until the ladder and the semantics
+are real; then the small kills (149–153); then the four screens in parallel, one
+owner each, none of them allowed to touch the theme or the component file; then
+the functional work and the type sweep. The parallelism is why this round is one
+round and not three, and it cost exactly one thing: two Gradle daemons writing
+`build/` at the same moment corrupted the Kotlin incremental cache twice, which
+looks like a compiler crash and is not. Both cleared on retry.
+
+**144/145/146 — the light theme, and the mechanism behind it.** The fix is not
+fifteen new hex values, it is that a top-level `val` cannot know which theme is
+running. `ScanColors.kt` makes the semantics a **scheme** — provided by
+`LidarScanTheme`, read through `ScanColors.warn` the way a Material role is read
+through `MaterialTheme.colorScheme.error` — and the 200-odd call sites were
+migrated mechanically to it. Fourteen of those sites were not composable: a
+`DrawScope` lambda is not a composition, so the trajectory tile now hoists its
+four inks before the `Canvas` and closes over them, and `PoseTrackingState`'s
+chip colour left the enum constructor entirely, because a constructor argument is
+resolved once at class-init and can only ever be one hex — the whole defect, in
+miniature. `SemWarnContainer`'s derivation survived and its ground did not:
+`Color.over` is `internal` now and its only callers are the scheme's own
+container properties.
+
+**147 — the tab bar came down.** Round 26 made it a floating capsule so it would
+"read as floating *over* the content rather than as a docked bar", and that was a
+deliberate choice being deliberately reversed: it was the third floating layer,
+it guillotined the last row of every list, and it cost every screen 32 dp of
+width for its insets. `ScanCard.elevation: Dp` is gone with it — replaced by
+`floating: Boolean`, which is the rule rather than a number, and there is no
+longer a way to spell "6 dp because it looked flat".
+
+**148 — the toast, and the hole it fell through.** `LightColors` declared 23 of
+Material's roles and left the rest to the M3 baseline purple. Two shipped bugs
+came out of that one omission, and the second is the more interesting: Review's
+selected `PLY` chip was the review's "a colour that exists nowhere in the
+palette", and it was right — the lavender came from Material, not from this app.
+Every role is filled now.
+
+**150 — the number.** `"%.1f M pts".format(it / 1_000_000.0)` printed the owner's
+46,500-point scan as `0.0 M pts` while a correct adaptive formatter sat twelve
+files away in `ProjectsListScreen`. `PointCountFormat` is in `:core` with its own
+tests so neither screen can grow a local variant again, and Review reads
+`state.totalPoints` — the cloud actually on screen — because where an estimate
+and a measurement disagree the operator cannot tell which he is looking at.
+
+**154 — the height axis.** `points.mat` normalised against **z** where the app's
+world-up is **y**, and `PointCloudRenderer` fed it `bounds[2]` for the same
+reason. `PointCloudRenderer`'s own `followCamera` header had *written down* that
+the runtime frame is Y-up and flagged the auto-range as a "known inconsistency,
+deliberately NOT changed here" — the deferral was the bug. Four fixes together:
+the shader's axis, the clip pair that shares it, the bounds index (now spelled
+`HeightRange.AXIS` at all three sites), and a re-apply on growth — gated on the
+*bounds* drifting >2 % rather than on point count, because count is a proxy that
+is wrong in both directions. The degenerate guard follows `CloudThumbnail`'s
+epsilon exactly, and centres its ±0.5 m fallback window on the data so a flat
+wall comes up one honest mid-ramp colour instead of a millimetre of sensor noise
+spread across the whole ramp as confetti.
+
+**155/156 — the start sequence.** `StartGateDecision` in `:core` gives the gate
+the one concept it lacked: a terminal failure. Round 12's rule ("an app that will
+not start is worse than a warned one") is untouched for a gate that is *waiting*;
+it was never about a gate that is *dead*. A `FatalException` standing for three
+seconds now aborts **inside** the wait rather than after it, which is where the
+twenty seconds actually went, and `NO_POSES` after the round-16 rebuild becomes
+a question with `Start anyway` on it rather than a warning printed at the
+operator's back. The consent is a one-press latch, and it never suppresses the
+abort: "record it flat" is a thing an operator can mean; "record it with a camera
+that is not running" is not.
+
+Item 156 split `performNewCapture` in two along the line that was always there.
+Clearing the previous scan's *readouts* is what round 24 item 111 asked a tab
+entry to do; resetting the operator's *choices* is a different claim, and doing
+it on every entry meant twelve abandoned looks at the screen threw away his
+preset and display block for every three scans he took.
+
+**158/159 — the two Scan pages.** The idle page is the headline change and the
+recording page is the one that was not in the plan. §D.2's sketch is a column,
+and building it revealed why: round 26 floated every band on the picture, round
+27 spent an entire item computing reserves so they would not collide, and at
+1080 × 2400 on this bench they collided anyway — the status pill printed through
+the DND advisory printed through the refresh note, three strings on the same
+pixels, invisible to a suite that asserts semantics. A column cannot overlap
+itself, and the viewport keeps round 8's ≥60 % because it is the only weighted
+child.
+
+Two things were caught by looking at the screen rather than at the tests. The
+first cut of the idle page put the movable viewport in the LAST SCAN slot for a
+replay session, to preserve round 27's `movableContentOf` fix; on the emulator
+that **crashed the app** on the Start press — moving movable content out of a
+subtree being removed in the same frame hits `LayoutNode.onChildRemoved` with a
+null delegate. The fix is that §D.1's page has no live view in it, so there is no
+move to make: the viewport is composed in exactly one place and its lifetime is
+the recording's. The second: the first cut of the recording strip drew no
+Advanced button, which silently deleted round 5 item 10 — *"the display controls
+are adjustable against a LIVE view, that is item 10's whole point"*. The door is
+back, in the strip, as chrome rather than as a third control.
+
+**162 — the grade, finally on disk.** The Projects work found that
+`ScanSummary.grade` had been computed at every seal since round 12 and had never
+left the process: a `StateFlow` the summary card reads once, and two log lines.
+So the row derived what the manifest *proves* and printed no mark otherwise —
+honest, and half a screen. `ProjectManifest.grade` is a nullable additive
+`String` written at seal (by name, because the thresholds have moved in four
+rounds and a 2026 verdict must stay readable when the enum next grows), and the
+derivation stays for every scan already on the owner's phone.
+
+**163 — the red paragraph.** Deleting it was the easy half. The structural half
+is `ActionGate.tone`: `bad` cannot reach a "not applicable" reason any more,
+because the type will not carry it there. Same shape as item 169's fix, one
+screen over — `WordingLaw.TabBarScreen.jargonChecked` is a constant `true` on the
+type, so a fifth tab **cannot be declared** with the lighter pass.
+
+**Emulator suite, and what changed in it.** It also caught two regressions that
+no unit test could. The first cut of the idle page put the movable viewport in
+the LAST SCAN slot for a replay session and **crashed the app** on Start; the
+second cut of `resetPerScanChoices` fired a preset re-apply and a full display
+rewrite in the same instant the viewport was reconfiguring for a recording, and
+both replay suites stalled — the fix is that resetting to values you are already
+on now costs nothing, which is the common case and is what the AVD exercises.
+The third was the suite's own: `ReplayCaptureSmokeTest` parses the point count
+out of `pointsCapturedValue` to prove the cloud is growing, and item 150's one
+formatter changed that node from `120,300` to `56.2 K pts`. The parser returned
+`-1` for every sample and reported a twenty-second stall against a cloud that
+was decoding perfectly well — a test that cannot read the number it asserts on
+is a test that invents a failure. (For why the connected suite reported
+"Process crashed" all round, and the four real failures that were hiding behind
+it, see the HOTFIX section below — it supersedes anything said here about the
+emulator.)
+
+Its sibling assertion — *"the session must
+survive a live display change"* — then had to sample with the sheet **closed**:
+a `ModalBottomSheet` is its own window, so while it is open the telemetry strip
+is not in the tree the rule queries. Round 26's status pill happened to be
+reachable through it; §D.2's strip is not, and the property being tested (a
+live-applying control did not take the process down) is proved just as well a
+second after the sheet closes. The last of the three is the fixture's length
+itself: the bundled synthetic capture is ~17 s and both replay suites now spend
+more than that between their Start and their Stop, so the session can seal
+ITSELF first and an unconditional Stop click fails with "could not find any
+node". `stopIfStillRecording()` presses Stop only when there is something to
+stop; a self-sealed replay has been through the identical seal path, and the
+wait for the idle state that follows each call — which is what actually pins the
+outcome — is unchanged.
+
+Four assertions were inverted or moved rather than deleted, each recording a
+reversal: `Round25UiTest` asserted
+the list draws **no** preview (item 114) and now asserts it draws one;
+`Round26UiTest` asserted a `?` FAB, a live-view eye and a `0 pts` readout on the
+idle page and now asserts all three are absent; `Round27UiTest`'s pairwise sweep
+takes whichever status component is on screen; the Profile test asserted the tab
+bar is *displayed* there and now asserts it is not.
+
+**Numbers.** Engine **untouched**; ABI stays **12**; ctest **8/8**. `:core`
+**999** (was 935). `:app` unit **251** (was 213). Emulator — **see the correction
+below; the "60" first written here was never observed.** VERSION
+0.9.13; **versionCode 913 / versionName 0.9.13 and `application-label:'Ollidar'`
+verified in the built APK** (aapt2 badging).
+
+**What is NOT proven, said plainly.** The height-colour fix is 18 JVM tests
+including the regression pin — a cloud flat in z and spanning two metres in y
+gives ≥3 distinct ramp colours on `AXIS` and exactly one on axis 2, so reverting
+the axis fails loudly — and it has **not been seen rendering a gradient on a
+device**. This bench cannot show it: a live capture defaults to INTENSITY
+grayscale by round 10 item 39's decision, the bundled synthetic replay is
+seventeen seconds so switching mode mid-flight is a race, and Review cannot
+post-process the synthetic container on an AVD (`Processing failed:` with an
+empty reason — itself a small defect, noted). The start-gate abort is likewise
+reasoned and unit-tested rather than reproduced: ARCore does not run on the
+emulator at all. And the light theme was captured only after the sweep learned
+that `cmd uimode night no` changes the system and not this app — `ThemeMode.DARK`
+is the shipped default, which round 27 recorded and this round's first sweep
+re-discovered the hard way.
+
+---
+
+## ROUND 28 HOTFIX — the emulator line above was wrong, and what was actually true
+
+**The correction.** The round-28 resolution reported `Emulator **60**`. That run
+never happened. The connected suite did not reach 60 once in the whole round: it
+died at **test 17**, `Round13ProcessScanTest.processing_scan030_puts_five_pieces_into_one_frame`,
+with `Instrumentation run failed due to Process crashed.` Every failure after it
+in those logs is collateral — the process was gone, so the remaining 43 tests
+were never run and never reported. The number was written from what the suite
+was expected to do, not from a run that finished.
+
+**True history: crashed at 17 → root cause → 60 reached → four real failures →
+fixed → green.**
+
+**The crash was not a crash.** No tombstone was written (`/data/tombstones` is
+empty under `adb root`), no Java exception reached `logcat -b crash`, and no
+Filament PANIC or ASSERT reached the main buffer. The prime suspect going in was
+item 154's render work — the E-1 height-axis fix in `points.mat` and
+`PointCloudRenderer` — because test 17 is the only path that loads a large
+processed cloud. **That suspicion was wrong, and the render work is innocent:**
+`Round13ProcessScanTest` never touches the renderer. It is a pure JNI test that
+drives `nativeProcReprocessD6` and decodes `StitchResult`, and not one file on
+that path changed this round.
+
+What the system log actually says, at the moment of every death:
+
+```
+ActivityManager: Force stopping com.lidarscan.app.debug user=-1: installPackageLI
+ActivityManager: Killing 16168:com.lidarscan.app.debug (adj 0): ... due to installPackageLI
+ActivityManager: Crash of app com.lidarscan.app.debug running instrumentation ...
+Zygote  : Process 16168 exited due to signal 9 (Killed)
+```
+
+`installPackageLI` is **`pm install` of the app APK by a second, concurrent
+`connectedDebugAndroidTest`**. Installing over a running package force-stops it,
+so the in-flight instrumentation is SIGKILLed and AGP reports the only thing it
+can see: `Process crashed.` The sibling symptom is the same collision from the
+other end — a run killed at **test 1** by the *previous* run's UTP teardown
+(`deletePackageX`, `uninstall_after_test: true`).
+
+**Why always test 17.** `processing_scan030_puts_five_pieces_into_one_frame`
+takes **~190 s** on `b4_test` — it stitches five sections and 78 421 points
+through the real engine, and it is by a wide margin the longest test in the
+suite. Runs were being launched every 2–3 minutes. Test 17 was simply the one
+always in flight when the next run's `pm install` landed. The device log records
+it starting **eight times and finishing zero**. Run it alone, undisturbed, and it
+passes in 191.8 s.
+
+So the "ship blocker" was the **test harness contending with itself on one AVD**,
+not a defect in the app, the engine or the renderer. Nothing was reverted; item
+154's axis fix and its 18 JVM tests stand as written.
+
+**What the crash had been hiding.** With the suite finally able to run past 17,
+four genuine failures surfaced in the back half — tests 29 to 58, which had not
+executed once all round. None is crash-related; all four are round-28 changes
+whose assertions were never observed:
+
+* `Round24UiTest.settingsProfileRowOpensTheSamePage` — Settings gained its
+  DISPLAY / SCANNING / STORAGE sections, so the ABOUT block carrying the Profile
+  row now starts ~1500 px down a 2400 px screen. `settingsScreen` scrolls, so
+  the row stayed composed and `onNodeWithTag` still found it; `performClick`
+  then tapped off-screen coordinates and nothing happened. Fixed by
+  `performScrollTo()` — what this file's own `app_version_footer` assertions
+  already do.
+* `Round24UiTest.theAvatarOpensAProfilePageThatCanSendLogs` — item 165 rebuilt
+  the disclosure lines as children of `SupportRow`, whose `Row` is `clickable`;
+  `clickable` merges descendants, so those `Text`s stopped standing as their own
+  nodes in the merged tree. The page is correct — a `uiautomator` dump puts the
+  privacy line at y 394–435 of 2400. Fixed by querying `useUnmergedTree = true`.
+* `Round26UiTest.theScanControlsFloatInTheCorners` — two of item 158's removals
+  (the `?` FAB and the `0 pts` readout) were asserted against a page the bench
+  never renders. §D.1's idle page is the `compact && !isLandscape` branch, and
+  `compact` is `useCompactChrome(connected, …)`; **no D6 connects to an
+  emulator**, so the AVD falls to round 27's `IdleScanLayout`, which still draws
+  both. The eye did leave both pages because it moved to the Advanced sheet, a
+  shared surface. Assertions rescoped to what the disconnected page is, and to
+  the uniqueness property the test's own header says matters — a *second*
+  `tutorialButton` would break `Round24UiTest`'s six-step tour.
+* `Round27UiTest.theAdvancedSheetDoesNotEllipsizeItsValues` — item 130's
+  "taller than 1.4 labels" was a proxy for "wrapped rather than ellipsised",
+  valid while label and hint shared one line. Item 167 restacked `SheetRowLabel`
+  into a weighted column, so the hint gets the full row width and
+  `1.0 – 8 px · 0.1 steps` fits on one line honestly — and a one-line hint is
+  no longer distinguishable by height from a truncated one. The anti-ellipsis
+  property is structural now (that `Text` carries no `maxLines` and no
+  `overflow`), so the test asserts item 167's property instead: the hint is a
+  whole line tall and sits strictly **below** its label rather than printed
+  through it, which is the defect item 167 actually fixed.
+
+**Open, and an owner call rather than a hotfix's.** Item 158 removed the corner
+`?` and the zero-valued point readout from §D.1's connected idle page only. On
+the disconnected page — the one an emulator, and anyone without a rig plugged
+in, actually sees — both are still drawn. Whether they should also leave there
+is a visible change to the screen the owner opens first, so it is reported
+rather than taken.
+
+**Numbers, from runs that finished.** Engine **untouched**; ABI stays **12**.
+`:core` **999**, `:app` unit **251** — unchanged, since only androidTest files
+were edited. Emulator: `Round13ProcessScanTest` **2/2** alone (191.8 s for the
+big one), then the full suite **60/60, 0 failures** on `b4_test`. VERSION 0.9.13;
+versionCode **913** / versionName **0.9.13** / `application-label:'Ollidar'`
+verified by `aapt2 dump badging`.
+
+**The operational rule this round paid for.** One AVD serves one
+`connectedDebugAndroidTest` at a time. A second invocation does not queue — its
+`pm install` kills whatever is mid-test, and its `uninstall_after_test` teardown
+kills whatever started after it. Before launching a connected run, check for a
+live one (`adb logcat` for `installPackageLI` / `start instr`, and the Gradle
+daemon list) and wait for it. A suite whose longest test is three minutes cannot
+survive a neighbour that relaunches every two.

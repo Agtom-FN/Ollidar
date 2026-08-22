@@ -65,7 +65,6 @@ object Wording {
     const val PROJECTS_LIST_HINT = "Tap a scan to open it."
 
     /** was: "$n scan(s) recorded no points and is/are hidden. Settings › Scans deletes them, or shows them again." */
-    const val PROJECTS_EMPTY_HIDDEN = "Some empty scans are hidden."
 
     // ── the per-card ⋯ menu (item 96) ──────────────────────────────────────
 
@@ -346,6 +345,28 @@ object Wording {
     const val LIVE_VIEW_IS_THE_PROOF = "Points on screen mean it works."
 
     /**
+     * ROUND 28 item 163 — **the 62-word red paragraph's five-word replacement.**
+     *
+     * `ProcessingScreen` rendered `ProcessingJob`'s gate reason — sixty-two
+     * words containing `Mid-360 LIO pipeline`, `pushbroom`, `trajectory`,
+     * `registered result`, `ARCore pose stream`, `.lscan` and *"the engine
+     * cannot write yet"* — in **error red**, against a six-word instruction law.
+     * Nothing had failed. The message means "this scan type is already final",
+     * and painting it `bad` told the operator his scan was broken.
+     *
+     * §D.6 moves the control it belongs to into Review's `⋯` menu and makes
+     * this its **disabled** state, in `ink-mute`. They live here rather than in
+     * a screen-local object so `WordingLaw` counts their words like every other
+     * operator-facing string — which is the guard the original paragraph got
+     * past by being generated in `:core`'s jobs package instead of declared
+     * here.
+     */
+    const val PROCESS_AGAIN = "Process again"
+
+    /** Five words; §C.6 allows twelve for a detail. **Never `bad`.** */
+    const val ALREADY_FINAL = "Already final. Processed while you walked."
+
+    /**
      * Every sentence above that is an INSTRUCTION (six words or fewer). The
      * guard walks this list; a new instruction that is not in it is not
      * guarded, so adding one here is part of adding one at all.
@@ -355,7 +376,6 @@ object Wording {
         PROJECTS_EMPTY_HINT,
         PROJECTS_EMPTY_ACTION,
         PROJECTS_LIST_HINT,
-        PROJECTS_EMPTY_HIDDEN,
         CARD_MENU_EXPORT,
         CARD_MENU_REPROCESS,
         CARD_MENU_DELETE,
@@ -371,6 +391,7 @@ object Wording {
         SCAN_SAVED,
         REVIEW_PROCESS,
         REVIEW_PROCESSING,
+        PROCESS_AGAIN,
         ADVANCED_TITLE,
         SCAN_BUTTON,
         SCAN_BUTTON_RECORDING,
@@ -408,6 +429,7 @@ object Wording {
 
     /** Every sentence above that is a DETAIL line (twelve words or fewer). */
     val DETAILS: List<String> = listOf(
+        ALREADY_FINAL,
         DELETE_BODY,
         MEASURE_DETAIL,
         PIECES_FIXED,

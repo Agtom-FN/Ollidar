@@ -7,6 +7,7 @@ import com.lidarscan.app.data.SettingsRepository
 import com.lidarscan.app.data.ThemeMode
 import com.lidarscan.app.data.Units
 import com.lidarscan.app.debug.REPLAY_PROJECT_NAME
+import com.lidarscan.core.feedback.DeviceFacts
 import com.lidarscan.core.model.SensorType
 import com.lidarscan.core.model.WorkflowProfile
 import com.lidarscan.core.store.ProjectStore
@@ -258,6 +259,41 @@ class SettingsViewModel(
         viewModelScope.launch { settingsRepository.setAllowPoorSyncColorize(allow) }
     }
 
+    // ── ROUND 28 item 164 (T1): what the Storage row says instead of a path ──
+    //
+    // The old first card in Settings was
+    // `/storage/emulated/0/Android/data/com.lidarscan.app.debug/files/Projects`
+    // in two lines of mono, above the first section header. It is the most
+    // prominent position on the screen and it was spent on the one string on
+    // the page that means nothing to anybody holding a phone. The path is not
+    // deleted — it is developer-mode evidence and it survives there — but the
+    // ordinary Storage row now answers the question an operator actually has:
+    // how much of this phone are my scans using, and how many are there.
+    //
+    // Recomputed on entry rather than collected, for the same reason
+    // `ProfileViewModel.refresh` is: it is a directory walk, and a figure that
+    // recomputes on every recomposition costs a frame every time a switch on
+    // this page moves.
+
+    private val _storageBytes = MutableStateFlow(0L)
+
+    /** Bytes under the projects root, as of the last [refreshStorage]. */
+    val storageBytes: StateFlow<Long> = _storageBytes.asStateFlow()
+
+    private val _scanCount = MutableStateFlow(0)
+
+    /** How many projects are on the device, as of the last [refreshStorage]. */
+    val scanCount: StateFlow<Int> = _scanCount.asStateFlow()
+
+    fun refreshStorage() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _scanCount.value = runCatching { projectStore.list().size }.getOrDefault(0)
+            _storageBytes.value = runCatching {
+                java.io.File(storageLocation).walkTopDown().filter { it.isFile }.sumOf { it.length() }
+            }.getOrDefault(0L)
+        }
+    }
+
     // ── ROUND 9, owner item 33: empty scans ─────────────────────────────────
     //
     // "prune 0-point legacy strays (scan-012/-014 style) — offer/perform cleanup
@@ -415,4 +451,98 @@ class SettingsViewModel(
             withContext(Dispatchers.Main) { onReady(project.id) }
         }
     }
+}
+
+/**
+ * ROUND 28 items 164 / 165 — **the right-hand column of Settings, as pure
+ * functions.**
+ *
+ * Every row on the rebuilt Settings page is `title … meta`, and the meta is a
+ * value: `8.1 GB · 66 scans`, `0.9.13 (913)`, `Set · 91.0°`, `native · ABI 12`.
+ * They live here rather than inline in the Composable for the reason
+ * [com.lidarscan.core.render.PointCountFormat] exists: a string built at a call
+ * site is a string that can only be checked by looking at a screenshot, and
+ * these are the strings the review found wrong (T4's invisible version line,
+ * T1's raw path standing in for a storage figure).
+ *
+ * Bytes go through [DeviceFacts.formatBytes] — the app already had one byte
+ * formatter and it is on the Profile page, which is the other half of this
+ * round. Two byte formatters is how `8.1 GB` and `8,100 MB` end up on two
+ * screens describing the same directory.
+ */
+object SettingsFormat {
+
+    /**
+     * The Storage row: `8.1 GB · 66 scans`.
+     *
+     * The count is part of the value rather than a second row because the
+     * figure only means anything against it — 8 GB is alarming for six scans
+     * and unremarkable for sixty-six.
+     */
+    fun storageLine(bytes: Long, scans: Int): String = when {
+        scans <= 0 -> "No scans yet"
+        scans == 1 -> "${DeviceFacts.formatBytes(bytes)} · 1 scan"
+        else -> "${DeviceFacts.formatBytes(bytes)} · $scans scans"
+    }
+
+    /**
+     * The Version row: `0.9.13 (913)`, and `0.9.13 (913) · dev` once the seven
+     * taps have landed.
+     *
+     * T4: this string used to render at roughly 1.5:1 in `outline`. The colour
+     * is the screen's business; what belongs here is that the developer state
+     * is part of the VALUE, not a second line — the mockup's own answer, and
+     * the only indicator of an unlocked device that is visible without
+     * scrolling to the section it unlocks.
+     */
+    fun versionLine(version: String, versionCode: Int, developerMode: Boolean): String =
+        "$version ($versionCode)" + if (developerMode) " · dev" else ""
+
+    /**
+     * The Mount row: `Set · 91.0°`, or `Not set` when no hold-steady has ever
+     * measured this rig.
+     *
+     * "Not set" rather than a red anything: an unmeasured mount is the state
+     * every fresh install is in, and §C.6's rule is that not-applicable is
+     * ink-mute, never `bad`.
+     */
+    fun mountLine(trimMagnitudeDeg: Double?): String =
+        if (trimMagnitudeDeg == null) "Not set" else "Set · %.1f°".format(trimMagnitudeDeg)
+
+    /** The developer Sensor-timing row: `D6 · 12 ms`. */
+    fun sensorTimingLine(latencyMs: Int): String = "D6 · $latencyMs ms"
+
+    /**
+     * The developer Engine row: `native · ABI 12`, or `simulated`.
+     *
+     * Both halves are stated because they answer different questions and the
+     * app has shipped builds where they disagreed: whether the `.so` loaded at
+     * all, and whether the switch above is overriding it anyway.
+     */
+    fun engineLine(nativeAvailable: Boolean, useFakeEngine: Boolean, abi: Int): String = when {
+        !nativeAvailable -> "simulated · no native library"
+        useFakeEngine -> "simulated · ABI $abi available"
+        else -> "native · ABI $abi"
+    }
+
+    /** The developer Capture-log row: `2.1 MB`, or `empty` before anything is written. */
+    fun captureLogLine(bytes: Long): String =
+        if (bytes <= 0L) "empty" else DeviceFacts.formatBytes(bytes)
+
+    /**
+     * The Empty-scans row's value.
+     *
+     * Zero is a sentence rather than a `0`, because "0" beside a Clean up
+     * button reads as a button that has not been pressed yet rather than as
+     * nothing to do.
+     */
+    fun emptyScanLine(count: Int): String = when {
+        count <= 0 -> "None"
+        count == 1 -> "1 scan"
+        else -> "$count scans"
+    }
+
+    /** The Cloud row: the host, or that there is nothing configured. */
+    fun cloudLine(baseUrl: String): String =
+        if (baseUrl.isBlank()) "Not set" else baseUrl.trim().removePrefix("https://").removePrefix("http://").trimEnd('/')
 }

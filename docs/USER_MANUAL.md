@@ -1,6 +1,6 @@
 # Ollidar — User Manual
 
-App version 0.9.12 (Android). Written for the owner and for field testers.
+App version 0.9.13 (Android). Written for the owner and for field testers.
 If you only want a first scan, read [QUICK_START.md](QUICK_START.md) instead.
 
 The app is called **Ollidar** as of 0.9.11. The repository, the Android

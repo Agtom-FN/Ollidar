@@ -149,44 +149,18 @@ class ProjectsViewTest {
         assertEquals(listOf("Newest", "A–Z", "Z–A"), ProjectSort.entries.map { it.label })
     }
 
-    // ── ROUND 25 item 114 ──────────────────────────────────────────────────
+    // ── ROUND 25 item 114, reversed by ROUND 28 item 162 ───────────────────
 
     /**
-     * The gallery is thumbnail-first; the list is not. Asserted as an
-     * exhaustive `for` over the enum rather than two literals, so adding a
-     * third layout one day cannot leave this test quietly passing on two of
-     * three cases.
+     * The three `showsThumbnail` cases are gone with the predicate — §D.5 puts
+     * a 56 dp tile at the leading edge of BOTH layouts, so there is no longer a
+     * condition to name. What survives from item 114 is the half that was
+     * always about layout rather than about pictures: the list is the default,
+     * and it is one column.
      */
     @Test
-    fun `only the gallery draws a preview image`() {
-        for (layout in ProjectsLayout.entries) {
-            assertEquals(
-                "showsThumbnail(${'$'}layout)",
-                layout == ProjectsLayout.GALLERY,
-                ProjectsView.showsThumbnail(layout),
-            )
-        }
-    }
-
-    /**
-     * The two layout facts have to agree about which layout is which. A
-     * one-column gallery or a two-column thumbnail-less list would each be a
-     * coherent function and an incoherent screen.
-     */
-    @Test
-    fun `the layout with two columns is the layout with the thumbnail`() {
-        for (layout in ProjectsLayout.entries) {
-            assertEquals(
-                "columns and showsThumbnail disagree about ${'$'}layout",
-                ProjectsView.columns(layout) == 2,
-                ProjectsView.showsThumbnail(layout),
-            )
-        }
-    }
-
-    /** The default layout is the list, so the default Projects tab shows no previews. */
-    @Test
-    fun `the default layout draws no preview`() {
-        assertEquals(false, ProjectsView.showsThumbnail(ProjectsLayout.DEFAULT))
+    fun `the default layout is the one-column list`() {
+        assertEquals(ProjectsLayout.LIST, ProjectsLayout.DEFAULT)
+        assertEquals(1, ProjectsView.columns(ProjectsLayout.DEFAULT))
     }
 }

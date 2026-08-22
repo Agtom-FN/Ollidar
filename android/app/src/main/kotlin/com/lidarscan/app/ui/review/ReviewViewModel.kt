@@ -74,6 +74,22 @@ data class ReviewUiState(
     val colorModeReasons: Map<com.lidarscan.core.render.ColorMode, String?> = emptyMap(),
     val hasCloud: Boolean = false,
     val load: ReviewLoad = ReviewLoad.PROBING,
+    /**
+     * ROUND 28 item 161 — the ≤6-word headline over [loadMessage].
+     *
+     * §C.6's empty state is `icon → Title (≤6 words) → Body → one Primary`, and
+     * until this round the viewport had only the Body: round 8's honest
+     * paragraphs (up to ~110 words for the pre-0.5.0 no-trajectory case) with
+     * nothing above them. A paragraph with no headline is a paragraph an
+     * operator does not read, so the *reason* the screen is empty — which is
+     * the whole point of those three states existing separately — arrived only
+     * for someone who read to the end.
+     *
+     * The headline lives beside the message rather than being derived in the
+     * composable because the two have to agree, and the state that knows which
+     * of the three load paths failed is here.
+     */
+    val loadHeadline: String? = null,
     /** One paragraph the viewport shows when there is nothing to draw. Never a bare error code. */
     val loadMessage: String? = null,
     /** What the container turned out to contain — drives everything above. */
@@ -117,6 +133,67 @@ data class ReviewUiState(
             load != ReviewLoad.LOADING_RECORDED &&
             load != ReviewLoad.RESOLVING &&
             load != ReviewLoad.NO_TRAJECTORY
+
+    /**
+     * ROUND 28 item 161 — **"Process again", and the honest answer when it
+     * would do nothing.**
+     *
+     * §D.6 moves the Jobs screen's `Post-process` card into Review's `⋯` menu
+     * as one row, and moves its **62-word red paragraph** into that row's
+     * disabled state. The paragraph was red, and red in this app means *an
+     * operation failed and the operator lost something* (item 163) — nothing
+     * had failed. It was explaining that a phone-tracked pushbroom's cloud is
+     * assembled while you walk, so there is no offline pipeline left to run.
+     * That is "not applicable", which is [ReviewProcessWording.ALREADY_FINAL]
+     * in ink-mute, five words, per §C.6.
+     *
+     * The gate is not "is this a D6": it is **is there anything a re-run could
+     * change**. Three things can make the answer yes, and each is a state the
+     * operator can see on the same screen:
+     *
+     *  * there is nothing drawn (this is [canProcess]'s case, unchanged);
+     *  * the capture is in more than one piece, so the stitch has work;
+     *  * `processed/map_stitched.bin` is absent, so the round-15 auto-process
+     *    never ran or never finished.
+     *
+     * A sealed single-section scan that already carries its processed file is
+     * the normal case since round 15, and for it a re-run reproduces the same
+     * bytes — so the row is disabled and says why.
+     */
+    val canProcessAgain: Boolean
+        get() = !processing &&
+            load != ReviewLoad.PROBING &&
+            load != ReviewLoad.LOADING_RECORDED &&
+            load != ReviewLoad.RESOLVING &&
+            load != ReviewLoad.NO_TRAJECTORY &&
+            (!hasCloud || sections > 1 || !isStitched)
+}
+
+/**
+ * ROUND 28 item 161 — Review's own strings for the `⋯` menu's Process row.
+ *
+ * Declared beside the gate that decides when they are shown, so a change to one
+ * cannot silently outlive the other. They belong in `:core`'s `Wording` (where
+ * `WordingLaw` would count their words for us) and should move there next time
+ * that file is open — this round it is owned by another agent.
+ */
+/**
+ * ROUND 28 item 163 — the two strings, **now owned by `:core`'s [Wording]** so
+ * `WordingLaw` counts their words like every other operator-facing sentence.
+ *
+ * Kept as forwarders rather than deleted: the call sites read better as
+ * `ReviewProcessWording.ALREADY_FINAL` at the point where the disabled row is
+ * built, and the guard follows the constant rather than the alias.
+ */
+object ReviewProcessWording {
+    /** ≤6 words. The row itself. */
+    const val PROCESS_AGAIN = com.lidarscan.core.Wording.PROCESS_AGAIN
+
+    /**
+     * The disabled detail. **Ink-mute, never `bad`** — see [ReviewUiState.canProcessAgain].
+     * Five words; §C.6 allows twelve.
+     */
+    const val ALREADY_FINAL = com.lidarscan.core.Wording.ALREADY_FINAL
 }
 
 /**
@@ -403,6 +480,10 @@ class ReviewViewModel(
                     ReviewLoad.FAILED,
                     "This project's data files could not be read. The .lscan directory is " +
                         "missing or unreadable:\n\n${p.directory.absolutePath}",
+                    // ROUND 28 item 161 — §C.6's ≤6-word headline. The paragraph
+                    // below it is unchanged; it names the directory, which is the
+                    // only thing that lets anyone act on this.
+                    headline = "Could not open this scan",
                 )
                 return@launch
             }
@@ -431,6 +512,10 @@ class ReviewViewModel(
                         "map from it — not by this app and not by any later one.\n\n" +
                         "Scans taken from 0.5.0 on store the trajectory alongside the returns " +
                         "and open straight into 3D.",
+                    // Six words. Round 8's paragraph stays verbatim underneath —
+                    // it is the one state nothing can fix, and the reason has to
+                    // survive being summarised.
+                    headline = "No 3D map in this scan",
                 )
                 return@launch
             }
@@ -440,10 +525,21 @@ class ReviewViewModel(
                 // always been reachable from the Processing screen. Nothing to
                 // auto-run here — a full LIO re-run is minutes of work and a
                 // deliberate action, not something a screen starts by itself.
+                // ── ROUND 28 item 163's rule, on this screen ────────────
+                //
+                // This was 25 words naming `Mid-360 pipeline`, `odometry` and
+                // `raw returns` — the same class of engineering confession the
+                // Jobs screen was rewritten to delete, surviving one screen
+                // over because it was generated in a ViewModel rather than
+                // declared in `Wording`. §C.6 caps an empty state's body at
+                // twelve words and its headline at six, and the operator's
+                // question here is not *which pipeline*, it is *what do I press
+                // and how long does it take*. The Primary button beside it
+                // already says `Process`.
                 setLoad(
                     ReviewLoad.FAILED,
-                    "No cloud in memory. Run Process on this project — the Mid-360 pipeline " +
-                        "re-runs the odometry from the raw returns, which takes a few minutes.",
+                    "Building the map takes a few minutes.",
+                    headline = "Not processed yet",
                 )
                 return@launch
             }
@@ -457,6 +553,7 @@ class ReviewViewModel(
                 setLoad(
                     ReviewLoad.FAILED,
                     "This scan could not be rebuilt: ${processing.lastError()}",
+                    headline = "Could not rebuild this scan",
                 )
             }
             // Success is observed by the points poll below, which flips the
@@ -480,8 +577,18 @@ class ReviewViewModel(
         return trim.composedWith(com.lidarscan.core.calib.BracketNominals.cadNominal(sensor)).m
     }
 
-    private fun setLoad(load: ReviewLoad, message: String?) {
-        _uiState.value = _uiState.value.copy(load = load, loadMessage = message)
+    /**
+     * ROUND 28 item 161: [headline] is the ≤6-word title §C.6's empty state puts
+     * over [ReviewUiState.loadMessage]. `null` for the states that draw a
+     * spinner instead of an empty state (there is no headline for "still
+     * reading the container" — the stage name is the whole message).
+     */
+    private fun setLoad(load: ReviewLoad, message: String?, headline: String? = null) {
+        _uiState.value = _uiState.value.copy(
+            load = load,
+            loadHeadline = headline,
+            loadMessage = message,
+        )
     }
 
     fun onRendererReady(r: PointCloudRenderer) {
@@ -565,7 +672,24 @@ class ReviewViewModel(
     }
 
     fun updateDisplay(transform: (DisplayParams) -> DisplayParams) {
-        val next = transform(_uiState.value.display).clamped()
+        // ── ROUND 28 item 153: the write path stamps ────────────────────────
+        //
+        // Round 27 item 141 migrates a persisted height grayscale to Turbo on
+        // READ and stamps `DisplayParams.migration` so it happens once. Review
+        // also WRITES display params — to the manifest AND to the per-device
+        // block, two stores, both below — and this path never stamped.
+        //
+        // The consequence is the exact failure mode item 141 was written to
+        // stop: an operator who deliberately chooses grayscale for a height
+        // ramp in Review gets it saved unstamped, and the next read migrates
+        // his choice away to Turbo. A migration that can run twice is not a
+        // migration, it is a preference that keeps resetting.
+        //
+        // `stamp` is idempotent and returns the same instance when it has
+        // nothing to do, so this costs an already-stamped write nothing.
+        val next = com.lidarscan.core.render.DisplayMigrations.stamp(
+            transform(_uiState.value.display).clamped(),
+        )
         _uiState.value = _uiState.value.copy(display = next)
         // ROUND 16 item 59: the path toggle lives in DisplayParams, so this is
         // where it reaches the scene.
@@ -582,6 +706,32 @@ class ReviewViewModel(
                 // stays: it is the PROJECT's record of how it is displayed.
                 settings.setDisplayParams(next)
             }
+        }
+    }
+
+    /**
+     * ROUND 28 item 161 — **edit the scalar block a colour mode actually
+     * reads**, through [updateDisplay] and nowhere else.
+     *
+     * The display sheet had this `when (p.colorMode)` copy-pasted into four
+     * call sites (colormap, gamma, brightness, auto-range), each with its own
+     * `else -> p` fall-through. Four copies of one routing decision is four
+     * chances for the ramp row to write the height block while the gamma
+     * slider writes the intensity block, and there was no way to test it.
+     *
+     * Non-scalar modes return the params untouched: `DisplayParams.activeScalar`
+     * hands RGB / fix-quality / coverage a neutral identity mapping that the
+     * shader never reads, so there is nothing there to edit.
+     */
+    fun updateScalar(
+        mode: com.lidarscan.core.render.ColorMode,
+        transform: (com.lidarscan.core.render.ScalarColorParams) -> com.lidarscan.core.render.ScalarColorParams,
+    ) = updateDisplay { p ->
+        when (mode) {
+            com.lidarscan.core.render.ColorMode.HEIGHT -> p.copy(height = transform(p.height))
+            com.lidarscan.core.render.ColorMode.INTENSITY -> p.copy(intensity = transform(p.intensity))
+            com.lidarscan.core.render.ColorMode.TIME -> p.copy(time = transform(p.time))
+            else -> p
         }
     }
 

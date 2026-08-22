@@ -9,13 +9,15 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Radar
-import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.outlined.Work
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -30,7 +32,7 @@ import androidx.compose.ui.unit.dp
 import com.lidarscan.app.ui.components.ScanDims
 import com.lidarscan.app.ui.theme.Ember
 import com.lidarscan.app.ui.theme.EmberSoft
-import com.lidarscan.app.ui.theme.InkFaint
+import com.lidarscan.app.ui.theme.ScanColors
 
 /**
  * The four top-level sections. `Capture` and `Jobs` are top-level in the
@@ -43,7 +45,14 @@ enum class ScanTab(val label: String, val icon: ImageVector) {
      * ROUND 22 item 94: **Projects keeps its name**, at the owner's explicit
      * request. It was the one tab the simplification was not asked to touch.
      */
-    PROJECTS("Projects", Icons.Filled.FolderOpen),
+    /**
+     * ROUND 28 item 168 — **Layers, chosen by the owner off the mockup sheet.**
+     *
+     * A stack of scans is what this tab holds, and `FolderOpen` said "files on
+     * a disk", which is the one thing about a project the operator never thinks
+     * about.
+     */
+    PROJECTS("Projects", Icons.Filled.Layers),
 
     /**
      * ROUND 22 item 94 — labelled **"Scan"**, not "Capture".
@@ -57,8 +66,25 @@ enum class ScanTab(val label: String, val icon: ImageVector) {
      */
     CAPTURE("Scan", Icons.Filled.Radar),
 
-    JOBS("Jobs", Icons.Filled.Layers),
-    SETTINGS("Settings", Icons.Filled.Tune),
+    /**
+     * ROUND 28 item 168. The outline briefcase — work queued and work done.
+     * `Layers` moved to Projects, where a stack means something.
+     */
+    JOBS("Jobs", Icons.Outlined.Work),
+
+    /**
+     * ROUND 28 item 168 — **Menu, and the reason is the Scan screen.**
+     *
+     * `Tune` is Material's horizontal sliders glyph, and the Scan screen's
+     * *scan-local* Advanced button used the same idea, so the app had two
+     * different destinations wearing one icon: press the sliders on the Scan
+     * page and you get per-scan settings, press the sliders in the tab bar and
+     * you get app settings. The owner's fix, chosen from the icon sheet: the
+     * tab is `Menu`, and Advanced on the Scan page becomes three **vertical**
+     * faders ([com.lidarscan.app.ui.components.ScanIcons.AdvancedFaders]) so
+     * the two can never be confused at a glance.
+     */
+    SETTINGS("Settings", Icons.Filled.Menu),
 }
 
 /**
@@ -108,41 +134,34 @@ fun tabForRoute(route: String?): ScanTab? = when {
 }
 
 /**
- * The floating capsule tab bar: inset 16 dp from each side and 12 dp from the
- * bottom, 58 dp tall, radius half its height, a translucent panel ground with a
- * hairline border and a shadow so it reads as floating *over* the content
- * rather than as a docked bar.
+ * ROUND 28 item 147 — **the tab bar comes down to level 0.**
  *
- * The active tab is an ember-washed capsule with ember ink.
+ * It was a floating capsule: inset 16 dp from each side and 12 dp from the
+ * bottom, radius half its height, a translucent panel ground, a hairline border
+ * and a 12 dp shadow "so it reads as floating *over* the content rather than as
+ * a docked bar". That was a deliberate choice and it is the one being reversed,
+ * for three reasons that are all consequences rather than taste:
  *
- * ## ROUND 24 item 107 — **icons only, centred**
+ *  * **It was the third floating layer.** The owner's own rule — only warnings
+ *    and the scan FAB may float — was broken by the status card, the `?` FAB,
+ *    the gear button and this. When four things float, nothing does.
+ *  * **It guillotined the last row of every list.** A translucent bar over
+ *    scrolling content with no scrim and no fade cuts the final Projects card
+ *    through the middle of its title, which reads as a clipping bug because it
+ *    is indistinguishable from one.
+ *  * **It cost every screen 32 dp of width**, permanently, for the two side
+ *    insets — on a 360 dp phone that is nearly a tenth of the display spent on
+ *    the gap around a bar.
  *
- * The four labels are gone at the owner's request and the icons centre in
- * their capsules. Two consequences were handled rather than discovered:
+ * So: opaque, full width, anchored to the bottom edge, 64 dp, with a top
+ * hairline and no shadow. The active tab is still the Agtom orange glyph in its
+ * soft ember capsule — item 168 keeps that, and it is the one place besides the
+ * primary action where the accent law spends the orange.
  *
- *  * **The accessible name moved.** It used to be the visible `Text`; it is now
- *    each icon's `contentDescription` ("Scan", "Projects", "Jobs",
- *    "Settings"), which is the same string from the same enum. A bar of four
- *    undescribed glyphs is not a simplification, it is an app a screen reader
- *    cannot use.
- *  * **"Settings" was already taken.** The Projects hero's avatar carried
- *    `contentDescription = "Settings"`, and the smoke test asserts that node is
- *    unambiguous. Item 109 turns that button into the door to the **Profile**
- *    page, so it is described as "Profile" now and the collision resolves
- *    itself — one name, one node, one destination.
- *
- * Selection is the Agtom orange icon inside the soft ember capsule.
- *
- * **ROUND 25 item 120 — the dot is gone, and so is its space.** Round 24 put a
- * 4 dp dot under the selected glyph and an invisible spacer of the same height
- * under the other three, which pushed every icon 8 dp off the bar's centre so
- * the dot had somewhere to live. The owner's instruction is to remove it, and
- * removing it properly means removing the reserved space too — otherwise the
- * icons stay pinned high above a gap nothing draws in. The capsule survives as
- * the state: `EmberSoft` behind the selected tab, an ember tint on its glyph,
- * `InkFaint` on the other three. The `tabSelectedDot`/`tabUnselectedDot` tags
- * go with the dot; every `tab_*` tag stays, because the emulator suite drives
- * the whole app through them.
+ * The `tab_*` test tags and the per-icon `contentDescription` accessible names
+ * (round 24 item 107) are untouched: the emulator suite drives the whole app
+ * through those tags, and a bar of four undescribed glyphs is not a
+ * simplification.
  */
 @Composable
 fun ScanTabBar(
@@ -151,36 +170,31 @@ fun ScanTabBar(
     onSelect: (ScanTab) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val shape = RoundedCornerShape(ScanDims.TabBar / 2)
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .padding(
-                start = ScanDims.TabBarSideInset,
-                end = ScanDims.TabBarSideInset,
-                bottom = ScanDims.TabBarBottomInset,
-            )
             .height(ScanDims.TabBar)
             .testTag("scanTabBar"),
-        shape = shape,
-        color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.94f),
-        shadowElevation = 12.dp,
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        // Level 0. See the header.
+        shadowElevation = 0.dp,
         tonalElevation = 0.dp,
     ) {
-        Row(
-            modifier = Modifier
-                .border(1.dp, MaterialTheme.colorScheme.outline, shape)
-                .padding(5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            ScanTab.entries.forEach { tab ->
-                TabButton(
-                    tab = tab,
-                    selected = tab == current,
-                    onClick = { onSelect(tab) },
-                    modifier = Modifier.weight(1f),
-                )
+        Column {
+            HorizontalDivider(thickness = ScanDims.Hair, color = MaterialTheme.colorScheme.outlineVariant)
+            Row(
+                modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = ScanDims.S1),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(ScanDims.S1),
+            ) {
+                ScanTab.entries.forEach { tab ->
+                    TabButton(
+                        tab = tab,
+                        selected = tab == current,
+                        onClick = { onSelect(tab) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
             }
         }
     }
@@ -193,28 +207,32 @@ private fun TabButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val shape = RoundedCornerShape(24.dp)
+    val shape = RoundedCornerShape(ScanDims.S6)
     Box(
         modifier = modifier
-            .height(48.dp)
+            .height(ScanDims.Touch)
             .background(if (selected) EmberSoft else Color.Transparent, shape)
             .clickable(role = Role.Tab, onClick = onClick)
             .testTag("tab_${tab.name.lowercase()}"),
         contentAlignment = Alignment.Center,
     ) {
-        // ROUND 25 item 120: one icon, centred in the capsule. No Column, no
-        // spacer, no dot — a Column with a single child would still be the
-        // round-24 layout with its bottom half hidden, and the icon would sit
-        // wherever that layout left it rather than in the middle.
+        // ROUND 28 item 168: all four glyphs at ONE size on ONE baseline. They
+        // were 23 dp of four different families (a filled folder, an outlined
+        // radar, filled layers, a filled tune) and the mixed weights are half
+        // of why the bar read as four unrelated stickers.
         Icon(
             tab.icon,
-            // ROUND 24 item 107: the label WAS the accessible name. With
-            // the label gone this is the accessible name, and it is the
-            // same string — `ScanTab.label` — so a rename can never
-            // desynchronise what is seen from what is announced.
+            // ROUND 24 item 107: the label WAS the accessible name. With the
+            // label gone this is the accessible name, and it is the same string
+            // — `ScanTab.label` — so a rename can never desynchronise what is
+            // seen from what is announced.
             contentDescription = tab.label,
-            modifier = Modifier.size(23.dp),
-            tint = if (selected) Ember else InkFaint,
+            modifier = Modifier.size(24.dp),
+            // ROUND 28 item 168: the unselected tint was `InkFaint`, the "UI
+            // only, never text" step, which is exactly the complaint that the
+            // icons were invisible. Unselected is `ink-mute` — a real ≥4.5:1
+            // token — and selected is the accent.
+            tint = if (selected) ScanColors.primary else ScanColors.inkMute,
         )
     }
 }

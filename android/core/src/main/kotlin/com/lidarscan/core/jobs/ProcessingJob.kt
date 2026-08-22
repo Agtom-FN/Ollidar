@@ -92,23 +92,20 @@ data class ProcessingJob(
  * So the two things a person actually wants to choose between are now named as
  * such — **Save to phone** and **Send to cloud** — and "Local" is named for what
  * it is (processing that happens here), not for where the file ends up.
+ *
+ * ── ROUND 28 item 163: [summary] is a row's detail line, not an essay ───────
+ *
+ * These three were a stacked segmented control on the Jobs tab with a 38-word
+ * paragraph under it — a settings screen wearing a status tab's name (J7, J9).
+ * The chooser moved to Review's Export sheet as a single **Destination** row,
+ * where a mode gets one ≤12-word line and nothing else, so [summary] is now
+ * written to that budget. Every fact that went missing said "this is how the
+ * bytes move", which is not what someone choosing a destination is asking.
  */
 enum class ProcessingMode(val displayName: String, val summary: String) {
-    LOCAL(
-        "Process here",
-        "Run the post pipeline on this phone, in a foreground service. No network, no upload — but it is the " +
-            "slowest option and the one that heats the device. Mid-360 captures only.",
-    ),
-    CLOUD(
-        "Send to cloud",
-        "Upload the .lscan as a resumable zip; a Linux worker runs the same engine CLI and the results come back " +
-            "into the project. Needs a server URL and token in Settings.",
-    ),
-    EXTRACT_FOR_TRANSFER(
-        "Save to phone",
-        "Package the whole capture as a .lscan.zip and save it to Downloads — no server, no account, nothing to " +
-            "configure. The desktop app imports that zip directly. This is the way to get a scan off the phone.",
-    ),
+    LOCAL("Process here", "Slowest, heats the phone. Mid-360 scans only."),
+    CLOUD("Send to cloud", "Needs a server set up in Settings."),
+    EXTRACT_FOR_TRANSFER("Save to phone", "Saves to Downloads. No server, no account."),
 }
 
 /**
@@ -121,11 +118,56 @@ enum class ProcessingMode(val displayName: String, val summary: String) {
  * (`SCAN_SYNC_UNKNOWN` fails closed) produces a bare `SCAN_ERR_NOT_SUPPORTED`
  * that means nothing to an operator.
  */
-data class ActionGate(val enabled: Boolean, val reason: String?) {
+data class ActionGate(
+    val enabled: Boolean,
+    val reason: String?,
+    val tone: GateTone = GateTone.BAD,
+    /**
+     * The long form, for the capture log only. Never rendered.
+     *
+     * ROUND 28 item 163: the D6/STL-27L refusal below used to be 62 words of
+     * pipeline archaeology **on the screen**. The archaeology is genuinely
+     * useful — to whoever is reading a log a year from now asking why an
+     * offline re-run was never offered — so it moved here rather than being
+     * deleted. [reason] is what a person reads; this is what a developer reads.
+     */
+    val logReason: String? = null,
+) {
     companion object {
         val allowed = ActionGate(true, null)
-        fun blocked(reason: String) = ActionGate(false, reason)
+
+        /** Something is wrong or missing and the operator can act on it. Red. */
+        fun blocked(reason: String, logReason: String? = null) =
+            ActionGate(false, reason, GateTone.BAD, logReason)
+
+        /**
+         * The action does not apply to this scan. Nothing failed, nothing was
+         * lost, there is nothing to fix — so it is [GateTone.NEUTRAL] and the
+         * caller must not paint it in `bad`.
+         */
+        fun notApplicable(reason: String, logReason: String? = null) =
+            ActionGate(false, reason, GateTone.NEUTRAL, logReason)
     }
+}
+
+/**
+ * ROUND 28 item 163 (review findings J1/J2) — **"unavailable" is not "failed".**
+ *
+ * Every refusal on the Processing screen was rendered `Hint(gate.reason, color =
+ * SemBad)`, because [ActionGate] had one shape and red was it. The screen
+ * therefore told an operator holding a perfectly good D6 scan, in error red,
+ * that his scan could not be post-processed — when the message actually means
+ * *"this scan type is already final"*. Red means an operation failed and the
+ * operator lost something. A colour that means both things means neither, so
+ * the gate now carries which one it is and the caller reads it instead of
+ * guessing.
+ */
+enum class GateTone {
+    /** An operation failed, or something the operator needs is missing. `bad`. */
+    BAD,
+
+    /** Not applicable here. `inkMute`, never red. §C.6's "not applicable" row. */
+    NEUTRAL,
 }
 
 /**
@@ -179,22 +221,36 @@ object ProcessingPolicy {
      * has no writer anywhere), so the trajectory does not survive the session.
      * Until it does, "post-process a D6 scan" has nothing to run on, and saying
      * that is the honest gate. See android/NOTES.md ROUND 7 §4.
+     *
+     * ── ROUND 28 item 163 (review J1/J2): honest, and now also short ────────
+     *
+     * All of the above stayed true and none of it belonged on the screen. The
+     * pushbroom refusal shipped as **62 words** naming `Mid-360 LIO pipeline`,
+     * `pushbroom`, `trajectory`, `registered result`, `ARCore pose stream` and
+     * `.lscan` — against a six-word instruction law — and it was painted in
+     * error red, so the one screen an operator visits after a good walk told
+     * him in red that something was wrong with his scan. Nothing is wrong with
+     * it. It is finished.
+     *
+     * "Already final. Processed while you walked." is that fact, in the words
+     * the operator would use: he watched the cloud build as he walked, and what
+     * he watched is what Export writes. The paragraph is not deleted — it moves
+     * to [ActionGate.logReason], where the person who needs `kPoseAr` will find
+     * it. And the gate is [ActionGate.notApplicable], so the colour says
+     * "nothing to do here" rather than "you lost your scan".
      */
     fun postProcess(hasRawStreams: Boolean, sensor: SensorType? = null): ActionGate = when {
-        !hasRawStreams -> ActionGate.blocked(
-            "Nothing recorded yet — capture first. Post-processing runs from the raw streams on disk, not from a live session.",
-        )
+        !hasRawStreams -> ActionGate.blocked("Nothing recorded yet — capture first.")
         // ROUND 25 item 119: the STL-27L falls in here too, and for exactly the
-        // reason the sentence already gives — it is a 2-D pushbroom whose cloud
+        // reason the log line still gives — it is a 2-D pushbroom whose cloud
         // is assembled live from the phone's trajectory, and that trajectory is
-        // still not written to the `.lscan`. The sensor's own name is
-        // interpolated so the operator is told about the scan they actually
-        // took; the pipeline fact underneath it is unchanged.
-        sensor != null && sensor.isPhoneTrackedPushbroom -> ActionGate.blocked(
-            "Post-processing is the Mid-360 LIO pipeline, and this is a ${sensor.displayName} scan. Its cloud is " +
-                "built live by the pushbroom from the phone's own trajectory — what you saw while walking IS the " +
-                "registered result, and it is what Export writes. An offline re-run needs the ARCore pose stream " +
-                "saved inside the .lscan, which the engine cannot write yet.",
+        // still not written to the `.lscan`. The pipeline fact is unchanged;
+        // only its audience moved.
+        sensor != null && sensor.isPhoneTrackedPushbroom -> ActionGate.notApplicable(
+            "Already final. Processed while you walked.",
+            logReason = "post-process not offered: ${sensor.displayName} is a phone-tracked pushbroom. Its cloud " +
+                "is built live from the ARCore trajectory and is what Export writes; an offline re-run needs the " +
+                "pose stream saved inside the .lscan (ChunkType::kPoseAr has no writer). See NOTES.md ROUND 7 §4.",
         )
         else -> ActionGate.allowed
     }
@@ -205,21 +261,26 @@ object ProcessingPolicy {
         allowPoorSync: Boolean,
         hasProcessedCloud: Boolean,
     ): ActionGate = when {
-        !hasProcessedCloud -> ActionGate.blocked(
-            "Post-process first. Colorization paints an existing cloud; there is nothing in memory to paint.",
+        // ROUND 28 item 163: same four refusals, same order, same policy — the
+        // paragraphs move to `logReason`. Every one of these carried a "§" the
+        // wording law lists as jargon, and three of the four were the "not
+        // applicable" case wearing red. What the operator gets is the fact; the
+        // spec citation goes where a spec citation is useful.
+        !hasProcessedCloud -> ActionGate.blocked("Post-process first — nothing to paint.")
+        !hasKeyframes -> ActionGate.notApplicable(
+            "No camera frames in this scan.",
+            logReason = "colorize unavailable: streams/frames/ is empty, so there is nothing to sample colour " +
+                "from. Tech Spec §3.5 calls this gracefully unavailable, not a failure — camera keyframes are " +
+                "enabled in the project's capture profile.",
         )
-        !hasKeyframes -> ActionGate.blocked(
-            "No camera frames in this capture (streams/frames/ is empty), so there is nothing to sample colour from. " +
-                "Tech Spec §3.5 calls this gracefully unavailable, not a failure — enable camera keyframes in the " +
-                "project's profile before the next capture.",
-        )
-        syncQuality == SyncQuality.UNKNOWN -> ActionGate.blocked(
-            "Clock sync never converged for this capture, so the colorizer refuses (it fails closed on purpose — " +
-                "A4 §7). A mis-timed projection paints colour onto the wrong points and nothing downstream can tell.",
+        syncQuality == SyncQuality.UNKNOWN -> ActionGate.notApplicable(
+            "Camera and lidar clocks never matched.",
+            logReason = "colorize refused: clock sync never converged for this capture and the colorizer fails " +
+                "closed on purpose (A4 §7). A mis-timed projection paints colour onto the wrong points and " +
+                "nothing downstream can tell.",
         )
         syncQuality == SyncQuality.POOR && !allowPoorSync -> ActionGate.blocked(
-            "Clock sync is poor (>15 ms). At that jitter, sync alone eats most of the reprojection budget (S6). " +
-                "Turn on \"Allow poor sync\" to override — the result is worth looking at, not worth quoting.",
+            "Clock sync is poor. Turn on \"Allow poor sync\".",
         )
         else -> ActionGate.allowed
     }
@@ -228,12 +289,16 @@ object ProcessingPolicy {
         hasProcessedCloud || hasLiveCloud -> ActionGate.allowed
         // ROUND 7: this refusal used to be a dead end that read as "you need a
         // server". It is a refusal about POINT-CLOUD formats (PLY/LAS/PCD),
-        // which need a resolved cloud in memory — and it now names the door that
-        // is always open, because "Save to phone" needs none of that.
+        // which need a resolved cloud in memory — and it names the door that is
+        // always open, because "Save to phone" needs none of that.
+        //
+        // ROUND 28 item 163: 45 words down to 10, and the door it names is the
+        // half that mattered. The format archaeology is the log's.
         else -> ActionGate.blocked(
-            "No point cloud in memory to convert to PLY/LAS/PCD — that needs a post-process run first. " +
-                "To get this scan off the phone right now, use \"Save to phone\": it packages the whole " +
-                "capture as a .lscan.zip into Downloads, with no processing and no server.",
+            "No point cloud yet. Use \"Save to phone\" instead.",
+            logReason = "export refused: no resolved cloud in memory to convert to PLY/LAS/PCD, which needs a " +
+                "post-process run. \"Save to phone\" packages the capture as a .lscan.zip into Downloads with " +
+                "no processing and no server.",
         )
     }
 
@@ -257,10 +322,12 @@ object ProcessingPolicy {
      * never a block.
      */
     fun exportFormatNote(format: ExportFormat, georeferenced: Boolean): String? = when {
+        // ROUND 28 item 163: 32 words and a "CRS" down to a detail line. What
+        // the operator needs to know is that the file opens but lands nowhere
+        // on a map; A9's placeholder is the reason, not the message.
         format == ExportFormat.LAS14 && !georeferenced ->
-            "This capture is not georeferenced, so the LAS will carry A9's local-frame placeholder CRS rather than a " +
-                "real one. It opens fine; it will not land anywhere on a map."
-        format == ExportFormat.PCD -> "PCD carries no CRS field at all."
+            "Opens fine, but lands nowhere on a map."
+        format == ExportFormat.PCD -> "Carries no map position."
         else -> null
     }
 }

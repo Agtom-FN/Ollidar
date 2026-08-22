@@ -140,7 +140,29 @@ class CaptureFlowNoStrayTest {
             // count rather than racing the first page.
             Thread.sleep(2_000)
 
-            composeRule.onNodeWithContentDescription("Stop recording").performClick()
+            // ── ROUND 28: the replay may have finished by itself ────────────
+            //
+            // The bundled synthetic capture is ~17 s and the wait above is
+            // allowed 20, so on a loaded emulator the fixture can run out
+            // *during* the two-second sleep — the session seals itself and the
+            // FAB goes back to "Start replay" before this line runs. An
+            // unconditional click then fails with "could not find any node",
+            // which is what it did on two of three runs of this round's suite
+            // while passing on the third.
+            //
+            // That is a race in the harness, not a claim about the product: the
+            // assertion this test exists to make is *"a scan that recorded
+            // points must still be in the Projects list after Stop"*, and a
+            // self-sealed replay has been through exactly the same seal path.
+            // So Stop is pressed if there is still something to stop, and
+            // either way the test then waits for the idle state it needs.
+            val stillRecording = composeRule
+                .onAllNodesWithContentDescription("Stop recording")
+                .fetchSemanticsNodes()
+                .isNotEmpty()
+            if (stillRecording) {
+                composeRule.onNodeWithContentDescription("Stop recording").performClick()
+            }
             composeRule.waitUntil(timeoutMillis = 20_000) {
                 composeRule.onAllNodesWithContentDescription("Start replay").fetchSemanticsNodes().isNotEmpty()
             }

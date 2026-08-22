@@ -19,18 +19,17 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.lerp
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import com.lidarscan.app.engine.ScanEngineNative
+import com.lidarscan.app.ui.components.ScanDims
 import com.lidarscan.app.render.PointCloudSource
 import com.lidarscan.app.render.samplePoints
 import com.lidarscan.app.render.streamsPresent
 import com.lidarscan.core.render.PreviewSanity
 import com.lidarscan.app.ui.theme.sensorBadgeColor
 import com.lidarscan.app.ui.theme.Ember
-import com.lidarscan.app.ui.theme.PoseBlue
-import com.lidarscan.app.ui.theme.ScanSand
-import com.lidarscan.app.ui.theme.ScanTeal
-import com.lidarscan.app.ui.theme.ViewportGround
+import com.lidarscan.app.ui.theme.HeightRamp
+import com.lidarscan.app.ui.theme.ScanColors
 import com.lidarscan.core.store.Project
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -255,37 +254,60 @@ object ProjectPreviewCache {
 }
 
 /**
- * The card tile. Draws the project's real sampled cloud when one exists, and a
- * seeded placeholder when it does not — never a spinner, because a list of
- * cards that flickers while scrolling is worse than a tile that is honest
- * about being a placeholder.
+ * The tile. Draws the project's real sampled cloud when one exists, and a
+ * seeded placeholder when it does not — never a spinner, because a list that
+ * flickers while scrolling is worse than a tile that is honest about being a
+ * placeholder.
+ *
+ * ROUND 28 item 162 — **it is back in the list row**, 56 dp at the leading
+ * edge (§D.5, finding P1c). Round 25 item 114 deleted it from the list on the
+ * argument that a 108 dp preview above every row means four scans fill a
+ * screen; that argument was against the 108 dp CARD, and it took the single
+ * strongest differentiator between 66 otherwise identical rows with it. A
+ * 56 dp tile inside a 72 dp row costs no height at all.
+ *
+ * @param cornerRadius the tile's radius. §D.5 asks for 8-12 on the row, and
+ *   the gallery keeps the larger one because there it is the card's picture
+ *   rather than a row's leading glyph. (It was a bare `14.dp`, which is off
+ *   the 4 dp grid in both places.)
  */
 @Composable
 fun ProjectThumbnail(
     project: Project,
     modifier: Modifier = Modifier,
+    cornerRadius: Dp = ScanDims.S3,
 ) {
+    // ROUND 28 item 162 (P1j): an empty scan draws a trough TILE and nothing
+    // else. It has no preview file, so the code below would fall through to
+    // the seeded placeholder — and a scan that recorded nothing must not be
+    // given an invented cloud to look at. The flat tile is the honest picture
+    // of "there is nothing in here", and it is what §D.5's mockup draws.
+    val empty = project.manifest.isEmptyScan
     var preview by remember(project.id) { mutableStateOf<ProjectPreview?>(null) }
     LaunchedEffect(project.id, project.manifest.pointCountEstimate) {
-        preview = ProjectPreviewCache.load(project)
+        preview = if (empty) null else ProjectPreviewCache.load(project)
     }
 
     val seed = remember(project.id) { project.id.hashCode().toLong() }
     val placeholder = remember(seed) { seededScatter(seed) }
     // ROUND 25 item 119: exhaustive, see `sensorBadgeColor`.
     val sensorTint = sensorBadgeColor(project.manifest.sensor)
+    // ROUND 28 item 154: the tile reads the SAME lookup table the shader does,
+    // rather than lerping between two sensor-identity colours. See [HeightRamp].
+    val ramp = HeightRamp.Turbo
 
     Canvas(
         modifier = modifier
-            .clip(RoundedCornerShape(14.dp))
-            .background(ViewportGround)
+            .clip(RoundedCornerShape(cornerRadius))
+            .background(if (empty) ScanColors.trough else ScanColors.viewport)
             .fillMaxSize(),
     ) {
+        if (empty) return@Canvas
         val real = preview
         if (real != null) {
-            drawRealCloud(real, sensorTint)
+            drawRealCloud(real, sensorTint, ramp)
         } else {
-            drawPlaceholder(placeholder, sensorTint)
+            drawPlaceholder(placeholder, sensorTint, ramp)
         }
     }
 }
@@ -293,14 +315,28 @@ fun ProjectThumbnail(
 /**
  * Projects the normalised sample with a light isometric tilt: x to the right,
  * the horizontal `y` axis raked upward, and height pushing the point up the
- * tile. Colour rides the height ramp (teal low, sand high) — the same ramp
- * `points.mat` uses, so a thumbnail and the live viewport agree on what "high"
- * looks like.
+ * tile. Colour rides [HeightRamp] — the same Turbo lookup table `points.mat`
+ * samples, so a thumbnail and the live viewport agree on what "high" looks
+ * like. ROUND 28 item 154: it used to lerp teal-to-sand, which agreed with
+ * nothing.
  */
-private fun DrawScope.drawRealCloud(preview: ProjectPreview, tint: Color) {
+private fun DrawScope.drawRealCloud(preview: ProjectPreview, tint: Color, ramp: HeightRamp) {
     val w = size.width
     val h = size.height
-    val r = min(w, h) * 0.011f
+    // ── ROUND 28 item 162, the owner's call: ONE PIXEL. ────────────────────
+    //
+    // This was `min(w, h) * 0.011f`, which is a radius proportional to the
+    // tile — 1.2 px on the old 108 dp card and 0.6 px on the new 56 dp row, so
+    // the same cloud got fatter as the tile got bigger and vanished as it got
+    // smaller. Neither is what a point cloud looks like. The owner's decision
+    // is that the tile draws the REAL cloud, dense, at point size 1 px in
+    // every tile it appears in — the density is the information, and fat dots
+    // merge 4,000 samples into a blob.
+    //
+    // A literal, not a `dp`: this is a size in the drawing surface's own
+    // pixels, and converting a dp here would make the point bigger on a denser
+    // screen, which is the opposite of the intent.
+    val r = 1f
     for (i in 0 until preview.count) {
         val nx = preview.points[i * 3]
         val ny = preview.points[i * 3 + 1]
@@ -309,7 +345,7 @@ private fun DrawScope.drawRealCloud(preview: ProjectPreview, tint: Color) {
         val py = (0.94f - ny * 0.30f - nz * 0.62f) * h
         if (px < -r || px > w + r || py < -r || py > h + r) continue
         drawCircle(
-            color = lerp(ScanTeal, ScanSand, nz).copy(alpha = 0.55f + 0.35f * nz),
+            color = ramp.at(nz).copy(alpha = 0.55f + 0.35f * nz),
             radius = r,
             center = Offset(px, py),
         )
@@ -341,14 +377,14 @@ private fun seededScatter(seed: Long): SeededScatter {
     return SeededScatter(xs, ys, zs)
 }
 
-private fun DrawScope.drawPlaceholder(scatter: SeededScatter, tint: Color) {
+private fun DrawScope.drawPlaceholder(scatter: SeededScatter, tint: Color, ramp: HeightRamp) {
     val w = size.width
     val h = size.height
     val r = min(w, h) * 0.013f
     for (i in scatter.xs.indices) {
         val nz = scatter.zs[i]
         drawCircle(
-            color = lerp(ScanTeal, ScanSand, nz).copy(alpha = 0.30f + 0.25f * nz),
+            color = ramp.at(nz).copy(alpha = 0.30f + 0.25f * nz),
             radius = r,
             center = Offset(scatter.xs[i] * w, (0.16f + scatter.ys[i] * 0.72f) * h),
         )

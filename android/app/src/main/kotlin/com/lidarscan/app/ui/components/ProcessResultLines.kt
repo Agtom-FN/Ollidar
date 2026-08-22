@@ -8,8 +8,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
-import com.lidarscan.app.ui.theme.SemBad
 import com.lidarscan.core.capture.StitchResult
+import com.lidarscan.app.ui.theme.ScanColors
 
 /**
  * ROUND 16 item 61 — **one implementation of "what processing found".**
@@ -78,7 +78,7 @@ fun ProcessResultLines(
         Text(
             warning,
             style = MaterialTheme.typography.bodySmall,
-            color = SemBad,
+            color = ScanColors.bad,
             modifier = Modifier.testTag(mountWarningTag),
         )
     }

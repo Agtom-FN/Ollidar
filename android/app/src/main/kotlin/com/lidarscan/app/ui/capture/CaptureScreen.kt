@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -121,25 +122,25 @@ import com.lidarscan.app.ui.components.SegmentedPill
 import com.lidarscan.app.ui.components.Stat
 import com.lidarscan.app.ui.components.StatPanel
 import com.lidarscan.app.ui.theme.DisplayFontFamily
-import com.lidarscan.app.ui.theme.CoverageAmber
+import com.lidarscan.app.ui.components.AttitudeButtonSlot
+import com.lidarscan.app.ui.components.AttitudeIndicator
+import com.lidarscan.app.ui.theme.ScanBody
+import com.lidarscan.app.ui.theme.ScanCountdown
+import com.lidarscan.app.ui.components.ScanIconButton
+import com.lidarscan.app.ui.components.ScanIcons
+import com.lidarscan.app.ui.components.ScanRow
+import com.lidarscan.app.ui.components.ScanRowCard
+import com.lidarscan.app.ui.components.SectionLabel
+import com.lidarscan.app.ui.components.StatusDot
+import com.lidarscan.app.ui.projects.ProjectThumbnail
+import com.lidarscan.app.ui.theme.ScanMeta
+import com.lidarscan.app.ui.theme.ScanTitle
 import com.lidarscan.app.ui.theme.Ember
-import com.lidarscan.app.ui.theme.InkFaint
-import com.lidarscan.app.ui.theme.MonoLabel
-import com.lidarscan.app.ui.theme.MonoMeta
 import com.lidarscan.app.ui.theme.MonoTabular
-import com.lidarscan.app.ui.theme.MonoValue
-import com.lidarscan.app.ui.theme.OnSemGoodContainer
-import com.lidarscan.app.ui.theme.OnSemWarnContainer
 import com.lidarscan.app.ui.theme.OnEmber
-import com.lidarscan.app.ui.theme.PoseBlue
-import com.lidarscan.app.ui.theme.ScanTeal
-import com.lidarscan.app.ui.theme.SemBad
-import com.lidarscan.app.ui.theme.SemGood
-import com.lidarscan.app.ui.theme.SemGoodContainer
-import com.lidarscan.app.ui.theme.SemWarn
-import com.lidarscan.app.ui.theme.SemWarnContainer
-import com.lidarscan.app.ui.theme.ViewportGround
 import com.lidarscan.app.ui.theme.sensorBadgeColor
+import com.lidarscan.app.ui.theme.ScanColors
+import com.lidarscan.app.ui.theme.ScanMetaCaps
 import com.lidarscan.core.capture.CaptureAutoConnectState
 import com.lidarscan.core.engine.CaptureState
 import com.lidarscan.core.engine.ConnectionState
@@ -763,6 +764,10 @@ fun CaptureRoute(
     val mountTrimNote by viewModel.mountTrimNote.collectAsStateWithLifecycle()
     // ── ROUND 7 ─────────────────────────────────────────────────────────────
     val mountTrimProvenance by viewModel.mountTrimProvenance.collectAsStateWithLifecycle()
+    // ROUND 28 items 155 + 158.
+    val lastScan by viewModel.lastScan.collectAsStateWithLifecycle()
+    val startBlock by viewModel.startBlock.collectAsStateWithLifecycle()
+    val startOrientation by viewModel.startOrientation.collectAsStateWithLifecycle()
     val noDataAlert by viewModel.noDataAlert.collectAsStateWithLifecycle()
     val noPoseAlert by viewModel.noPoseAlert.collectAsStateWithLifecycle()
     val sectionHint by viewModel.sectionHint.collectAsStateWithLifecycle()
@@ -1226,6 +1231,17 @@ fun CaptureRoute(
         onCancelMountHold = viewModel::cancelMountHold,
         onClearMountReference = viewModel::clearMountReference,
         onDismissMountTrimNote = viewModel::dismissMountTrimNote,
+        // ROUND 28 item 158: the LAST SCAN card. `onOpenReview` is the Projects
+        // route's own handler, threaded through so the card lands where the
+        // Projects row lands — one destination for "open this scan".
+        lastScan = lastScan,
+        onOpenLastScan = { onScanSealed?.invoke(it) },
+        startOrientationRollDeg = startOrientation?.screenUpAngleDeg,
+        // ROUND 28 item 155: the start sequence's terminal states.
+        startBlock = startBlock,
+        onStartBlockRetry = viewModel::retryStartAfterBlock,
+        onStartAnyway = viewModel::startAnyway,
+        onDismissStartBlock = viewModel::dismissStartBlock,
         nowMillis = System.currentTimeMillis(),
     )
 }
@@ -1446,6 +1462,20 @@ fun CaptureScreen(
     onCancelMountHold: () -> Unit = {},
     onClearMountReference: () -> Unit = {},
     onDismissMountTrimNote: () -> Unit = {},
+    /** ROUND 28 item 158: the newest sealed scan, for the LAST SCAN card. */
+    lastScan: com.lidarscan.core.store.Project? = null,
+    /** Opens [lastScan] in Review. */
+    onOpenLastScan: (String) -> Unit = {},
+    /**
+     * ROUND 28 item 168: the gravity-derived roll of the current hold, for the
+     * attitude instrument. Null where there is no attitude (no ARCore, replay).
+     */
+    startOrientationRollDeg: Double? = null,
+    /** ROUND 28 item 155: the start sequence stopped and is asking. */
+    startBlock: CaptureViewModel.StartBlock? = null,
+    onStartBlockRetry: () -> Unit = {},
+    onStartAnyway: () -> Unit = {},
+    onDismissStartBlock: () -> Unit = {},
     nowMillis: Long = 0L,
 ) {
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -1484,6 +1514,90 @@ fun CaptureScreen(
         lossEpisodes = arTrackingLossEpisodes,
     )
 
+    // The mount row is only for the sensor whose extrinsic the trim is ABOUT.
+    val mountRowVisible = poseTrackingRequired && sensor.isPhoneTrackedPushbroom
+
+    // ── ROUND 28 item 158: THE PRE-FLIGHT, IN THREE ROWS ───────────────────
+    //
+    // Six controls in two ragged rows, five visual treatments, none of them the
+    // primary action, became three lines that each state their own state and
+    // carry their own fix. The rules — which row blocks the FAB, which one wears
+    // the bad colour when two fail, what the status bar says — are
+    // `ScanReadiness` in `:core`, because "when may this app start recording" is
+    // the most consequential question it asks and it must be answerable without
+    // an emulator.
+    //
+    // The Mount row is present only for the sensor whose extrinsic the trim is
+    // ABOUT (round 8 item 30c's rule, unchanged), and the Tracking row only
+    // where the third dimension depends on the phone's pose stream — a Mid-360
+    // carries its own IMU and would be answering a question nobody asked.
+    val readiness = buildList {
+        add(
+            com.lidarscan.core.capture.ScanReadiness.Row(
+                title = "Sensor",
+                state = if (connected) {
+                    com.lidarscan.core.capture.ScanReadiness.State.GOOD
+                } else {
+                    com.lidarscan.core.capture.ScanReadiness.State.BAD
+                },
+                value = if (connected) "${sensor.badgeLabel} connected" else "Not found",
+                detail = if (connected) null else "Plug it in, then retry.",
+                actionLabel = if (connected) null else "Retry",
+            ),
+        )
+        if (mountRowVisible) {
+            val hasTrim = mountTrim != null
+            val warnTrim = mountTrimProvenance?.warn == true
+            add(
+                com.lidarscan.core.capture.ScanReadiness.Row(
+                    title = "Mount",
+                    state = when {
+                        !hasTrim -> com.lidarscan.core.capture.ScanReadiness.State.WARN
+                        warnTrim -> com.lidarscan.core.capture.ScanReadiness.State.WARN
+                        else -> com.lidarscan.core.capture.ScanReadiness.State.GOOD
+                    },
+                    // ROUND 28 item 167: `MOUNT SET · 91.0°` was a WORD in
+                    // instrument-panel caps beside sentence-case buttons. "Set"
+                    // is a word; the angle is a number; neither is a code.
+                    value = if (hasTrim) {
+                        mountTrimProvenance?.chipLabel?.lowercase()
+                            ?.replaceFirstChar { it.uppercase() } ?: "Set"
+                    } else {
+                        "Not set"
+                    },
+                    detail = if (hasTrim) null else "Re-zero before scanning.",
+                    actionLabel = if (hasTrim) "Re-zero" else "Set",
+                ),
+            )
+        }
+        if (poseTrackingRequired) {
+            add(
+                com.lidarscan.core.capture.ScanReadiness.Row(
+                    title = "Tracking",
+                    state = when (poseState) {
+                        PoseTrackingState.TRACKING -> com.lidarscan.core.capture.ScanReadiness.State.GOOD
+                        PoseTrackingState.UNAVAILABLE -> com.lidarscan.core.capture.ScanReadiness.State.BAD
+                        else -> com.lidarscan.core.capture.ScanReadiness.State.WARN
+                    },
+                    value = when (poseState) {
+                        PoseTrackingState.TRACKING -> "Ready"
+                        PoseTrackingState.INITIALIZING -> "Starting"
+                        PoseTrackingState.LOST -> "Lost"
+                        PoseTrackingState.UNAVAILABLE -> "Unavailable"
+                        PoseTrackingState.NOT_REQUIRED -> "Not needed"
+                    },
+                    detail = when (poseState) {
+                        PoseTrackingState.UNAVAILABLE -> "Scans will be flat."
+                        PoseTrackingState.INITIALIZING -> "Move the phone slowly."
+                        PoseTrackingState.LOST -> "Point at edges and furniture."
+                        else -> null
+                    },
+                    actionLabel = if (poseState == PoseTrackingState.UNAVAILABLE) "Retry" else null,
+                ),
+            )
+        }
+    }
+
     // ── ROUND 8, owner item 28: the live scan view keeps 60 % of the screen ──
     //
     // The whole of the pre-capture stack — name field, auto-detect line, manual
@@ -1495,8 +1609,6 @@ fun CaptureScreen(
     val manualEntryOpen = autoConnectState?.manualEntryOpen == true
     val compact = CaptureLayout.useCompactChrome(connected = connected, manualEntryOpen = manualEntryOpen)
     val screenHeightDp = LocalConfiguration.current.screenHeightDp.toFloat()
-    // The mount row is only for the sensor whose extrinsic the trim is ABOUT.
-    val mountRowVisible = poseTrackingRequired && sensor.isPhoneTrackedPushbroom
     // ROUND 26 item 124: the `BackBar` survives ONLY for the replay session,
     // which since round 23 is the one project-scoped entry into this screen
     // (see Routes.kt) and therefore the one with a real parent to go back to.
@@ -1750,6 +1862,7 @@ fun CaptureScreen(
                             onPause = onPause,
                             onResume = onResume,
                             onStop = onStop,
+                            rollDeg = startOrientationRollDeg,
                         )
                     }
 
@@ -1902,7 +2015,7 @@ fun CaptureScreen(
                         }
                         if (noDataAlert != null) {
                             LoudBanner(
-                                title = "NO SENSOR DATA",
+                                title = "No sensor data",
                                 message = noDataAlert,
                                 onDismiss = onDismissNoDataAlert,
                                 testTag = "noDataBanner",
@@ -1915,7 +2028,7 @@ fun CaptureScreen(
                         // diagnosis and it has a different instruction.
                         if (noPoseAlert != null) {
                             LoudBanner(
-                                title = "NO POSITION TRACKING",
+                                title = "No position tracking",
                                 message = noPoseAlert,
                                 onDismiss = onDismissNoPoseAlert,
                                 testTag = "noPoseBanner",
@@ -1924,17 +2037,17 @@ fun CaptureScreen(
                         // ROUND 8 (item 30b): a refused re-zero is now as loud as
                         // a failed save, and for the same reason — the owner
                         // tapped this control eight times in one session, was told
-                        // "MOVING" in a grey one-liner every time, and reasonably
+                        // "Moving" in a grey one-liner every time, and reasonably
                         // concluded the button did nothing. The measured numbers
                         // and the instruction ("hold still ~1 s") are in the
                         // message; see MountTrimResult.Rejected.sentence.
                         if (mountTrimNote != null && mountTrimNoteIsWarning) {
                             LoudBanner(
-                                title = "MOUNT REFERENCE NOT SET",
+                                title = "Mount reference not set",
                                 message = mountTrimNote,
                                 onDismiss = onDismissMountTrimNote,
                                 testTag = "mountTrimRefusalBanner",
-                                accent = SemWarn,
+                                accent = ScanColors.warn,
                             )
                         }
                     }
@@ -2003,17 +2116,17 @@ fun CaptureScreen(
                                     }
                                     Hint(
                                         startTapRefusal,
-                                        color = SemWarn,
+                                        color = ScanColors.warn,
                                         modifier = Modifier
                                             .padding(horizontal = 10.dp, vertical = 3.dp)
                                             .bringIntoViewRequester(refusalIntoView)
                                             .background(
-                                                SemWarn.copy(alpha = 0.12f),
+                                                ScanColors.warn.copy(alpha = 0.12f),
                                                 RoundedCornerShape(ScanDims.TileRadius),
                                             )
                                             .border(
                                                 1.dp,
-                                                SemWarn.copy(alpha = 0.55f),
+                                                ScanColors.warn.copy(alpha = 0.55f),
                                                 RoundedCornerShape(ScanDims.TileRadius),
                                             )
                                             .clickable(onClick = onDismissStartTapRefusal)
@@ -2026,17 +2139,17 @@ fun CaptureScreen(
                                     // first place.
                                     Hint(
                                         startBlockedReason,
-                                        color = InkFaint,
+                                        color = ScanColors.inkFaint,
                                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
                                             .testTag("startBlockedNote"),
                                     )
                                 }
                                 if (dndNote != null) {
-                                    // SemWarn, not InkFaint: this one is about
+                                    // ScanColors.warn, not ScanColors.inkFaint: this one is about
                                     // the measurement, not about a convenience.
                                     Hint(
                                         dndNote,
-                                        color = SemWarn,
+                                        color = ScanColors.warn,
                                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
                                             .testTag("dndUnprotectedNote"),
                                     )
@@ -2044,7 +2157,7 @@ fun CaptureScreen(
                                 if (georefNote != null) {
                                     Hint(
                                         georefNote,
-                                        color = InkFaint,
+                                        color = ScanColors.inkFaint,
                                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
                                             .testTag("georefDeniedNote"),
                                     )
@@ -2052,7 +2165,7 @@ fun CaptureScreen(
                                 if (refreshDownshiftNote != null) {
                                     Hint(
                                         refreshDownshiftNote,
-                                        color = InkFaint,
+                                        color = ScanColors.inkFaint,
                                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
                                             .testTag("refreshDownshiftNote"),
                                     )
@@ -2060,7 +2173,7 @@ fun CaptureScreen(
                                 if (motionHint != null) {
                                     Hint(
                                         motionHint,
-                                        color = SemWarn,
+                                        color = ScanColors.warn,
                                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
                                             .testTag("motionHint"),
                                     )
@@ -2076,7 +2189,7 @@ fun CaptureScreen(
                                     Hint(
                                         com.lidarscan.core.Wording.AR_DEGRADED + " " + arErrorMessage + "\n" +
                                             com.lidarscan.core.Wording.AR_DEGRADED_DETAIL,
-                                        color = SemWarn,
+                                        color = ScanColors.warn,
                                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
                                             .testTag("arUnavailableNote"),
                                     )
@@ -2089,7 +2202,7 @@ fun CaptureScreen(
                                 if (sectionHint != null) {
                                     Hint(
                                         sectionHint,
-                                        color = SemWarn,
+                                        color = ScanColors.warn,
                                         modifier = Modifier
                                             .padding(horizontal = 14.dp, vertical = 2.dp)
                                             .testTag("sectionHint"),
@@ -2102,7 +2215,7 @@ fun CaptureScreen(
                                 if (liveMapFullNote != null) {
                                     Hint(
                                         liveMapFullNote,
-                                        color = SemWarn,
+                                        color = ScanColors.warn,
                                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
                                             .testTag("liveMapFullNote"),
                                     )
@@ -2113,7 +2226,7 @@ fun CaptureScreen(
                                 if (mountTrimNote != null && !mountTrimNoteIsWarning) {
                                     Hint(
                                         mountTrimNote,
-                                        color = ScanTeal,
+                                        color = ScanColors.sensorD6,
                                         modifier = Modifier
                                             .padding(horizontal = 14.dp, vertical = 2.dp)
                                             .clickable(onClick = onDismissMountTrimNote)
@@ -2287,7 +2400,55 @@ fun CaptureScreen(
                     val movableViewport = remember {
                         androidx.compose.runtime.movableContentOf<Modifier> { m -> currentViewport(m) }
                     }
-                    if (minimal) {
+                    if (minimal && !isLandscape) {
+                        // ── ROUND 28 item 159: THE RECORDING PAGE ───────────
+                        //
+                        // Round 26 floated every band on the picture and round
+                        // 27 spent an item computing reserves so they would not
+                        // collide. At 1080 × 2400 on this bench they collided
+                        // anyway — status pill through DND advisory through
+                        // refresh note, three strings on the same pixels. A
+                        // column cannot overlap itself, and the viewport still
+                        // gets ≥60 % because it is the only weighted child.
+                        //
+                        // Landscape keeps `MinimalScanLayout`: round 27 item
+                        // 129(a) solved landscape with an end rail and a
+                        // start rail, and a portrait column would undo it.
+                        ScanRecordingPage(
+                            telemetry = {
+                                RecordingTelemetry(
+                                    elapsed = formatDuration(stats.elapsedMillis),
+                                    points = stats.pointsCaptured,
+                                    metres = trailLengthM.toDouble(),
+                                    // §B Job 2's missing number, from what is
+                                    // known LIVE: a section break means the
+                                    // trajectory came apart, and tracking loss
+                                    // episodes are what produce the `drops` the
+                                    // seal grade counts.
+                                    quality = when {
+                                        arTrackingLossEpisodes > 0 -> ScanColors.bad
+                                        // `sectionHint` is non-null exactly
+                                        // when the trajectory has come apart
+                                        // and not healed — the live half of
+                                        // what the seal grade counts as
+                                        // `sections`.
+                                        sectionHint != null -> ScanColors.warn
+                                        else -> ScanColors.good
+                                    },
+                                    paused = paused,
+                                    onOpenAdvanced = { sheet = CaptureSheet.SETTINGS },
+                                )
+                            },
+                            viewport = movableViewport,
+                            advisories = {
+                                // Absent in the nominal case — §D.2: the
+                                // advisory INSERTS, it does not reserve.
+                                loudBanners()
+                                hints()
+                            },
+                            controls = { controls(false) },
+                        )
+                    } else if (minimal) {
                         MinimalScanLayout(
                             isLandscape = isLandscape,
                             bottomClearance = bottomClearance,
@@ -2302,6 +2463,62 @@ fun CaptureScreen(
                             hints = hints,
                             streamChip = streamChip,
                             tutorialChip = { TutorialChip(onOpenTutorial = onStartTutorial) },
+                        )
+                    } else if (compact && !isLandscape) {
+                        // ── ROUND 28 item 158: THE IDLE PAGE ────────────────
+                        //
+                        // The one state the review calls "the worst screen, and
+                        // the one the owner opens first" — connected, portrait,
+                        // not recording. Round 27 item 136 gave this state a
+                        // guaranteed 60 % viewport because the sensor was
+                        // attached; the sensor being attached is not the same
+                        // question as whether there is anything to draw, and
+                        // the answer to the second one, before Start, is no.
+                        //
+                        // §D.1's page instead: status bar, LAST SCAN, three
+                        // readiness rows, one FAB. The live viewport is not
+                        // composed here at all — there is nothing in it — which
+                        // is what lets the FAB take the slack rather than a
+                        // 940-px rectangle.
+                        //
+                        // Landscape and the disconnected connect flow keep
+                        // `IdleScanLayout`: landscape is a different problem
+                        // (round 27 item 129(a) solved it and this page would
+                        // undo that), and the disconnected screen's job is the
+                        // connect flow, which needs the room and is where round
+                        // 26's `connectFlowMaxHeightDp` already puts it. A
+                        // replay session uses this page with the live preview in
+                        // the LAST SCAN slot — see `ScanReadyPage.previewSlot`.
+                        ScanReadyPage(
+                            statusLine = com.lidarscan.core.capture.ScanReadiness.statusLine(
+                                sensorName = sensor.badgeLabel,
+                                rows = readiness,
+                            ),
+                            blocked = !com.lidarscan.core.capture.ScanReadiness.canStart(readiness),
+                            onOpenAdvanced = { sheet = CaptureSheet.SETTINGS },
+                            lastScan = lastScan,
+                            onOpenLastScan = onOpenLastScan,
+                            readiness = readiness,
+                            onReadinessAction = { title ->
+                                when (title) {
+                                    "Sensor" -> onRetryAutoDetect()
+                                    "Mount" -> onBeginMountHold()
+                                    "Tracking" -> onRetryAr()
+                                }
+                            },
+                            banners = {
+                                loudBanners()
+                                hints()
+                            },
+                            tutorialBanner = {
+                                if (offerTutorial) {
+                                    TutorialOffer(
+                                        onAccept = onAcceptTutorialOffer,
+                                        onDismiss = onDismissTutorialOffer,
+                                    )
+                                }
+                            },
+                            fab = { controls(false) },
                         )
                     } else {
                         IdleScanLayout(
@@ -2332,6 +2549,37 @@ fun CaptureScreen(
     // the transport row — including the STOP button, which is deliberately
     // still reachable THROUGH it. See `TrackingLossPopup`.
         TrackingLossPopup(trackingBanner)
+
+        // ── ROUND 28 items 155 + 160: the start flow's modal ─────────────────
+        //
+        // Over everything, like the tracking popup and for the same reason: it
+        // is the one thing on screen while it is up. Two states, ONE size —
+        // see `StartModalCard`.
+        val block = startBlock
+        if (block != null) {
+            StartBlockModal(
+                block = block,
+                onRetry = onStartBlockRetry,
+                onStartAnyway = onStartAnyway,
+                onCancel = onDismissStartBlock,
+            )
+        } else if (startHold != null) {
+            val hold = startHold
+            val fraction = hold.progress?.fraction ?: 0f
+            val secondsLeft = (
+                ((1f - fraction) * CaptureViewModel.START_HOLD_TIMEOUT_MS) / 1000f
+                ).toInt().coerceAtLeast(0)
+            StartHoldModal(
+                secondsLeft = secondsLeft,
+                fraction = fraction,
+                label = hold.progress?.label ?: "Hold still",
+                // ROUND 28 item 168: the attitude instrument, inside the card
+                // that is telling him to hold still. `startOrientation` is the
+                // gravity-derived roll round 26 item 125(b) already computes.
+                rollDeg = startOrientationRollDeg,
+                onCancel = onDismissStartBlock,
+            )
+        }
 
         // ── ROUND 24 item 110(b): the tour, over everything ─────────────────
         //
@@ -2450,7 +2698,7 @@ fun CaptureScreen(
                     // and two "Retry" links driving one state.
                     Hint(
                         "The connect panel is on the screen behind this sheet.",
-                        color = InkFaint,
+                        color = ScanColors.inkFaint,
                     )
                 } else if (autoConnectState != null) {
                     AutoDetectLine(
@@ -2473,7 +2721,7 @@ fun CaptureScreen(
                         )
                     }
                 } else {
-                    Hint("Replay session — there is no device to connect.", color = InkFaint)
+                    Hint("Replay session — there is no device to connect.", color = ScanColors.inkFaint)
                 }
             },
             mount = if (poseTrackingRequired && sensor.isPhoneTrackedPushbroom) {
@@ -2494,6 +2742,11 @@ fun CaptureScreen(
         )
 
         CaptureSheet.SETTINGS -> CaptureSettingsSheet(
+            // ROUND 28 item 158: the eye moved off the transport row into this
+            // sheet. See the `Live view` row in `CaptureSheets`.
+            liveView = liveView,
+            onLiveViewChange = onLiveViewChange,
+            onOpenTutorial = onStartTutorial,
             sheetState = settingsSheetState,
             // ── ROUND 27 item 139: the Connection tab ───────────────────────
             //
@@ -2653,7 +2906,7 @@ fun CaptureScreen(
  * worth printing.
  *
  * The colour is load-bearing too — teal for a trim in force, amber for none —
- * because "NO MOUNT REF · CAD NOMINAL" in the same ink as everything else is
+ * because "Mount not set · CAD nominal" in the same ink as everything else is
  * how a warning becomes wallpaper.
  */
 @Composable
@@ -2668,10 +2921,10 @@ private fun MountStateRow(
     val shape = RoundedCornerShape(50)
     val holding = hold != null
     val accent = when {
-        holding -> if (hold?.gatePasses == true) ScanTeal else SemWarn
-        !hasTrim -> SemWarn
-        provenance?.warn == true -> SemWarn
-        else -> ScanTeal
+        holding -> if (hold?.gatePasses == true) ScanColors.sensorD6 else ScanColors.warn
+        !hasTrim -> ScanColors.warn
+        provenance?.warn == true -> ScanColors.warn
+        else -> ScanColors.sensorD6
     }
     Row(
         Modifier
@@ -2701,7 +2954,7 @@ private fun MountStateRow(
                 Column(Modifier.fillMaxWidth()) {
                     Text(
                         hold.label,
-                        style = MonoLabel,
+                        style = ScanMetaCaps,
                         color = accent,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -2720,8 +2973,8 @@ private fun MountStateRow(
                 }
             } else {
                 Text(
-                    provenance?.chipLabel ?: "NO MOUNT REF · CAD NOMINAL",
-                    style = MonoLabel,
+                    provenance?.chipLabel ?: "Mount not set · CAD nominal",
+                    style = ScanMetaCaps,
                     color = accent,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -2892,7 +3145,7 @@ private fun SheetChip(label: String, readout: String?, testTag: String, onClick:
         )
         if (readout != null) {
             Spacer(Modifier.width(6.dp))
-            Text(readout.uppercase(), style = MonoLabel, color = Ember, maxLines = 1)
+            Text(readout.uppercase(), style = ScanMetaCaps, color = Ember, maxLines = 1)
         }
     }
 }
@@ -2909,7 +3162,7 @@ private fun SheetChip(label: String, readout: String?, testTag: String, onClick:
  */
 @Composable
 private fun SaveErrorBanner(message: String, onDismiss: () -> Unit) =
-    LoudBanner("SCAN NOT SAVED", message, onDismiss, "saveErrorBanner")
+    LoudBanner("Scan not saved", message, onDismiss, "saveErrorBanner")
 
 /**
  * ROUND 8: a third caller, and the reason [LoudBanner] grew an [accent].
@@ -2994,8 +3247,8 @@ internal fun TrackingLossPopup(state: com.lidarscan.core.capture.TrackingBannerS
     // neutral card wearing a coloured ring. One token decides the ground, one
     // decides everything drawn on it, and both move together if the semantic
     // amber is ever retuned.
-    val container = if (lost) SemWarnContainer else SemGoodContainer
-    val onContainer = if (lost) OnSemWarnContainer else OnSemGoodContainer
+    val container = if (lost) ScanColors.warnContainer else ScanColors.goodContainer
+    val onContainer = if (lost) ScanColors.warn else ScanColors.good
 
     // The amber card counts up at 250 ms, like the start panel's own tick, so
     // "how long have I been standing here" is answered without arithmetic.
@@ -3037,7 +3290,10 @@ internal fun TrackingLossPopup(state: com.lidarscan.core.capture.TrackingBannerS
                 .testTag(if (lost) "trackingLostBanner" else "trackingBackBanner"),
             container = container,
             borderColor = onContainer.copy(alpha = 0.55f),
-            elevation = 16.dp,
+            // §C.5: a modal over a scrim is one of the three things that may
+            // float. It was 16 dp; level 1 is 4 dp with a wide blur, which is
+            // the same read at a fifth of the ink.
+            floating = true,
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 22.dp),
         ) {
             // Status iconography consistent with the rest of the app, which is
@@ -3124,7 +3380,7 @@ private fun StartProgressPanel(
     hold: CaptureViewModel.StartHoldState?,
 ) {
     val go = hold?.go == true
-    val accent = if (go) SemGood else ScanTeal
+    val accent = if (go) ScanColors.good else ScanColors.sensorD6
     val shape = RoundedCornerShape(ScanDims.TileRadius)
 
     // Which stage is live. `hold` outlives `progress` by the GO linger, so GO
@@ -3171,8 +3427,8 @@ private fun StartProgressPanel(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                if (go) "GO — START WALKING" else "STARTING SCAN",
-                style = MonoLabel,
+                if (go) "Go — start walking" else "Starting scan",
+                style = ScanMetaCaps,
                 color = accent,
                 modifier = Modifier.testTag(if (go) "holdSteadyGo" else "startProgressTitle"),
             )
@@ -3180,8 +3436,8 @@ private fun StartProgressPanel(
             if (!go && elapsedS != null) {
                 Text(
                     "${elapsedS}s · usually 4–8 s",
-                    style = MonoLabel,
-                    color = InkFaint,
+                    style = ScanMetaCaps,
+                    color = ScanColors.inkFaint,
                 )
             }
         }
@@ -3201,7 +3457,7 @@ private fun StartProgressPanel(
                     Text(
                         check,
                         style = MaterialTheme.typography.bodySmall,
-                        color = SemWarn,
+                        color = ScanColors.warn,
                     )
                 }
             }
@@ -3311,14 +3567,14 @@ private fun StartStageRow(
                 live -> "●"
                 else -> "○"
             },
-            style = MonoLabel,
-            color = if (done || live) accent else InkFaint,
+            style = ScanMetaCaps,
+            color = if (done || live) accent else ScanColors.inkFaint,
         )
         Spacer(Modifier.width(8.dp))
         Text(
             title,
-            style = MonoLabel,
-            color = if (live) accent else if (done) MaterialTheme.colorScheme.onSurface else InkFaint,
+            style = ScanMetaCaps,
+            color = if (live) accent else if (done) MaterialTheme.colorScheme.onSurface else ScanColors.inkFaint,
         )
     }
     if (live && status != null) {
@@ -3335,7 +3591,7 @@ private fun StartStageRow(
         Text(
             instruction,
             style = MaterialTheme.typography.bodySmall,
-            color = InkFaint,
+            color = ScanColors.inkFaint,
             modifier = Modifier.padding(start = 20.dp),
         )
     }
@@ -3359,7 +3615,7 @@ private fun LoudBanner(
     message: String,
     onDismiss: () -> Unit,
     testTag: String,
-    accent: Color = SemBad,
+    accent: Color = ScanColors.bad,
 ) {
     val shape = RoundedCornerShape(ScanDims.TileRadius)
     Column(
@@ -3374,7 +3630,7 @@ private fun LoudBanner(
     ) {
         Text(
             title,
-            style = MonoLabel,
+            style = ScanMetaCaps,
             color = accent,
         )
         Spacer(Modifier.height(4.dp))
@@ -3384,7 +3640,7 @@ private fun LoudBanner(
             color = MaterialTheme.colorScheme.onSurface,
         )
         Spacer(Modifier.height(4.dp))
-        Text("Tap to dismiss · Settings → Capture log has the full trace", style = MonoLabel, color = InkFaint)
+        Text("Tap to dismiss · Settings → Capture log has the full trace", style = ScanMetaCaps, color = ScanColors.inkFaint)
     }
 }
 
@@ -3508,7 +3764,7 @@ private fun PreCaptureStrip(
             // of the explanation is now TutorialStep.SCAN_BUTTON / START_HOLD.
             Hint(
                 com.lidarscan.core.Wording.D6_MOUNT_HINT + "\n" + com.lidarscan.core.Wording.D6_MOUNT_DETAIL,
-                color = InkFaint,
+                color = ScanColors.inkFaint,
                 modifier = Modifier.testTag("d6MountHint"),
             )
             // ── ROUND 6 (owner item 23): the one-tap mount re-zero ──────
@@ -3548,15 +3804,15 @@ private fun PreCaptureStrip(
                             .format(mountTrim.magnitudeDeg, mountTrim.ageLabel(nowMillis))
                 },
                 color = when {
-                    mountTrim == null -> InkFaint
-                    mountTrimProvenance?.warn == true -> SemWarn
-                    else -> ScanTeal
+                    mountTrim == null -> ScanColors.inkFaint
+                    mountTrimProvenance?.warn == true -> ScanColors.warn
+                    else -> ScanColors.sensorD6
                 },
                 modifier = Modifier.testTag("mountTrimAge"),
             )
 
             // The tracking chip belongs to a session that exists: with nothing
-            // connected, "TRACKING · INITIALISING" is a status about a scan that
+            // connected, "Tracking · starting" is a status about a scan that
             // is not happening.
             if (poseState != PoseTrackingState.NOT_REQUIRED && sensorStreaming) {
                 Spacer(Modifier.height(4.dp))
@@ -3575,7 +3831,7 @@ private fun PreCaptureStrip(
                 if (poseState == PoseTrackingState.UNAVAILABLE) {
                     Hint(
                         com.lidarscan.core.Wording.NO_TRACKING_HINT + "\n" + com.lidarscan.core.Wording.NO_TRACKING_DETAIL,
-                        color = SemWarn,
+                        color = ScanColors.warn,
                     )
                 }
 
@@ -3615,16 +3871,16 @@ private fun MountReferenceDetail(
                     .format(mountTrim.magnitudeDeg, mountTrim.ageLabel(nowMillis))
             },
         color = when {
-            mountTrim == null -> SemWarn
-            mountTrimProvenance?.warn == true -> SemWarn
-            else -> ScanTeal
+            mountTrim == null -> ScanColors.warn
+            mountTrimProvenance?.warn == true -> ScanColors.warn
+            else -> ScanColors.sensorD6
         },
         modifier = Modifier.testTag("mountTrimDetail"),
     )
     Spacer(Modifier.height(6.dp))
     // ROUND 24 item 110(a): was 69 words. The instruction half is on the
     // capture screen where the hold actually happens; this is the why.
-    Hint(com.lidarscan.core.Wording.MOUNT_REF_WHY + " " + com.lidarscan.core.Wording.MOUNT_REF_HINT, color = InkFaint)
+    Hint(com.lidarscan.core.Wording.MOUNT_REF_WHY + " " + com.lidarscan.core.Wording.MOUNT_REF_HINT, color = ScanColors.inkFaint)
     Row(verticalAlignment = Alignment.CenterVertically) {
         if (mountTrim != null) {
             TextButton(
@@ -3657,10 +3913,10 @@ private fun AutoDetectLine(
         }
         Text(
             state.statusLine(),
-            style = MonoMeta,
+            style = ScanMeta,
             color = when (state.phase) {
-                CaptureAutoConnectState.Phase.PREVIEW -> SemGood
-                CaptureAutoConnectState.Phase.FAILED -> SemWarn
+                CaptureAutoConnectState.Phase.PREVIEW -> ScanColors.good
+                CaptureAutoConnectState.Phase.FAILED -> ScanColors.warn
                 else -> MaterialTheme.colorScheme.onSurfaceVariant
             },
             maxLines = 2,
@@ -3669,7 +3925,7 @@ private fun AutoDetectLine(
         )
     }
     state.detection?.detail?.let {
-        Text(it, style = MonoLabel, color = InkFaint, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(it, style = ScanMetaCaps, color = ScanColors.inkFaint, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
         if (state.phase == CaptureAutoConnectState.Phase.FAILED) {
@@ -3761,7 +4017,7 @@ private fun ManualEntryPanel(
             .padding(12.dp)
             .testTag("manualEntryPanel"),
     ) {
-        Text("USB SCANNER", style = MonoLabel, color = Ember)
+        Text("USB scanner", style = ScanMetaCaps, color = Ember)
         Spacer(Modifier.height(6.dp))
         // The two serial lidars, by the same badge labels the Projects cards
         // use — no new vocabulary for the operator to learn.
@@ -3776,7 +4032,7 @@ private fun ManualEntryPanel(
             modifier = Modifier.testTag("manualSensorSelector"),
         )
         Spacer(Modifier.height(4.dp))
-        Hint(com.lidarscan.core.Wording.MANUAL_SERIAL_PICK, color = InkFaint)
+        Hint(com.lidarscan.core.Wording.MANUAL_SERIAL_PICK, color = ScanColors.inkFaint)
         Spacer(Modifier.height(6.dp))
         if (devices.isEmpty()) {
             Hint(com.lidarscan.core.Wording.NO_USB_DEVICE + "\n" + com.lidarscan.core.Wording.NO_USB_DEVICE_DETAIL)
@@ -3788,7 +4044,7 @@ private fun ManualEntryPanel(
                 ) {
                     Text(
                         device.label,
-                        style = MonoMeta,
+                        style = ScanMeta,
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -3805,7 +4061,7 @@ private fun ManualEntryPanel(
         }
 
         Spacer(Modifier.height(10.dp))
-        Text("LIVOX MID-360 · ETHERNET", style = MonoLabel, color = Ember)
+        Text("LIVOX MID-360 · ETHERNET", style = ScanMetaCaps, color = Ember)
         Spacer(Modifier.height(6.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(
@@ -3834,7 +4090,7 @@ private fun ManualEntryPanel(
         Spacer(Modifier.height(2.dp))
         Hint(
             com.lidarscan.core.Wording.LIVE_VIEW_IS_THE_PROOF,
-            color = InkFaint,
+            color = ScanColors.inkFaint,
         )
     }
 }
@@ -3937,7 +4193,7 @@ private fun CaptureViewport(
     // the whole stretch `StreamFilter.MAPPED_ONLY` spends falling back to raw
     // pages before the first registered/pushbroom-resolved page exists. This
     // polls the renderer's own stats at a cheap, UI-appropriate cadence (not
-    // once per frame) so the chip only ever claims "LIVE MAP" once that is
+    // once per frame) so the chip only ever claims "Live map" once that is
     // actually true.
     var pointCloudRenderer by remember { mutableStateOf<com.lidarscan.app.render.PointCloudRenderer?>(null) }
     var hasSeenMappedPage by remember { mutableStateOf(false) }
@@ -3970,7 +4226,7 @@ private fun CaptureViewport(
 
     Box(
         modifier
-            .background(ViewportGround, shape)
+            .background(ScanColors.viewport, shape)
             .then(
                 if (fullBleed) Modifier
                 else Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape),
@@ -4169,7 +4425,7 @@ private fun CaptureViewport(
                 ) {
                     Text(
                         label,
-                        style = MonoLabel.copy(fontSize = 11.sp, letterSpacing = 0.04.em),
+                        style = ScanMetaCaps,
                         color = if (selected) OnEmber else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -4193,7 +4449,7 @@ private fun CaptureViewport(
         if (cameraMode == CameraMode.AR && arTrackingHint != null) {
             ScanChip(
                 text = arTrackingHint,
-                color = SemWarn,
+                color = ScanColors.warn,
                 modifier = Modifier.align(Alignment.TopCenter).padding(chipInsets).padding(top = 40.dp),
             )
         }
@@ -4283,6 +4539,14 @@ private fun TrajectoryTrailOverlay(
     modifier: Modifier = Modifier,
 ) {
     val shape = RoundedCornerShape(ScanDims.TileRadius)
+    // ROUND 28 item 144: a `DrawScope` lambda is not a composition, so the
+    // theme has to be read out here and closed over. Hoisting rather than
+    // reaching for a constant is the whole point — the trail is amber and red
+    // in the dark theme and a DIFFERENT amber and red in the light one.
+    val badInk = ScanColors.bad
+    val trackedInk = ScanColors.sensorD6
+    val hereInk = ScanColors.primary
+    val thinInk = ScanColors.coverageAmber
     Box(
         modifier
             .background(MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.72f), shape)
@@ -4303,7 +4567,7 @@ private fun TrajectoryTrailOverlay(
                         // tile stops drawing a walk that never happened. Same
                         // verdict the 3D ribbon and the floor-plan sheet draw.
                         drawLine(
-                            color = SemBad.copy(alpha = 0.7f),
+                            color = badInk.copy(alpha = 0.7f),
                             start = from,
                             end = here,
                             strokeWidth = 2.5f,
@@ -4313,7 +4577,7 @@ private fun TrajectoryTrailOverlay(
                         )
                     } else {
                         drawLine(
-                            color = if (previousTracking && p.tracking) ScanTeal else SemBad.copy(alpha = 0.5f),
+                            color = if (previousTracking && p.tracking) trackedInk else badInk.copy(alpha = 0.5f),
                             start = from,
                             end = here,
                             strokeWidth = 3f,
@@ -4325,7 +4589,7 @@ private fun TrajectoryTrailOverlay(
                 previousTracking = p.tracking
             }
             // Where you are NOW — the one thing worth finding at a glance.
-            previous?.let { drawCircle(color = Ember, radius = 4.5f, center = it) }
+            previous?.let { drawCircle(color = hereInk, radius = 4.5f, center = it) }
 
             // ROUND 19 item 75: the guidance ring. Amber arcs at the tile's
             // edge where the map around the walked path is thin.
@@ -4337,7 +4601,7 @@ private fun TrajectoryTrailOverlay(
                 for (s in 0 until sectors) {
                     if (coverageSectors[s] >= com.lidarscan.core.render.CoverageCompass.DEFAULT_THIN_FRACTION) continue
                     drawArc(
-                        color = CoverageAmber.copy(alpha = 0.9f),
+                        color = thinInk.copy(alpha = 0.9f),
                         startAngle = s * sweep + 1.5f,
                         sweepAngle = sweep - 3f,
                         useCenter = false,
@@ -4353,8 +4617,8 @@ private fun TrajectoryTrailOverlay(
         }
         Text(
             "%.0f m".format(lengthM),
-            style = MonoLabel.copy(fontSize = 9.sp),
-            color = InkFaint,
+            style = ScanMetaCaps,
+            color = ScanColors.inkFaint,
             modifier = Modifier.align(Alignment.TopEnd).padding(4.dp),
         )
     }
@@ -4420,6 +4684,8 @@ private fun ScanControlCluster(
     onPause: () -> Unit,
     onResume: () -> Unit,
     onStop: () -> Unit,
+    /** ROUND 28 item 168: the gravity-derived roll, for the attitude instrument. */
+    rollDeg: Double? = null,
 ) {
     val recording = captureState == CaptureState.RECORDING
     val paused = captureState == CaptureState.PAUSED
@@ -4427,6 +4693,19 @@ private fun ScanControlCluster(
     val stopping = captureState == CaptureState.STOPPING
 
     val secondaries: @Composable () -> Unit = {
+        // ── ROUND 28 items 158 + 159: PAUSE IS A RECORDING CONTROL ──────────
+        //
+        // It used to be drawn idle as well, dimmed — the review's finding S7,
+        // "three circles, three sizes, one row", where the 72 dp grey pause was
+        // *indistinguishable from disabled* and meaningless with nothing
+        // recording. Keeping the cluster's shape stable across sensors was the
+        // reason it was present-and-dimmed, and that reason still holds
+        // BETWEEN SENSORS while recording; it never justified a control on a
+        // page where the thing it controls does not exist.
+        //
+        // §D.1 counts one FAB on the idle page and §D.2 counts two controls on
+        // the recording one. Absent idle, present (and dimmed on a Mid-360 or a
+        // replay, which genuinely cannot pause) while live.
         // Pause: offered only where it actually works. Replay has no pause hook
         // in ReplaySource (B4) and a Mid-360 cannot pause without truncating the
         // recording on resume (B2/B3) — so it is present and dimmed rather than
@@ -4447,6 +4726,7 @@ private fun ScanControlCluster(
         }
     }
 
+    @Suppress("UNUSED_VARIABLE")
     val liveToggle: @Composable () -> Unit = {
         // ROUND 26 item 124: the Live-view SWITCH became a round eye button,
         // and the honesty it carried moved rather than being dropped. "display
@@ -4485,23 +4765,40 @@ private fun ScanControlCluster(
         )
     }
 
+    // ── ROUND 28 items 159 + 168: what is beside STOP while walking ────────
+    //
+    // §D.2 cuts the recording row to **two** controls, and the owner's mockup
+    // review puts a third thing in the third slot: the attitude instrument,
+    // mirrored against the pause button either side of the FAB. It is not a
+    // control — it cannot be pressed — which is exactly why it belongs there:
+    // the one fact the operator cannot see while holding a rig at arm's length
+    // is whether he is holding it square, and the seal grade only tells him
+    // afterwards, when nothing can be done.
+    //
+    // The live-view eye moves to the Advanced sheet (§D.1's table): it is a
+    // display setting, it is pressed once a session if ever, and it was one of
+    // three grey circles in two sizes that the walking operator had to tell
+    // apart.
+    val attitude: @Composable () -> Unit = {
+        AttitudeButtonSlot(rollDeg = rollDeg)
+    }
     if (vertical) {
         Column(
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(ScanDims.S3),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            liveToggle()
+            if (live) attitude()
             fab()
-            secondaries()
+            if (live) secondaries()
         }
     } else {
         Row(
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(ScanDims.S6),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            secondaries()
+            if (live) secondaries()
             fab()
-            liveToggle()
+            if (live) attitude()
         }
     }
 }
@@ -4758,15 +5055,15 @@ private fun ScanStatusPill(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 formatPoints(stats.pointsCaptured),
-                style = MonoValue.copy(fontSize = 12.5.sp),
+                style = ScanMeta,
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 modifier = Modifier.testTag("pointsCapturedValue"),
             )
             Text(
                 " pts · ${String.format(java.util.Locale.US, "%.1f", trailLengthM)} m",
-                style = MonoLabel.copy(fontSize = 10.sp, letterSpacing = 0.04.em),
-                color = InkFaint,
+                style = ScanMetaCaps,
+                color = ScanColors.inkFaint,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -4778,9 +5075,9 @@ private fun ScanStatusPill(
         if (!liveView) {
             Spacer(Modifier.height(2.dp))
             Text(
-                if (live) "LIVE VIEW OFF · STILL RECORDING" else "LIVE VIEW OFF",
-                style = MonoLabel.copy(fontSize = 9.sp, letterSpacing = 0.06.em),
-                color = CoverageAmber,
+                if (live) "Live view off · still recording" else "Live view off",
+                style = ScanMetaCaps,
+                color = ScanColors.coverageAmber,
                 maxLines = 1,
             )
         }
@@ -4839,8 +5136,8 @@ private fun ArTroubleCard(
         Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 6.dp)
-            .background(SemWarn.copy(alpha = 0.12f), RoundedCornerShape(ScanDims.TileRadius))
-            .border(1.dp, SemWarn, RoundedCornerShape(ScanDims.TileRadius))
+            .background(ScanColors.warn.copy(alpha = 0.12f), RoundedCornerShape(ScanDims.TileRadius))
+            .border(1.dp, ScanColors.warn, RoundedCornerShape(ScanDims.TileRadius))
             .padding(horizontal = 14.dp, vertical = 12.dp)
             .testTag("arTroubleCard"),
     ) {
@@ -4849,7 +5146,7 @@ private fun ArTroubleCard(
             fontFamily = DisplayFontFamily,
             fontWeight = FontWeight.SemiBold,
             fontSize = 16.sp,
-            color = SemWarn,
+            color = ScanColors.warn,
             modifier = Modifier.testTag("arTroubleTitle"),
         )
         if (detail != null) {
@@ -4986,7 +5283,14 @@ private fun IdleScanLayout(
                             .fillMaxWidth()
                             .weight(1f)
                             .verticalScroll(chromeScroll)
-                            .padding(horizontal = 12.dp)
+                            // ROUND 28 item 157: the same reserve in landscape,
+                            // where the rail's own bottom is the tab bar rather
+                            // than the transport row.
+                            .padding(
+                                start = ScanDims.S3,
+                                end = ScanDims.S3,
+                                bottom = ScanDims.S6,
+                            )
                             .testTag("scanChromeColumn"),
                     ) { chrome() }
                 }
@@ -5032,17 +5336,617 @@ private fun IdleScanLayout(
                         if (connected) Modifier.heightIn(max = chromeMaxDp) else Modifier.weight(1f),
                     )
                     .verticalScroll(chromeScroll)
-                    .padding(horizontal = 12.dp)
+                    .padding(
+                        start = ScanDims.S3,
+                        end = ScanDims.S3,
+                        // ── ROUND 28 item 157 (review §E-6) ─────────────────
+                        //
+                        // "Pick the scanner on this cable." was guillotined
+                        // mid-line by the transport row: a scrollable band with
+                        // no bottom padding for the controls that overlay it,
+                        // so its last line could never be scrolled clear. The
+                        // reserve is the control row's own height plus a
+                        // section gap, which is the smallest number that
+                        // guarantees the final line reaches daylight.
+                        bottom = ScanDims.Fab + ScanDims.S6,
+                    )
                     .testTag("scanChromeColumn"),
             ) { chrome() }
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                    .padding(horizontal = ScanDims.ScreenMargin, vertical = ScanDims.S3),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically,
             ) { controls(false) }
         }
+    }
+}
+
+/**
+ * ROUND 28 item 159 — **the recording page, per §D.2.**
+ *
+ * ```
+ * ● REC  01:12   84.2 K pts   12.4 m       ●   56   telemetry, mono, tnum
+ * ├──────────────────────────────────────────────┤
+ * │              LIVE VIEWPORT                   │   weight(1f) — ≥60 % kept
+ * ├──────────────────────────────────────────────┤
+ * │ ⚠ Hold still — tracking lost            44   │   ONLY when not nominal
+ * ├──────────────────────────────────────────────┤
+ * │      ( ❚❚ )   ( ■ STOP )   ( ⊙ )         24  │   2 controls + the instrument
+ * ```
+ *
+ * **Counts: 0 chips, 0 cards, 2 buttons.** The tab bar is hidden (round 26
+ * item 124's choice, kept).
+ *
+ * ## Why it is a COLUMN and round 26's page was a stack
+ *
+ * Round 26 made the recording screen fullscreen and floated everything on top
+ * of the picture; round 27 then spent an entire item (129) computing reserves
+ * so that the floating things would not collide, and shipped a geometry test
+ * to catch it when they did. On this bench, at 1080 × 2400, they collided
+ * anyway: the status pill printed through the Do-Not-Disturb advisory and the
+ * refresh-downshift note printed through both, three strings sharing the same
+ * pixels.
+ *
+ * That is not a tuning failure, it is what a stack of independently-positioned
+ * floating bands does the moment one of them grows a line — and every one of
+ * them grows a line for a reason (round 27 item 129 lists four). A column
+ * cannot overlap itself. The viewport keeps round 8's ≥60 % because it is the
+ * only weighted child, which is the same arithmetic guarantee `CaptureLayout`
+ * was written to make, restated where it cannot be undone by an inset.
+ *
+ * **The advisory INSERTS, it does not reserve.** In the nominal case it is
+ * absent and the viewport is that much taller; §D.2 is explicit about this,
+ * and it is the difference between a warning that means something and a band
+ * that is usually empty.
+ */
+@Composable
+private fun ScanRecordingPage(
+    telemetry: @Composable () -> Unit,
+    viewport: @Composable (Modifier) -> Unit,
+    advisories: @Composable () -> Unit,
+    controls: @Composable () -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(ScanColors.page)
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .testTag("scanRecordingPage"),
+    ) {
+        telemetry()
+        Box(Modifier.fillMaxWidth().weight(1f)) { viewport(Modifier.fillMaxSize()) }
+        advisories()
+        Box(
+            Modifier.fillMaxWidth().padding(vertical = ScanDims.S3),
+            contentAlignment = Alignment.Center,
+        ) { controls() }
+    }
+}
+
+/**
+ * §D.2's telemetry strip: one mono row, tabular figures, so nothing twitches
+ * while the operator is walking.
+ *
+ * It replaces the floating status pill, which stated the same facts in five
+ * components — a sensor badge, a filled tracking chip, an outlined state chip,
+ * a health chip and a three-number line — and floated to do it.
+ */
+@Composable
+private fun RecordingTelemetry(
+    elapsed: String,
+    points: Long,
+    metres: Double,
+    quality: Color,
+    paused: Boolean,
+    onOpenAdvanced: () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(ScanDims.Row)
+            .padding(horizontal = ScanDims.ScreenMargin)
+            .testTag("scanTelemetryStrip"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(ScanDims.S3),
+    ) {
+        StatusDot(if (paused) ScanColors.warn else ScanColors.bad)
+        // `REC` is a code, not a word — §C.2's rule, and one of the few places
+        // Meta Caps is correct.
+        Text(
+            if (paused) "PAUSED" else "REC",
+            style = ScanMetaCaps,
+            color = if (paused) ScanColors.warn else ScanColors.bad,
+        )
+        Text(
+            elapsed,
+            style = ScanMeta,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.testTag("elapsedValue"),
+        )
+        Text(
+            com.lidarscan.core.render.PointCountFormat.compactPts(points),
+            style = ScanMeta,
+            color = ScanColors.inkMute,
+            modifier = Modifier.testTag("pointsCapturedValue"),
+        )
+        Text("%.1f m".format(metres), style = ScanMeta, color = ScanColors.inkMute)
+        Spacer(Modifier.weight(1f))
+        // ROUND 28 item 159, §B Job 2's one missing number: a LIVE quality dot,
+        // driven by the same inputs that produce `grade` at seal. The operator
+        // learns the scan is going badly while he can still fix it, instead of
+        // at seal time when nothing can be done.
+        StatusDot(quality, Modifier.testTag("liveQualityDot"))
+        // ── The Advanced door stays open during a recording ─────────────────
+        //
+        // §D.2's sketch draws no control up here, and the first cut of this
+        // strip drew none — which silently deleted the one thing round 5 item
+        // 10 is about: *"the display controls are adjustable against a LIVE
+        // view — that is item 10's whole point."* Colour mode, point size and
+        // the live-view toggle are exactly the settings whose effect can only
+        // be judged while points are landing, and round 23 item 102 spent an
+        // item establishing that there is ONE door to them.
+        //
+        // So the strip carries the door, at its end, as chrome rather than as a
+        // control in the transport row — which is what §D.2's count of "two
+        // controls" is protecting. The tag is `advancedButton`, unchanged,
+        // because three emulator suites drive it mid-recording.
+        ScanIconButton(
+            icon = ScanIcons.AdvancedFaders,
+            contentDescription = "Advanced",
+            onClick = onOpenAdvanced,
+            modifier = Modifier.testTag("advancedButton"),
+        )
+    }
+}
+
+/**
+ * ROUND 28 item 160 — **the start flow's modal, per §D.3.**
+ *
+ * The owner's log measures a start sequence that was **silent for up to 21
+ * seconds** and then recorded into a state it had already diagnosed as bad. The
+ * screen had stages (`StartProgressPanel`, `StartStageRow`, `CaptureGateBanner`)
+ * and no way to distinguish *nearly ready* from *never going to be ready*, so
+ * the operator had no signal to give up and did not.
+ *
+ * §D.3 asks for three properties, and this composable is two of them (the third,
+ * aborting on a terminal failure, is
+ * [com.lidarscan.core.capture.StartGateDecision] in `:core`):
+ *
+ *  * **Every stage is named and bounded.** `Starting camera` (4 s) →
+ *    `Hold still` (10 s) → `Recording`. Which stage, and how long is left.
+ *  * **A terminal failure terminates**, in the same card, at the same size.
+ *
+ * **The two cards are deliberately identical in size** — the owner's explicit
+ * note on the mockups. A failure card that is smaller than the progress card it
+ * replaces makes the screen jump at the exact moment the operator is being told
+ * something went wrong, and a jump is read as a glitch rather than as
+ * information.
+ *
+ * The hold-still card carries the [AttitudeIndicator], because "hold still" is
+ * precisely the instruction an attitude reading helps obey (item 168).
+ */
+@Composable
+private fun StartModalCard(
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            // A scrim with NO pointer-input modifier — the same trick
+            // `TrackingLossPopup` uses and for the same reason: it darkens the
+            // screen without stealing a tap, so nothing underneath goes dead.
+            .background(Color.Black.copy(alpha = 0.45f))
+            .testTag("startModalScrim"),
+        contentAlignment = Alignment.Center,
+    ) {
+        ScanCard(
+            modifier = Modifier
+                .padding(horizontal = ScanDims.S8)
+                // The one fixed dp on this card, and the reason it is fixed:
+                // both states must be the same size. See the header.
+                .heightIn(min = 172.dp)
+                .testTag("startModalCard"),
+            // §C.5: a modal over a scrim is one of the three things that float.
+            floating = true,
+            contentPadding = PaddingValues(horizontal = ScanDims.S6, vertical = ScanDims.S6),
+            content = content,
+        )
+    }
+}
+
+/** §D.3's hold-still card: attitude, title, countdown, progress, Cancel. */
+@Composable
+private fun StartHoldModal(
+    secondsLeft: Int,
+    fraction: Float,
+    label: String,
+    rollDeg: Double?,
+    onCancel: () -> Unit,
+) {
+    StartModalCard {
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            AttitudeIndicator(rollDeg = rollDeg, size = ScanDims.S6 + ScanDims.S1)
+        }
+        Spacer(Modifier.height(ScanDims.S2))
+        Text(
+            label,
+            style = ScanTitle,
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().testTag("startModalTitle"),
+        )
+        Text(
+            // ROUND 28 item 160: a stage the operator must stand still through
+            // is a foreground task with a deadline, and it had no countdown at
+            // all. `tnum` is what stops the digit shifting the string sideways
+            // once a second — round 25 item 116's finding, applied here.
+            "${secondsLeft}s",
+            style = ScanCountdown,
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = ScanDims.S2)
+                .testTag("startModalCountdown"),
+        )
+        androidx.compose.material3.LinearProgressIndicator(
+            progress = { fraction.coerceIn(0f, 1f) },
+            modifier = Modifier.fillMaxWidth().height(ScanDims.S1),
+            color = ScanColors.primary,
+            trackColor = ScanColors.trough,
+        )
+        Spacer(Modifier.height(ScanDims.S3))
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            SecondaryPill(
+                text = com.lidarscan.core.capture.StartGateDecision.CANCEL,
+                onClick = onCancel,
+                modifier = Modifier.testTag("startModalCancel"),
+            )
+        }
+    }
+}
+
+/**
+ * §D.3's terminal-failure card. Same size as [StartHoldModal] — see
+ * [StartModalCard].
+ *
+ * `Start anyway` appears only for the NO_POSES case, and it is a **Secondary**:
+ * recording a flat scan is a thing an operator may legitimately mean, and item
+ * 155's whole point is that it becomes a decision rather than a surprise.
+ */
+@Composable
+private fun StartBlockModal(
+    block: CaptureViewModel.StartBlock,
+    onRetry: () -> Unit,
+    onStartAnyway: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    StartModalCard {
+        Text(
+            block.title,
+            style = ScanTitle,
+            color = ScanColors.bad,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().testTag("startBlockTitle"),
+        )
+        Spacer(Modifier.height(ScanDims.S2))
+        Text(
+            block.detail,
+            style = ScanBody,
+            color = ScanColors.inkMute,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().testTag("startBlockDetail"),
+        )
+        Spacer(Modifier.height(ScanDims.S4))
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(ScanDims.S2, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SecondaryPill(
+                text = com.lidarscan.core.capture.StartGateDecision.CANCEL,
+                onClick = onCancel,
+                modifier = Modifier.testTag("startBlockCancel"),
+            )
+            if (block.startAnyway) {
+                SecondaryPill(
+                    text = com.lidarscan.core.capture.StartGateDecision.START_ANYWAY,
+                    onClick = onStartAnyway,
+                    modifier = Modifier.testTag("startBlockStartAnyway"),
+                )
+            }
+            if (block.retryable) {
+                PrimaryPill(
+                    text = com.lidarscan.core.capture.StartGateDecision.RETRY,
+                    onClick = onRetry,
+                    modifier = Modifier.testTag("startBlockRetry"),
+                )
+            }
+        }
+    }
+}
+
+// ── ROUND 28 item 158: the idle page's own furniture ────────────────────────
+
+/**
+ * §D.1's status bar: `COIN-D6 · Ready` and the Advanced button, 56 dp, flat, on
+ * the page ground, with a bottom hairline.
+ *
+ * It replaces the floating status card, which carried five components to
+ * communicate "ready" and floated to do it. One clause and one control.
+ */
+@Composable
+private fun ScanStatusBar(
+    line: String,
+    blocked: Boolean,
+    onOpenAdvanced: () -> Unit,
+) {
+    Column(Modifier.fillMaxWidth().testTag("scanStatusBar")) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(ScanDims.Row)
+                .padding(horizontal = ScanDims.ScreenMargin),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                line,
+                style = ScanTitle,
+                color = if (blocked) ScanColors.bad else MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).testTag("scanStatusLine"),
+            )
+            // ROUND 28 item 168: three VERTICAL faders, not the Settings tab's
+            // glyph. The two used to be the same icon leading to different
+            // places — see `ScanIcons`.
+            ScanIconButton(
+                icon = ScanIcons.AdvancedFaders,
+                contentDescription = "Advanced",
+                onClick = onOpenAdvanced,
+                // The app's canonical Advanced tag — round 23 item 102 made it
+                // "the one door", and three emulator suites drive it. The
+                // GLYPH changed (item 168); the door did not.
+                modifier = Modifier.testTag("advancedButton"),
+            )
+        }
+        HorizontalDivider(thickness = ScanDims.Hair, color = MaterialTheme.colorScheme.outlineVariant)
+    }
+}
+
+/**
+ * §D.1's LAST SCAN card — **what the 940-px empty rectangle became.**
+ *
+ * The owner's idle screen spent roughly half its height on a dark slab
+ * reserved, arithmetically, for a live view that does not exist until Start is
+ * pressed (round 27 item 136 gated the 60 % floor on `connected`, and his rig
+ * IS connected and NOT recording). The condition tested the wrong thing: "is a
+ * sensor attached" rather than "is there anything to draw".
+ *
+ * What goes there instead is the thing he most often wants on opening this tab
+ * — the scan he just took, as a picture, with its grade. Tapping it opens
+ * Review. `CloudThumbnail` already renders a real cloud and the gallery already
+ * uses it; the owner's decision is that it draws at **point size 1 px**, so the
+ * card shows the actual scan rather than a scatter of fat dots.
+ */
+@Composable
+private fun LastScanCard(
+    project: com.lidarscan.core.store.Project,
+    onOpen: (String) -> Unit,
+) {
+    ScanCard(
+        modifier = Modifier
+            .padding(horizontal = ScanDims.ScreenMargin)
+            .height(180.dp)
+            .testTag("lastScanCard"),
+        onClick = { onOpen(project.id) },
+        contentPadding = PaddingValues(0.dp),
+    ) {
+        Box(Modifier.fillMaxSize()) {
+            ProjectThumbnail(
+                project = project,
+                modifier = Modifier.fillMaxSize(),
+                cornerRadius = ScanDims.CardRadius,
+            )
+            // A bottom gradient rather than a solid caption bar: the name has to
+            // be legible over whatever the cloud happens to be, and a solid bar
+            // would cut the picture the card exists to show.
+            Column(
+                Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    .background(
+                        androidx.compose.ui.graphics.Brush.verticalGradient(
+                            listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f)),
+                        ),
+                    )
+                    .padding(
+                        start = ScanDims.S3,
+                        end = ScanDims.S3,
+                        top = ScanDims.S8,
+                        bottom = ScanDims.S2,
+                    ),
+            ) {
+                Text(
+                    project.manifest.name,
+                    style = ScanTitle,
+                    // The card's ink is fixed rather than themed: it sits on a
+                    // dark point cloud in BOTH themes, so `onSurface` would be
+                    // near-black on near-black in light.
+                    color = com.lidarscan.app.ui.theme.Ink,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.testTag("lastScanName"),
+                )
+                Text(
+                    com.lidarscan.core.render.PointCountFormat.rowClause(
+                        project.manifest.pointCountEstimate,
+                    ),
+                    style = ScanMeta,
+                    color = com.lidarscan.app.ui.theme.InkMute,
+                    maxLines = 1,
+                    modifier = Modifier.testTag("lastScanMeta"),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * §D.1's readiness row — the pattern that replaced the loose control row.
+ *
+ * The whole argument is in [com.lidarscan.core.capture.ScanReadiness]: a row
+ * states its own state and carries its own fix, so a screen that used to need
+ * six controls in two ragged rows needs three lines and no chips.
+ */
+@Composable
+private fun ReadinessRow(
+    row: com.lidarscan.core.capture.ScanReadiness.Row,
+    isBlocker: Boolean,
+    onAction: (() -> Unit)?,
+) {
+    val dot = when (row.state) {
+        com.lidarscan.core.capture.ScanReadiness.State.GOOD -> ScanColors.good
+        com.lidarscan.core.capture.ScanReadiness.State.WARN -> ScanColors.warn
+        // Only the FIRST failing row wears the bad colour — a screen with two
+        // red rows has stopped ranking its own problems.
+        com.lidarscan.core.capture.ScanReadiness.State.BAD ->
+            if (isBlocker) ScanColors.bad else ScanColors.warn
+    }
+    ScanRow(
+        title = if (row.detail == null) row.title else "${row.title} · ${row.value}",
+        detail = row.detail,
+        meta = if (row.detail == null) row.value else null,
+        leading = { StatusDot(dot) },
+        modifier = Modifier.testTag("readinessRow_${row.title.lowercase()}"),
+        trailing = row.actionLabel?.let { label ->
+            if (onAction == null) return@let null
+            {
+                SecondaryPill(
+                    text = label,
+                    onClick = onAction,
+                    height = ScanDims.S8,
+                    modifier = Modifier.testTag("readinessAction_${row.title.lowercase()}"),
+                )
+            }
+        },
+    )
+}
+
+/**
+ * ROUND 28 item 158 — **the idle Scan page, per §D.1.**
+ *
+ * ```
+ * COIN-D6 · Ready                    [faders]   56   status bar, flat, hairline
+ * LAST SCAN                                          section label
+ * ┌ thumbnail ─────────────────────────────┐  180    the repurposed viewport region
+ * │ Scan-085-2026-08-21-1803               │
+ * │ 46.5 K pts                             │
+ * └────────────────────────────────────────┘
+ * READY TO SCAN                                      section label
+ * ● Sensor      COIN-D6 connected           56       three ROWs, hairline-separated
+ * ● Mount       Set · 91.0°                 56
+ * ● Tracking    Ready                       56
+ *                                          flex      absorbs ALL the slack
+ *                  ( SCAN )                 88       the ONE FAB
+ * ```
+ *
+ * **Counts: 0 chips, 0 pills, 1 card, 1 FAB, 3 rows** — against six chips and
+ * pills in five treatments, one floating card, three circular buttons in two
+ * sizes, one FAB and a floating tab pill, sharing no padding value between them.
+ *
+ * The removals, with destinations, because every one of them was somebody's
+ * decision at the time: `00:00` / `0 pts` / `0.0 m` are deleted outright (never
+ * render a zero-valued readout); the `D6`, `3D TRACKING` and `Idle` chips
+ * become the status bar's one clause and the Tracking row; the mount pill and
+ * `Re-zero` become the Mount row, whose tap IS the re-zero; the
+ * `Scan-088-… OPTIMAL` pill is deleted (the scan is auto-named, the preset
+ * lives in Advanced, rename lives in Review); `Diag`, the live-view eye and the
+ * `?` move into the Advanced sheet; the pause circle returns during recording
+ * where it means something; and `New capture` is deleted because item 156 makes
+ * the tab do it and a control that repeats an automatic behaviour teaches the
+ * operator that controls are decorative.
+ */
+@Composable
+private fun ScanReadyPage(
+    statusLine: String,
+    blocked: Boolean,
+    onOpenAdvanced: () -> Unit,
+    lastScan: com.lidarscan.core.store.Project?,
+    onOpenLastScan: (String) -> Unit,
+    readiness: List<com.lidarscan.core.capture.ScanReadiness.Row>,
+    onReadinessAction: (String) -> Unit,
+    banners: @Composable () -> Unit,
+    tutorialBanner: @Composable () -> Unit,
+    fab: @Composable () -> Unit,
+) {
+    val blocker = com.lidarscan.core.capture.ScanReadiness.blocker(readiness)
+    Column(
+        Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .testTag("scanIdlePage"),
+    ) {
+        ScanStatusBar(line = statusLine, blocked = blocked, onOpenAdvanced = onOpenAdvanced)
+        // ROUND 28 item 166: one line, under the status bar, that never
+        // displaces the task. See `ScanTutorialBanner`.
+        tutorialBanner()
+        banners()
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .testTag("scanChromeColumn"),
+        ) {
+            // ── ROUND 28 item 158, second cut: NO live viewport here ────────
+            //
+            // The first cut put the movable viewport in this slot for a replay
+            // session, on the argument that it kept round 27's
+            // `movableContentOf` fix alive across the idle → recording flip.
+            // On the emulator that crashed the app: moving movable content out
+            // of a subtree that is being removed in the same frame hit
+            // `LayoutNode.onChildRemoved` with a null `layoutDelegate`, twice,
+            // reproducibly, on the Start press.
+            //
+            // The fix is not to nurse the move — it is that there is no longer
+            // a move to make. §D.1's page has no live view in it, so the
+            // viewport is composed in exactly ONE place (`MinimalScanLayout`)
+            // and its lifetime is the recording's: created at Start, disposed
+            // at Stop, never relocated. Round 27's fix solved a problem this
+            // layout does not have.
+            if (lastScan != null) {
+                SectionLabel("Last scan")
+                LastScanCard(project = lastScan, onOpen = onOpenLastScan)
+            }
+            SectionLabel("Ready to scan")
+            ScanRowCard(
+                modifier = Modifier.padding(horizontal = ScanDims.ScreenMargin),
+                rows = readiness.map { row ->
+                    {
+                        ReadinessRow(
+                            row = row,
+                            isBlocker = row === blocker,
+                            onAction = if (row.actionLabel != null) {
+                                { onReadinessAction(row.title) }
+                            } else {
+                                null
+                            },
+                        )
+                    }
+                },
+            )
+        }
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = ScanDims.S6),
+            contentAlignment = Alignment.Center,
+        ) { fab() }
     }
 }
 
@@ -5208,12 +6112,12 @@ private fun StreamModeChip(
         // again three centimetres away, in a chip whose actual subject is the
         // STREAM.
         text = when {
-            !liveMapEnabled -> "RAW · LIGHT PRESET"
-            !liveMapRequested -> "RAW RETURNS"
-            hasSeenMappedPage -> "LIVE MAP · 3D"
+            !liveMapEnabled -> "Raw · light preset"
+            !liveMapRequested -> "Raw returns"
+            hasSeenMappedPage -> "Live map · 3D"
             else -> "BUILDING MAP…"
         },
-        color = PoseBlue,
+        color = ScanColors.sensorMid360,
         showDot = true,
         modifier = modifier.testTag("streamModeChip"),
     )
@@ -5286,10 +6190,10 @@ private fun MapModeChip(liveMapEnabled: Boolean, liveMapRequested: Boolean, onCl
     ScanChip(
         text = when {
             liveMapEnabled -> "MAP"
-            liveMapRequested -> "MAP FULL"
-            else -> "SLICES"
+            liveMapRequested -> "Map full"
+            else -> "Slices"
         },
-        color = if (liveMapEnabled) ScanTeal else null,
+        color = if (liveMapEnabled) ScanColors.sensorD6 else null,
         modifier = Modifier
             .clickable(role = Role.Switch, onClick = onClick)
             .semantics {
@@ -5348,8 +6252,8 @@ private fun FixChipStrip(fix: GnssFixSnapshot, ntrip: NtripStatsSnapshot, georef
         ScanChip(
             text = georefSource.chipLabel,
             color = when {
-                georefSource.isRtk -> if (fix.hasFix) fixColor(fix.fix) else SemGood
-                georefSource.isPhoneFallback -> SemWarn
+                georefSource.isRtk -> if (fix.hasFix) fixColor(fix.fix) else ScanColors.good
+                georefSource.isPhoneFallback -> ScanColors.warn
                 else -> null
             },
             showDot = true,
@@ -5358,12 +6262,12 @@ private fun FixChipStrip(fix: GnssFixSnapshot, ntrip: NtripStatsSnapshot, georef
         if (!georefSource.isRtk) {
             // No rover fix: say why in one word rather than showing three empty
             // RTK chips (round 5 item 7's "fewer things on screen").
-            ScanChip(text = if (ntrip.receiving) "NTRIP LIVE" else "NO ROVER")
+            ScanChip(text = if (ntrip.receiving) "NTRIP live" else "No rover")
         } else {
             ScanChip(text = "NTRIP ${ntrip.state.name}")
             ScanChip(
-                text = if (ntrip.receiving) "CORRECTIONS LIVE" else "NO RTCM",
-                color = if (ntrip.receiving) SemGood else null,
+                text = if (ntrip.receiving) "Corrections live" else "No RTCM",
+                color = if (ntrip.receiving) ScanColors.good else null,
             )
             if (fix.hasFix) ScanChip(text = "${fix.satellites} SATS")
         }
@@ -5452,8 +6356,8 @@ private fun SessionSummaryContent(
                 savedPath != null -> "Saved to $savedPath — it is in the Projects tab now."
                 else -> "Nothing was written for this session."
             },
-            style = MonoMeta,
-            color = if (saveError != null) SemBad else InkFaint,
+            style = ScanMeta,
+            color = if (saveError != null) ScanColors.bad else ScanColors.inkFaint,
             modifier = Modifier.testTag("sessionSavedPath"),
         )
         Spacer(Modifier.height(16.dp))
@@ -5562,19 +6466,19 @@ private fun ScanGradeBanner(
     } else {
         summary
     }
-    // ROUND 16 item 58(c): "RESCAN" is right for a thin or broken scan and
+    // ROUND 16 item 58(c): "Rescan" is right for a thin or broken scan and
     // wrong for this one — it invites "walk it again more carefully", and a
     // capture with no trajectory will not be better for anything the operator
     // does differently about walking. The card says what it is.
     val (accent, word) = when {
         // ROUND 17 item 64: two more ways a capture can be not-a-scan, and both
-        // of them used to reach "GOOD SCAN" — scan-045 did exactly that.
-        summary.engineStartFailed -> SemBad to "NOT RECORDED"
-        summary.isNoRoom -> SemBad to "NO ROOM — NOTHING WAS PLACED"
-        summary.isTwoDimensionalOnly -> SemBad to "2D ONLY — NO ROOM"
-        summary.grade == com.lidarscan.core.capture.ScanGrade.GOOD -> SemGood to "GOOD SCAN"
-        summary.grade == com.lidarscan.core.capture.ScanGrade.FAIR -> SemWarn to "USABLE"
-        else -> SemBad to "RESCAN"
+        // of them used to reach "Good scan" — scan-045 did exactly that.
+        summary.engineStartFailed -> ScanColors.bad to "Not recorded"
+        summary.isNoRoom -> ScanColors.bad to "No room — nothing was placed"
+        summary.isTwoDimensionalOnly -> ScanColors.bad to "2D ONLY — NO ROOM"
+        summary.grade == com.lidarscan.core.capture.ScanGrade.GOOD -> ScanColors.good to "Good scan"
+        summary.grade == com.lidarscan.core.capture.ScanGrade.FAIR -> ScanColors.warn to "Usable"
+        else -> ScanColors.bad to "Rescan"
     }
     Column(
         Modifier
@@ -5591,7 +6495,7 @@ private fun ScanGradeBanner(
             color = accent,
         )
         Spacer(Modifier.height(4.dp))
-        Text(summary.gradeReason, style = MonoMeta, color = InkFaint)
+        Text(summary.gradeReason, style = ScanMeta, color = ScanColors.inkFaint)
         // ROUND 12: the conditional drift line, under the grade and not part of
         // it — the app cannot know whether the operator meant to finish where
         // they started, so it states the condition instead of assuming it.
@@ -5599,13 +6503,13 @@ private fun ScanGradeBanner(
             Spacer(Modifier.height(4.dp))
             Text(
                 note,
-                style = MonoMeta,
+                style = ScanMeta,
                 color = if ((summary.loopEndGapMeters ?: 0.0) >=
                     com.lidarscan.core.capture.LoopReturnTracker.WORTH_MENTIONING_M
                 ) {
-                    SemWarn
+                    ScanColors.warn
                 } else {
-                    InkFaint
+                    ScanColors.inkFaint
                 },
                 modifier = Modifier.testTag("scanSummaryLoopNote"),
             )
@@ -5617,8 +6521,8 @@ private fun ScanGradeBanner(
             Spacer(Modifier.height(6.dp))
             Text(
                 advice,
-                style = MonoMeta,
-                color = SemWarn,
+                style = ScanMeta,
+                color = ScanColors.warn,
                 modifier = Modifier.testTag("scanSummaryNextWalk"),
             )
         }
@@ -5634,22 +6538,42 @@ private fun ScanGradeBanner(
  * labels say what it means for the *scan* rather than for the AR session, because
  * for a D6 this is the state of the third dimension.
  */
-enum class PoseTrackingState(val chipLabel: String, val chipColor: Color?) {
+enum class PoseTrackingState(val chipLabel: String) {
     /** This sensor does not need phone tracking (Mid-360, replay). */
-    NOT_REQUIRED("", null),
+    NOT_REQUIRED(""),
 
     /** No ARCore at all — the capture will be fan slices, not a cloud. */
-    UNAVAILABLE("NO TRACKING", SemBad),
+    UNAVAILABLE("No tracking"),
 
     /** Session up, no pose yet: move the phone slowly to let VIO converge. */
-    INITIALIZING("TRACKING…", SemWarn),
+    INITIALIZING("TRACKING…"),
 
     /** Poses are flowing into the engine. */
-    TRACKING("3D TRACKING", SemGood),
+    TRACKING("3D TRACKING"),
 
     /** Was tracking, is not now: points from this stretch are flagged and excluded by default. */
-    LOST("TRACKING LOST", SemBad),
+    LOST("Tracking lost"),
 }
+
+/**
+ * ROUND 28 item 144 — **the colour left the constructor.**
+ *
+ * It was a constructor argument, which meant it was resolved once when the
+ * class initialised and could only ever be one hex — the mechanism behind the
+ * whole light-theme defect, in miniature. An enum entry is a *meaning*; the
+ * paint for that meaning belongs to whichever theme is running when it is
+ * drawn, so it is an extension property that reads the scheme.
+ */
+val PoseTrackingState.chipColor: Color?
+    @androidx.compose.runtime.Composable
+    @androidx.compose.runtime.ReadOnlyComposable
+    get() = when (this) {
+        PoseTrackingState.NOT_REQUIRED -> null
+        PoseTrackingState.UNAVAILABLE -> ScanColors.bad
+        PoseTrackingState.INITIALIZING -> ScanColors.warn
+        PoseTrackingState.TRACKING -> ScanColors.good
+        PoseTrackingState.LOST -> ScanColors.bad
+    }
 
 internal fun poseTrackingState(
     required: Boolean,
@@ -5689,8 +6613,24 @@ private fun captureStateLabel(state: CaptureState) = when (state) {
  * read-out would be flat for the whole window and the assertion would be
  * measuring the formatter, not the decoder.
  */
+/**
+ * ROUND 28 item 150 — a FOURTH variant, kept deliberately and named.
+ *
+ * The scan-summary panel is the one place a point count is a *figure being
+ * audited* rather than a readout being glanced at: it sits beside `SECTIONS`
+ * and `PTS / METRE` in a table the operator reads after the walk, and there
+ * `120,300` is more useful than `120.3 K`. Every other site in the app goes
+ * through [com.lidarscan.core.render.PointCountFormat]; this one states its
+ * exception rather than being an accident, and it no longer disagrees about
+ * the million (`%.2f M` and `PointCountFormat.compact`'s `%.1f M` were two
+ * roundings of one number).
+ */
 internal fun formatPoints(points: Long): String =
-    if (points >= 1_000_000) "%.2f M".format(points / 1_000_000.0) else "%,d".format(points)
+    if (points >= 1_000_000) {
+        com.lidarscan.core.render.PointCountFormat.compact(points)
+    } else {
+        "%,d".format(points)
+    }
 
 private fun formatRate(pointsPerSecond: Double): String = when {
     pointsPerSecond >= 1_000_000 -> "%.1fM".format(pointsPerSecond / 1_000_000.0)
@@ -5705,12 +6645,14 @@ private fun formatDuration(millis: Long): String {
 
 private fun formatMegabytes(bytes: Long): String = "${(bytes / 1_000_000.0).toInt()} MB"
 
+@androidx.compose.runtime.Composable
+@androidx.compose.runtime.ReadOnlyComposable
 private fun healthReadout(health: DeviceHealth?): Pair<String, Color?> = when {
     health == null -> "No data" to null
     health.state == ScanEngineNative.DeviceState.STREAMING && health.checksumPassRate >= 0.995 ->
-        "Healthy" to SemGood
-    health.state == ScanEngineNative.DeviceState.FAULT -> "Fault" to SemBad
-    health.state == ScanEngineNative.DeviceState.DEGRADED -> "Degraded" to SemWarn
+        "Healthy" to ScanColors.good
+    health.state == ScanEngineNative.DeviceState.FAULT -> "Fault" to ScanColors.bad
+    health.state == ScanEngineNative.DeviceState.DEGRADED -> "Degraded" to ScanColors.warn
     else -> ScanEngineNative.DeviceState.label(health.state) to null
 }
 
@@ -5732,9 +6674,11 @@ private fun arTrackingLabel(
     !arAvailable -> "unavailable"
     cameraMode != CameraMode.AR && !keyframesEnabled && !poseTrackingRequired -> "off"
     tracking -> "TRACKING"
-    else -> "LIMITED"
+    else -> "Limited"
 }
 
+@androidx.compose.runtime.Composable
+@androidx.compose.runtime.ReadOnlyComposable
 private fun deviceDiagnostics(
     health: DeviceHealth?,
     captureState: CaptureState,
@@ -5742,17 +6686,17 @@ private fun deviceDiagnostics(
     sensor: SensorType,
 ): DeviceDiagnostics {
     val (stateText, stateColor) = when (captureState) {
-        CaptureState.RECORDING -> "Streaming" to SemGood
-        CaptureState.PAUSED -> "Paused" to SemWarn
-        CaptureState.STOPPING -> "Stopping" to SemWarn
-        CaptureState.IDLE -> "Idle" to InkFaint
+        CaptureState.RECORDING -> "Streaming" to ScanColors.good
+        CaptureState.PAUSED -> "Paused" to ScanColors.warn
+        CaptureState.STOPPING -> "Stopping" to ScanColors.warn
+        CaptureState.IDLE -> "Idle" to ScanColors.inkFaint
     }
     val checksum = health?.let { "%.2f%%".format(it.checksumPassRate * 100) } ?: "—"
     val checksumColor = when {
-        health == null -> InkFaint
-        health.checksumPassRate >= 0.995 -> SemGood
-        health.checksumPassRate >= 0.98 -> SemWarn
-        else -> SemBad
+        health == null -> ScanColors.inkFaint
+        health.checksumPassRate >= 0.995 -> ScanColors.good
+        health.checksumPassRate >= 0.98 -> ScanColors.warn
+        else -> ScanColors.bad
     }
     val dropped = health?.packetsBad ?: 0L
     val total = (health?.packetsOk ?: 0L) + dropped
@@ -5783,6 +6727,8 @@ private fun deviceDiagnostics(
     )
 }
 
+@androidx.compose.runtime.Composable
+@androidx.compose.runtime.ReadOnlyComposable
 private fun arDiagnostics(
     arAvailable: Boolean,
     arTracking: Boolean,
@@ -5800,9 +6746,9 @@ private fun arDiagnostics(
     return ArDiagnostics(
         tracking = label,
         trackingColor = when {
-            !arAvailable || label == "off" -> InkFaint
-            label == "TRACKING" -> SemGood
-            else -> SemWarn
+            !arAvailable || label == "off" -> ScanColors.inkFaint
+            label == "TRACKING" -> ScanColors.good
+            else -> ScanColors.warn
         },
         // With keyframes off the row says so rather than freezing a stale
         // integer that would read as a live number.
@@ -5823,7 +6769,7 @@ private fun arDiagnostics(
         // extrinsic behind the pushbroom was measured or assumed.
         posesPushed = if (poseTrackingRequired || posesPushed > 0) "%,d".format(posesPushed) else "not needed",
         mountExtrinsic = if (mountIsNominal) "CAD nominal (uncalibrated)" else "measured calibration",
-        mountExtrinsicColor = if (mountIsNominal) SemWarn else SemGood,
+        mountExtrinsicColor = if (mountIsNominal) ScanColors.warn else ScanColors.good,
         georefSource = georefSource.chipLabel,
     )
 }

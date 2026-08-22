@@ -1,5 +1,7 @@
 package com.lidarscan.app.ui.capture
 
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
@@ -38,12 +40,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.lidarscan.app.ui.theme.ScanBody
+import com.lidarscan.app.ui.components.SecondaryPill
+import com.lidarscan.app.ui.components.ScanIconButton
 import com.lidarscan.app.ui.components.PrimaryPill
 import com.lidarscan.app.ui.components.ScanDims
 import com.lidarscan.app.ui.theme.DisplayFontFamily
 import com.lidarscan.app.ui.theme.Ember
-import com.lidarscan.app.ui.theme.InkFaint
-import com.lidarscan.app.ui.theme.MonoLabel
+import com.lidarscan.app.ui.theme.ScanColors
+import com.lidarscan.app.ui.theme.ScanMeta
+import com.lidarscan.app.ui.theme.ScanMetaCaps
 import com.lidarscan.core.capture.ScanTutorial
 import com.lidarscan.core.capture.TutorialAnchor
 import com.lidarscan.core.capture.TutorialState
@@ -211,7 +217,7 @@ internal fun ScanTutorialOverlay(
         ) {
             Text(
                 ScanTutorial.progressLabel(state),
-                style = MonoLabel,
+                style = ScanMetaCaps,
                 color = Ember,
                 modifier = Modifier.testTag("tutorialProgress"),
             )
@@ -228,7 +234,7 @@ internal fun ScanTutorialOverlay(
             Text(
                 step.body,
                 style = MaterialTheme.typography.bodyMedium,
-                color = InkFaint,
+                color = ScanColors.inkFaint,
                 modifier = Modifier.testTag("tutorialBody"),
             )
             Spacer(Modifier.height(14.dp))
@@ -238,7 +244,7 @@ internal fun ScanTutorialOverlay(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 TextButton(onClick = onSkip, modifier = Modifier.testTag("tutorialSkip")) {
-                    Text(ScanTutorial.SKIP, color = InkFaint)
+                    Text(ScanTutorial.SKIP, color = ScanColors.inkFaint)
                 }
                 Spacer(Modifier.weight(1f))
                 PrimaryPill(
@@ -253,50 +259,60 @@ internal fun ScanTutorialOverlay(
 }
 
 /**
- * ROUND 24 item 110(b) — **the one-time offer.**
+ * ROUND 28 item 166 — **one line, and it never displaces the task.**
  *
- * A card, not a dialog. The Scan screen's own rule since round 5 is that a
- * modal is the worst possible interruption on this tab, and that applies most
- * of all to the very first time someone opens it. It is dismissible, it never
- * comes back (both flags are persisted — see
- * [com.lidarscan.core.capture.ScanTutorial.shouldOffer]), and it sits at the
- * top of the screen where the loud band already lives.
+ * Round 24 item 110(b)'s reasoning was right and is kept: a modal is the worst
+ * possible interruption on this tab, most of all the first time someone opens
+ * it. What was wrong was everything else about the card.
+ *
+ * It was an **orange-outlined** card — a fourth card treatment, and the accent
+ * spent on a decorative border while nine other things on the same screen were
+ * already orange. It was **injected inline into the scroll**, between the
+ * viewport and the connect flow, so on a disconnected first run it pushed the
+ * user's actual task (plug in the scanner) below the fold, where round 27's
+ * missing bottom padding then guillotined *"Pick the scanner on this cable."*
+ * mid-line. And its dismissal pair was unbalanced: low-contrast grey text
+ * against a filled orange pill.
+ *
+ * §D.9: a **48 dp banner directly under the status bar**, level 0, one line, a
+ * Secondary `Start` and a `✕`. It sits above the content rather than inside it,
+ * so it can never displace anything; it is dismissed permanently on `✕` (both
+ * flags are still persisted — see
+ * [com.lidarscan.core.capture.ScanTutorial.shouldOffer]); and the tour itself
+ * is unchanged and still reachable afterwards from Settings › Tutorial and the
+ * Scan page's Advanced sheet.
  */
 @Composable
 internal fun TutorialOffer(onAccept: () -> Unit, onDismiss: () -> Unit) {
-    Column(
+    Row(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 6.dp)
-            .background(
-                MaterialTheme.colorScheme.surfaceContainer,
-                RoundedCornerShape(ScanDims.TileRadius),
-            )
-            .border(1.dp, Ember, RoundedCornerShape(ScanDims.TileRadius))
-            .padding(horizontal = 14.dp, vertical = 12.dp)
+            .height(ScanDims.Touch)
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .padding(start = ScanDims.ScreenMargin, end = ScanDims.S1)
             .testTag("tutorialOffer"),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             ScanTutorial.OFFER_TITLE,
-            fontFamily = DisplayFontFamily,
-            fontWeight = FontWeight.SemiBold,
-            fontSize = 16.sp,
+            style = ScanBody,
             color = MaterialTheme.colorScheme.onSurface,
-            textAlign = TextAlign.Start,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
         )
-        Spacer(Modifier.height(8.dp))
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onDismiss, modifier = Modifier.testTag("tutorialOfferDismiss")) {
-                Text(ScanTutorial.OFFER_DISMISS, color = InkFaint)
-            }
-            Spacer(Modifier.weight(1f))
-            PrimaryPill(
-                text = ScanTutorial.OFFER_ACCEPT,
-                height = 42.dp,
-                onClick = onAccept,
-                modifier = Modifier.testTag("tutorialOfferAccept"),
-            )
-        }
+        SecondaryPill(
+            text = ScanTutorial.OFFER_ACCEPT,
+            height = ScanDims.S8,
+            onClick = onAccept,
+            modifier = Modifier.testTag("tutorialOfferAccept"),
+        )
+        ScanIconButton(
+            icon = Icons.Filled.Close,
+            contentDescription = ScanTutorial.OFFER_DISMISS,
+            onClick = onDismiss,
+            modifier = Modifier.testTag("tutorialOfferDismiss"),
+        )
     }
 }
 

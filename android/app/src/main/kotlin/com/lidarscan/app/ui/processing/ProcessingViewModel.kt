@@ -13,6 +13,7 @@ import com.lidarscan.core.cloud.CloudSubmitClient
 import com.lidarscan.core.cloud.CloudSubmitConfig
 import com.lidarscan.core.cloud.UrlConnectionHttpTransport
 import com.lidarscan.core.jobs.ActionGate
+import com.lidarscan.core.jobs.JobKind
 import com.lidarscan.core.jobs.ProcessingJob
 import com.lidarscan.core.jobs.ProcessingMode
 import com.lidarscan.core.jobs.ProcessingPolicy
@@ -57,7 +58,31 @@ data class ProcessingUiState(
     val exportFormat: ExportFormat = ExportFormat.PLY_BINARY,
     val exportNote: String? = null,
     val cloud: CloudUploadState = CloudUploadState(),
+    /**
+     * The transient banner Review still shows over the viewer.
+     *
+     * ROUND 28 item 163: the Jobs tab no longer reads this. It used to render
+     * it as a `Snackbar` pinned above the tab bar — i.e. directly on top of the
+     * queue rows describing the same event (J4) — with an unset `contentColor`
+     * that drew at 1.05:1 in light and 1.25:1 in dark (J3), carrying a
+     * filesystem path with a hash in it (J5). See [outcomes] for what replaced
+     * it there. Review's own use is a different surface and is untouched.
+     */
     val message: String? = null,
+    /**
+     * ROUND 28 item 163 — **the success IS the row** (§C.6).
+     *
+     * Job id → that job's ≤12-word result line, e.g. `Done · 813 KB ·
+     * Downloads`. The delivery outcome is only known to this ViewModel (the
+     * engine's job finishes when the bytes are written into the project; the
+     * copy into `Downloads/LidarScan/` happens afterwards, here), so without
+     * this map the queue could only ever say "Done" and the *useful* half of
+     * the news had nowhere to live but a floating toast.
+     *
+     * The path and the byte count still go to the capture log, in full. What
+     * the row shows is the size and the folder — no path, no hash.
+     */
+    val outcomes: Map<Long, String> = emptyMap(),
     val engineAvailable: Boolean = true,
     /** ROUND 19 item 76: a blocking D6 reprocess is running from this screen. */
     val d6Processing: Boolean = false,
@@ -95,6 +120,9 @@ class ProcessingViewModel(
 
     /** The latest DataStore snapshot, mirrored so the gate recomputation is not itself suspending. */
     private var appSettings = com.lidarscan.app.data.AppSettings()
+
+    /** ROUND 28 item 163: `recomputeGates` runs on every job tick; the log line does not. */
+    private var lastLoggedGateReason: String? = null
 
     init {
         viewModelScope.launch {
@@ -166,11 +194,21 @@ class ProcessingViewModel(
             val allowPoor = appSettings.allowPoorSyncColorize
             val cloudConfigured = appSettings.cloudBaseUrl.isNotBlank() && appSettings.cloudToken.isNotBlank()
 
+            val postGate = ProcessingPolicy.postProcess(hasRaw, project.manifest.sensor)
+            // ROUND 28 item 163: the paragraph that used to be on the screen is
+            // now on exactly one surface — this one. `logReason` is written once
+            // per distinct refusal so a support log still explains why an
+            // offline re-run was never offered for a pushbroom scan, which is
+            // the only question the 62 words ever answered.
+            postGate.logReason?.takeIf { it != lastLoggedGateReason }?.let {
+                lastLoggedGateReason = it
+                log(it)
+            }
             _uiState.value = current.copy(
                 hasRawStreams = hasRaw,
                 keyframeCount = keyframes,
                 syncQuality = sync,
-                postProcessGate = ProcessingPolicy.postProcess(hasRaw, project.manifest.sensor),
+                postProcessGate = postGate,
                 colorizeGate = ProcessingPolicy.colorize(keyframes > 0, sync, allowPoor, repo.hasProcessedCloud(projectId)),
                 exportGate = ProcessingPolicy.export(repo.hasProcessedCloud(projectId), repo.totalPoints() > 0),
                 transferGate = ProcessingPolicy.transferBundle(hasRaw),
@@ -378,6 +416,7 @@ class ProcessingViewModel(
             val why = job?.statusText ?: "the job disappeared"
             _uiState.value = _uiState.value.copy(
                 message = "Export failed ($why). Nothing was written to Downloads.",
+                outcomes = _uiState.value.outcomes + (jobId to "Failed · $why"),
             )
             log("export FAILED job=$jobId state=${job?.state} file=${file.name} reason=$why")
             return
@@ -390,6 +429,14 @@ class ProcessingViewModel(
             onSuccess = { where ->
                 _uiState.value = _uiState.value.copy(
                     message = "Exported to $where (${humanBytes(file.length())}).",
+                    // ROUND 28 item 163 (J5): the row gets the size and the
+                    // folder. `$where` is `Downloads/LidarScan/scan-085-…-
+                    // e035f2-20260821-212507.ply`, which was the *success*
+                    // message, three lines long, and unreadable at a glance.
+                    // The full path is one line down, in the log, where the
+                    // person who needs it is looking.
+                    outcomes = _uiState.value.outcomes +
+                        (jobId to "Done · ${humanBytes(file.length())} · $DOWNLOADS_FOLDER"),
                 )
                 log("export OK job=$jobId ${file.name} -> $where bytes=${file.length()}")
                 if (share) {
@@ -405,6 +452,10 @@ class ProcessingViewModel(
                     message = "Export finished but could not be copied to Downloads " +
                         "(${e.javaClass.simpleName}: ${e.message}). The file is on the phone at " +
                         "${file.absolutePath} — use the share sheet or a USB cable to get it off.",
+                    // The row states the half the operator can act on. The
+                    // absolute path is in the log line below it.
+                    outcomes = _uiState.value.outcomes +
+                        (jobId to "Done, but not in Downloads. Share it."),
                 )
                 log("export COPY FAILED ${file.name}: ${e.javaClass.name}: ${e.message}")
                 // Offer the hand-off anyway: it is the only remaining route.
@@ -597,7 +648,9 @@ class ProcessingViewModel(
 
     private fun cloudErrorText(e: Throwable): String = when (e) {
         is CloudError.PermissionDenied -> "The server rejected the token. Check it in Settings."
-        is CloudError.TooLarge -> "The bundle is larger than the server's cap (§3.8's hard limit is 2 GiB)."
+        // ROUND 28 item 163: "§3.8's hard limit" is a spec citation, and "§" is
+        // on the wording law's own jargon list. The number is the useful half.
+        is CloudError.TooLarge -> "This scan is too big for the server (2 GB cap)."
         is CloudError.Network -> "Could not reach the server: ${e.message}"
         is CloudError.Cancelled -> "Cancelled."
         is CloudError.JobFailed -> "The server reported a failure: ${e.status.message}"
@@ -610,6 +663,34 @@ class ProcessingViewModel(
         repo.cancel(id)
     }
 
+    /**
+     * ROUND 28 item 163 — **the one control a read-only queue still needs.**
+     *
+     * §C.6's error pattern is "a Secondary button performing the fix, inline,
+     * at the point of failure", and on a queue the point of failure is the row.
+     * This is not the task launcher §D.6 deleted: it re-runs a job the operator
+     * already started, from the row that reports it failed, rather than
+     * offering a fresh one. Every *new* job now starts from Review or from the
+     * Projects `⋯` menu, where the operator is looking at the scan.
+     *
+     * A failed job carries no re-submit handle (the engine's queue is keyed by
+     * id and a dead id cannot be revived), so retry means "submit the same kind
+     * again for this project" — which is exactly what the operator tapped the
+     * first time.
+     */
+    fun retry(context: Context, job: ProcessingJob) {
+        // Drop the stale outcome first: a row that says "Failed · Storage full"
+        // while a fresh attempt is running is the queue lying about itself.
+        _uiState.value = _uiState.value.copy(outcomes = _uiState.value.outcomes - job.id)
+        when (job.kind) {
+            JobKind.EXPORT_POINTS -> export(context)
+            JobKind.TRANSFER_EXPORT -> transferBundle(context, share = false)
+            JobKind.POST_PROCESS -> postProcess()
+            JobKind.COLORIZE -> colorize()
+            JobKind.CLOUD_SUBMIT -> cloudSubmit()
+        }
+    }
+
     private fun report(r: Result<Long>, ok: String) {
         _uiState.value = _uiState.value.copy(
             message = r.fold({ ok }, { it.message ?: "Failed." }),
@@ -618,5 +699,12 @@ class ProcessingViewModel(
 
     private companion object {
         val IDENTITY_4X4 = doubleArrayOf(1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+
+        /**
+         * The word a person uses for where the file went. `DownloadsExporter`
+         * writes into `Downloads/LidarScan/`; the sub-folder is a detail of
+         * ours, and the operator opens Downloads.
+         */
+        const val DOWNLOADS_FOLDER = "Downloads"
     }
 }

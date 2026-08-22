@@ -358,4 +358,41 @@ object CaptureLayout {
      */
     fun useCompactChrome(connected: Boolean, manualEntryOpen: Boolean): Boolean =
         connected && !manualEntryOpen
+
+    /**
+     * ROUND 28 item 158 — **the 60 % floor is keyed on RECORDING, not on
+     * CONNECTED.**
+     *
+     * Round 27 item 136 wrote the exception as "connected keeps the picture,
+     * disconnected gives the room to the connect flow", and the reasoning was
+     * sound for the state it was thinking about. It tests the wrong thing. The
+     * owner's rig **is** connected and **is not** recording, so his first
+     * screen took the picture-wins branch and reserved 60 % of the display —
+     * about 940 px on his phone — for a live view that does not exist until
+     * Start is pressed. Half the screen was an empty dark rectangle with square
+     * corners in a light theme.
+     *
+     * The question the floor is really asking is *"is there anything to
+     * draw?"*, and before Start the answer is no however many cables are
+     * plugged in. Round 8's rule is not weakened by this — it is finally being
+     * applied to the state it was written about, which is an operator walking
+     * with a cloud growing in front of him.
+     *
+     * @param recording a capture is running or paused — the only state in which
+     *   the viewport has content.
+     * @param isReplay a replay session, whose entire content IS the preview.
+     */
+    fun viewportEarnsTheScreen(recording: Boolean, isReplay: Boolean): Boolean =
+        recording || isReplay
+
+    /**
+     * The viewport's guaranteed share, given [viewportEarnsTheScreen].
+     *
+     * Zero when there is nothing to draw: §D.1 does not shrink the viewport on
+     * the idle page, it *replaces* it — with the LAST SCAN card and three
+     * readiness rows — so the honest number for that state is not a small
+     * fraction, it is none.
+     */
+    fun minViewportFraction(recording: Boolean, isReplay: Boolean): Float =
+        if (viewportEarnsTheScreen(recording, isReplay)) MIN_VIEWPORT_FRACTION else 0f
 }

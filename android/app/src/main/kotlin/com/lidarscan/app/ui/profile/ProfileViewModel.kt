@@ -54,6 +54,19 @@ class ProfileViewModel(
         val sending: Float? = null,
         /** The last word — [FeedbackWording.SENT] or [FeedbackWording.NOT_SENT]. */
         val result: String? = null,
+        /**
+         * ROUND 28 item 165 (F6) — the two numbers the Projects header used to
+         * carry, absorbed into the "This phone" table when item 151 deleted
+         * that header.
+         *
+         * They are NOT on [DeviceFacts]: that class is the contract for what
+         * leaves the phone in a bundle, it is pinned by `:core` tests, and
+         * "how many of my scans have a CRS" is a fact about the library rather
+         * than about the device. Adding it there would put a new field in every
+         * feedback zip to satisfy a row on one screen.
+         */
+        val totalPoints: Long = 0L,
+        val georeferencedCount: Int = 0,
     ) {
         val note: String get() = FeedbackWording.noteFor(route)
     }
@@ -85,11 +98,25 @@ class ProfileViewModel(
     fun refresh() {
         viewModelScope.launch {
             val settings = settingsRepository.settings.first()
-            val (count, bytes) = withContext(Dispatchers.IO) {
+            val walk = withContext(Dispatchers.IO) {
                 val projects = runCatching { projectStore.list() }.getOrDefault(emptyList())
-                projects.size to runCatching { sizeOf(projectsRootDir) }.getOrDefault(0L)
+                LibraryWalk(
+                    count = projects.size,
+                    bytes = runCatching { sizeOf(projectsRootDir) }.getOrDefault(0L),
+                    points = projects.sumOf { it.manifest.pointCountEstimate ?: 0L },
+                    // The same test the Projects list uses for the EPSG badge:
+                    // a manifest carrying 0 is a manifest that was written
+                    // before the field meant anything, not a scan in EPSG 0.
+                    georeferenced = projects.count { p ->
+                        p.manifest.crsEpsg?.takeIf { it != 0 } != null
+                    },
+                )
             }
+            val count = walk.count
+            val bytes = walk.bytes
             _uiState.value = _uiState.value.copy(
+                totalPoints = walk.points,
+                georeferencedCount = walk.georeferenced,
                 facts = DeviceFacts(
                     appVersion = appVersion,
                     versionCode = versionCode,
@@ -137,4 +164,73 @@ class ProfileViewModel(
     /** Bytes under [dir], following the tree. Symlinks are not created by this app. */
     private fun sizeOf(dir: File): Long =
         dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+
+    /**
+     * One directory walk, four numbers.
+     *
+     * A holder rather than four `runCatching` calls in [refresh] because the
+     * walk is the expensive part and doing it once is the difference between
+     * one pass over 66 project directories and four.
+     */
+    private data class LibraryWalk(
+        val count: Int,
+        val bytes: Long,
+        val points: Long,
+        val georeferenced: Int,
+    )
+}
+
+/**
+ * ROUND 28 item 165 — **the "This phone" table's four values, as pure
+ * functions.**
+ *
+ * §A.8's finding F6 is the only ✅ in the whole review: *"the This phone spec
+ * table is the best-built pattern in the app"*, and §C.4 made it the model for
+ * `ScanRow` everywhere. So its content is kept verbatim and the strings it
+ * shows move here, where they can be pinned by a test rather than by a
+ * screenshot — the same treatment
+ * [com.lidarscan.core.render.PointCountFormat] got for the same reason.
+ *
+ * Points go through `PointCountFormat.longForm`; there is no second point
+ * formatter in this app any more, which is what item 150 was about.
+ */
+object ProfileFacts {
+
+    /** `Ollidar 0.9.13 (913)`. */
+    fun appLine(appName: String, version: String, versionCode: Int): String =
+        "$appName $version ($versionCode)"
+
+    /**
+     * `Pixel 8 Pro · Android 16`.
+     *
+     * One row where there were two. The model and the OS release are always
+     * read together — nobody has ever wanted one without the other — and F6's
+     * table is a table of ANSWERS, so a row per field was a row too many.
+     */
+    fun deviceLine(model: String, androidVersion: String): String {
+        val phone = model.trim().ifBlank { "Unknown phone" }
+        return if (androidVersion.isBlank()) phone else "$phone · Android $androidVersion"
+    }
+
+    /**
+     * `66 · 8.1 M points` — the scan count and the point total the Projects
+     * header carried until item 151 removed it.
+     */
+    fun scansLine(scanCount: Int, totalPoints: Long): String = when {
+        scanCount <= 0 -> "None yet"
+        else -> "$scanCount · ${com.lidarscan.core.render.PointCountFormat.longForm(totalPoints)}"
+    }
+
+    /**
+     * `65 of 66` — the third figure from that header.
+     *
+     * Stated as a fraction rather than a bare count because the number only
+     * means something against the total: 65 georeferenced scans is excellent
+     * out of 66 and alarming out of 400.
+     */
+    fun georeferencedLine(georeferenced: Int, scanCount: Int): String = when {
+        scanCount <= 0 -> "None yet"
+        georeferenced <= 0 -> "None of $scanCount"
+        else -> "$georeferenced of $scanCount"
+    }
 }

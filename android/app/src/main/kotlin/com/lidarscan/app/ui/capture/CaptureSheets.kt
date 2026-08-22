@@ -46,10 +46,9 @@ import com.lidarscan.app.ui.components.SheetSection
 import com.lidarscan.app.ui.components.SheetSlider
 import com.lidarscan.app.ui.components.SheetSwitchRow
 import com.lidarscan.app.ui.theme.DisplayFontFamily
-import com.lidarscan.app.ui.theme.InkFaint
-import com.lidarscan.app.ui.theme.MonoLabel
-import com.lidarscan.app.ui.theme.SemGood
-import com.lidarscan.app.ui.theme.SemWarn
+import com.lidarscan.app.ui.theme.ScanColors
+import com.lidarscan.app.ui.theme.ScanMeta
+import com.lidarscan.app.ui.theme.ScanMetaCaps
 import com.lidarscan.core.render.ColorMode
 import com.lidarscan.core.render.Colormap
 
@@ -116,7 +115,7 @@ private fun SheetHead(title: String, hint: String) {
             color = MaterialTheme.colorScheme.onSurface,
         )
         Spacer(Modifier.weight(1f))
-        Text(hint.uppercase(), style = MonoLabel, color = InkFaint)
+        Text(hint.uppercase(), style = ScanMetaCaps, color = ScanColors.inkFaint)
     }
 }
 
@@ -149,6 +148,11 @@ fun CaptureSettingsSheet(
     colormap: Colormap,
     pointSizePx: Float,
     lodBudgetMPoints: Int,
+    /** ROUND 28 item 158: the live-view toggle, moved off the transport row. */
+    liveView: Boolean = true,
+    onLiveViewChange: (Boolean) -> Unit = {},
+    /** ROUND 28 item 158: the `?` FAB's destination — see the Tutorial row. */
+    onOpenTutorial: () -> Unit = {},
     // ── ROUND 23 item 106(a): DETAIL — Auto / High / Max ────────────────────
     /** The rungs THIS device may be offered (item 100's ceiling has already dropped the rest). */
     detailLevels: List<com.lidarscan.core.capture.DetailLevel> =
@@ -375,13 +379,50 @@ fun CaptureSettingsSheet(
                     hint = "phone-tracked · read-only",
                     readout = arTrackingLabel,
                     readoutColor = when {
-                        !arAvailable -> InkFaint
-                        arTrackingIsGood -> SemGood
-                        else -> SemWarn
+                        !arAvailable -> ScanColors.inkFaint
+                        arTrackingIsGood -> ScanColors.good
+                        else -> ScanColors.warn
                     },
                 )
 
+                // ── ROUND 28 items 158 + 166: the `?` FAB's destination ─────
+                //
+                // The help affordance was a floating `?` anchored inside the
+                // empty viewport — the one region of the idle screen with no
+                // content to explain. §D.1 sends it here, which is also where
+                // Settings › Tutorial lands, so the tour has one door per
+                // surface instead of a permanent floating layer.
+                SheetRowLabel(label = "Tutorial", readout = "")
+                com.lidarscan.app.ui.components.SecondaryPill(
+                    text = com.lidarscan.core.capture.ScanTutorial.HELP_LABEL,
+                    onClick = onOpenTutorial,
+                    modifier = Modifier.fillMaxWidth().testTag("tutorialButton"),
+                )
+
                 SheetSection("Display")
+
+                // ── ROUND 28 item 158: the live-view eye lives HERE now ─────
+                //
+                // It was one of three grey circles in two sizes below the
+                // viewport — 72 dp pause, 156 dp SCAN, 72 dp eye — that a
+                // walking operator had to tell apart, and it is a *display
+                // setting*, pressed once a session if ever. §D.1's table sends
+                // it to this sheet; the recording row's third slot goes to the
+                // attitude instrument, which is the one thing there he cannot
+                // otherwise see.
+                //
+                // The `liveViewSwitch` test tag is kept exactly, because three
+                // emulator suites drive this control through it and a renamed
+                // tag would silently retire their assertions.
+                SheetSwitchRow(
+                    title = "Live view",
+                    // Round 26 item 124's honesty, kept verbatim: the one thing
+                    // an operator must know before turning this off.
+                    subtitle = "Display only. Recording is unaffected.",
+                    checked = liveView,
+                    onCheckedChange = onLiveViewChange,
+                    modifier = Modifier.testTag("liveViewSwitch"),
+                )
 
                 SheetRowLabel(label = "Colour mode", readout = colorModeLabel(colorMode))
                 // ROUND 10 (owner item 39): RGB is paused with the camera —
@@ -470,7 +511,7 @@ fun CaptureSettingsSheet(
                     label = "Gamma",
                     hint = if (toneActive) "0.1 – 4.0" else "height / intensity only",
                     readout = "%.2f".format(gamma),
-                    readoutColor = if (toneActive) MaterialTheme.colorScheme.onSurface else InkFaint,
+                    readoutColor = if (toneActive) MaterialTheme.colorScheme.onSurface else ScanColors.inkFaint,
                 )
                 SheetSlider(
                     value = gamma,
@@ -486,7 +527,7 @@ fun CaptureSettingsSheet(
                     label = "Brightness",
                     hint = if (toneActive) "0.1 – 3.0" else "height / intensity only",
                     readout = "%.2f".format(brightness),
-                    readoutColor = if (toneActive) MaterialTheme.colorScheme.onSurface else InkFaint,
+                    readoutColor = if (toneActive) MaterialTheme.colorScheme.onSurface else ScanColors.inkFaint,
                 )
                 SheetSlider(
                     value = brightness,
@@ -549,7 +590,7 @@ fun CaptureSettingsSheet(
                     Spacer(Modifier.height(4.dp))
                     Hint(
                         detailCeilingNote,
-                        color = InkFaint,
+                        color = ScanColors.inkFaint,
                         modifier = Modifier.testTag("detailCeilingNote"),
                     )
                 }
@@ -565,7 +606,7 @@ fun CaptureSettingsSheet(
                 Hint(
                     "Recording, connection, performance and the mount reference are in the Capture sheet — " +
                         "this one is only about how the cloud is drawn. Nothing here touches the recording.",
-                    color = InkFaint,
+                    color = ScanColors.inkFaint,
                 )
                 Spacer(Modifier.height(14.dp))
             }
@@ -681,7 +722,7 @@ fun CaptureConfigSheet(
                     // changed" — and stays until read, or tapped away.
                     Hint(
                         presetChangeNote,
-                        color = SemGood,
+                        color = ScanColors.good,
                         modifier = Modifier
                             .clickable(onClick = onDismissPresetNote)
                             .testTag("presetChangeNote"),
@@ -689,7 +730,7 @@ fun CaptureConfigSheet(
                 }
                 if (presetCaution != null) {
                     Spacer(Modifier.height(6.dp))
-                    Hint(presetCaution, color = SemWarn, modifier = Modifier.testTag("presetCaution"))
+                    Hint(presetCaution, color = ScanColors.warn, modifier = Modifier.testTag("presetCaution"))
                 }
 
                 SheetSection("Scan")
@@ -820,7 +861,7 @@ fun DiagnosticsSheet(
                 Hint(
                     "Read-only. The capture settings that drive these — camera keyframes and their rate — " +
                         "live in the Capture-settings sheet.",
-                    color = InkFaint,
+                    color = ScanColors.inkFaint,
                 )
                 Spacer(Modifier.height(14.dp))
             }
@@ -956,7 +997,7 @@ fun PreScanChecklistSheet(
                 readoutColor = if (trimAccuracy != null &&
                     trimAccuracy > com.lidarscan.core.calib.MountTrim.WARN_STABILITY_DEG
                 ) {
-                    SemWarn
+                    ScanColors.warn
                 } else {
                     MaterialTheme.colorScheme.onSurface
                 },
@@ -977,7 +1018,7 @@ fun PreScanChecklistSheet(
             SheetRowLabel(
                 label = "Tracking",
                 readout = trackingLabel.ifBlank { "not required for this sensor" },
-                readoutColor = if (trackingIsGood) SemGood else SemWarn,
+                readoutColor = if (trackingIsGood) ScanColors.good else ScanColors.warn,
                 modifier = Modifier.testTag("checklistTrackingRow"),
             )
 

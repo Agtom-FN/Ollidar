@@ -60,18 +60,25 @@ class Round25UiTest {
     private fun count(tag: String): Int =
         composeRule.onAllNodesWithTag(tag, useUnmergedTree = true).fetchSemanticsNodes().size
 
-    // ── item 114 ───────────────────────────────────────────────────────────
+    // ── item 114, REVERSED by ROUND 28 item 162 ────────────────────────────
 
     /**
-     * **Item 114.** The list row carries no lidar preview; the gallery card
-     * still does.
+     * **Item 114 → item 162.** BOTH layouts draw a preview.
      *
-     * The two halves are one test on purpose. "No thumbnails anywhere" and
-     * "thumbnails in the right layout" produce identical results in the list,
-     * and the first is a regression the owner would find in one tap.
+     * Round 25 removed the thumbnail from the list on the argument that a
+     * 108 dp preview above every row means four scans fill a phone screen. The
+     * argument was about the CARD, and applying it to the thumbnail deleted the
+     * single strongest differentiator between 66 otherwise identical rows —
+     * leaving text and three chips that were the same on every one of them.
+     *
+     * §D.5's row is 72 dp with a 56 dp tile at the leading edge, so the picture
+     * costs no height at all; the list holds roughly twice as many scans as the
+     * old card layout did *with* the thumbnail back. The assertion is inverted
+     * rather than deleted, and the tag is unchanged, so this file records the
+     * reversal instead of losing the claim.
      */
     @Test
-    fun theListHasNoPreviewAndTheGalleryStillDoes() {
+    fun bothLayoutsDrawAPreview() {
         ActivityScenario.launch(MainActivity::class.java).use {
             awaitProjectsTab()
             composeRule.waitForIdle()
@@ -90,13 +97,10 @@ class Round25UiTest {
                 composeRule.waitUntil(timeoutMillis = 10_000) { has("projectsList") }
             }
             composeRule.waitForIdle()
-            assertEquals(
-                "item 114: a list row draws no lidar preview",
-                0,
-                count("projectPreview"),
+            assertTrue(
+                "item 162: a list row draws its scan's cloud at the leading edge",
+                count("projectPreview") > 0,
             )
-            // …and there IS a row, so the zero above means something.
-            assertTrue("the list must actually have a card in it", has("projectCard"))
 
             composeRule.onNodeWithTag("projectsLayoutToggle").performClick()
             composeRule.waitUntil(timeoutMillis = 10_000) { has("projectsGallery") }
@@ -199,9 +203,23 @@ class Round25UiTest {
 
             // Both controls, because a sweep you cannot copy is a sweep that
             // does not reach the person who needs to read it.
-            composeRule.onNodeWithTag("connectionDebugSweep").performScrollTo()
+            // ROUND 28 item 164: the sweep's output and its two controls moved
+            // into a SHEET behind `connectionDebugRow`, per the mockup — a
+            // developer read-out is not a card that lives permanently on the
+            // Settings page. The row is still the developer-mode gate this test
+            // waits on above; the controls are one tap further in, and both are
+            // still asserted, because a sweep you cannot copy is a sweep that
+            // does not reach the person who needs to read it.
+            composeRule.onNodeWithTag("connectionDebugRow").performScrollTo()
+            composeRule.onNodeWithTag("connectionDebugRow").performClick()
+            composeRule.waitUntil(timeoutMillis = 15_000) { has("connectionDebugSweep") }
             composeRule.onNodeWithTag("connectionDebugSweep").assertIsDisplayed()
             composeRule.onNodeWithTag("connectionDebugCopy").assertIsDisplayed()
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+                .uiAutomation.performGlobalAction(
+                    android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK,
+                )
+            composeRule.waitForIdle()
 
             // Lock it again so the next test meets a clean device.
             composeRule.onNodeWithTag("app_version_footer").performScrollTo()

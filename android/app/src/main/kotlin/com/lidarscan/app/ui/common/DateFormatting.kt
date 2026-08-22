@@ -10,14 +10,23 @@ private val DATE_FORMATTER = DateTimeFormatter.ofPattern("MMM d, yyyy")
 fun formatCreatedDate(epochMillis: Long): String =
     DATE_FORMATTER.format(Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault()))
 
-fun formatPointCount(count: Long?): String {
-    if (count == null) return "No capture yet"
-    return when {
-        count >= 1_000_000 -> "%.1fM pts".format(count / 1_000_000.0)
-        count >= 1_000 -> "%.1fK pts".format(count / 1_000.0)
-        else -> "$count pts"
-    }
-}
+/**
+ * ROUND 28 item 150 — **the third formatter, folded into the one.**
+ *
+ * The item started from two — a correct adaptive one on Projects and a broken
+ * divide-by-a-million on Review — and the screenshot sweep found a third here,
+ * feeding the project picker and the detail screen. Its output differed from
+ * Projects' by a space (`120.3K pts` against `120.3 K pts`), which is exactly
+ * the kind of difference that is invisible in code review, invisible to every
+ * test, and immediately visible when two screens showing the same scan are put
+ * side by side.
+ *
+ * One number, one formatter. `PointCountFormat` lives in `:core` with its own
+ * tests; this is a forwarder so the two call sites did not need editing, and
+ * `rowClause` also gives an empty scan its own words rather than `0 pts`.
+ */
+fun formatPointCount(count: Long?): String =
+    com.lidarscan.core.render.PointCountFormat.rowClause(count)
 
 /**
  * A project's id is its `.lscan` DIRECTORY name (see `FileProjectStore`), so

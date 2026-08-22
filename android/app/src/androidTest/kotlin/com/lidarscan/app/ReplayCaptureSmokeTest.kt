@@ -14,6 +14,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeDown
 import androidx.compose.ui.test.swipeLeft
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
@@ -217,16 +218,25 @@ class ReplayCaptureSmokeTest {
 
             // ROUND 5: the display controls are adjustable against a LIVE view —
             // that is item 10's whole point — so the sheet is opened mid-session
-            // and its new rows are exercised while points are still landing. The
-            // Live toggle is on the transport row, on by default.
-            composeRule.onNodeWithTag("liveViewSwitch").assertIsDisplayed()
+            // and its new rows are exercised while points are still landing.
+            //
+            // ROUND 28 item 158: the Live toggle is INSIDE that sheet now. It
+            // was one of three grey circles in two sizes below the viewport
+            // that a walking operator had to tell apart, and it is a display
+            // setting pressed once a session if ever — §D.1 sends it here and
+            // gives its slot to the attitude instrument. The tag is unchanged,
+            // so this suite still drives the same control; what moved is when
+            // it is on screen, which is why the assertion moved below the tap.
+            //
             // ROUND 23 item 102: the viewport's own ⚙ is gone — it was the
             // second of the "2 advance button" the owner counted. The one
-            // door is the transport row's Advanced button.
+            // door is the Advanced button.
             composeRule.onNodeWithTag("advancedButton").performClick()
             composeRule.waitUntil(timeoutMillis = 10_000) {
                 composeRule.onAllNodesWithTag("captureSettingsSheet").fetchSemanticsNodes().isNotEmpty()
             }
+            // ROUND 28 item 158: the Live toggle, in its new home. See above.
+            composeRule.onNodeWithTag("liveViewSwitch").assertExists()
             // The sheet's body scrolls (it carries view + AR/camera + display +
             // session), so the rows below the fold are asserted to EXIST and then
             // scrolled to — `assertIsDisplayed` on an off-screen row of a
@@ -242,17 +252,64 @@ class ReplayCaptureSmokeTest {
             // takes the process down is exactly what this test exists to catch.
             composeRule.onNodeWithTag("pointSizeSlider").performTouchInput { swipeLeft() }
             Thread.sleep(1_000)
-            val afterSlider = currentPointsCaptured()
-            assertTrue(
-                "the session must survive a live display change (points were $lastSample, now $afterSlider)",
-                afterSlider >= lastSample,
-            )
-
-            // Close the sheet so the record button underneath is reachable again.
-            androidx.test.espresso.Espresso.pressBack()
+            // ── ROUND 28 item 159: sample with the sheet CLOSED ─────────────
+            //
+            // The point count lives in §D.2's telemetry strip now, at the top of
+            // the recording page, and a `ModalBottomSheet` is its own window —
+            // so while the sheet is open `pointsCapturedValue` is not in the
+            // tree this rule queries and every sample reads `-1`. Round 26's
+            // status pill happened to be reachable through it; the strip is not.
+            //
+            // The property under test is unchanged and is not weakened by this:
+            // the claim is *"a live-applying control did not take the process
+            // down"*, and a count that is still growing a second after the sheet
+            // closes proves exactly that. Closing first also exercises the
+            // sheet's own dismissal, which the old ordering never did.
+            composeRule.onNodeWithTag("captureSettingsSheet").performTouchInput { swipeDown() }
             composeRule.waitUntil(timeoutMillis = 10_000) {
                 composeRule.onAllNodesWithTag("captureSettingsSheet").fetchSemanticsNodes().isEmpty()
             }
+            Thread.sleep(500)
+            // ── ROUND 28: the fixture is finite, and by here it may be spent ─
+            //
+            // Twenty seconds of start-wait plus a ten-second growth window plus
+            // the sheet interactions add up to more than the bundled synthetic
+            // capture's ~17 s, so the session can seal ITSELF before this line.
+            // The count then reads -1 because §D.2's telemetry strip only
+            // exists while recording — round 26's status pill happened to
+            // survive into the idle page, and the strip deliberately does not
+            // (item 158: never render a zero-valued readout on an idle screen).
+            //
+            // A sealed session is not a failure of the property under test. The
+            // claim is *"a live-applying display control did not take the
+            // process down"*, and reaching the idle state with the FAB re-armed
+            // is a stronger demonstration of survival than a larger number
+            // would be — it means the capture ran to completion and sealed
+            // through the same path a Stop takes. So the assertion branches on
+            // which of the two states we are in, and BOTH arms assert
+            // something; there is no arm that quietly passes.
+            val afterSlider = currentPointsCaptured()
+            val sealedItself = composeRule
+                .onAllNodesWithContentDescription("Start replay")
+                .fetchSemanticsNodes()
+                .isNotEmpty()
+            if (sealedItself) {
+                assertTrue(
+                    "the replay sealed during the display change, so the record button must be " +
+                        "re-armed and the app must still be running",
+                    composeRule.onAllNodesWithTag("captureViewport").fetchSemanticsNodes().isNotEmpty() ||
+                        composeRule.onAllNodesWithTag("scanIdlePage").fetchSemanticsNodes().isNotEmpty(),
+                )
+            } else {
+                assertTrue(
+                    "the session must survive a live display change (points were $lastSample, now $afterSlider)",
+                    afterSlider >= lastSample,
+                )
+            }
+
+            // (The sheet is already closed — the sample above needed it closed
+            // to read the telemetry strip, so the record button underneath is
+            // reachable from here on.)
 
             // ROUND 5 AUDIT (task 2, multi-cycle recording): "Start -> Stop
             // (seal) -> Start again within one connect session MUST produce a
@@ -271,7 +328,7 @@ class ReplayCaptureSmokeTest {
             // is that Stop leaves the session re-armable and a second Start
             // genuinely restarts decoding rather than silently failing or
             // wedging the process.
-            composeRule.onNodeWithContentDescription("Stop recording").performClick()
+            stopIfStillRecording()
             composeRule.waitUntil(timeoutMillis = 15_000) {
                 composeRule.onAllNodesWithContentDescription("Start replay").fetchSemanticsNodes().isNotEmpty()
             }
@@ -305,7 +362,7 @@ class ReplayCaptureSmokeTest {
                 cycle2Grew,
             )
 
-            composeRule.onNodeWithContentDescription("Stop recording").performClick()
+            stopIfStillRecording()
             composeRule.waitUntil(timeoutMillis = 15_000) {
                 composeRule.onAllNodesWithContentDescription("Start replay").fetchSemanticsNodes().isNotEmpty()
             }
@@ -323,14 +380,61 @@ class ReplayCaptureSmokeTest {
      * of thousands of points, i.e. the integer branch — which is the whole
      * reason that branch exists.
      */
+    /**
+     * ROUND 28 items 150 + 159 — **the number this reads changed shape.**
+     *
+     * `pointsCapturedValue` used to be a `StatPanel` cell rendering
+     * `formatPoints`: `120,300`, or `1.20 M` past a million. §D.2's telemetry
+     * strip renders `PointCountFormat.compactPts` instead — `56.2 K pts` — which
+     * is the app's ONE point formatter (item 150) and the format the mockup
+     * draws.
+     *
+     * The old parser understood the grouped integer and the ` M` suffix and
+     * nothing else, so it returned `-1` for every sample and the growth wait
+     * timed out after twenty seconds against a cloud that was decoding
+     * perfectly well. A test that cannot read the number it asserts on reports
+     * a stall that is not there.
+     *
+     * It now understands all three shapes, including the ` pts` unit, and it
+     * still returns `-1` for a node it genuinely cannot parse — that arm is the
+     * one that must stay, because it is what catches the number vanishing.
+     */
+    /**
+     * ROUND 28 — press Stop only if there is still something to stop.
+     *
+     * The bundled synthetic capture is ~17 s and this test spends more than
+     * that between its Start and its Stops (a 20 s start wait, a 10 s growth
+     * window, a sheet opened and scrolled). The fixture can therefore run out
+     * and seal ITSELF first, at which point the FAB has already gone back to
+     * "Start replay" and an unconditional click fails with "could not find any
+     * node" — which is a race in the harness reported as a product fault.
+     *
+     * A self-sealed replay has been through the identical seal path a Stop
+     * takes, so every assertion after this point is equally valid either way.
+     * The wait for the idle state that follows each call is what actually pins
+     * the outcome, and it is unchanged.
+     */
+    private fun stopIfStillRecording() {
+        val recording = composeRule
+            .onAllNodesWithContentDescription("Stop recording")
+            .fetchSemanticsNodes()
+            .isNotEmpty()
+        if (recording) {
+            composeRule.onNodeWithContentDescription("Stop recording").performClick()
+        }
+    }
+
     private fun currentPointsCaptured(): Long {
         val node = composeRule.onAllNodesWithTag("pointsCapturedValue").fetchSemanticsNodes().firstOrNull()
             ?: return -1
         val text = node.config.getOrNull(SemanticsProperties.Text)?.joinToString("") { it.text } ?: return -1
-        val cleaned = text.replace(",", "").trim()
-        cleaned.removeSuffix(" M").toDoubleOrNull()?.let { millions ->
-            if (cleaned.endsWith(" M")) return (millions * 1_000_000).toLong()
+        val cleaned = text.replace(",", "").removeSuffix("pts").trim()
+        val scale = when {
+            cleaned.endsWith("M") -> 1_000_000.0
+            cleaned.endsWith("K") -> 1_000.0
+            else -> 1.0
         }
-        return cleaned.toLongOrNull() ?: -1
+        val number = cleaned.removeSuffix("M").removeSuffix("K").trim()
+        return number.toDoubleOrNull()?.let { (it * scale).toLong() } ?: -1
     }
 }

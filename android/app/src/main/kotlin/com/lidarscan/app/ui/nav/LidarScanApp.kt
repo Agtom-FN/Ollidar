@@ -70,6 +70,22 @@ fun LidarScanApp(
     val currentEntry by navController.currentBackStackEntryAsState()
     val currentTab = tabForRoute(currentEntry?.destination?.route)
 
+    // ── ROUND 28 item 165 (review finding F4): the bar is HIDDEN on Profile ──
+    //
+    // Round 27 item 131 established that Profile lights no tab, because it is a
+    // peer of Projects rather than a screen inside it, and a tab bar must not
+    // let the highlight depend on the back stack. That was correct and it left
+    // the visible consequence: Profile drew a full tab bar with **no tab
+    // active**, four inert glyphs and 64 dp of chrome that say nothing. A
+    // navigation control whose entire content is "you are not in any of these"
+    // is worse than no control.
+    //
+    // Profile keeps its own back arrow, which is the affordance that is
+    // actually true there. Expressed as a route test rather than as
+    // `currentTab == null` so that a future off-tab destination has to make its
+    // own decision instead of silently inheriting this one.
+    val onProfile = currentEntry?.destination?.route == Routes.PROFILE
+
     // ── ROUND 22 item 97: Simple mode, read once and asked everywhere ───────
     //
     // `SimpleMode` (in :core) is the single place that decides what each
@@ -116,8 +132,11 @@ fun LidarScanApp(
     // them, including the three the redesign never restyled — and it is why
     // `CaptureScreen` stopped padding for the bar in the same round.
     val scanning by container.scanInProgress.collectAsStateWithLifecycle()
+    // ROUND 28 item 147: the bar is level 0 and 64 dp, so the clearance it
+    // reserves is 80 rather than round 27's 86 — see `ScanDims.TabBarClearance`.
+    val tabBarVisible = !scanning && !onProfile
     val tabBarInset by androidx.compose.animation.core.animateDpAsState(
-        targetValue = if (scanning) 0.dp else ScanDims.TabBarClearance,
+        targetValue = if (tabBarVisible) ScanDims.TabBarClearance else 0.dp,
         label = "tabBarInset",
     )
     Box(Modifier.fillMaxSize()) {
@@ -464,7 +483,7 @@ fun LidarScanApp(
         // thing left on a dimmed screen. A tour cannot start during a
         // recording, so the two states never meet.
         androidx.compose.animation.AnimatedVisibility(
-            visible = !scanning,
+            visible = tabBarVisible,
             enter = androidx.compose.animation.slideInVertically { it } + androidx.compose.animation.fadeIn(),
             exit = androidx.compose.animation.slideOutVertically { it } + androidx.compose.animation.fadeOut(),
             modifier = Modifier.align(Alignment.BottomCenter),

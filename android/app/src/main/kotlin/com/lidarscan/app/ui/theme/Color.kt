@@ -20,11 +20,21 @@ import androidx.compose.ui.graphics.Color
  */
 
 // ── surfaces ────────────────────────────────────────────────────────────────
-/** Blue-biased near-black — the app's ground plane. */
-val Ground = Color(0xFF12161B)
+/**
+ * Blue-biased near-black — the app's ground plane.
+ *
+ * ROUND 28 item 146 — **the ground drops so the card can be seen.** It was
+ * `#12161B` against a `#1A2027` panel: **1.11:1**, which is not a step, it is a
+ * rounding error. A card that cannot be perceived as a card is why every panel
+ * in this app was given a border AND a drop shadow, and that pair is what the
+ * owner reads as "floating card soup". Moving the ground down two points and
+ * the panel up one takes card-vs-page to 1.17:1 — still quiet, but a real rung
+ * — which is what lets item 147 delete the shadows rather than merely ban them.
+ */
+val Ground = Color(0xFF0E1216)
 
-/** Raised panel (cards, tab bar, stat strip). */
-val Panel = Color(0xFF1A2027)
+/** Raised panel (cards, tab bar, stat strip). See [Ground] for the change. */
+val Panel = Color(0xFF1B222A)
 
 /** Second panel step (segmented-control troughs, tiles inside a card). */
 val PanelAlt = Color(0xFF222A33)
@@ -137,77 +147,140 @@ val SemBad = Color(0xFFE05252)
 // `on` colours stay the pure semantic hue, which is what keeps the contrast:
 // against a 14 %-amber ground, full-strength amber reads far better than the
 // near-black `onSurface` a Material container would pair.
-private fun Color.over(ground: Color, alpha: Float): Color = Color(
+/**
+ * ROUND 28 item 145 — **the derivation was right; its ground was a constant.**
+ *
+ * Round 25 wrote `SemWarn.over(Panel, 0.14f)` and `Panel` is `#1B222A`, a dark
+ * value, in every theme. The light theme therefore drew warning cards as **dark
+ * olive boxes on a white page**, and success cards as near-black green ones.
+ *
+ * The function survives — deriving a container from its semantic is what keeps
+ * the pair from drifting when a token changes, which was the whole point — but
+ * it is now `internal` and takes the ground from the CALLER, and the only
+ * callers are [ScanColorScheme]'s container properties, which are resolved
+ * against the current theme's card colour at composition time. There is no
+ * longer a way to spell "composite over the dark panel" by accident.
+ */
+internal fun Color.over(ground: Color, alpha: Float): Color = Color(
     red = red * alpha + ground.red * (1f - alpha),
     green = green * alpha + ground.green * (1f - alpha),
     blue = blue * alpha + ground.blue * (1f - alpha),
 )
 
-/** Warning ground: amber at 14 % over the panel. Pairs with [OnSemWarnContainer]. */
-val SemWarnContainer = SemWarn.over(Panel, 0.14f)
-
-/** The legible foreground on [SemWarnContainer]. */
-val OnSemWarnContainer = SemWarn
-
-/** Success ground: green at 14 % over the panel. Pairs with [OnSemGoodContainer]. */
-val SemGoodContainer = SemGood.over(Panel, 0.14f)
-
-/** The legible foreground on [SemGoodContainer]. */
-val OnSemGoodContainer = SemGood
-
 /**
- * Sensor badge colours. Fixed regardless of theme so the D6-vs-Mid-360 badge
- * stays recognisable at a glance across projects — the same reasoning this
- * file carried before the redesign, now expressed in the redesign's own ramp
- * colours (the mockup's `.chip.sensor-d6` / `.chip.sensor-mid`).
- */
-val SensorD6Badge = ScanTeal
-val SensorMid360Badge = PoseBlue
-
-/**
- * ROUND 25 item 119 — the STL-27L's badge.
+ * ROUND 28 item 144 — **the sensor identities moved into the scheme.**
  *
- * A THIRD colour rather than a reuse of [SensorD6Badge], even though the
- * STL-27L behaves like the D6 nearly everywhere else in this app. The badge's
- * entire job is telling an operator scrolling the Projects list which box was
- * on the bracket for a given scan; two 2-D serial lidars sharing one teal pill
- * would make the badge stop answering the only question it is asked. Sand is
- * the ramp's remaining unclaimed colour and is distinguishable from both teal
- * and blue for the common colour-vision deficiencies, where a second green or
- * a second blue would not be.
- */
-val SensorStl27lBadge = ScanSand
-
-/**
- * ROUND 25 item 119 — **the one place a `SensorType` becomes a badge colour.**
+ * The block that stood here explained why the D6, the Mid-360 and the STL-27L
+ * are "fixed regardless of theme so the badge stays recognisable at a glance
+ * across projects", and round 25 item 119's reasoning for a third colour — sand
+ * rather than a second teal or a second blue, because two 2-D serial lidars
+ * sharing one pill make the badge stop answering the only question it is asked
+ * — is still exactly right and is preserved in [ScanColorScheme.sensor].
  *
- * Four draw sites (the Projects card, the card thumbnail, the picker, the
- * detail screen) each spelled this as `if (sensor == MID360) PoseBlue else
- * ScanTeal`. That `else` is what painted a brand new STL-27L in the COIN-D6's
- * teal the moment the enum grew — the label said "STL-27L" and the colour said
- * D6, and on a card read at arm's length the colour is what is read first.
+ * What was wrong was the word *fixed*. Fixing the hex is not what makes a badge
+ * recognisable; fixing the **hue** is. `#3EC4B0` on white is 2.16:1, so on the
+ * owner's phone the recognisable teal was a pale smudge. The light column keeps
+ * the hue and moves the lightness, so a D6 badge is the same teal in both
+ * themes and readable in both.
  *
- * The exhaustive decision lives in `:core` (`SensorType.badgeTint`), so a
- * fourth sensor breaks the build there; this is only the palette lookup, which
- * is the half that genuinely belongs to the theme.
+ * @see ScanColorScheme.sensor
+ * @see sensorBadgeColor
  */
-fun sensorBadgeColor(sensor: com.lidarscan.core.model.SensorType): Color =
-    when (sensor.badgeTint) {
-        com.lidarscan.core.model.SensorType.BadgeTint.D6 -> SensorD6Badge
-        com.lidarscan.core.model.SensorType.BadgeTint.MID360 -> SensorMid360Badge
-        com.lidarscan.core.model.SensorType.BadgeTint.STL27L -> SensorStl27lBadge
-    }
-
-// ── light-theme companions ──────────────────────────────────────────────────
+// ── light-theme companions (ROUND 28 items 144/146) ────────────────────────
 //
-// The mockup is deliberately single-theme ("dark-cockpit instrument UIs, shown
-// in their own world"). The Settings screen's Light/Dark/System control
-// predates the redesign and stays functional, so the tokens get a light
-// counterpart rather than the switch quietly doing nothing: same ember, same
-// semantics, inverted ground.
-val GroundLight = Color(0xFFF4F6F8)
+// **The light theme was an unfinished port, and it was the single largest
+// defect in the app.** This file used to define thirty dark tokens and six
+// light ones, and the comment above `sensorBadgeColor` explained the missing
+// twenty-four as a principle: the semantics and the sensor identities are
+// "deliberately theme-invariant so a Float badge looks the same on every
+// screen and in every theme".
+//
+// The instinct was right and the execution inverted it. A badge that looks the
+// same in both themes is the goal; a badge painted with the same *hex* in both
+// themes is how you lose it, because #E5B93C measures 8.86:1 on the dark panel
+// and **1.71:1** on white. On the owner's phone — which runs light — the amber
+// that means "degraded", the green that means "fixed", both sensor identities
+// and the ember used as text were all somewhere between invisible and merely
+// illegible. `CoverageAmber` at 1.68:1 was painting *"No scanner found. Plug it
+// in, then Retry."*
+//
+// So each semantic gets a light column in which **hue and saturation are
+// preserved and only lightness moves**, tuned to land at 4.5:1 on the light
+// page. A FAIR badge is recognisably the same amber in both themes and legible
+// in both, which is what "theme-invariant" was always trying to buy.
+//
+// Ratios in the comments are against the theme's own page colour.
+
+/** §C.3 `page` — the light ground. Was `#F4F6F8`; see [Ground] for why it moved. */
+val GroundLight = Color(0xFFECEFF3)
+
+/** §C.3 `card` — white, unchanged. It is the ground that moved, not the card. */
 val PanelLight = Color(0xFFFFFFFF)
-val PanelAltLight = Color(0xFFE8ECF0)
-val LineLight = Color(0xFFD3DAE1)
+
+/** §C.3 `trough` — segmented-control tracks and tiles inside a card. */
+val PanelAltLight = Color(0xFFE2E7EC)
+
+/** §C.3 `line` — the 1 dp hairline. 1.41:1 → **1.58:1** on white, which is what
+ * actually makes a card read as a card once the shadows are gone. */
+val LineLight = Color(0xFFC6CFD8)
+
+/**
+ * §C.3 `viewport`, light.
+ *
+ * ROUND 28 item S2: `ViewportGround`'s near-black had no light counterpart, so
+ * the 3D view was a `#0B0E12` slab with square corners inside a white page —
+ * the review's words are "it reads as a rendering failure". A point cloud still
+ * needs a dark ground to carry (that part of the dark-only design was correct),
+ * so the light viewport is the dark theme's CARD colour rather than the light
+ * theme's: dark enough for the cloud, close enough to the page's family that it
+ * reads as a panel and not as a hole.
+ */
+val ViewportGroundLight = Color(0xFF1B222A)
+
 val InkLight = Color(0xFF12161B)
+
+/** 5.3:1 on [GroundLight] — a real body-text token, not a dark-theme leftover. */
 val InkMuteLight = Color(0xFF5C6873)
+
+/**
+ * 3.5:1 — **UI only, never text.** Disabled labels, inert chevrons, tick marks.
+ * Named `faint` rather than given to text so the one rule that keeps this
+ * theme legible ("every string is ≥4.5:1") has no exception to argue about.
+ */
+val InkFaintLight = Color(0xFF78838E)
+
+/**
+ * ROUND 28 item 144 — **orange that may be text.**
+ *
+ * The brand fill does not move: `#F26A1B` stays exactly as round 22 item 93 set
+ * it, on filled buttons, the active tab, the record FAB and progress. But the
+ * same value used as *ink* measures **3.06:1** on the light page, and the app
+ * uses it as ink in a dozen places (links, section labels, active-chip text).
+ * Splitting the role rather than darkening the brand is what lets both be
+ * right: `primary` is the fill, `primaryInk` is the text and icon colour, and
+ * in the dark theme they are the same token because there they already pass.
+ */
+val EmberInkLight = Color(0xFFBF4D0B)
+
+// ── the light semantic column (§C.3) ───────────────────────────────────────
+
+/** 4.51:1 — RTK fixed / healthy / done. */
+val SemGoodLight = Color(0xFF218147)
+
+/** 4.54:1 — float / degraded / warning. */
+val SemWarnLight = Color(0xFF8C6C13)
+
+/** 4.51:1 — the coverage amber. See [CoverageAmber]; this is its light half. */
+val CoverageAmberLight = Color(0xFFA16300)
+
+/** 4.51:1 — single / fault / failed. */
+val SemBadLight = Color(0xFFD92929)
+
+/** 4.50:1 — the COIN-D6 identity, and the height ramp's low end. */
+val ScanTealLight = Color(0xFF267E71)
+
+/** 4.55:1 — the Mid-360 identity, and the trajectory colour. */
+val PoseBlueLight = Color(0xFF1F71C9)
+
+/** 4.51:1 — the STL-27L identity, and the height ramp's high end. */
+val ScanSandLight = Color(0xFF8B6D18)

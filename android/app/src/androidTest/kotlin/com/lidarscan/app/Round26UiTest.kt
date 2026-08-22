@@ -137,12 +137,81 @@ class Round26UiTest {
                 0,
                 composeRule.onAllNodesWithTag("mapModeChip").fetchSemanticsNodes().size,
             )
-            composeRule.onNodeWithTag("tutorialButton").assertIsDisplayed()
-            composeRule.onNodeWithTag("liveViewSwitch").assertIsDisplayed()
-            composeRule.onNodeWithTag("pointsCapturedValue").assertIsDisplayed()
+            // ── ROUND 28 item 158 supersedes three of round 26's claims ────
+            //
+            // Round 26 asserted a floating `?`, a live-view eye and a
+            // `0 pts` readout on the idle Scan page. §D.1 removes all three,
+            // and each removal is a decision this suite now RECORDS rather
+            // than a line somebody quietly deleted — the same treatment round
+            // 27 item 140(a) gave the map-mode chip six lines above.
+            //
+            //  * the `?` FAB floated inside the empty viewport, anchored to the
+            //    one region with no content to explain. It is a row in the
+            //    Advanced sheet.
+            //  * the eye was one of three grey circles in two sizes. It is a
+            //    switch in the Advanced sheet.
+            //  * `0 pts` was one of three zero-valued readouts — `00:00`,
+            //    `0 pts`, `0.0 m` — occupying the most valuable position on the
+            //    screen to say that nothing had happened.
+            // ── ROUND 28 HOTFIX: this one claim was scoped wrong ────────────
+            //
+            // The `?` is the only one of item 158's three removals this bench
+            // can NOT see, and the reason is which layout the AVD renders.
+            // §D.1's idle page is the `compact && !isLandscape` branch of
+            // `CaptureScreen`, and `compact` is
+            // `CaptureLayout.useCompactChrome(connected, …)` — **connected**.
+            // No D6 is connected to an emulator, so this screen falls to the
+            // `else` branch, round 27's `IdleScanLayout`, which still draws
+            // `TutorialChip` in the bottom-end corner. The eye below really did
+            // leave both pages — it moved into the Advanced sheet, which is a
+            // shared surface — but the `?` and the point readout hang off the
+            // LAYOUT, and only the layout §D.1 replaced lost them.
+            //
+            // Asserted as ONE rather than as zero, because one is what the AVD
+            // renders and because two would be the real defect: the `?` is also
+            // a row in the Advanced sheet now (`CaptureSheets`), and
+            // `Round24UiTest` drives the whole six-step tour through this tag —
+            // `CaptureScreen`'s own note beside the chip row says an ambiguous
+            // `tutorialButton` selector is what breaks that suite.
+            //
+            // What is NOT proven here, and is reported upward instead: whether
+            // the corner `?` should ALSO leave the disconnected page. That is a
+            // visible affordance on the screen the owner opens first, so it is
+            // an owner call, not a hotfix's.
+            assertEquals(
+                "item 158: exactly one ? — the corner chip on round 27's idle " +
+                    "page (the AVD is disconnected, so §D.1's page is not the " +
+                    "one under test); a second would be the Advanced-sheet row " +
+                    "leaking and would break Round24UiTest's tour",
+                1,
+                count("tutorialButton"),
+            )
+            assertEquals(
+                "item 158: the live-view eye has left the transport row",
+                0,
+                count("liveViewSwitch"),
+            )
+            // ROUND 28 HOTFIX, and the same scoping as the `?` above: item 158
+            // deleted the `00:00 / 0 pts / 0.0 m` band from §D.1's page, which
+            // needs a connected sensor. Round 27's `IdleScanLayout` — the one
+            // an emulator gets — still carries the old status band, so the
+            // readout is present and there is exactly one of it. The second
+            // `pointsCapturedValue` in `CaptureScreen` belongs to item 159's
+            // REC strip and is only composed while recording; seeing two here
+            // would mean both bands were live at once.
+            assertEquals(
+                "item 158: exactly one point readout — round 27's status band, " +
+                    "which is the page a disconnected AVD renders; two would " +
+                    "mean item 159's REC strip is composed on an idle screen",
+                1,
+                count("pointsCapturedValue"),
+            )
+            // ROUND 28 item 168: the ATTITUDE instrument takes the eye's slot
+            // while recording — and only while recording, which is why it is
+            // absent here.
+            assertEquals("item 168: no attitude instrument on an idle page", 0, count("attitudeIndicator"))
 
             assertEquals("item 124: one Advanced gear", 1, count("advancedButton"))
-            assertEquals("item 124: one tour button", 1, count("tutorialButton"))
             assertEquals("item 124: one scan button", 1, count("recordButton"))
 
             // ── ROUND 27 item 136: the same claims, on a PAGE ──────────────
@@ -151,19 +220,25 @@ class Round26UiTest {
             // tab is a laid-out page now, so "corner of the picture" is not the
             // right frame — but the SPATIAL claims that made those corners
             // useful survive verbatim and are restated against the page: the
-            // gear is above and at the end, the scan button is below it and
-            // centred, and the `?` is off to the end of the scan button. The
-            // map-mode chip is gone with item 140(a), asserted above.
-            val page = composeRule.onNodeWithTag("captureViewport").fetchSemanticsNode()
+            // gear is above and at the end, and the scan button is below it and
+            // centred. The map-mode chip is gone with item 140(a) and the `?`
+            // with item 158, both asserted above.
+            val page = composeRule.onNodeWithTag("recordButton").fetchSemanticsNode()
                 .root!!.semanticsOwner.rootSemanticsNode.size
             val gear = composeRule.onNodeWithTag("advancedButton").fetchSemanticsNode().boundsInRoot
             val fab = composeRule.onNodeWithTag("recordButton").fetchSemanticsNode().boundsInRoot
-            val help = composeRule.onNodeWithTag("tutorialButton").fetchSemanticsNode().boundsInRoot
 
             assertTrue("the gear is in the top half", gear.center.y < page.height / 2f)
             assertTrue("the gear is at the end edge", gear.center.x > page.width / 2f)
             assertTrue("the scan button is in the bottom half", fab.center.y > page.height / 2f)
-            assertTrue("the ? is above the scan button's band", help.center.y < fab.top)
+            // ROUND 28 item 158: the FAB is the ONE action on this page and it
+            // is centred. It used to be a 156 dp circle between a 72 dp pause
+            // and a 72 dp eye, which is not a centred primary — it is the
+            // middle of three.
+            assertTrue(
+                "item 158: the scan button is centred (${fab.center.x} of ${page.width})",
+                kotlin.math.abs(fab.center.x - page.width / 2f) < page.width * 0.08f,
+            )
         }
     }
 
@@ -201,11 +276,18 @@ class Round26UiTest {
 
     /**
      * **Item 122.** The app calls itself Ollidar where the operator can see it,
-     * and the version footer is 0.9.12.
+     * and the version footer is 0.9.13.
      *
-     * The footer is the strongest single check available on-device: it is the
-     * one string that carries the name AND both version numbers, and it is read
-     * from `BuildConfig`, so a stale APK fails it rather than passing quietly.
+     * The footer is read from `BuildConfig`, so a stale APK fails this rather
+     * than passing quietly.
+     *
+     * ROUND 28 item 164: the footer used to be `Ollidar v0.9.12 (build 912)`,
+     * rendered at about 1.5:1 — effectively invisible, which is finding T4.
+     * §D.7 makes it a ROW: the label says `Version` and the value says
+     * `0.9.13 (913)`, in `ScanMeta` at a legible ink-mute. So the NAME is
+     * asserted where the operator actually reads it — the Projects hero, two
+     * lines above — and this node keeps the two numbers, which is the half that
+     * catches a stale APK.
      */
     @Test
     fun theAppIsCalledOllidar() {
@@ -224,9 +306,8 @@ class Round26UiTest {
                 .getOrNull(androidx.compose.ui.semantics.SemanticsProperties.Text)
                 ?.joinToString(" ")
                 .orEmpty()
-            assertTrue("the footer names the app: \"$footer\"", footer.contains("Ollidar"))
-            assertTrue("the footer is this round's version: \"$footer\"", footer.contains("0.9.12"))
-            assertTrue("…and its code: \"$footer\"", footer.contains("912"))
+            assertTrue("the footer is this round's version: \"$footer\"", footer.contains("0.9.13"))
+            assertTrue("…and its code: \"$footer\"", footer.contains("913"))
 
             composeRule.onNodeWithTag("tab_projects").performClick()
         }

@@ -113,6 +113,35 @@ data class ProjectManifest(
      */
     val recovered: Boolean = false,
     /**
+     * ROUND 28 item 162 — **the seal verdict, on disk.**
+     *
+     * `ScanSummary.grade` was computed at seal from eight measurements —
+     * points, elapsed, path length, sections, tracking drops, poses recorded,
+     * world points resolved, whether the engine ever started — and then sent to
+     * an in-memory `StateFlow` and two log lines. **It reached nothing the
+     * operator could see afterwards.**
+     *
+     * That is the whole of finding P1b: in the owner's fleet every scan is a
+     * D6, every scan is Quick scan and 65 of 66 are georeferenced, so the three
+     * chips on every Projects card carried zero bits — while the ONE field that
+     * genuinely differs between his 66 scans, and the only one that answers
+     * "which of these is worth exporting", was thrown away four milliseconds
+     * after it was computed. He could not tell a POOR scan from a GOOD one
+     * without opening it.
+     *
+     * A nullable `String` rather than the enum: this is a *record of what was
+     * decided at seal time*, not a live computation, and the grading thresholds
+     * have moved in four separate rounds (11, 12, 16, 17). Storing the name
+     * keeps an old scan's verdict readable when the enum next grows a value,
+     * and a nullable field is additive, so the schema version does not move and
+     * a manifest written by 0.9.13 still reads on 0.9.12.
+     *
+     * Null means "sealed before this existed", which is every scan already on
+     * the owner's phone — `ProjectRowGrade` derives what the manifest proves in
+     * that case and prints no mark rather than guessing.
+     */
+    val grade: String? = null,
+    /**
      * ROUND 7, item 3: the ARCore tracking discontinuities observed during this
      * capture, in the engine's clock.
      *

@@ -1,5 +1,6 @@
 package com.lidarscan.core.jobs
 
+import com.lidarscan.core.WordingLaw
 import com.lidarscan.core.model.ExportFormat
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -64,15 +65,19 @@ class ProcessingPolicyTest {
         assertFalse(noCloud.enabled)
         assertTrue(noCloud.reason!!.contains("Post-process first"))
 
-        // Then no camera: §3.5's "gracefully unavailable", explicitly NOT a failure.
+        // Then no camera: §3.5's "gracefully unavailable", explicitly NOT a
+        // failure — and after ROUND 28 item 163 the tone says so too, while the
+        // spec citation the operator cannot use lives in `logReason`.
         val noCamera = ProcessingPolicy.colorize(false, SyncQuality.GOOD, false, hasProcessedCloud = true)
         assertFalse(noCamera.enabled)
-        assertTrue(noCamera.reason!!.contains("gracefully unavailable"))
+        assertEquals(GateTone.NEUTRAL, noCamera.tone)
+        assertTrue(noCamera.reason!!.contains("No camera frames"))
+        assertTrue(noCamera.logReason!!.contains("gracefully unavailable"))
 
         // Then the sync gate, which fails CLOSED at UNKNOWN.
         val unsynced = ProcessingPolicy.colorize(true, SyncQuality.UNKNOWN, false, hasProcessedCloud = true)
         assertFalse(unsynced.enabled)
-        assertTrue(unsynced.reason!!.contains("never converged"))
+        assertTrue(unsynced.logReason!!.contains("never converged"))
     }
 
     @Test
@@ -112,7 +117,9 @@ class ProcessingPolicyTest {
     fun `LAS without a georeference is a note, never a block`() {
         val note = ProcessingPolicy.exportFormatNote(ExportFormat.LAS14, georeferenced = false)
         assertNotNull(note)
-        assertTrue(note!!.contains("placeholder"))
+        // ROUND 28 item 163: what the operator needs is the consequence, not
+        // A9's placeholder CRS — and "CRS" is on the wording law's jargon list.
+        assertTrue(note!!.contains("lands nowhere on a map"))
         assertNull(ProcessingPolicy.exportFormatNote(ExportFormat.LAS14, georeferenced = true))
         assertNotNull(ProcessingPolicy.exportFormatNote(ExportFormat.PCD, georeferenced = true))
         assertNull(ProcessingPolicy.exportFormatNote(ExportFormat.PLY_BINARY, georeferenced = false))
@@ -138,12 +145,90 @@ class ProcessingPolicyTest {
             sensor = com.lidarscan.core.model.SensorType.COIN_D6,
         )
         assertFalse(gate.enabled)
-        val why = gate.reason!!
-        assertTrue(why, why.contains("Mid-360"))
-        assertTrue(why, why.contains("COIN-D6"))
-        // And it says what DOES produce the D6's registered cloud, so the
-        // refusal is navigable rather than a dead end.
-        assertTrue(why, why.contains("pushbroom"))
+        // The reason is still there and still true; ROUND 28 item 163 moved the
+        // pipeline archaeology to the log and left the operator the fact.
+        assertEquals("Already final. Processed while you walked.", gate.reason)
+        val log = gate.logReason!!
+        assertTrue(log, log.contains("COIN-D6"))
+        assertTrue(log, log.contains("pushbroom"))
+        assertTrue(log, log.contains("kPoseAr"))
+    }
+
+    // ── ROUND 28 item 163 (review findings J1, J2) ────────────────────────
+
+    /**
+     * The headline defect of the old Processing screen, pinned as two separate
+     * assertions because it was two separate mistakes in one string.
+     */
+    @Test
+    fun `the pushbroom refusal obeys the instruction law and is NOT an error`() {
+        for (sensor in com.lidarscan.core.model.SensorType.entries.filter { it.isPhoneTrackedPushbroom }) {
+            val gate = ProcessingPolicy.postProcess(hasRawStreams = true, sensor = sensor)
+            val why = gate.reason!!
+            // It shipped at 62 words against a six-word law.
+            assertTrue(
+                "$sensor: ${WordingLaw.wordCount(why)} words: \"$why\"",
+                WordingLaw.isInstruction(why),
+            )
+            // It shipped naming Mid-360 LIO, pushbroom, trajectory, the ARCore
+            // pose stream and .lscan — to a person holding a phone in a flat.
+            assertTrue(why, WordingLaw.jargonIn(why).isEmpty())
+            assertFalse(why, why.contains("pushbroom"))
+            assertFalse(why, why.contains(".lscan"))
+            assertFalse(why, why.contains("ARCore"))
+            // And it shipped in error red, on a scan where nothing failed.
+            // §C.6: "not applicable" is ink-mute. NEVER red.
+            assertEquals("nothing failed, so nothing is red", GateTone.NEUTRAL, gate.tone)
+        }
+    }
+
+    /**
+     * The complement: a refusal the operator really can act on keeps its red.
+     * A tone that is always NEUTRAL would fix J2 by making the colour mean
+     * nothing at all, which is the mistake in the other direction.
+     */
+    @Test
+    fun `a refusal the operator can act on is still bad`() {
+        assertEquals(GateTone.BAD, ProcessingPolicy.postProcess(hasRawStreams = false).tone)
+        assertEquals(GateTone.BAD, ProcessingPolicy.transferBundle(hasRawStreams = false).tone)
+        assertEquals(GateTone.BAD, ProcessingPolicy.cloudSubmit(true, cloudConfigured = false).tone)
+        assertEquals(GateTone.BAD, ProcessingPolicy.export(false, false).tone)
+    }
+
+    /**
+     * Every sentence this policy can put in front of an operator, against the
+     * law — because the Jobs tab is in the primary tab bar and Review's export
+     * sheet is one tap from it.
+     */
+    @Test
+    fun `no gate reason exceeds the detail law or carries jargon`() {
+        val sensors = com.lidarscan.core.model.SensorType.entries
+        val gates = buildList {
+            add(ProcessingPolicy.postProcess(hasRawStreams = false))
+            sensors.forEach { add(ProcessingPolicy.postProcess(true, it)) }
+            add(ProcessingPolicy.colorize(true, SyncQuality.GOOD, false, false))
+            add(ProcessingPolicy.colorize(false, SyncQuality.GOOD, false, true))
+            add(ProcessingPolicy.colorize(true, SyncQuality.UNKNOWN, false, true))
+            add(ProcessingPolicy.colorize(true, SyncQuality.POOR, false, true))
+            add(ProcessingPolicy.export(false, false))
+            add(ProcessingPolicy.transferBundle(false))
+            add(ProcessingPolicy.cloudSubmit(false, false))
+            add(ProcessingPolicy.cloudSubmit(true, false))
+        }
+        for (gate in gates) {
+            val why = gate.reason ?: continue
+            val faults = WordingLaw.violations(why, WordingLaw.TabBarScreen.JOBS)
+            assertTrue("$faults in \"$why\"", faults.isEmpty())
+        }
+    }
+
+    /** The mode summaries are a Destination row's detail line now (§D.6). */
+    @Test
+    fun `every processing mode summary fits a row`() {
+        for (mode in ProcessingMode.entries) {
+            val faults = WordingLaw.violations(mode.summary, WordingLaw.TabBarScreen.JOBS)
+            assertTrue("${mode.name}: $faults in \"${mode.summary}\"", faults.isEmpty())
+        }
     }
 
     @Test

@@ -10,6 +10,7 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -51,7 +52,7 @@ private val DarkColors = darkColorScheme(
     onTertiaryContainer = ScanSand,
     error = SemBad,
     onError = OnEmber,
-    errorContainer = Color(0x33E05252),
+    errorContainer = SemBad.over(Panel, 0.14f),
     onErrorContainer = SemBad,
     background = Ground,
     onBackground = Ink,
@@ -69,8 +70,36 @@ private val DarkColors = darkColorScheme(
     scrim = Color(0xCC0A0D11),
     inverseSurface = Ink,
     inverseOnSurface = Ground,
+    inversePrimary = Ember,
+    surfaceTint = Ember,
 )
 
+/**
+ * ROUND 28 item 148 — **every role, filled.**
+ *
+ * The light scheme used to declare twenty-three of Material's roles and leave
+ * the rest to `lightColorScheme()`'s own defaults, which are the M3 baseline
+ * purple. That is not a theoretical hazard; it shipped two visible bugs:
+ *
+ *  * `inverseOnSurface` was never set, so `Snackbar` — which takes its content
+ *    colour from `SnackbarDefaults.contentColor` = `inverseOnSurface` — drew
+ *    near-white `#F4EFF4` text on the `#E8ECF0` container the export toast
+ *    overrode. **1.05:1.** The owner exported the same file twice, 22 seconds
+ *    apart, because he could not read the message telling him the first one
+ *    worked.
+ *  * `secondaryContainer` was never set, so Review's selected `PLY` filter chip
+ *    inherited the baseline lavender — the review's "a colour that exists
+ *    nowhere in the palette", and it was right, because it came from Material
+ *    rather than from this file.
+ *
+ * Both are the same defect: a hole in the scheme is a hole any un-restyled
+ * Material component can fall into, and the app has dozens it has never
+ * restyled. So the list below is complete, and the two `inverse*` roles that
+ * caused the toast are pinned deliberately — `inverseSurface` is the ink
+ * colour and `inverseOnSurface` the page colour, which is what "inverse"
+ * means and what makes a default-styled snackbar legible without being
+ * restyled at all.
+ */
 private val LightColors = lightColorScheme(
     // ROUND 22 item 93: the SAME Agtom orange as the dark theme. The light
     // theme used to run a darkened ember (`EmberDim`) as its primary so that
@@ -81,11 +110,20 @@ private val LightColors = lightColorScheme(
     onPrimary = OnEmber,
     primaryContainer = EmberSoft,
     onPrimaryContainer = EmberDim,
-    secondary = Color(0xFF1E8C7C),
+    secondary = ScanTealLight,
     onSecondary = Color.White,
-    tertiary = Color(0xFF9A7A1E),
+    // The container pair a `FilterChip` reaches for when nothing restyles it —
+    // the trough, not Material's lavender. See the header.
+    secondaryContainer = PanelAltLight,
+    onSecondaryContainer = InkLight,
+    tertiary = ScanSandLight,
     onTertiary = Color.White,
-    error = SemBad,
+    tertiaryContainer = PanelAltLight,
+    onTertiaryContainer = InkLight,
+    error = SemBadLight,
+    onError = Color.White,
+    errorContainer = SemBadLight.over(PanelLight, 0.14f),
+    onErrorContainer = SemBadLight,
     background = GroundLight,
     onBackground = InkLight,
     surface = GroundLight,
@@ -99,6 +137,13 @@ private val LightColors = lightColorScheme(
     surfaceContainerHighest = PanelAltLight,
     outline = LineLight,
     outlineVariant = LineLight,
+    scrim = Color(0x99000000),
+    // The two roles the export toast fell through. Inverse means inverse:
+    // ink-coloured ground, page-coloured ink.
+    inverseSurface = InkLight,
+    inverseOnSurface = GroundLight,
+    inversePrimary = Ember,
+    surfaceTint = Ember,
 )
 
 /**
@@ -145,10 +190,16 @@ fun LidarScanTheme(
         else -> LightColors
     }
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = LidarScanTypography,
-        shapes = LidarScanShapes,
-        content = content,
-    )
+    // ROUND 28 item 144: the semantics travel with the Material scheme rather
+    // than beside it. Providing them here — not at each screen — is what makes
+    // `ScanColors.warn` correct on every surface in the app including the ones
+    // nobody remembered to audit.
+    CompositionLocalProvider(LocalScanColors provides scanColorScheme(useDarkTheme)) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = LidarScanTypography,
+            shapes = LidarScanShapes,
+            content = content,
+        )
+    }
 }

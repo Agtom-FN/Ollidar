@@ -170,6 +170,27 @@ object CaptureFocus {
             "Access not granted. Scans run unprotected."
         }
 
+    /**
+     * ROUND 28 item 164 — **the same fact, as a row rather than as a sentence.**
+     *
+     * `accessStatus` is one string carrying two clauses, and §C.4's ROW gives a
+     * title one ellipsised line. The screenshot sweep caught the result: the
+     * Settings row read *"Access not granted. Scans run unp…"* — a **warning the
+     * operator cannot finish reading**, next to the button that fixes it.
+     *
+     * The string is not shortened, because both clauses are load-bearing (the
+     * state, and what it costs). It is split at the sentence break it already
+     * had: the state is the title, the consequence is the detail line under it.
+     * `accessStatus` stays for the places that want one sentence — the sent
+     * diagnostics bundle among them — so nothing that reads a log line changes.
+     */
+    fun accessState(granted: Boolean): String =
+        if (granted) "Access granted" else "Access not granted"
+
+    /** The consequence, for [accessState]'s detail line. */
+    fun accessConsequence(granted: Boolean): String =
+        if (granted) "Scans run silenced." else "Scans run unprotected."
+
     /** One sentence for the capture screen. Null when there is nothing to say. */
     fun note(state: DndState): String? = when (state) {
         DndState.PROTECTED, DndState.ALREADY_QUIET, DndState.DISABLED -> null

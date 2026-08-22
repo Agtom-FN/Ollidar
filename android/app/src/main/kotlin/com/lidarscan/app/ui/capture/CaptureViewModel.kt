@@ -857,7 +857,7 @@ class CaptureViewModel(
                 // `fixedPx` at all. So the control the owner was moving wrote a
                 // field the declared mode said to ignore, and the owner's own
                 // `project.json` recorded the contradiction verbatim:
-                // `"mode": "ADAPTIVE", "fixedPx": 2.5`.
+                // `"mode": "Adaptive", "fixedPx": 2.5`.
                 pointSize = base.pointSize.copy(
                     mode = com.lidarscan.core.render.PointSizeMode.FIXED_PIXELS,
                     fixedPx = size,
@@ -1308,6 +1308,32 @@ class CaptureViewModel(
      * summary sheet. A path on screen is the cheapest possible answer to "is it
      * saved?", and it is the thing the owner could not get last time.
      */
+    // ── ROUND 28 item 158: the LAST SCAN card's subject ────────────────────
+    //
+    // The idle Scan page's most valuable region was ~940 px of empty dark
+    // rectangle: the 60 % viewport floor reserved for a live view that does not
+    // exist until Start is pressed. §D.1 repurposes it, and what belongs there
+    // is the thing the operator most often wants after opening this tab — the
+    // scan he just took, with its picture, so he can check it or open it.
+    //
+    // Loaded from the store rather than tracked in this ViewModel, because "the
+    // most recent scan" outlives any one capture session and must survive a tab
+    // hop; `_lastSavedProject` below is a different fact (what THIS session
+    // sealed) and remains what the seal flow uses.
+    private val _lastScan = MutableStateFlow<com.lidarscan.core.store.Project?>(null)
+    val lastScan: StateFlow<com.lidarscan.core.store.Project?> = _lastScan.asStateFlow()
+
+    fun refreshLastScan() {
+        viewModelScope.launch {
+            val newest = withContext(Dispatchers.IO) {
+                runCatching {
+                    projectStore.list().maxByOrNull { it.manifest.createdAtEpochMillis }
+                }.getOrNull()
+            }
+            _lastScan.value = newest
+        }
+    }
+
     private val _lastSavedProject = MutableStateFlow<String?>(null)
     val lastSavedProject: StateFlow<String?> = _lastSavedProject.asStateFlow()
 
@@ -1874,6 +1900,69 @@ class CaptureViewModel(
     val startOrientation: StateFlow<com.lidarscan.core.calib.HoldOrientation?> =
         _startOrientation.asStateFlow()
 
+    // ── ROUND 28 item 155: the gate's own view of a dead camera ────────────
+    //
+    // Round 27 item 142 tracks `arError`'s age in the SCREEN, as a `remember`,
+    // deliberately: the card is a property of what that screen has been looking
+    // at. The start sequence needs the same fact and cannot read a composition,
+    // so it keeps its own stamp from the same source. Two clocks over one
+    // signal, and that is correct — they answer different questions ("should I
+    // show a card?" and "should I abort this start?") and have different
+    // lifetimes.
+    private var arFatalSinceMillis: Long? = null
+
+    /**
+     * ROUND 28 item 155 — set by [runStartGateWait] when it stopped the start
+     * rather than merely finished waiting.
+     *
+     * A plain field rather than a return value because the wait is called
+     * inside a `try` whose whole job (round 21 item 84) is that NO outcome can
+     * end the job without re-entering the sequence — including a crash. A
+     * deliberate stop is the one outcome that must NOT re-enter, and a field
+     * survives the `catch` that a return value would have to be threaded
+     * through.
+     */
+    private var gateBlocked = false
+
+    /**
+     * ROUND 28 item 155 — the operator has already said yes to a flat scan, so
+     * this sequence must not ask again.
+     *
+     * Consumed by [blockStartIfTerminal] and cleared there, so the consent
+     * covers exactly one press. A flag that persisted would turn one informed
+     * decision into a permanently silenced warning, which is the state the item
+     * is fixing.
+     *
+     * It never suppresses [StartGateOutcome.ABORT]: "record it flat" is a thing
+     * an operator can mean, and "record it with a camera that is not running"
+     * is not.
+     */
+    private var startAnywayArmed = false
+
+    /**
+     * ROUND 28 item 155 — **the start sequence's terminal states.**
+     *
+     * Null while a start is merely in progress. Non-null means the sequence has
+     * stopped and is waiting for the operator, in the same card the hold-still
+     * panel uses (the owner's mockup note: hold-still and hard-failure are the
+     * SAME card size, so the screen does not jump when one becomes the other).
+     */
+    data class StartBlock(
+        val title: String,
+        val detail: String,
+        /** True for the NO_POSES case, which offers `Start anyway`. */
+        val startAnyway: Boolean,
+        /** True when Retry can plausibly do something — never for an unsupported device. */
+        val retryable: Boolean,
+    )
+
+    private val _startBlock = MutableStateFlow<StartBlock?>(null)
+    val startBlock: StateFlow<StartBlock?> = _startBlock.asStateFlow()
+
+    fun dismissStartBlock() {
+        _startBlock.value = null
+    }
+
     private val _startHold = MutableStateFlow<StartHoldState?>(null)
 
     /** Non-null while the hold-steady stage (or its GO linger) is on screen. */
@@ -2304,9 +2393,16 @@ class CaptureViewModel(
         pendingConfigurationChange = false
         if (live || _starting.value) return
         if (!afterConfigurationChange && !isReplay) {
-            logEvent(LOG_TAG_SESSION, "scan tab entered: fresh entry — starting a new scan")
-            performNewCapture()
+            // ROUND 28 item 156: the READOUTS clear here, the CHOICES do not.
+            // See `clearPreviousScanArtifacts` for the fifteen-entries-three-
+            // scans measurement that made the difference matter.
+            logEvent(LOG_TAG_SESSION, "scan tab entered: fresh entry — previous scan's readouts cleared")
+            clearPreviousScanArtifacts()
         }
+        // ROUND 28 item 158: the LAST SCAN card is re-read on every entry, not
+        // cached for the ViewModel's life — a scan deleted from Projects must
+        // not keep its picture on the Scan tab.
+        refreshLastScan()
         // A latch with no sequence behind it is exactly the "Start is dead
         // until the app is killed" failure of ROUND 21, arriving by a
         // different road: the sequence's owner was disposed, not released.
@@ -2861,6 +2957,127 @@ class CaptureViewModel(
      * `CaptureArController.clearEngineHandleIf` for the scan-068 story.
      */
     private var armedEngineHandle: Long = 0L
+
+    /**
+     * ROUND 28 item 155 — the dead-camera stamp, sampled where the gate can see
+     * it.
+     *
+     * Called at each point in the start sequence that is about to spend real
+     * time, rather than collected continuously: a collector would need a scope
+     * that outlives the sequence and a cancellation story for a ViewModel that
+     * round 22 item 88 already fought to keep alive across tab hops. Sampling
+     * costs one `StateFlow` read and cannot leak.
+     */
+    private fun sampleArFatal() {
+        val failing = arController?.status?.value?.arError != null
+        arFatalSinceMillis = if (failing) (arFatalSinceMillis ?: clock()) else null
+    }
+
+    /**
+     * The gate's verdict, and — when it is terminal — the card the operator
+     * gets instead of twenty seconds of silence.
+     *
+     * Returns true when the sequence should stop here. The latch is released on
+     * every stopping path, because round 21 item 84's rule stands: an un-resumed
+     * sequence is a held latch and a held latch is a dead Start button.
+     */
+    private fun blockStartIfTerminal(
+        ready: Boolean,
+        blocker: com.lidarscan.core.capture.TrackingWarmup.Blocker?,
+        rebuilt: Boolean,
+    ): Boolean {
+        sampleArFatal()
+        val outcome = com.lidarscan.core.capture.StartGateDecision.outcome(
+            ready = ready,
+            blocker = blocker,
+            fatalSinceMillis = arFatalSinceMillis,
+            nowMillis = clock(),
+            rebuilt = rebuilt,
+        )
+        return when (outcome) {
+            com.lidarscan.core.capture.StartGateOutcome.PROCEED -> false
+            com.lidarscan.core.capture.StartGateOutcome.OFFER_START_ANYWAY
+            if startAnywayArmed -> {
+                startAnywayArmed = false
+                logEvent(LOG_TAG_AR, "start gate: still no poses — proceeding on the operator's consent")
+                false
+            }
+            com.lidarscan.core.capture.StartGateOutcome.ABORT -> {
+                logEvent(
+                    LOG_TAG_AR,
+                    "start ABORTED: the tracking camera has been stopped for " +
+                        "${com.lidarscan.core.capture.ArTrouble.FATAL_PERSIST_MILLIS}ms — " +
+                        "not running the hold timer and not recording into it",
+                )
+                _startBlock.value = StartBlock(
+                    title = com.lidarscan.core.capture.StartGateDecision.ABORT_TITLE,
+                    detail = com.lidarscan.core.capture.StartGateDecision.ABORT_DETAIL,
+                    startAnyway = false,
+                    retryable = true,
+                )
+                abandonStart()
+                true
+            }
+            com.lidarscan.core.capture.StartGateOutcome.OFFER_START_ANYWAY -> {
+                logEvent(
+                    LOG_TAG_AR,
+                    "start HELD: no poses after the rebuild — asking before recording a flat scan",
+                )
+                _startBlock.value = StartBlock(
+                    title = com.lidarscan.core.capture.StartGateDecision.NO_POSES_TITLE,
+                    detail = com.lidarscan.core.capture.StartGateDecision.NO_POSES_DETAIL,
+                    startAnyway = true,
+                    retryable = true,
+                )
+                abandonStart()
+                true
+            }
+        }
+    }
+
+    /**
+     * Stop a start sequence without starting anything, leaving the button
+     * usable. The counterpart of the round-21 watchdog's cleanup, reached
+     * deliberately rather than by timeout.
+     */
+    private fun abandonStart() {
+        startGateJob?.cancel()
+        startGateJob = null
+        startPending = false
+        _startWarmup.value = null
+        _startHold.value = null
+        _startProgress.value = null
+        _starting.value = false
+        releaseStart()
+    }
+
+    /**
+     * ROUND 28 item 155 — **the operator's explicit "yes, record it flat".**
+     *
+     * Round 16 already knew the scan would be 2-D and started anyway with a
+     * warning note; the scans that produced are the `POOR` grades and several of
+     * the seven `points=0` seals. The information did not change — the consent
+     * did.
+     */
+    fun startAnyway() {
+        _startBlock.value = null
+        startAnywayArmed = true
+        logEvent(LOG_TAG_SESSION, "start anyway: the operator accepted a flat scan")
+        startCapture(skipChecklist = true)
+    }
+
+    /** The error card's Retry: rebuild the tracking session, then start again. */
+    fun retryStartAfterBlock() {
+        _startBlock.value = null
+        arFatalSinceMillis = null
+        viewModelScope.launch {
+            startPoseSource?.resetWorldFrame(
+                attempts = com.lidarscan.app.ar.CaptureArController.RESET_ATTEMPTS,
+            )
+            startPoseSource?.resetPoseCounters()
+            startCapture(skipChecklist = true)
+        }
+    }
 
     init {
         // ── ROUND 22 item 88: the observable the owner's log already carried ──
@@ -3457,6 +3674,15 @@ class CaptureViewModel(
             }
             _starting.value = true
             _engineStarted.value = null
+            // ── ROUND 28 item 156: THIS is where a new scan gets new settings ──
+            //
+            // It used to be the tab entry, which meant twelve abandoned looks
+            // at the screen threw away the operator's preset and display block
+            // for every three scans he actually took. A press of Start is the
+            // moment he has committed to a capture, and it is the only moment
+            // at which "back to defaults" is what he asked for. See
+            // `resetPerScanChoices`.
+            resetPerScanChoices()
             // A gate job from an earlier press has no business surviving into
             // this one. It cannot happen while the atomic holds, and it is
             // cancelled here anyway: the failure it caused was silent and cost
@@ -3582,7 +3808,14 @@ class CaptureViewModel(
                         )
                     }
                     _startWarmup.value = null
-                    runStartSequence(skipChecklist = true, resume = StartResume.AFTER_GATE)
+                    // ROUND 28 item 155: a gate that STOPPED does not resume the
+                    // sequence. `abandonStart` has already released the latch and
+                    // put the card up; re-entering here would start the capture
+                    // the card just declined to start.
+                    if (!gateBlocked) {
+                        runStartSequence(skipChecklist = true, resume = StartResume.AFTER_GATE)
+                    }
+                    gateBlocked = false
                 }
                 return
             }
@@ -3890,16 +4123,36 @@ class CaptureViewModel(
      * leaves the honest note when it starts anyway.
      */
     private suspend fun runStartGateWait() {
+        gateBlocked = false
         val giveUpAt =
             clock() + com.lidarscan.core.capture.TrackingWarmup.MAX_WAIT_MILLIS
         while (clock() < giveUpAt) {
             val v = trackingWarmup.evaluate(startPoseSource?.poseWindow().orEmpty())
             _startWarmup.value = v
             if (v.ready) break
+            // ROUND 28 item 155: check for a terminal failure INSIDE the wait,
+            // not after it. Discovering at t=4s that the camera has been dead
+            // since t=0 and then spending 4 more seconds rebuilding it and 10
+            // more holding still is exactly the twenty seconds the owner's log
+            // measures. `sampleArFatal` is a StateFlow read; at one tick per
+            // `MOUNT_HOLD_TICK_MS` this costs nothing.
+            sampleArFatal()
+            if (arFatalSinceMillis != null &&
+                clock() - arFatalSinceMillis!! >=
+                com.lidarscan.core.capture.ArTrouble.FATAL_PERSIST_MILLIS
+            ) {
+                break
+            }
             kotlinx.coroutines.delay(MOUNT_HOLD_TICK_MS)
         }
         val finalVerdict =
             trackingWarmup.evaluate(startPoseSource?.poseWindow().orEmpty())
+        // A dead camera ends the sequence here, with the card, rather than
+        // falling through to the rebuild and the hold. See `blockStartIfTerminal`.
+        if (blockStartIfTerminal(finalVerdict.ready, finalVerdict.blocker, rebuilt = false)) {
+            gateBlocked = true
+            return
+        }
         logEvent(
             LOG_TAG_AR,
             "start gate: ${if (finalVerdict.ready) "cleared" else "timed out"} — " +
@@ -3952,6 +4205,23 @@ class CaptureViewModel(
                     "${if (verdictNow.ready) "cleared" else "still blocked"} — " +
                     verdictNow.logSuffix,
             )
+        }
+        // ── ROUND 28 item 155 ──────────────────────────────────────────────
+        //
+        // This is the fall-through the item is about. Round 16 diagnosed
+        // NO_POSES-after-a-rebuild correctly and then *started anyway*, leaving
+        // a four-sentence warning note on a screen the operator had already
+        // begun walking away from. Four milliseconds after the recording began,
+        // the log says `tracking_degraded`.
+        //
+        // The app knew. It now asks. `Start anyway` is still there — an app
+        // that will not start is worse than a warned one, and round 12's rule
+        // is not being reversed — but taking a flat scan is a decision the
+        // operator makes, once, in one tap, instead of a surprise he discovers
+        // at seal time.
+        if (blockStartIfTerminal(verdictNow.ready, verdictNow.blocker, rebuilt = true)) {
+            gateBlocked = true
+            return
         }
         if (!verdictNow.ready) {
             _mountTrimNote.value = if (
@@ -4163,7 +4433,7 @@ class CaptureViewModel(
         logEvent(
             LOG_TAG_AR,
             "phone IMU start: handle=$handle available=${recorder.available} " +
-                "camera_from_imu=${if (extrinsics.derived) "derived" else "IDENTITY"} (${extrinsics.why})",
+                "camera_from_imu=${if (extrinsics.derived) "derived" else "Identity"} (${extrinsics.why})",
         )
     }
 
@@ -4683,7 +4953,7 @@ class CaptureViewModel(
             // controller — a Mid-360 session, a replay, the four round-15 unit
             // tests — has no pushbroom writing `map.bin`, so its absence there
             // is not evidence of anything. Reading it as zero made every one of
-            // those captures "NO ROOM", which is exactly the mistake ROUND 16's
+            // those captures "No room", which is exactly the mistake ROUND 16's
             // comment three lines up was written to stop being repeated.
             worldPointsResolved = arController?.let {
                 resolvedWorldPoints((_uiState.value as? CaptureUiState.Loaded)?.project?.directory)
@@ -4832,6 +5102,31 @@ class CaptureViewModel(
                     // ROUND 7 (item 3): the seams, so the post pipeline has the
                     // one fact that makes them alignable rather than mysterious.
                     sectionBreaks = sectionBreaks,
+                    // ── ROUND 28 item 162: THE VERDICT, WRITTEN DOWN ────────
+                    //
+                    // `summary.grade` has been computed at every seal since
+                    // round 12 and has never left this process. It went to a
+                    // `StateFlow` the summary card reads once and to two log
+                    // lines, and then the operator closed the card and the one
+                    // field that actually differs between his 66 scans was
+                    // gone. He could not tell a POOR scan from a GOOD one
+                    // without opening it — which is the review's finding P1b and
+                    // the reason the Projects list had 198 chips saying nothing
+                    // and no chip saying the thing that mattered.
+                    //
+                    // Written by NAME, for the reason `ProjectManifest.grade`
+                    // records: the thresholds have moved in four rounds, and a
+                    // 2026 scan's verdict must stay readable when the enum next
+                    // grows. `2D ONLY` is folded in here rather than being a
+                    // fourth enum value, because it is a POOR scan with a
+                    // *specific* cause and the operator's question is "is it
+                    // worth exporting", to which "no, there is no trajectory"
+                    // is a more useful answer than "no".
+                    grade = when {
+                        summary.pointsCaptured <= 0L -> "EMPTY"
+                        summary.isTwoDimensionalOnly -> "2D ONLY"
+                        else -> summary.grade.name
+                    },
                 )
             }
         }
@@ -4858,6 +5153,9 @@ class CaptureViewModel(
             // "saved to <path>" — saying so would send the operator to a
             // directory this method deletes three lines from now.
             if (!pruneEmptyScan) _lastSavedProject.value = verified.directory.absolutePath
+            // ROUND 28 item 158: a seal is the one event that always changes
+            // which scan is the last one.
+            refreshLastScan()
             logEvent(
                 LOG_TAG_SEAL,
                 "sealed OK id=$activeId name=\"${verified.manifest.name}\" " +
@@ -5393,8 +5691,32 @@ class CaptureViewModel(
         _showNewCaptureConfirm.value = false
     }
 
-    private fun performNewCapture() {
-        logEvent(LOG_TAG_SESSION, "new capture: per-scan state cleared, settings back to defaults")
+    /**
+     * ROUND 28 item 156 — **the destructive half, split off.**
+     *
+     * `performNewCapture()` used to do two different things under one name:
+     * clear the *artifacts of the previous scan* (summary cards, verdicts, the
+     * trail, the viewport, the counters) and reset the *operator's choices*
+     * (the performance preset, the whole display block). Round 24 item 111 then
+     * called the whole thing on every tab entry, because the owner asked that
+     * opening the Scan tab mean a new scan — which it does, for the first half.
+     *
+     * The second half is a different claim, and the field log measures its
+     * cost: on the evening of 08-21 there were **15** `scan tab entered` events
+     * and **3** actual scans, twelve of them abandoned within 1.2–20 seconds,
+     * and *every one of the fifteen* logged `settings back to defaults`. In a
+     * four-tab bar where Scan is the second icon, merely looking at a screen
+     * threw away the operator's preset and display block. Navigation is not
+     * free, and it must not be destructive.
+     *
+     * So this is what a tab entry does — everything that is *about the previous
+     * capture* and nothing the operator chose — and [resetPerScanChoices] is
+     * what a **scan start** does. Both still run at start, in that order, so a
+     * new scan is exactly as clean as it was; what changed is that abandoning
+     * the tab costs nothing.
+     */
+    private fun clearPreviousScanArtifacts() {
+        logEvent(LOG_TAG_SESSION, "new capture: the previous scan's readouts cleared")
         // Per-scan verdicts and notes.
         _sessionSummary.value = null
         _scanSummary.value = null
@@ -5418,17 +5740,6 @@ class CaptureViewModel(
             _sectionCount.value = 1
             _unhealedSectionBreaks.value = 0
         }
-        // Settings back to defaults: the tier's preset (which rewrites the
-        // five tuning controls) and the display block's capture defaults.
-        setPreset(com.lidarscan.core.capture.PerformancePresets.DEFAULT)
-        val defaults = com.lidarscan.core.render.DisplayParams.captureDefaults()
-        _displayBase.value = defaults
-        _colorMode.value = defaults.colorMode
-        _intensityColormap.value = defaults.intensity.colormap
-        _heightColormap.value = defaults.height.colormap
-        _pointSizePx.value = defaults.pointSize.fixedPx
-        _gamma.value = defaults.intensity.gamma
-        _brightness.value = defaults.intensity.brightness
         // The viewport, and a fresh auto-name so the tab reads as a new scan.
         viewModelScope.launch {
             clearLiveViewport()
@@ -5441,6 +5752,75 @@ class CaptureViewModel(
                 )
             }
         }
+    }
+
+    /**
+     * ROUND 28 item 156 — **the operator's choices, reset at START.**
+     *
+     * Round 20 item 83's enumeration is unchanged and still correct: the tier's
+     * preset (which rewrites the five tuning controls) and the display block's
+     * capture defaults are CLEARED; the mount trim, the lever arm, sensor
+     * latency, the DND choice, the cue preference, the developer settings and
+     * the scan series counter are KEPT, because they are device facts and
+     * wiping them would un-fix items 78/79/82.
+     *
+     * What moved is only *when*. A reset that happens when a scan begins is the
+     * owner's "a new scan gets new settings"; the same reset happening when a
+     * screen is merely looked at is a trap.
+     */
+    private fun resetPerScanChoices() {
+        // ── ROUND 28 item 156, second cut: A NO-OP RESET DOES NOTHING ───────
+        //
+        // Moving this to the Start press was correct and it introduced a race
+        // the emulator caught immediately: `applyTuning` flips
+        // `_liveMapEnabled` and bumps `_refreshRequestToken`, and the display
+        // rewrite below re-applies every scalar — all in the same instant the
+        // viewport is reconfiguring for a recording. `CaptureFlowNoStrayTest`
+        // and `ReplayCaptureSmokeTest` both stalled: the replay never reached
+        // "Stop recording", because the renderer was being reconfigured out
+        // from under the decode that had just been asked to start.
+        //
+        // The fix is not to move it again — press time is the only moment
+        // "back to defaults" is what the operator asked for. It is that
+        // resetting to values you are already on must cost nothing. In the
+        // common case (the operator has changed neither the preset nor the
+        // display block, which is every case the AVD exercises) this returns
+        // without touching the engine at all, and the race cannot arm.
+        val defaults = com.lidarscan.core.render.DisplayParams.captureDefaults()
+        val presetIsDefault = _preset.value == com.lidarscan.core.capture.PerformancePresets.DEFAULT
+        val displayIsDefault = _displayBase.value == defaults &&
+            _colorMode.value == defaults.colorMode &&
+            _intensityColormap.value == defaults.intensity.colormap &&
+            _heightColormap.value == defaults.height.colormap &&
+            _pointSizePx.value == defaults.pointSize.fixedPx &&
+            _gamma.value == defaults.intensity.gamma &&
+            _brightness.value == defaults.intensity.brightness
+        if (presetIsDefault && displayIsDefault) return
+
+        logEvent(LOG_TAG_SESSION, "new capture: per-scan settings back to defaults")
+        if (!presetIsDefault) setPreset(com.lidarscan.core.capture.PerformancePresets.DEFAULT)
+        if (displayIsDefault) return
+        _displayBase.value = defaults
+        _colorMode.value = defaults.colorMode
+        _intensityColormap.value = defaults.intensity.colormap
+        _heightColormap.value = defaults.height.colormap
+        _pointSizePx.value = defaults.pointSize.fixedPx
+        _gamma.value = defaults.intensity.gamma
+        _brightness.value = defaults.intensity.brightness
+    }
+
+    /**
+     * The explicit New-capture action: both halves, as it always was.
+     *
+     * ROUND 28 item 158 deletes the *button* from the Scan screen — the tab
+     * already clears the readouts and a start already resets the choices, so a
+     * control that repeats an automatic behaviour teaches the operator that
+     * controls are decorative. The function stays because the confirm dialog's
+     * "Stop and start fresh" is a real, distinct intent.
+     */
+    private fun performNewCapture() {
+        clearPreviousScanArtifacts()
+        resetPerScanChoices()
     }
 
     fun setLiveSlam(enabled: Boolean) {

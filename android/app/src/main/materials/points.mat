@@ -129,8 +129,30 @@ fragment {
         vec3 rgb;
         int mode = materialParams.colorMode;
         if (mode == 1 || mode == 2) {           // kHeight | kIntensity
+            // HEIGHT IS world.y, NOT world.z — ROUND 28 item 154.
+            //
+            // This line read `world.z` from the day it was ported, because the
+            // desktop file it came from was ported in turn from a spike whose
+            // only test geometry was the engine's +z-up synthetic wall. The
+            // frame this shader actually draws is ARCore's, which is Y-UP:
+            // CaptureArController.publishPose pushes camera.pose verbatim into
+            // the engine, so every PointVertex is in ARCore's world frame.
+            // PointCloudRenderer's FollowCamera already committed to Y_UP and
+            // wrote the derivation down; this was the site it flagged and did
+            // not fix.
+            //
+            // What it cost: colour was auto-ranged over a HORIZONTAL axis. A
+            // handheld scan walked at one height has metres of z and almost no
+            // y, so the ramp spread itself across the room's depth and the
+            // owner's Review shot came back a flat dark indigo — the low end of
+            // Turbo, every point. Nothing divided by zero and nothing threw;
+            // the cloud was simply one colour.
+            //
+            // The clip pair below shares this axis and MOVED WITH IT. Fixing
+            // one and not the other would have swapped a monochrome cloud for a
+            // height clip that culls along the floor.
             float value = (mode == 1)
-                    ? world.z
+                    ? world.y
                     : dot(src.rgb, vec3(0.299, 0.587, 0.114));  // RGB-derived intensity
             float span = max(materialParams.valueMax - materialParams.valueMin, 1e-6);
             float t = clamp((value - materialParams.valueMin) / span, 0.0, 1.0);
@@ -155,7 +177,12 @@ fragment {
         float alpha = src.a;
         int mask = materialParams.clipEnabledMask;
         if ((mask & 2) != 0) {
-            if (world.z < materialParams.clipHeightMin || world.z > materialParams.clipHeightMax) {
+            // world.y, for the same reason and by the same round as the height
+            // ramp above — A14 calls this the HEIGHT clip, and the height axis
+            // is y. Held next to its ramp deliberately: these two are one
+            // decision, and the axis has already been changed in two files
+            // without this third site following.
+            if (world.y < materialParams.clipHeightMin || world.y > materialParams.clipHeightMax) {
                 alpha = 0.0;
             }
         }
