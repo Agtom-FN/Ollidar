@@ -2,6 +2,8 @@ package com.lidarscan.app.usb
 
 import com.hoho.android.usbserial.driver.UsbSerialDriver
 import com.lidarscan.core.engine.SerialLidarBaud
+import com.lidarscan.core.engine.SerialModemLines
+import com.lidarscan.core.engine.SilentLineFallback
 import com.lidarscan.core.engine.Stl27lSignatureScanner
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -25,6 +27,17 @@ sealed interface Stl27lAutoProbeResult {
     data class Identified(
         val devicePath: String,
         override val evidence: String = "",
+        /**
+         * ROUND 32 item 178(b) — **the rate this port actually answered at.**
+         *
+         * Usually [SerialLidarBaud.STL27L]. When the datasheet's rate produced
+         * a silent line and a fallback did not, this is the fallback, and it
+         * has to travel all the way to `scan_engine_add_device` — the engine
+         * derives per-point timing from `serial_baud`, so identifying at
+         * 230 400 and then telling the engine 921 600 would be the exact
+         * silent mis-timing `SerialLidarBaud`'s own doc warns about.
+         */
+        val baud: Int = SerialLidarBaud.STL27L,
     ) : Stl27lAutoProbeResult
 
     /**
@@ -81,9 +94,15 @@ sealed interface Stl27lAutoProbeResult {
  * ## Contract, identical to [D6AutoProbe]'s
  *
  * On [Stl27lAutoProbeResult.Identified] the connection is **left open** in
- * [registry] at 921 600 so `RealEngineBridge.connect` — which refuses a path
- * the registry has no open connection for — can use it with no second open.
- * On anything else the speculatively-opened connection is closed again.
+ * [registry], at the rate that identified it, so `RealEngineBridge.connect` —
+ * which refuses a path the registry has no open connection for — can use it
+ * with no second open. On anything else the speculatively-opened connection is
+ * closed again.
+ *
+ * ROUND 32 item 178(b): "the rate that identified it" is 921 600 unless the
+ * silent-line fallback adopted an LD-family rate, which is why
+ * [Stl27lAutoProbeResult.Identified] carries a baud at all — the port is open
+ * at that divisor and the engine has to be told the same number.
  *
  * UNVERIFIED: no STL-27L hardware exists. The framing, the CRC parameters and
  * the packet rate above are protocol-derived from the public LD-series
@@ -97,13 +116,25 @@ class Stl27lAutoProbe(private val registry: D6UsbConnectionRegistry) {
             if (!granted) return Stl27lAutoProbeResult.PermissionDenied()
         }
 
+        // ROUND 32 item 178(b): the ladder itself is `runLadder`, which knows
+        // nothing about USB. This is the only line that binds it to hardware.
+        return runLadder(driver.device.deviceName) { baud -> readWindow(driver, baud, windowMs) }
+    }
+
+    /**
+     * Open at [baud], read for [windowMs], count.
+     *
+     * Leaves the connection OPEN when it identified — [Stl27lAutoProbe]'s
+     * contract with `RealEngineBridge.connect`, unchanged since round 25 —
+     * and closes it otherwise so the next rate can claim the interface.
+     */
+    private suspend fun readWindow(driver: UsbSerialDriver, baud: Int, windowMs: Long): WindowResult {
         val connection = try {
-            // ROUND 31: blocking usbfs work (and, since item 176(a), a
-            // reader-thread join when a previous connection has to be released
-            // first) off the Main dispatcher the detectors run on.
-            withContext(Dispatchers.IO) { registry.open(driver, SerialLidarBaud.STL27L) }
+            withContext(Dispatchers.IO) {
+                registry.open(driver, baud, SerialModemLines.STL27L)
+            }
         } catch (e: Exception) {
-            return Stl27lAutoProbeResult.Error(e.message ?: "could not open the serial port")
+            return WindowResult.Failed(e.message ?: "could not open the serial port")
         }
 
         val found = CompletableDeferred<Unit>()
@@ -114,7 +145,11 @@ class Stl27lAutoProbe(private val registry: D6UsbConnectionRegistry) {
         val firstBytes = SerialFirstBytesTrace(
             driver = driver,
             sensor = SerialFirstBytesTrace.SENSOR_STL27L,
-            baud = SerialLidarBaud.STL27L,
+            baud = baud,
+            // ROUND 32 item 178(a): what was actually put on the wire, so a
+            // still-silent retest log answers "were the lines asserted?" in the
+            // same line that shows the silence.
+            lines = registry.lastModemLines,
         )
 
         connection.startReading { buffer, len, _ ->
@@ -138,10 +173,114 @@ class Stl27lAutoProbe(private val registry: D6UsbConnectionRegistry) {
 
         val identified = withTimeoutOrNull(windowMs) { found.await() } != null
         if (!identified) withContext(Dispatchers.IO) { registry.close(driver.device.deviceName) }
-        return verdict(driver.device.deviceName, bytesSeen, headers, packets)
+        return WindowResult.Read(
+            attempt = SilentLineFallback.Attempt(baud, bytesSeen, headers, packets),
+            identified = identified,
+        )
+    }
+
+    /** One rate's window. [Read] means the port opened and was listened to; [Failed] means it did not. */
+    internal sealed interface WindowResult {
+        data class Read(val attempt: SilentLineFallback.Attempt, val identified: Boolean) : WindowResult
+        data class Failed(val message: String) : WindowResult
     }
 
     companion object {
+
+        /**
+         * ROUND 32 item 178(b) — **the whole silent-line ladder, with no USB in
+         * it.**
+         *
+         * Rung one is exactly what round 25 shipped and round 31 tightened:
+         * 921 600, four CRC-valid packets. What is new is what happens when
+         * that window comes back SILENT rather than wrong — sixteen bytes, as
+         * the owner's line did, on a sensor he could see spinning. That is not
+         * a decline, it is an unanswered question, and the LD family runs at
+         * more than one rate. See [SilentLineFallback] for the whole argument,
+         * and for why a LOUD decline deliberately does not get this treatment.
+         *
+         * [readWindow] is the only hardware in the design, injected: the live
+         * probe passes the real port reader and a test passes byte streams, so
+         * what a test drives is this function and not a copy of it.
+         */
+        internal suspend fun runLadder(
+            devicePath: String,
+            readWindow: suspend (baud: Int) -> WindowResult,
+        ): Stl27lAutoProbeResult {
+            val attempts = mutableListOf<SilentLineFallback.Attempt>()
+
+            val first = readWindow(SerialLidarBaud.STL27L)
+            if (first is WindowResult.Failed) return Stl27lAutoProbeResult.Error(first.message)
+            val firstWindow = first as WindowResult.Read
+            attempts += firstWindow.attempt
+            if (firstWindow.identified) {
+                return Stl27lAutoProbeResult.Identified(
+                    devicePath = devicePath,
+                    evidence = evidenceFor(attempts, SerialLidarBaud.STL27L),
+                    baud = SerialLidarBaud.STL27L,
+                )
+            }
+
+            if (SilentLineFallback.isSilent(firstWindow.attempt.bytes)) {
+                for (baud in SilentLineFallback.FALLBACK_BAUDS) {
+                    when (val next = readWindow(baud)) {
+                        // A rate that will not even open is not a reason to
+                        // stop asking the next one — and it is not the port's
+                        // verdict either, since 921 600 opened perfectly well a
+                        // moment ago.
+                        is WindowResult.Failed -> continue
+                        is WindowResult.Read -> {
+                            attempts += next.attempt
+                            if (next.identified) {
+                                return Stl27lAutoProbeResult.Identified(
+                                    devicePath = devicePath,
+                                    evidence = evidenceFor(attempts, baud),
+                                    baud = baud,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            return Stl27lAutoProbeResult.NotIdentified(
+                evidence = evidenceFor(attempts, null),
+                // The partial-match signal — the input to round 31's ambiguity
+                // verdict — is still the datasheet rate's alone. A CRC-valid
+                // packet found at 460 800 is not evidence that the port is an
+                // ambiguous STL-27L/D6; it is evidence that it IS an STL-27L,
+                // and that branch has already returned above.
+                sawPartialMatch = firstWindow.attempt.packets > 0,
+            )
+        }
+
+        /**
+         * Count one window's worth of chunks with the REAL scanner, exactly as
+         * the reader-thread callback does. Shared by the live probe's byte path
+         * and by the byte-exact tests.
+         */
+        internal fun countWindow(baud: Int, chunks: Iterable<ByteArray>): WindowResult {
+            var carry: Byte? = null
+            var packets = 0
+            var headers = 0
+            var bytesSeen = 0L
+            var identified = false
+            for (chunk in chunks) {
+                bytesSeen += chunk.size
+                headers += Stl27lSignatureScanner.headerPairCount(carry, chunk, chunk.size)
+                packets += Stl27lSignatureScanner.validPacketCount(carry, chunk, chunk.size)
+                carry = Stl27lSignatureScanner.lastByteOrNull(chunk, chunk.size)
+                if (packets >= PACKETS_TO_IDENTIFY) {
+                    identified = true
+                    break
+                }
+            }
+            return WindowResult.Read(
+                SilentLineFallback.Attempt(baud, bytesSeen, headers, packets),
+                identified,
+            )
+        }
+
         /**
          * ROUND 31 item 176(b) — counters to answer, in one place, shared by
          * the live probe and by [classify] so a byte-exact test is asserting on
@@ -159,6 +298,32 @@ class Stl27lAutoProbe(private val registry: D6UsbConnectionRegistry) {
             } else {
                 Stl27lAutoProbeResult.NotIdentified(evidence = evidence, sawPartialMatch = packets > 0)
             }
+        }
+
+        /**
+         * ROUND 32 item 178(b) — the evidence line for a probe that may have
+         * tried more than one rate.
+         *
+         * The single-rate case reads exactly as it did in round 31, so a
+         * COIN-D6 rig's log is unchanged; the multi-rate case appends every
+         * rate's counters and names the one that answered. `chosen` is the
+         * rate being adopted, or null when none was.
+         */
+        internal fun evidenceFor(attempts: List<SilentLineFallback.Attempt>, chosen: Int?): String {
+            // One rate tried is the round-31 line, character for character, so
+            // a COIN-D6 rig's log does not change shape because a second sensor
+            // grew a fallback ladder.
+            attempts.singleOrNull()?.let { only ->
+                return "bytes=${only.bytes} 542c=${only.headers} packets=${only.packets} " +
+                    "(need packets>=$PACKETS_TO_IDENTIFY)"
+            }
+            val trail = SilentLineFallback.evidenceLine(attempts)
+            val verdict = if (chosen == null) {
+                "silent at ${SerialLidarBaud.STL27L}; no fallback rate answered"
+            } else {
+                "adopted $chosen"
+            }
+            return "$trail ($verdict)"
         }
 
         /**

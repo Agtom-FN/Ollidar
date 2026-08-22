@@ -8,6 +8,7 @@ import android.content.IntentFilter
 import android.hardware.usb.UsbManager
 import android.os.Build
 import com.hoho.android.usbserial.driver.UsbSerialDriver
+import com.lidarscan.core.engine.SerialModemLines
 import com.hoho.android.usbserial.driver.UsbSerialPort
 import com.hoho.android.usbserial.driver.UsbSerialProber
 import java.util.concurrent.ConcurrentHashMap
@@ -105,7 +106,16 @@ class D6UsbConnectionRegistry(context: Context) {
      * delivers bytes, they are simply framing garbage, so the failure looks
      * like a sensor that is present and silent rather than like an error.
      */
-    fun open(driver: UsbSerialDriver, baud: Int = BAUD_RATE): D6SerialConnection {
+    fun open(
+        driver: UsbSerialDriver,
+        baud: Int = BAUD_RATE,
+        // ROUND 32 item 178(a): DEFAULTED TO THE D6'S STATE, so every caller
+        // that existed before this round opens the port exactly as it always
+        // has. The STL-27L paths pass their own; nothing is inferred from the
+        // baud, because item 178(b)'s fallback opens an STL-27L at the D6's
+        // rate and inferring would hand it the D6's lines.
+        lines: SerialModemLines.State = SerialModemLines.COIN_D6,
+    ): D6SerialConnection {
         // ══════════════════════════════════════════════════════════════════
         // ROUND 31 item 176(a) — **THE BUG THE OWNER HIT, IN ONE LINE.**
         //
@@ -150,13 +160,52 @@ class D6UsbConnectionRegistry(context: Context) {
         val port = driver.ports.first()
         port.open(connection)
         port.setParameters(baud, UsbSerialPort.DATABITS_8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
-        port.setDTR(false)
+
+        // ══════════════════════════════════════════════════════════════════
+        // ROUND 32 item 178(a) — **the silent line, and the two wires it was.**
+        //
+        // What stood here was `port.setDTR(false)` and nothing about RTS,
+        // which usb-serial-for-android leaves de-asserted from `open()`. Both
+        // control lines low, on every port this app has ever opened. The
+        // COIN-D6's adapter does not care and a hundred field captures prove
+        // it; the STL-27L arrives on a CH340 DEV-KIT BOARD (1a86:7523), and
+        // that class of board commonly gates the sensor's enable or the level
+        // shifter's output-enable on DTR and/or RTS.
+        //
+        // The owner's retest is the evidence: the sensor is SPINNING and the
+        // line delivered 42 bytes in two seconds with `first1=00` and not one
+        // `54 2C`. Powered, enabled, rotating, and saying nothing — which is
+        // the signature of a data path held down rather than of a baud or a
+        // protocol.
+        //
+        // Not asserted globally: see `SerialModemLines` for why the D6 keeps
+        // the state it has field history with, and why the decision to unify
+        // is left to the next log rather than taken here.
+        //
+        // Some drivers throw on a control-line write they cannot perform.
+        // Neither line is required for a device that ignores them, so a
+        // failure here must not lose a port that would otherwise work — it is
+        // recorded and the open continues.
+        // ══════════════════════════════════════════════════════════════════
+        val linesApplied = applyModemLines(port, lines)
+
+        lastModemLines = if (linesApplied) lines else null
 
         val wrapped = D6SerialConnection(driver.device.deviceName, port)
         wrapped.setSensorLatencyMillis(sensorLatencyMs)
         openConnections[driver.device.deviceName] = wrapped
         return wrapped
     }
+
+    /**
+     * ROUND 32 item 178(a): the modem-line state the last [open] actually put
+     * on the wire, or null when the driver refused it. Read by
+     * [SerialFirstBytesTrace] so the `[net-debug]` port-open line records what
+     * was asserted rather than what was asked for.
+     */
+    @Volatile
+    var lastModemLines: SerialModemLines.State? = null
+        private set
 
     fun get(devicePath: String): D6SerialConnection? = openConnections[devicePath]
 
@@ -181,6 +230,22 @@ class D6UsbConnectionRegistry(context: Context) {
     }
 
     companion object {
+        /**
+         * ROUND 32 item 178(a) — the two setter calls, extracted so they can be
+         * asserted against a fake port without a USB stack.
+         *
+         * Returns false when the driver refused, which is not a failure of the
+         * open: neither line is required by a device that ignores them, and
+         * losing a port that would otherwise work in order to insist on a
+         * control signal would be a worse bug than the one this fixes.
+         */
+        @androidx.annotation.VisibleForTesting
+        internal fun applyModemLines(port: UsbSerialPort, lines: SerialModemLines.State): Boolean =
+            runCatching {
+                port.setDTR(lines.dtr)
+                port.setRTS(lines.rts)
+            }.isSuccess
+
         /**
          * The COIN-D6's 230 400, and therefore [open]'s default — the value
          * this registry has always used. Aliased to

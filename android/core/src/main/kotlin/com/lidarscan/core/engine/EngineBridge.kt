@@ -112,6 +112,17 @@ enum class CaptureState {
 data class EngineTarget(
     val sensor: SensorType,
     val transportHint: String? = null,
+    /**
+     * ROUND 32 item 178(b) — override the rate `SerialLidarBaud` would derive
+     * from [sensor].
+     *
+     * Null means "use the sensor's standard rate", which is every case but one:
+     * an STL-27L that was silent at 921 600 and answered at an LD-family
+     * fallback. The host divisor and this number are the pair
+     * `SerialLidarBaud`'s doc warns must never disagree, so the value that
+     * opened the port is the value that travels here.
+     */
+    val serialBaud: Int? = null,
 )
 
 sealed interface EngineEvent {

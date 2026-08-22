@@ -1,6 +1,6 @@
 # Ollidar — User Manual
 
-App version 0.9.16 (Android). Written for the owner and for field testers.
+App version 0.9.17 (Android). Written for the owner and for field testers.
 If you only want a first scan, read [QUICK_START.md](QUICK_START.md) instead.
 
 The app is called **Ollidar** as of 0.9.11. The repository, the Android
@@ -729,6 +729,13 @@ developer-only items moved behind the seven-tap unlock.
 **Display**
 - **Units** — Meters / Feet.
 - **Theme** — System / Light / Dark. Dark is the default.
+- **Welcome animation** — *"Plays once when the app starts."* **On by
+  default.** Three seconds of the Ollidar llama, once per app start — not on
+  tab switches, not when you rotate the phone. **Touch anywhere to skip it**;
+  it goes at once and the app is already loaded underneath. If your phone has
+  animations turned off (Accessibility › Remove animations, or the developer
+  animation scales set to zero) it never plays at all, and this switch is left
+  alone. New in 0.9.17.
 
 **Lab features**
 - One switch, **default off**. *"Floor plan, merge, cloud, survey
@@ -751,7 +758,7 @@ developer-only items moved behind the seven-tap unlock.
 
 **The version footer**
 
-At the very bottom: `Ollidar v0.9.16 (build 916)`. **Tap it seven times**
+At the very bottom: `Ollidar v0.9.17 (build 917)`. **Tap it seven times**
 to unlock a **Developer** section, and seven more to lock it away again. The
 counter resets when you re-lock, so a single stray tap afterwards does not
 re-open it.
@@ -763,20 +770,29 @@ sweep, and the read-only workflow-profile reference. None of it is needed for
 scanning. For getting a log to someone, **Profile › Send logs** is the better
 door.
 
-**What Developer mode records about a serial scanner (0.9.16).** With it on,
+**What Developer mode records about a serial scanner (0.9.17).** With it on,
 every serial port the app opens writes one `[net-debug]` line carrying the
-device's `vid:pid`, its product string, the baud it was opened at, and **the
-first 64 bytes it actually sent**, as hex. Every probe attempt writes another
-line with the counters it decided on — for the D6, how many `AA 55` pairs, how
-many complete frames and how many correctly chained; for the STL-27L, how many
-`54 2C` headers and how many survived the CRC.
+device's `vid:pid`, its product string, the baud it was opened at, **the state
+of the DTR and RTS control lines** (`dtr=1 rts=1`) and **the first 64 bytes it
+actually sent**, as hex. Every probe attempt writes another line with the
+counters it decided on — for the D6, how many `AA 55` pairs, how many complete
+frames and how many correctly chained; for the STL-27L, how many `54 2C`
+headers and how many survived the CRC, **at every speed that was tried**:
+
+```
+921600:bytes=16,542c=0,packets=0 230400:bytes=34104,542c=712,packets=709 (adopted 230400)
+```
+
+The control-line state and the per-speed counters are new in 0.9.17 and they
+exist for one reason — see §13's silent line.
 
 That is deliberately the raw evidence rather than a verdict. `54 2C ...` at
 921600 is an STL-27L; `AA 55` with a sane length byte at 230400 is a COIN-D6;
-printable ASCII is a GNSS receiver on the same connector; all zeros is the
-cable or the wrong speed. None of those can be told apart from "No scanner
-found." If a scanner is not recognised, turn Developer mode on, plug it in
-once, and send the log.
+printable ASCII is a GNSS receiver on the same connector; all zeros with a
+byte count in the tens is a **silent line** — the sensor may be spinning
+perfectly and not be reaching the phone at all (§13). None of those can be told
+apart from "No scanner found." If a scanner is not recognised, turn Developer
+mode on **before** you plug it in, plug it in once, and send the log.
 
 ---
 
@@ -1008,11 +1024,15 @@ appears — when Android on that phone resolves the deep link.
 
 ## 13. STL-27L (LDROBOT)
 
-> **Status: supported — bench validation pending.**
+> **Status: supported — bench validation pending, second retest owed.**
 > The driver is code-complete against the published LD-series protocol and is
 > covered by byte-exact synthetic fixtures, including its CRC. **No STL-27L
-> hardware has ever been connected to this app.** Treat the first real unit as
-> a test, not as a working sensor, and send the logs afterwards.
+> hardware has ever been connected to this Mac.** One has been connected to
+> the app, twice, on the owner's phone: the 0.9.15 attempt failed three ways
+> (all fixed in 0.9.16) and the 0.9.16 attempt failed a fourth (a silent line
+> — see below, fixed in 0.9.17). Treat the next real unit as a test, not as a
+> working sensor, turn Developer mode on **before** you plug it in, and send
+> the logs afterwards.
 >
 > The engine driver, its fixtures and `engine_cli --sensor stl27l` are in
 > place, and the app can select an STL-27L. The C ABI did not change for it
@@ -1048,6 +1068,70 @@ There is also a new honest answer where there used to be a wrong one: when the
 port produces fragments of **both** protocols and neither reaches its bar, the
 app says *"Can't tell which scanner this is"* and asks, instead of claiming
 whichever probe ran first.
+
+### What changed in 0.9.17: the silent line
+
+The owner retested on 0.9.16 the same evening. **All three of the above
+worked** — the manual pick bound, the log said
+`[session] sensor: LDROBOT STL-27L (manual)`, the project recorded
+`sensor=STL27L`, the D6 probe honestly declined, and the first-bytes evidence
+line appeared. And the scan still recorded nothing, for a fourth reason
+nobody had looked for.
+
+**The line was silent.** Not garbled — *absent*. 42 bytes in two seconds. 552
+bytes in twenty-five. The first byte was `00`. Not one `54 2C` header ever
+arrived, at any point, in any window. **And the sensor was spinning.**
+
+A sensor that is powered, enabled and turning while its host receives nothing
+is not a baud problem and not a protocol problem. Something is holding the
+data path down. Two things were, and 0.9.17 fixes both.
+
+**1. DTR and RTS were low.** Every serial port this app has ever opened ended
+with `setDTR(false)` and never mentioned RTS, which the driver leaves low
+after opening. On a bare COIN-D6 that is invisible — a hundred field scans
+prove it. The STL-27L arrives on a **CH340 dev-kit adapter board**
+(`1a86:7523`, product string `USB Serial`), and boards of that class commonly
+wire DTR and/or RTS to the sensor's enable line or to the level shifter's
+output-enable. Both low means the board is listening to a spinning sensor and
+telling the phone nothing.
+
+From 0.9.17 an STL-27L port is opened with **DTR and RTS both asserted**, on
+the auto-detect path and on the manual pick alike. **The COIN-D6 is
+deliberately unchanged** and keeps both lines low: that is the state every
+recorded scan was taken with, and on some adapters DTR is a *reset* line, so
+changing the sensor that works to fix the one that does not is not a trade
+worth making. Developer mode records which state each port was opened in
+(`dtr=1 rts=1`).
+
+**2. The datasheet's speed is now a hypothesis, not a fact.** The STL-27L is
+documented at 921600. The LD06 and LD19 in the same family run **230400**, and
+several STL-27L dev-kit and clone batches ship at the family default. So when
+the probe hears a **silent** line at 921600 — under 256 bytes in its window —
+it now re-opens at **230400** and then **460800** and listens again. If one of
+them produces CRC-valid packets, *that is the speed the scan runs at*, end to
+end (the phone's divisor and the number the engine is told are the same
+number), and the log says so:
+
+```
+[session] STL-27L at 230400 (non-standard)
+```
+
+A **loud** line carrying the wrong protocol does not get this treatment, on
+purpose: something is streaming and it is not an STL-27L, and re-clocking a
+working COIN-D6 port twice on every connect to ask a question that has already
+been answered would be churn on the one path every recorded scan came through.
+
+Under developer mode the `[net-debug]` block now carries every speed that was
+tried, with its counters:
+
+```
+921600:bytes=16,542c=0,packets=0 230400:bytes=34104,542c=712,packets=709 (adopted 230400)
+```
+
+**Still unverified.** No STL-27L exists on this machine. Both fixes are proved
+against byte-exact synthetic streams through the same decision code the phone
+runs, and against a mock port for the two control-line writes. If the retest
+fails again, the line above is what to send.
 
 ### What it is
 
@@ -1180,6 +1264,25 @@ Common causes, in order:
    arrived. For a Mid-360 this is nearly always the addressing (§12). Check
    the Diag chip's points/sec while idle: it should be non-zero before you
    press SCAN.
+
+   **If the banner says *"Sensor is silent. Is it spinning?"*** — that is a
+   different fault from a wrong speed, and the app is asking you the one
+   question that splits it, because you can answer it in a second by looking:
+
+   * **it is not spinning** → it is not getting 5 V. A phone's USB-C port is
+     the usual reason; try a powered hub, and check the sensor's own power
+     lead rather than the data cable.
+   * **it is spinning** → the sensor is fine and the *data* is not arriving.
+     Try a different USB cable first (a charge-only cable powers a sensor
+     perfectly and carries no data), then the adapter board and its TX wiring.
+     From 0.9.17 the app has already asserted DTR and RTS and already retried
+     at 230400 and 460800 before showing you this — see §13 — so those three
+     are ruled out by the time you read it.
+
+   Either way, turn Developer mode on (§9) and send the log: the
+   `[net-debug]` line records the adapter's `vid:pid`, the control-line state
+   and the byte counts at every speed tried, which is what makes the next
+   attempt start from evidence.
 2. **the phone never tracked** — no ARCore, camera permission denied, or the
    camera was covered. Without a trajectory a flat scanner produces flat
    slices and no room.

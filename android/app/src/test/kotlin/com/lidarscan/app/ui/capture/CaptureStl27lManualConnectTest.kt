@@ -8,6 +8,7 @@ import com.lidarscan.core.capture.SensorAutoDetector
 import com.lidarscan.core.engine.EngineTarget
 import com.lidarscan.core.engine.FakeEngineBridge
 import com.lidarscan.core.engine.SerialLidarBaud
+import com.lidarscan.core.engine.SerialModemLines
 import com.lidarscan.core.model.SensorType
 import com.lidarscan.core.store.FileProjectStore
 import java.io.File
@@ -162,8 +163,10 @@ class CaptureStl27lManualConnectTest {
             claimSeriesNumber = { series.incrementAndGet() },
             peekSeriesNumber = { series.get() + 1 },
             attachedSerialDevices = { listOf(DEVICE) },
-            openSerialPort = { path, baud ->
-                calls += "open:$path@$baud"
+            openSerialPort = { path, baud, lines ->
+                // ROUND 32 item 178(a): the modem-line state is part of what a
+                // manual connect DOES, so it is part of what this records.
+                calls += "open:$path@$baud ${lines.log}"
                 opened += path to baud
                 openFailure?.let { Result.failure(IllegalStateException(it)) } ?: Result.success(Unit)
             },
@@ -257,7 +260,7 @@ class CaptureStl27lManualConnectTest {
         assertEquals(
             listOf(
                 "disconnect",
-                "open:${DEVICE.path}@${SerialLidarBaud.STL27L}",
+                "open:${DEVICE.path}@${SerialLidarBaud.STL27L} ${SerialModemLines.STL27L.log}",
                 "connect:STL27L:${DEVICE.path}",
             ),
             calls.toList(),
@@ -282,7 +285,7 @@ class CaptureStl27lManualConnectTest {
         assertEquals(
             listOf(
                 "disconnect",
-                "open:${DEVICE.path}@${SerialLidarBaud.COIN_D6}",
+                "open:${DEVICE.path}@${SerialLidarBaud.COIN_D6} ${SerialModemLines.COIN_D6.log}",
                 "connect:COIN_D6:${DEVICE.path}",
             ),
             calls.toList(),
@@ -298,7 +301,7 @@ class CaptureStl27lManualConnectTest {
         awaitPreview(vm)
 
         assertEquals(
-            listOf("open:${DEVICE.path}@${SerialLidarBaud.STL27L}", "connect:STL27L:${DEVICE.path}"),
+            listOf("open:${DEVICE.path}@${SerialLidarBaud.STL27L} ${SerialModemLines.STL27L.log}", "connect:STL27L:${DEVICE.path}"),
             calls.toList(),
         )
     }

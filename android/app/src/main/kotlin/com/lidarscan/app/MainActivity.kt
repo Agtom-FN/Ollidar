@@ -10,11 +10,16 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.rememberNavController
@@ -24,6 +29,10 @@ import com.lidarscan.app.debug.findOrCreateReplayProjectId
 import com.lidarscan.app.ui.nav.LidarScanApp
 import com.lidarscan.app.ui.nav.Routes
 import com.lidarscan.app.ui.theme.LidarScanTheme
+import com.lidarscan.app.ui.welcome.WelcomeLaunchGate
+import com.lidarscan.app.ui.welcome.WelcomeOverlay
+import com.lidarscan.app.ui.welcome.WelcomeReducedMotion
+import com.lidarscan.core.welcome.WelcomeAnimation
 
 class MainActivity : ComponentActivity() {
 
@@ -61,9 +70,39 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            val settings by container.settingsRepository.settings
-                .collectAsStateWithLifecycle(initialValue = AppSettings())
+            // ── ROUND 32 item 177 ────────────────────────────────────────────
+            //
+            // Collected as a NULLABLE here, and the null is load-bearing.
+            // `AppSettings()` is a perfectly good placeholder for a theme — a
+            // fresh install and an unread DataStore want the same dark screen —
+            // but it is a WRONG ANSWER for the welcome animation: its defaults
+            // say "developer mode off", so deciding from them would show a
+            // developer the ordinary film every single launch and there would
+            // be no symptom other than the wrong llama. So the decision waits
+            // for the store's first real emission, which arrives in a few
+            // milliseconds and is the same moment the page underneath draws.
+            val storedSettings by container.settingsRepository.settings
+                .collectAsStateWithLifecycle(initialValue = null)
+            val settings = storedSettings ?: AppSettings()
             val navController = rememberNavController()
+
+            var welcome by remember { mutableStateOf<WelcomeAnimation.Variant?>(null) }
+            var welcomeDecided by remember { mutableStateOf(false) }
+            LaunchedEffect(storedSettings != null) {
+                val loaded = storedSettings ?: return@LaunchedEffect
+                if (welcomeDecided) return@LaunchedEffect
+                welcomeDecided = true
+                welcome = WelcomeAnimation.variantFor(
+                    WelcomeAnimation.Launch(
+                        enabled = loaded.welcomeAnimation,
+                        developerMode = loaded.developerMode,
+                        reducedMotion = WelcomeReducedMotion.isOn(applicationContext),
+                        // The one-shot, taken here: a rotation re-runs this
+                        // effect, finds the claim gone, and shows nothing.
+                        firstInProcess = WelcomeLaunchGate.claimFirstLaunch(),
+                    ),
+                )
+            }
 
             // Debug-only deep link (see com.lidarscan.app.debug.ReplayDeepLink):
             // `-e EXTRA_LAUNCH_REPLAY_CAPTURE true` / an Intent extra jumps
@@ -80,7 +119,35 @@ class MainActivity : ComponentActivity() {
 
             LidarScanTheme(themeMode = settings.themeMode) {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    LidarScanApp(container = container, navController = navController)
+                    Box(Modifier.fillMaxSize()) {
+                        // The app is composed FIRST and underneath: the page
+                        // loads while the film plays, so "interactive the
+                        // moment it ends" is not a promise the overlay has to
+                        // keep — there is nothing left to do when it goes.
+                        LidarScanApp(container = container, navController = navController)
+                        // ROUND 32 item 177 — the ~80 ms before the store's
+                        // first emission, which is the window the decision
+                        // above waits for.
+                        //
+                        // Found in the recording: the launch splash left, the
+                        // Projects page drew one frame, and THEN the film
+                        // started over the top of it. One frame of a page you
+                        // are about to cover reads as a glitch, not as
+                        // honesty. This holds the page's own colour across
+                        // that gap — the same ground the film's scrim uses, so
+                        // when the film does start there is no seam, and when
+                        // the answer is "no film" it simply goes.
+                        if (!welcomeDecided) {
+                            Box(
+                                Modifier
+                                    .fillMaxSize()
+                                    .background(MaterialTheme.colorScheme.background),
+                            )
+                        }
+                        welcome?.let { variant ->
+                            WelcomeOverlay(variant = variant, onFinished = { welcome = null })
+                        }
+                    }
                 }
             }
         }

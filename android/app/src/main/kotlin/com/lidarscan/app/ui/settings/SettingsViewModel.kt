@@ -338,6 +338,11 @@ class SettingsViewModel(
         viewModelScope.launch { settingsRepository.setAdvancedFeatures(enabled) }
     }
 
+    /** ROUND 32 item 177: see [com.lidarscan.app.data.AppSettings.welcomeAnimation]. */
+    fun setWelcomeAnimation(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setWelcomeAnimation(enabled) }
+    }
+
     fun setKeepEmptyScans(keep: Boolean) {
         viewModelScope.launch { settingsRepository.setKeepEmptyScans(keep) }
     }

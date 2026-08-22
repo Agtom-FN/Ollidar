@@ -10,6 +10,8 @@ import com.lidarscan.app.usb.SerialFirstBytesTrace
 import com.lidarscan.app.usb.Stl27lAutoProbe
 import com.lidarscan.app.usb.Stl27lAutoProbeResult
 import com.lidarscan.core.capture.AutoDetection
+import com.lidarscan.core.engine.SerialLidarBaud
+import com.lidarscan.core.engine.SerialModemLines
 import com.lidarscan.core.capture.SensorAutoDetector
 import com.lidarscan.core.model.SensorType
 import com.lidarscan.core.net.Mid360DetectionResult
@@ -57,6 +59,13 @@ sealed interface SerialProbeOutcome {
     data class Identified(
         val devicePath: String,
         override val evidence: String = "",
+        /**
+         * ROUND 32 item 178(b) — the rate this rung actually got an answer at,
+         * or null to mean "the sensor's standard one". Non-null only when the
+         * STL-27L's silent-line fallback adopted a different rate, and it has
+         * to reach `scan_engine_add_device` intact.
+         */
+        val serialBaud: Int? = null,
     ) : SerialProbeOutcome
 
     /**
@@ -229,7 +238,7 @@ class SerialLidarAutoDetector(
                 when (val outcome = step.probe(devicePath)) {
                     is SerialProbeOutcome.Identified -> {
                         note(step, devicePath, SerialProbeRecord.OUTCOME_IDENTIFIED, outcome.evidence)
-                        return detectionFor(step.sensor, outcome.devicePath)
+                        return detectionFor(step.sensor, outcome.devicePath, outcome.serialBaud)
                     }
 
                     is SerialProbeOutcome.Declined -> {
@@ -286,9 +295,16 @@ class SerialLidarAutoDetector(
         runCatching { debug.logSweep(ConnectionDebugSweeper.TRIGGER_AUTO_DETECT) }
     }
 
-    private fun detectionFor(sensor: SensorType, devicePath: String) = AutoDetection(
+    private fun detectionFor(
+        sensor: SensorType,
+        devicePath: String,
+        serialBaud: Int? = null,
+    ) = AutoDetection(
         sensor = sensor,
         transportHint = devicePath,
+        // ROUND 32 item 178(b): null for every rung that answered at its own
+        // standard rate, which is all of them except a fallen-back STL-27L.
+        serialBaud = serialBaud,
         label = "${sensor.displayName} · ${shortPath(devicePath)}",
         // Round 5 item 11: neither serial lidar has an IMU of its own, so the
         // phone is not an accessory here — it IS the trajectory. Said in the
@@ -367,7 +383,14 @@ class Stl27lProbeStep(
             ?: return SerialProbeOutcome.Unusable("$devicePath is no longer attached")
         return when (val result = probe.probe(driver)) {
             is Stl27lAutoProbeResult.Identified ->
-                SerialProbeOutcome.Identified(result.devicePath, result.evidence)
+                SerialProbeOutcome.Identified(
+                    result.devicePath,
+                    result.evidence,
+                    // Only carried when it is NOT the datasheet's rate: a null
+                    // here means "nothing unusual happened", which is what the
+                    // rest of the app should have to reason about.
+                    serialBaud = result.baud.takeIf { it != SerialLidarBaud.STL27L },
+                )
             is Stl27lAutoProbeResult.NotIdentified ->
                 SerialProbeOutcome.Declined(result.evidence, result.sawPartialMatch)
             is Stl27lAutoProbeResult.PermissionDenied ->
@@ -467,6 +490,14 @@ suspend fun openSerialPortByPath(
     registry: D6UsbConnectionRegistry,
     devicePath: String,
     baud: Int = D6UsbConnectionRegistry.BAUD_RATE,
+    /**
+     * ROUND 32 item 178(a): defaulted to the D6's state so this signature's
+     * existing callers are untouched. The manual picker passes the chosen
+     * sensor's — an operator who picks STL-27L in the panel gets the asserted
+     * lines the auto path gives it, or the manual escape hatch would be the
+     * one road that still cannot make the dev-kit board talk.
+     */
+    lines: SerialModemLines.State = SerialModemLines.COIN_D6,
 ): Result<Unit> {
     val driver = registry.findDrivers().firstOrNull { it.device.deviceName == devicePath }
         ?: return Result.failure(IllegalStateException("$devicePath is no longer attached"))
@@ -479,10 +510,10 @@ suspend fun openSerialPortByPath(
     // to put the device's USB identity in the log. A manual STL-27L connect
     // that goes on to stream nothing is then still diagnosable: vid:pid says
     // whether the phone even enumerated the adapter the owner thinks it did.
-    SerialFirstBytesTrace(driver, SerialFirstBytesTrace.SENSOR_MANUAL, baud).noteOpen()
+    SerialFirstBytesTrace(driver, SerialFirstBytesTrace.SENSOR_MANUAL, baud, lines).noteOpen()
     // ROUND 31 item 176(a): `registry.open` now releases any connection this
     // path already had (see its comment — that release is the whole fix), and
     // that release joins a reader thread. Off the caller's dispatcher, which
     // is `viewModelScope`, which is Main.
-    return withContext(Dispatchers.IO) { runCatching { registry.open(driver, baud) }.map { } }
+    return withContext(Dispatchers.IO) { runCatching { registry.open(driver, baud, lines) }.map { } }
 }

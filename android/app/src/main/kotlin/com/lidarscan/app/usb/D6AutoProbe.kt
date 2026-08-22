@@ -98,6 +98,11 @@ class D6AutoProbe(private val registry: D6UsbConnectionRegistry) {
             driver = driver,
             sensor = SerialFirstBytesTrace.SENSOR_D6,
             baud = SerialLidarBaud.COIN_D6,
+            // ROUND 32 item 178(a): the D6 keeps DTR/RTS exactly as it always
+            // had them; the line is logged anyway, because "the sensor that
+            // works runs with both low" is the fact the decision to unify the
+            // two states will be made from.
+            lines = registry.lastModemLines,
         )
 
         connection.startReading { buffer, len, _ ->

@@ -205,6 +205,46 @@ object Wording {
     /** The one detail line under the switch. */
     const val ADVANCED_DETAIL = "Floor plan, merge, cloud, survey tools."
 
+    // ── ROUND 32 item 178(c): the silent line ──────────────────────────────
+
+    /**
+     * The no-data banner when a whole capture has produced only a trickle.
+     *
+     * A question, and deliberately so. The owner was told *"the baud or the
+     * cable is wrong"* after 552 bytes in twenty-five seconds, while the sensor
+     * turned in his hand — and the app has no way to know whether it is
+     * turning, while he can settle it in one second by looking. So the app asks
+     * the thing only he can see, and [SILENT_LINE_DETAIL] makes both answers
+     * actionable.
+     *
+     * What the app has already done about it — asserting DTR and RTS, retrying
+     * at the LD family's rates — is in the log, which is exempt from the law
+     * and is read by somebody sitting down. This is read by somebody standing
+     * in a corridor.
+     */
+    const val SILENT_LINE_TITLE = "Sensor is silent. Is it spinning?"
+
+    /** Both branches, and both are a next move rather than a diagnosis. */
+    const val SILENT_LINE_DETAIL = "Spinning means the cable. Not spinning means power."
+
+    // ── ROUND 32 item 177: the welcome animation's Settings row ────────────
+
+    /**
+     * Settings → Display → the welcome animation switch. The owner named it,
+     * so it is his two words and not a paraphrase.
+     */
+    const val WELCOME_TITLE = "Welcome animation"
+
+    /**
+     * Its one detail line.
+     *
+     * It says **when**, because that is the only question a switch called
+     * "Welcome animation" leaves open — and "once" is the word that answers
+     * the worry the toggle exists for, which is not "is it pretty" but "is
+     * this going to happen every time I touch the app".
+     */
+    const val WELCOME_DETAIL = "Plays once when the app starts."
+
     // ── the Scan screen (item 95) ──────────────────────────────────────────
 
     const val SCAN_BUTTON = "SCAN"

@@ -242,8 +242,9 @@ class CaptureViewModel(
      * divisor, and a default would let a future caller open an STL-27L at the
      * D6's rate and get a silent stream of framing garbage instead of an error.
      */
-    private val openSerialPort: suspend (String, Int) -> Result<Unit> =
-        { _, _ -> Result.failure(IllegalStateException("no USB")) },
+    private val openSerialPort:
+        suspend (String, Int, com.lidarscan.core.engine.SerialModemLines.State) -> Result<Unit> =
+        { _, _, _ -> Result.failure(IllegalStateException("no USB")) },
     /**
      * Addresses the manual Mid-360 fields open with — the last auto-detected pair
      * (AUTO-DETECT §3's DataStore keys), else the factory defaults. Suspend and
@@ -965,7 +966,15 @@ class CaptureViewModel(
                 detectors = autoDetectors,
                 connect = { detection ->
                     engineBridge.connect(
-                        EngineTarget(detection.sensor, transportHint = detection.transportHint),
+                        EngineTarget(
+                            detection.sensor,
+                            transportHint = detection.transportHint,
+                            // ROUND 32 item 178(b): null unless the STL-27L's
+                            // silent-line fallback adopted an LD-family rate,
+                            // in which case the divisor the port was OPENED at
+                            // is the one the engine must be told.
+                            serialBaud = detection.serialBaud,
+                        ),
                     ).onSuccess {
                         // ROUND 31 item 176(a): the counterpart of the manual
                         // path's line, in the same shape, so one grep for
@@ -974,6 +983,14 @@ class CaptureViewModel(
                         // it or did the ladder?" — the question the owner's
                         // 2026-08-22 report could not be answered from.
                         logEvent(LOG_TAG_SESSION, "sensor: ${detection.sensor.displayName} (auto)")
+                        // ROUND 32 item 178(b): and, when it is not the rate
+                        // the datasheet says, a second line that says so in as
+                        // many words. A capture running at 230 400 on a sensor
+                        // documented at 921 600 is a fact the next field report
+                        // must arrive carrying.
+                        detection.serialBaud
+                            ?.let { com.lidarscan.core.engine.SilentLineFallback.nonStandardBaudLine(it) }
+                            ?.let { logEvent(LOG_TAG_SESSION, it) }
                         // The detected sensor decides what the new project will
                         // be created as, and (for a Mid-360) which addresses get
                         // written into its manifest at Start.
@@ -1047,6 +1064,10 @@ class CaptureViewModel(
     ) {
         val controller = autoConnect ?: return
         val baud = com.lidarscan.core.engine.SerialLidarBaud.forSensorOrNull(sensor) ?: return
+        // ROUND 32 item 178(a): the manual escape hatch asserts the same modem
+        // lines the auto path does. It would be a strange fix that made the
+        // dev-kit board talk only when the app guessed right by itself.
+        val lines = com.lidarscan.core.engine.SerialModemLines.forSensorOrNull(sensor) ?: return
         val label = "${sensor.displayName} · ${device.label}"
         // ROUND 31 item 176(a). The owner's line, verbatim: even manual
         // selection was "still not adopted". This is the log line that makes
@@ -1082,7 +1103,8 @@ class CaptureViewModel(
                 runCatching { engineBridge.disconnect() }
                     .onFailure { logEvent(LOG_TAG_SESSION, "manual pick: disconnect threw: ${it.message}") }
             }
-            val opened = runCatching { openSerialPort(device.path, baud) }.getOrElse { Result.failure(it) }
+            val opened = runCatching { openSerialPort(device.path, baud, lines) }
+                .getOrElse { Result.failure(it) }
             if (opened.isFailure) {
                 logEvent(
                     LOG_TAG_SESSION,
@@ -1626,6 +1648,33 @@ class CaptureViewModel(
                     bytes == 0L ->
                         "NO DATA — ${seconds}s into this scan and the ${_sensor.value.displayName} has sent " +
                             "0 bytes. Nothing is being recorded. Stop, re-seat the USB-C cable, and start again."
+                    // ══════════════════════════════════════════════════════
+                    // ROUND 32 item 178(c) — **a trickle is not a wrong baud.**
+                    //
+                    // The message this branch used to print — "the cable is
+                    // alive and the data is not the sensor's … the baud or the
+                    // cable is wrong" — is right for a LOUD line carrying the
+                    // wrong protocol, and it is what the owner's 0.9.16 retest
+                    // was told after 552 bytes in twenty-five seconds. 552
+                    // bytes is not a stream of anything. It is silence with
+                    // framing noise in it, and "the baud is wrong" sent him
+                    // looking at a setting when the sensor was spinning in his
+                    // hand.
+                    //
+                    // So the trickle case gets its own answer, and the answer
+                    // is a QUESTION the operator can settle in one second
+                    // without any equipment: is it turning? Both branches of
+                    // it are actionable — spinning means the data path (the
+                    // cable, the adapter, the wiring), not spinning means the
+                    // 5 V. What the app has already done about it (asserting
+                    // DTR and RTS, trying the LD-family rates) is in the log,
+                    // where that belongs, and not in a sentence held by
+                    // somebody standing in a corridor.
+                    // ══════════════════════════════════════════════════════
+                    ok == 0L && bytes < com.lidarscan.core.engine.SilentLineFallback.QUIET_LINE_BYTES ->
+                        "NO DATA — ${seconds}s in: only $bytes bytes arrived. " +
+                            "${com.lidarscan.core.Wording.SILENT_LINE_TITLE} " +
+                            com.lidarscan.core.Wording.SILENT_LINE_DETAIL
                     ok == 0L ->
                         "NO DATA — ${seconds}s in: $bytes bytes arrived but not one valid packet " +
                             "($bad rejected). The cable is alive and the data is not the sensor's. " +

@@ -154,7 +154,18 @@ class RealEngineBridge(
         //               sendStartStop=false. Building a trampoline it would
         //               never use would only leave a JVM global ref alive.
         val kind = deviceKindOf(target.sensor)
-        val baud = SerialLidarBaud.forSensorOrNull(target.sensor)
+        // ROUND 32 item 178(b): the target's own rate wins when it has one.
+        // The probe that opened this port at 230 400 has already proved the
+        // sensor answers there; deriving 921 600 from the sensor type at this
+        // point would hand the engine a divisor the wire is not using, which
+        // does not fail — it mis-times every return.
+        if (target.serialBaud == null && !SerialLidarBaud.isSerial(target.sensor)) {
+            return@withContext Result.failure(
+                IllegalStateException("$sensorName is not a serial sensor"),
+            )
+        }
+        val baud = target.serialBaud
+            ?: SerialLidarBaud.forSensorOrNull(target.sensor)
             ?: return@withContext Result.failure(
                 IllegalStateException("$sensorName is not a serial sensor"),
             )

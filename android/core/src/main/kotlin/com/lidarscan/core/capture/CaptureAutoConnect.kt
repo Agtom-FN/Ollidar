@@ -25,6 +25,19 @@ data class AutoDetection(
     val transportHint: String?,
     val label: String,
     val detail: String? = null,
+    /**
+     * ROUND 32 item 178(b) — the serial rate this detection was made at, when
+     * it is **not** the sensor's standard one.
+     *
+     * Null almost always, and null is the normal answer: a COIN-D6 at 230 400
+     * and an STL-27L at 921 600 both leave this alone, because
+     * `SerialLidarBaud` already knows those. It is non-null only for the case
+     * item 178(b) exists for — an STL-27L whose datasheet rate produced a
+     * silent line and which answered at an LD-family fallback instead. That
+     * number has to survive all the way to `scan_engine_add_device`, since the
+     * engine derives per-point timing from it.
+     */
+    val serialBaud: Int? = null,
 )
 
 /**

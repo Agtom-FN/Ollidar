@@ -8,6 +8,8 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeDown
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
@@ -334,6 +336,38 @@ class Round24UiTest {
                 composeRule.onNodeWithTag("app_version_footer").performScrollTo()
                 repeat(7) { composeRule.onNodeWithTag("app_version_footer").performClick() }
                 composeRule.waitUntil(timeoutMillis = 15_000) { !has("captureLogPath") }
+
+                // ── ROUND 32: the trap the comment below has described since
+                // round 25, finally closed at the cause.
+                //
+                // Establishing the precondition costs a scroll to the very
+                // bottom, because the version footer is the last thing on a
+                // long page. Round 28 papered over it with a `performScrollTo`
+                // on the row being asserted; round 29 removed that (rightly —
+                // "an avatar that needs scrolling to is not a header") and left
+                // the CAUSE, so the failure came straight back the first time a
+                // device arrived with developer mode already on. It did, this
+                // round, because unlocking it is how animation B was recorded.
+                //
+                // A page scrolled to its footer is not the page a user arrives
+                // on, so the page is put back to its top before anything about
+                // the HEADER is asserted.
+                //
+                // Leaving the tab and returning does NOT do it: round 22 item
+                // 88 gave the tab bar `saveState`/`restoreState`, and
+                // `rememberScrollState` is saveable, so Settings comes back
+                // exactly where it was left. (Tried, and it failed in the same
+                // place — worth writing down, because it is the obvious move.)
+                //
+                // Scrolling the CONTAINER rather than `performScrollTo` on the
+                // avatar keeps round 29's assertion honest: what is under test
+                // is that the avatar is visible at the top of the page without
+                // being scrolled to, and a test that scrolls to the node it is
+                // about to call `assertIsDisplayed` on cannot fail.
+                repeat(12) {
+                    composeRule.onNodeWithTag("settingsScreen").performTouchInput { swipeDown() }
+                    composeRule.waitForIdle()
+                }
             }
 
             // ROUND 25: scroll back to the row before asserting it is DISPLAYED.

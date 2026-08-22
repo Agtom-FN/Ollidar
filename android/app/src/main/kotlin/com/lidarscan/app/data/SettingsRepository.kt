@@ -86,6 +86,9 @@ class SettingsRepository(private val context: Context) {
         /** ROUND 17 (item 66): the per-capture debug log. Default true, but gated by DEVELOPER_MODE. */
         val CAPTURE_DEBUG_LOG = booleanPreferencesKey("capture_debug_log")
 
+        /** ROUND 32 (item 177): the welcome animation. Unset means ON. */
+        val WELCOME_ANIMATION = booleanPreferencesKey("welcome_animation")
+
         /** ROUND 11 (item 43): haptic + audio operator cues. Unset means ON. */
         val OPERATOR_CUES = booleanPreferencesKey("operator_cues_enabled")
         val DND_DURING_CAPTURE = booleanPreferencesKey("dnd_during_capture")
@@ -180,6 +183,9 @@ class SettingsRepository(private val context: Context) {
             // of a gesture-unlocked section.
             developerMode = prefs[Keys.DEVELOPER_MODE] ?: false,
             captureDebugLog = prefs[Keys.CAPTURE_DEBUG_LOG] ?: true,
+            // ROUND 32 (item 177): unset means ON, so a fresh install is
+            // introduced to the app rather than dropped into it.
+            welcomeAnimation = prefs[Keys.WELCOME_ANIMATION] ?: true,
             // ROUND 11 (item 43): default ON, so an unset preference buzzes.
             operatorCuesEnabled = prefs[Keys.OPERATOR_CUES] ?: true,
             dndDuringCapture = prefs[Keys.DND_DURING_CAPTURE] ?: true,
@@ -363,6 +369,11 @@ class SettingsRepository(private val context: Context) {
     /** ROUND 17 (item 66): see [AppSettings.captureDebugLog]. */
     suspend fun setCaptureDebugLog(enabled: Boolean) {
         context.settingsDataStore.edit { it[Keys.CAPTURE_DEBUG_LOG] = enabled }
+    }
+
+    /** ROUND 32 (item 177): see [AppSettings.welcomeAnimation]. */
+    suspend fun setWelcomeAnimation(enabled: Boolean) {
+        context.settingsDataStore.edit { it[Keys.WELCOME_ANIMATION] = enabled }
     }
 
     /** ROUND 11 (item 43). */

@@ -6091,3 +6091,347 @@ to capture. **The owner's retest is this round's bench validation**, and
 176(c)'s first-64-bytes line exists precisely so that if it fails again, the
 next round starts from what the device sent rather than from what it ought to
 have sent.
+
+## ROUND 32 (v0.9.17) — the welcome animation, from an approved storyboard
+
+The owner approved a two-variant welcome animation on 2026-08-22, as an
+artifact (`ollidar-welcome-animation.html`) whose CSS keyframes are the spec
+rather than an illustration of one. This round builds it out of the **real
+icon artwork**, cut into layers, and not out of the storyboard's stand-in SVG
+llama.
+
+### 177 — the welcome animation
+
+Owner-approved, in his words on the artifact: *"APPROVED (2026-08-22): both
+animations at 3.0 s; A rings spread to the window edges. The in-app build uses
+the REAL icon artwork — the llama and lidar cut into separate layers from the
+1024px master — posed to this exact storyboard."*
+
+**Animation A — every cold launch, 3.0 s.** Idle; the llama crouch-tosses
+(whole body bobs ~5 px); the lidar puck flips off its head **dark** — no light
+until it is back down; the apex stays well inside the screen; **exactly one**
+360° rotation; it lands back on its anchor with a squash; the LED ignites; the
+orange fan-dots sweep one revolution around the puck while **two** orange rings
+expand from the puck **to the screen edges**; the whole overlay fades out on the
+flash tail. The eye layer follows the puck vertically by a few pixels.
+
+**Animation B — replaces A while developer mode is on, 3.0 s.** The side llama;
+an orange four-point star twinkles at the eye; it crossfades/turns to a
+**front-facing** pose; the cheeks puff; a water-blue droplet launches from the
+mouth **toward the viewer** (translate down + scale up ~4×); it splats on the
+"glass"; a grin.
+
+**The rules around it.**
+
+ * Pure Compose — `Canvas` / `Image` layers and `Animatable`. No video, no GIF,
+   no Lottie.
+ * The overlay covers the start destination and is drawn over a scrim of the
+   page. The page loads underneath it.
+ * **Cold launch only** — process start. Not a tab switch, not a rotation.
+   B iff developer mode is enabled at launch.
+ * **Tap anywhere skips instantly**: overlay gone, zero residue. Otherwise
+   exactly 3.0 s, and the app is fully interactive the moment it ends.
+ * Settings → Display → **"Welcome animation"**, default ON, persisted, with a
+   wording-law-legal detail line.
+ * The `prefers-reduced-motion` equivalent: if `Settings.Global
+   .animator_duration_scale == 0`, or the accessibility remove-animations
+   setting is on, **skip entirely** — never a static frame held for three
+   seconds.
+
+**Art.** Four layers cut from the 1024 px master and pixel-verified to
+reassemble it: the body (head reconstructed where the lidar sits, **no** eye),
+the lidar puck, the fan-dots, the eye. A front-facing llama **does not exist**
+in the master art, so B's front pose is the one drawn element in the round: it
+is constructed from ellipses and paths in the icon's own language — the same
+fleece, the same ink, the same outline weight — exactly as the approved
+storyboard's front face was.
+
+
+### 178 — STL-27L: the line is silent, and the sensor is spinning
+
+The owner retested 0.9.16 the same evening
+(`captures/lidarscan-capture-log-2026-08-22-1919.txt`, from line 3319).
+**Every one of round 31's fixes worked.** The manual pick bound and logged
+`[session] sensor: LDROBOT STL-27L (manual)`; the project was created with
+`sensor=STL27L`; the strict D6 probe declined honestly
+(`bytes=35 aa55=0 frames=0 chained=0`); the first-bytes evidence line
+appeared, naming `vid:pid=1a86:7523 product="USB Serial"`. Round 31's
+diagnosis was right, its fixes landed, and the scan still recorded nothing.
+
+The fourth fault, which nobody had looked for:
+
+```
+[session] NO DATA after 2005ms: bytesIn=42  packetsOk=0 packetsBad=0
+[seal]    NO-DATA=true reason="… 552 bytes arrived but not one valid packet"
+[net-debug] STL27L → first-bytes (… baud=921600 first1=00)
+[net-debug] STL27L → declined (bytes=16 542c=0 packets=0)
+```
+
+42 bytes in two seconds. 552 in twenty-five. 666 in five. First byte `00`.
+**Zero `54 2C` headers, ever, at any point.** Not garbled — *absent*. And the
+owner confirms, asked directly: **the sensor is spinning.**
+
+Powered, enabled, rotating, and saying nothing. That is not a baud fault and
+not a protocol fault; that is a data path held down. Three things this round
+owes:
+
+**(a) DTR/RTS.** Find what the D6 open path does with the control lines. On
+open, assert DTR and RTS — matching the D6 if it differs, and **do not
+regress the working D6**: if the D6 asserts neither and works, assert them for
+the STL-27L only and say why. Log the line states under developer mode.
+
+**(b) A multi-baud evidence rung.** When the STL-27L probe sees a **silent**
+line at 921 600, retry the evidence capture at 230 400 and 460 800 — the LD
+family's own rates, which some STL-27L firmware and dev-kit batches ship at.
+Per-rate byte and header counts into the `[net-debug]` serial-probes block. If
+a fallback rate produces valid `54 2C` packets, **use it for the session** and
+log `[session] STL-27L at 230400 (non-standard)`.
+
+**(c) A no-data message for the silent case.** The current one says *"the baud
+or the cable is wrong"* — which was told to a man holding a spinning sensor.
+Under a kilobyte, say what a silent line means and ask the question that
+splits it, inside the wording law.
+
+**(d) Tests.** DTR/RTS asserted on open against a mock port; the baud-fallback
+state machine against synthetic silent and valid streams; message selection.
+Engine untouched. Manual §13/§14 gain the silent-line entry, with the
+motor-spin question as the operator's first check.
+
+### Resolution — 2026-08-22 (0.9.17, round 32)
+
+**177 — the welcome animation.**
+
+Both films ship, both exactly 3.0 s, both built from the approved storyboard's
+own keyframes rather than from a description of them.
+
+`WelcomeTimeline` (`android/core/src/main/kotlin/com/lidarscan/core/welcome/
+WelcomeTimeline.kt`) is the artifact's CSS, transcribed: the same stop
+positions, the same values, and the same **per-segment** easing, which is what
+`animation-timing-function` does and therefore what a faithful port has to do
+— a single easing stretched across the puck's four segments would have put the
+apex in the wrong place and the landing at the wrong speed. It lives in
+`:core`, and that is the point: the owner's stated waypoints are then pinnable
+by a clock-driven JVM test against the same arithmetic the screen draws.
+
+Everything is in **master-art units** — the 1024 px canvas the icon was drawn
+on. One `withTransform` maps that square onto the screen and after it a stroke
+width of 21 *is* the icon's outline weight and the puck's anchor *is*
+`(474, 176)`. The storyboard's stand-in llama was drawn at a different scale;
+`STORYBOARD_TO_MASTER` = **3.887** is the conversion, measured between the two
+landmarks both drawings share (puck centre → eye: 53.25 storyboard px, 207.0
+master units) rather than from the puck's size, which would have stretched
+every distance by a third because the stand-in's puck is drawn small.
+
+**Two things the storyboard could not say, and one it said that was missed.**
+
+*The rings.* `scale(8.5)` is a real number in a fixed 340 × 420 stage and stops
+less than half way down a handset. The timeline's scale is read as a **fraction
+of the way to the screen's furthest corner**, so *"the rings spread to the
+window edges"* is true on every screen instead of on one. The stroke
+deliberately does **not** scale with the ring the way a CSS `transform` would:
+across a phone's diagonal that turns the last ring into a 100 px orange band.
+
+*The squash.* The storyboard has a 3 px overshoot; the item asks for a squash.
+It is an explicit track, about the puck's **foot**, which is what makes a
+squash read as weight rather than as a wobble.
+
+*And the one that was missed.* The first recording came back with a
+**see-through llama**. The cut body layer is an OUTLINE — its fluff interior is
+transparent, because in the icon the fleece and the ground are the same colour
+and the artist never drew a fill — so on this app's dark default page it
+composited as a scribble with a floating white face. The fix is not to invent a
+fill: it is to give the film the ground the artwork was drawn for, **the app
+icon itself**, reproduced at size from the master's own measurements (frame
+band 51 units, outer corner ≈ 200, inner ≈ 150, `#E55B2A` on `#F1F2ED`). The
+storyboard had already said so and it was read past — its stage is
+`background:#F2F1EC; border:3px solid; border-radius:24px`, a light panel, not
+a bare page. It earns its place beyond the bug: the thing the operator tapped
+to get here is that icon, so the film now starts inside it, throws the lidar
+clear of it, and bursts the scan rings out past its edge to the corners of the
+screen. **This was found by watching the recording, which is the entire reason
+the item asks for one.**
+
+**B's front pose** is the one drawn element of the round, because a
+front-facing llama does not exist in the master art and could not be cut from
+it. Head ∪ nine crown scallops ∪ two ears, unioned with `Path.op` into a
+**single** silhouette so it carries one continuous outline instead of a pile of
+overlapping circles, filled fleece and stroked ink at the measured weight; the
+hat is the **real puck sprite** and the open eye is the **real eye sprite**, so
+the front pose wears the same objects the side pose does. Two rounds of
+recording went into the ears alone: the storyboard's short quadratics came out
+as horns, lengthening them made them longer horns that punched through the
+icon's frame, and the shipped shape is a tapered leaf whose tip stays inside
+the paper. The crown scallops were enlarged for the same reason — at r = 52 a
+bump that sits 20 units above a 272-unit curve reads as a smooth egg.
+
+**The gate.** `WelcomeAnimation.variantFor` is four booleans and every one of
+them is a sentence from the item: not first-in-process → nothing; toggle off →
+nothing; reduced motion → nothing; developer mode → B; else A.
+`WelcomeLaunchGate` is an `AtomicBoolean` claimed once per **process** — not
+composable state (replays on every tab switch), not `rememberSaveable`
+(survives a rotation, which is not a launch), not the Activity (recreated by a
+rotation, a theme change and a locale change). Atomic rather than a plain
+`var` because two Activities can be created concurrently in this app — a
+launcher tap racing the manifest's `USB_DEVICE_ATTACHED` filter — and a torn
+read would play the film twice, over the top of itself.
+
+**Reduced motion** is `animator_duration_scale == 0` **or**
+`transition_animation_scale == 0`. Android has no single reduce-motion flag;
+what Accessibility → *Remove animations* actually does is write zero into those
+scales. Either zero is a "no", and the answer is to **skip**, never to freeze a
+frame — a static picture held for three seconds costs the same three seconds
+and buys nothing.
+
+**The settings read is nullable, and the null is load-bearing.** `AppSettings()`
+is a fine placeholder for a theme and a **wrong answer** for this: its defaults
+say "developer mode off", so deciding from them would show a developer the
+ordinary film every launch with no symptom other than the wrong llama. The
+decision waits for DataStore's first real emission. The recording then showed
+what that costs — the splash left, the Projects page drew one frame, and the
+film started over the top of it. One frame of a page you are about to cover
+reads as a glitch, not as honesty, so the page's own colour is held across that
+~80 ms gap: the same ground the film's scrim uses, so there is no seam when the
+film starts and nothing to remove when the answer is "no film".
+
+**Skip** is on the pointer **DOWN**, not the tap — waiting for the up would
+mean the first thing the app does is make you finish a gesture — and the event
+is **consumed**, so the same touch cannot also press what is underneath. A lid
+that leaks is worse than no lid.
+
+**Settings → Display → "Welcome animation"**, default ON, persisted
+(`welcome_animation`). It is in Display beside Units and Theme because it is
+not a scanning setting and not a developer one: it is what the person wants
+their app to look like when it opens. Both strings live in `Wording` so the
+`:core` wording-law test can reach them — Settings is a **tab-bar** screen and
+gets no exemption at all (round 28 item 169). "Welcome animation" is two words;
+*"Plays once when the app starts."* is six, and it says **when**, because that
+is the only question the title leaves open and "once" answers the worry the
+toggle exists for.
+
+**Art: four layers, 102 054 bytes**, lossless WebP in `res/drawable-nodpi`
+(`welcome_llama_body` 49 178, `welcome_fan_dots` 32 582, `welcome_lidar_puck`
+18 718, `welcome_llama_eye` 1 576). The body is downscaled to 512 px per the
+item's ceiling; the other three are already under it and ship at native size.
+PNG would have cost 178 443. No video, no GIF, no Lottie, no new dependency.
+
+**178 — the silent line.**
+
+**(a) The answer to "what does the D6 path do with DTR/RTS today", which is the
+question that found the bug.** It does `port.setDTR(false)` — one deliberate
+line, `D6UsbConnectionRegistry.open` — and it **never mentions RTS**, which
+usb-serial-for-android leaves de-asserted from `open()`. So **both control
+lines have been low on every port this app has ever opened**, for every sensor,
+in every release. On a bare COIN-D6 that is invisible and a hundred field
+captures prove it. The STL-27L arrives on a **CH340 dev-kit adapter board** —
+`1a86:7523`, product string `USB Serial`, straight off the owner's own
+`[net-debug]` line — and that class of board routinely wires DTR and/or RTS to
+the sensor's enable or to the level shifter's output-enable. Both low means the
+board is listening to a spinning sensor and telling the host nothing, which is
+*exactly* the report.
+
+`SerialModemLines` (`:core`) makes the state per-sensor and explicit.
+**COIN_D6 = (dtr=false, rts=false)** — unchanged, stated rather than left
+implicit, and guarded by a test that says so in as many words. **STL27L =
+(dtr=true, rts=true)**. Not asserted globally, and that is a decision rather
+than caution: on some adapters DTR is a *reset* line, so changing the one path
+with field history in order to fix the one without it would trade a known
+failure for an unknown one on the sensor the owner actually scans with. The
+`[net-debug]` port-open line now records `dtr=1 rts=1` for every open, so the
+decision to unify can be made from a log instead of from an argument. A driver
+that refuses a control line reports false and the open **continues** — neither
+line is required by a device that ignores them, and losing a working port to
+insist on a signal would be a worse bug than the one being fixed.
+
+**(b) The multi-baud rung.** Round 31 made the probes honest about declining; a
+decline on **sixteen bytes** and a decline on thirty thousand bytes of the
+wrong protocol print the same word and mean completely different things. The
+first is not a decline at all — it is an unanswered question, and at that point
+the baud is a hypothesis. It is a live one: the LD06 and LD19 in the same
+family run 230 400, several STL-27L dev-kit batches ship at the family default,
+and `first1=00` is what a UART sampling a mis-clocked stream produces.
+
+`Stl27lAutoProbe.runLadder` reads 921 600 first; if that window comes back
+**silent** (< 256 bytes — the owner's line was 16, a healthy STL-27L clears the
+bar in under three milliseconds, the two populations are three orders of
+magnitude apart) it re-opens at **230 400** then **460 800**. CRC-valid packets
+at a fallback rate adopt it for the session, and the rate travels intact:
+`Stl27lAutoProbeResult.baud` → `SerialProbeOutcome.serialBaud` →
+`AutoDetection.serialBaud` → `EngineTarget.serialBaud` →
+`scan_engine_add_device`, because the engine derives per-point timing from that
+number and identifying at 230 400 while telling the engine 921 600 is precisely
+the silent mis-timing `SerialLidarBaud`'s own doc warns about. `[session]
+STL-27L at 230400 (non-standard)` when it is not the datasheet's rate, and
+nothing when it is.
+
+A **loud** decline deliberately does not get this treatment. Something is
+streaming and it is not this protocol; the question has been answered, and
+re-clocking a working port twice on every connect would be churn on the one
+path every recorded scan came through. `runLadder` takes its window reader as a
+parameter, so the byte-exact tests drive **that function** rather than a copy of
+it — round 31's standard, kept.
+
+**(c) The message.** *"the baud or the cable is wrong"* is right for a loud line
+carrying the wrong protocol and it was what the owner was told after 552 bytes
+in twenty-five seconds. 552 bytes is not a stream of anything; it is silence
+with framing noise in it, and it sent him looking at a setting while the sensor
+turned in his hand. Under `QUIET_LINE_BYTES` (4 096 — his three captures were
+42, 552 and 666; one second of a real COIN-D6 is 24 000) the banner now says
+*"Sensor is silent. Is it spinning?  Spinning means the cable. Not spinning
+means power."* Both branches are actionable and the operator can settle it in
+one second by looking. What the app has already done about it — asserting the
+lines, trying the family's rates — is in the **log**, where it belongs, and not
+in a sentence held by somebody standing in a corridor.
+
+**What is NOT proven, again, plainly.** No STL-27L and no COIN-D6 is attached
+to this Mac. The two control-line writes are proved against a mock port; the
+ladder against byte-exact synthetic streams through the production decision
+code; the thresholds against the owner's own counters. The seam none of it
+reaches is the CH340 itself — whether *that board* gates on DTR, on RTS, on
+both, or on neither. **The owner's next retest is this round's bench
+validation**, and the `dtr=1 rts=1` field in the port-open line exists so that
+if it fails again the next round starts from what the adapter was actually
+driven with.
+
+**Numbers.** Engine **untouched**; ABI stays **12**; `ctest` **8/8** (247.9 s,
+`mid360_sim_e2e` 204.3 s of it). `:core` unit **1119 / 0** (was 1085; +12
+`WelcomeTimelineTest`, +7 `WelcomeAnimationTest`, +15
+`SilentLineFallbackTest`). `:app` unit **278 / 0** (was 265; +9
+`Stl27lSilentLineTest`, +4 `WelcomeLaunchGateTest`). Emulator: **71 tests, 0
+failures, 2 assumed-skipped** on `b4_test` (was 66; +5 `Round32WelcomeTest`),
+`BUILD SUCCESSFUL in 3m 31s`. VERSION 0.9.17; versionCode **917** /
+versionName **0.9.17** / `application-label:'Ollidar'` verified by `aapt2 dump
+badging` on `dist/Ollidar-0.9.17-917.apk`. The art costs **102 054 bytes** of
+the APK's **+550 541**; the rest is the round's code.
+
+**Measured from the recordings, which are the deliverable.** `uishots6/
+animA.mp4` and `uishots6/animB.mp4`, plus four keyframes each (A: start /
+apex / flash / end — B: twinkle / front / spit / splat). The emulator's
+`screenrecord` drops frames badly under a software renderer — animA averages
+**14.2 fps with a 1.39 s maximum gap**, animB 25.5 fps — so the films measure
+**2.80 s** and **2.97 s** end to end from the first frame carrying the icon to
+the first clean frame of the app. Those are lower bounds set by the dropped
+frames, not by the animation: the duration is one `tween(3000, LinearEasing)`,
+asserted at 3 000 ms in `:core` and bracketed on the device by
+`Round32WelcomeTest.itFinishesOnItsOwnAtThreeSeconds`, which requires that
+nothing has fired at 2 600 ms and that it has fired by 3 200 ms.
+
+**One connected test changed, and it is the same trap for the third time.**
+`Round24UiTest.settingsIsSimplifiedWithDeveloperThingsHidden` re-locks
+developer mode as its own precondition, which costs a scroll to the version
+footer at the bottom of a long page — and then asserts that the header's
+avatar is DISPLAYED. It therefore fails, and only fails, on a device that
+arrived with developer mode already on. Round 25 diagnosed it in a nine-line
+comment; round 28 patched it with a `performScrollTo` on the row under
+assertion; round 29 removed that patch on principle ("an avatar that needs
+scrolling to is not a header") and left the cause in place. This round is how
+it came back: unlocking developer mode is how animation B was recorded.
+
+Leaving the tab and returning does **not** fix it — round 22 item 88 gave the
+tab bar `saveState`/`restoreState` and `rememberScrollState` is saveable, so
+Settings comes back exactly where it was left. That was tried and it failed in
+the same place; it is written into the test's comment because it is the obvious
+move. What fixes it is scrolling the **container** back to its top, which
+restores the state a user arrives in and leaves round 29's assertion able to
+fail. **Proven under the failing precondition**: developer mode was armed by
+hand on `b4_test` and the whole suite run against it, twice red before the fix
+and green after.

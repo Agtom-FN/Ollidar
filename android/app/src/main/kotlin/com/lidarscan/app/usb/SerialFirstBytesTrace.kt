@@ -35,6 +35,13 @@ class SerialFirstBytesTrace(
     /** What the caller was probing FOR, so the log says which attempt these bytes belong to. */
     private val sensor: String,
     private val baud: Int,
+    /**
+     * ROUND 32 item 178(a): the DTR/RTS state this open put on the wire. Null
+     * when the caller does not know or the driver refused, which is itself
+     * worth seeing in a log — `dtr=? rts=?` and a silent line is a different
+     * report from `dtr=1 rts=1` and a silent line.
+     */
+    private val lines: com.lidarscan.core.engine.SerialModemLines.State? = null,
 ) {
     private var written = false
 
@@ -46,7 +53,7 @@ class SerialFirstBytesTrace(
             sensor = sensor,
             devicePath = driver.device.deviceName,
             outcome = SerialProbeRecord.OUTCOME_PORT_OPEN,
-            detail = "$identity baud=$baud",
+            detail = "$identity baud=$baud $linesDetail",
         )
     }
 
@@ -66,9 +73,12 @@ class SerialFirstBytesTrace(
             sensor = sensor,
             devicePath = driver.device.deviceName,
             outcome = SerialProbeRecord.OUTCOME_FIRST_BYTES,
-            detail = "$identity baud=$baud first$n=$hex",
+            detail = "$identity baud=$baud $linesDetail first$n=$hex",
         )
     }
+
+    /** ROUND 32 item 178(a). `dtr=1 rts=1`, or `dtr=? rts=?` when it could not be set. */
+    private val linesDetail: String get() = lines?.log ?: "dtr=? rts=?"
 
     private val identity: String
         get() = buildString {

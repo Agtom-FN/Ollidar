@@ -174,6 +174,7 @@ fun SettingsRoute(
         onD6SensorLatencyChange = viewModel::setD6SensorLatencyMs,
         emptyScanCount = emptyScanCount,
         emptyScanNote = emptyScanNote,
+        onWelcomeAnimationChange = viewModel::setWelcomeAnimation,
         onKeepEmptyScansChange = viewModel::setKeepEmptyScans,
         onAdvancedFeaturesChange = viewModel::setAdvancedFeatures,
         onDeveloperModeChange = viewModel::setDeveloperMode,
@@ -297,6 +298,8 @@ fun SettingsScreen(
     /** What the last "clean up empty scans" actually did. */
     emptyScanNote: String? = null,
     onKeepEmptyScansChange: (Boolean) -> Unit = {},
+    /** ROUND 32 item 177: the welcome animation. Default ON. */
+    onWelcomeAnimationChange: (Boolean) -> Unit = {},
     /** ROUND 22 item 97: the one Advanced-features switch. Default OFF. */
     onAdvancedFeaturesChange: (Boolean) -> Unit = {},
     /** ROUND 17 item 66: the seven-tap unlock and everything behind it. */
@@ -426,6 +429,21 @@ fun SettingsScreen(
                         trailing = { Chevron() },
                         onClick = { sheet = SettingsSheet.THEME },
                         modifier = Modifier.testTag("settingsThemeRow"),
+                    )
+                },
+                {
+                    // ROUND 32 item 177: the welcome animation, and it belongs
+                    // in Display for the same reason Units and Theme do — it is
+                    // not a scanning setting and it is not a developer one, it
+                    // is what the person wants their app to look like when it
+                    // opens. The strings are `Wording`'s rather than literals
+                    // here, so the wording-law test in :core can reach them.
+                    ScanSwitchRow(
+                        title = Wording.WELCOME_TITLE,
+                        detail = Wording.WELCOME_DETAIL,
+                        checked = settings.welcomeAnimation,
+                        onCheckedChange = onWelcomeAnimationChange,
+                        modifier = Modifier.testTag("welcomeAnimationRow"),
                     )
                 },
             )

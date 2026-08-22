@@ -170,6 +170,21 @@ data class AppSettings(
     val developerMode: Boolean = false,
 
     /**
+     * ROUND 32 item 177 — **the welcome animation. Default ON.**
+     *
+     * Three seconds of the app's own llama, once per process start. Default ON
+     * because it is the owner's approved introduction to his app and an
+     * introduction nobody is shown is not one; a switch because three seconds
+     * is three seconds, and the operator who is on his fortieth scan of the
+     * afternoon has already been introduced.
+     *
+     * It is not the only thing that can silence it: the platform's reduce-
+     * motion setting skips it outright, without touching this preference. See
+     * [com.lidarscan.core.welcome.WelcomeAnimation.variantFor].
+     */
+    val welcomeAnimation: Boolean = true,
+
+    /**
      * ROUND 17 item 66 — write `debug/capture-debug.log` into each capture's
      * bundle. Only ever consulted when [developerMode] is on; locking developer
      * mode leaves the preference alone but stops it having any effect, so

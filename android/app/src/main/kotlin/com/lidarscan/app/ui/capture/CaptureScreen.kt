@@ -310,11 +310,12 @@ fun CaptureRoute(
                             )
                         }
                     },
-                    openSerialPort = { path, baud ->
+                    openSerialPort = { path, baud, lines ->
                         com.lidarscan.app.capture.openSerialPortByPath(
                             container.d6UsbConnectionRegistry,
                             path,
                             baud,
+                            lines,
                         )
                     },
                     manualMid360Defaults = {
