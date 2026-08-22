@@ -1038,6 +1038,8 @@ fun CaptureRoute(
         detailLevels = viewModel.detailLevels,
         detailLevel = detailLevel,
         detailCeilingNote = viewModel.detailCeilingNote,
+        // ROUND 29 item 172.
+        detailReadout = viewModel.detailReadout(detailLevel),
         onDetailChange = viewModel::setDetailLevel,
         // ROUND 23 item 106(c): contextual on the SENSOR, never on the switch —
         // `SimpleMode` has said so since round 22 and this is the surface that
@@ -1311,6 +1313,8 @@ fun CaptureScreen(
         com.lidarscan.core.capture.DetailLevel.entries,
     detailLevel: com.lidarscan.core.capture.DetailLevel = com.lidarscan.core.capture.DetailLevels.DEFAULT,
     detailCeilingNote: String? = null,
+    /** ROUND 29 item 172: `Fits this device`, or the rung's own budget. */
+    detailReadout: String? = null,
     onDetailChange: (com.lidarscan.core.capture.DetailLevel) -> Unit = {},
     /** ROUND 23 item 106(c): non-null shows the Mid-360 setup chip on the Scan tab. */
     onOpenMid360Setup: (() -> Unit)? = null,
@@ -1608,6 +1612,17 @@ fun CaptureScreen(
     // disconnected screen's job is the connect flow, and it needs the room).
     val manualEntryOpen = autoConnectState?.manualEntryOpen == true
     val compact = CaptureLayout.useCompactChrome(connected = connected, manualEntryOpen = manualEntryOpen)
+
+    /**
+     * ROUND 29 item 170 — **is the connect flow already drawn behind a sheet?**
+     *
+     * Two pages answer it differently now. Landscape still keeps round 27's
+     * `IdleScanLayout`, where the flow is the `!compact` chrome; portrait draws
+     * it inside §D.1's Sensor row, which happens exactly when nothing is
+     * connected. The Capture sheet needs the answer so it does not put a second
+     * `scanNameField` or a second `manualLidarIpField` into the same tree.
+     */
+    val connectFlowOnScreen = if (isLandscape) !compact else !connected
     val screenHeightDp = LocalConfiguration.current.screenHeightDp.toFloat()
     // ROUND 26 item 124: the `BackBar` survives ONLY for the replay session,
     // which since round 23 is the one project-scoped entry into this screen
@@ -1980,7 +1995,15 @@ fun CaptureScreen(
                         // A card, not a dialog: round 5's rule is that a modal
                         // is the worst possible interruption on this tab, and
                         // that applies most of all to the first time it opens.
-                        if (offerTutorial) {
+                        //
+                        // ROUND 29 item 170: §D.1's page has its own slot for
+                        // this (item 166 put it directly under the status bar,
+                        // where it never displaces the task), and it passes
+                        // `loudBanners` as well — so on the bench the offer
+                        // rendered TWICE, one line under the other. The band
+                        // draws it only for the pages that have no slot:
+                        // landscape, and the recording page.
+                        if (offerTutorial && (isLandscape || live || starting)) {
                             TutorialOffer(
                                 onAccept = onAcceptTutorialOffer,
                                 onDismiss = onDismissTutorialOffer,
@@ -2133,10 +2156,20 @@ fun CaptureScreen(
                                             .padding(horizontal = 10.dp, vertical = 7.dp)
                                             .testTag("startTapRefusalNote"),
                                     )
-                                } else if (startBlockedReason != null) {
+                                } else if (startBlockedReason != null && (isLandscape || live || starting)) {
                                     // The standing reason, quietly, so the
                                     // dimmed button is never a mystery in the
                                     // first place.
+                                    //
+                                    // ROUND 29 item 170: not on §D.1's page.
+                                    // The owner photographed it there as
+                                    // *"Connect the scanner first."* floating
+                                    // under a row of pills with nothing to
+                                    // attach to — and on that page the Sensor
+                                    // row states the same fact, in red, with
+                                    // the fix on it. Two sentences about one
+                                    // blocker is how the old screen came to say
+                                    // readiness six ways at once.
                                     Hint(
                                         startBlockedReason,
                                         color = ScanColors.inkFaint,
@@ -2464,7 +2497,7 @@ fun CaptureScreen(
                             streamChip = streamChip,
                             tutorialChip = { TutorialChip(onOpenTutorial = onStartTutorial) },
                         )
-                    } else if (compact && !isLandscape) {
+                    } else if (!isLandscape) {
                         // ── ROUND 28 item 158: THE IDLE PAGE ────────────────
                         //
                         // The one state the review calls "the worst screen, and
@@ -2481,14 +2514,30 @@ fun CaptureScreen(
                         // is what lets the FAB take the slack rather than a
                         // 940-px rectangle.
                         //
-                        // Landscape and the disconnected connect flow keep
-                        // `IdleScanLayout`: landscape is a different problem
-                        // (round 27 item 129(a) solved it and this page would
-                        // undo that), and the disconnected screen's job is the
-                        // connect flow, which needs the room and is where round
-                        // 26's `connectFlowMaxHeightDp` already puts it. A
-                        // replay session uses this page with the live preview in
-                        // the LAST SCAN slot — see `ScanReadyPage.previewSlot`.
+                        // ── ROUND 29 item 170 ──────────────────────────────
+                        //
+                        // Round 28 gated this page on `compact`, i.e. on
+                        // `useCompactChrome(connected, …)`, and **no D6 connects
+                        // to an emulator** — so the AVD, and the owner with the
+                        // cable out, both fell to round 27's `IdleScanLayout`.
+                        // The redesign he approved has, on his phone, never once
+                        // been the screen he opens. The HOTFIX section of round
+                        // 28 raised this as an owner call; he made it.
+                        //
+                        // Portrait idle is §D.1 in BOTH states now. The
+                        // disconnected one is the mockup's own "scanner missing"
+                        // phone: the Sensor row goes bad and the connect flow
+                        // opens inside the card under it (`connectFlow`). What
+                        // leaves with round 27's page is exactly what item 158
+                        // listed and the owner photographed again on 0.9.13 —
+                        // the `00:00 / 0 pts / 0.0 m / No data` card, the
+                        // `NO GEOREF` + `No rover` chip strip, the dead black
+                        // viewport, the corner `?`, the Capture/Diag/New-capture
+                        // pills and the stray "Connect the scanner first." line.
+                        //
+                        // Landscape keeps `IdleScanLayout`: round 27 item 129(a)
+                        // solved landscape with two rails and a portrait column
+                        // would undo it.
                         ScanReadyPage(
                             statusLine = com.lidarscan.core.capture.ScanReadiness.statusLine(
                                 sensorName = sensor.badgeLabel,
@@ -2504,6 +2553,46 @@ fun CaptureScreen(
                                     "Sensor" -> onRetryAutoDetect()
                                     "Mount" -> onBeginMountHold()
                                     "Tracking" -> onRetryAr()
+                                }
+                            },
+                            // ROUND 29 item 170: only when there is nothing on
+                            // the cable. The mount block is suppressed inside it
+                            // because the Mount ROW above owns that fact now —
+                            // drawing both is how the owner's 0.9.13 page ended
+                            // up stating the trim twice, once in 24 words.
+                            connectFlow = if (connected) {
+                                null
+                            } else {
+                                {
+                                    PreCaptureStrip(
+                                        maxHeight = androidx.compose.ui.unit.Dp.Unspecified,
+                                        autoName = newScan?.autoName,
+                                        scanName = scanName,
+                                        autoConnectState = autoConnectState,
+                                        sensor = sensor,
+                                        poseTrackingRequired = poseTrackingRequired,
+                                        poseState = poseState,
+                                        sensorStreaming = connected,
+                                        mountIsNominal = mountIsNominal,
+                                        manualDevices = manualDevices,
+                                        manualLidarIp = manualLidarIp,
+                                        manualHostIp = manualHostIp,
+                                        onScanNameChange = onScanNameChange,
+                                        onRetryAutoDetect = onRetryAutoDetect,
+                                        onShowManualEntry = onShowManualEntry,
+                                        onHideManualEntry = onHideManualEntry,
+                                        onManualDeviceConnect = onManualDeviceConnect,
+                                        onManualLidarIpChange = onManualLidarIpChange,
+                                        onManualHostIpChange = onManualHostIpChange,
+                                        onManualMid360Connect = onManualMid360Connect,
+                                        onOpenMountCalibration = onOpenMountCalibration,
+                                        mountTrim = mountTrim,
+                                        mountTrimProvenance = mountTrimProvenance,
+                                        nowMillis = nowMillis,
+                                        onSetMountReference = onSetMountReference,
+                                        onClearMountReference = onClearMountReference,
+                                        showMountBlock = false,
+                                    )
                                 }
                             },
                             banners = {
@@ -2674,7 +2763,11 @@ fun CaptureScreen(
             // name field, and `connection` says where the controls are instead
             // of repeating them. Everything the sheet uniquely owns (preset,
             // profile, live map, live SLAM) is reachable in both states.
-            autoName = newScan?.autoName.takeIf { compact },
+            // ROUND 29 item 170: `compact` was a proxy for "the connect flow is
+            // on the screen behind this sheet", and it stopped being one the
+            // moment portrait's disconnected page became §D.1 — see
+            // `connectFlowOnScreen`.
+            autoName = newScan?.autoName.takeIf { !connectFlowOnScreen },
             scanName = scanName,
             onScanNameChange = onScanNameChange,
             // The profile is only settable while the project does not exist yet
@@ -2692,7 +2785,7 @@ fun CaptureScreen(
             liveSlamSupported = !sensor.isPhoneTrackedPushbroom,
             onLiveSlamChange = onLiveSlamChange,
             connection = {
-                if (!compact && autoConnectState != null) {
+                if (connectFlowOnScreen && autoConnectState != null) {
                     // The connect flow is on the screen BEHIND this sheet. A
                     // second copy of it here is two `manualLidarIpField` nodes
                     // and two "Retry" links driving one state.
@@ -2814,6 +2907,12 @@ fun CaptureScreen(
             detailLevels = detailLevels,
             detailLevel = detailLevel,
             detailCeilingNote = detailCeilingNote,
+            detailReadout = detailReadout,
+            // ROUND 29 item 170: the Capture sheet's one door, now that no page
+            // draws a chip row. Setting `sheet` SWAPS rather than stacks —
+            // there is one `sheet` value and two modal surfaces can never be
+            // open at once, which is what that nullable enum was for.
+            onOpenCaptureSheet = { sheet = CaptureSheet.CAPTURE },
             onDetailChange = onDetailChange,
             refreshHz = refreshHz,
             // ROUND 5.3 (item 17): the ceiling is the panel's, read from the
@@ -3702,6 +3801,20 @@ private fun PreCaptureStrip(
     nowMillis: Long = 0L,
     onSetMountReference: () -> Unit = {},
     onClearMountReference: () -> Unit = {},
+    /**
+     * ROUND 29 item 170 — **false when a Mount ROW is already on screen.**
+     *
+     * §D.1's page states the mount as one of its three readiness rows, whose
+     * tap IS the re-zero. Drawing this strip's mount block under it would put
+     * the same fact on the screen twice — which is precisely what the owner
+     * photographed on 0.9.13: a `Mount` row he could not see (round 27's page
+     * had none) and, in its place, a 24-word amber paragraph beginning
+     * *"Mount trim 91.0° · set 18 h ago — that is old."*
+     *
+     * The block is untouched for the landscape page and the calibration wizard,
+     * which have no row to defer to.
+     */
+    showMountBlock: Boolean = true,
 ) {
     val ownScroll = maxHeight != androidx.compose.ui.unit.Dp.Unspecified
     Column(
@@ -3714,7 +3827,11 @@ private fun PreCaptureStrip(
                     Modifier
                 },
             )
-            .padding(horizontal = 14.dp)
+            // ROUND 29 item 170: the screen margin, from the token. It was a
+            // literal `14.dp` — one of the 69 the round-28 audit counted — and
+            // inside §D.1's card it has to share an edge with the `ScanRow`s
+            // above it, which are on `CardPadding`.
+            .padding(horizontal = ScanDims.CardPadding)
             .testTag("preCaptureStrip"),
     ) {
         if (autoName != null) {
@@ -3735,6 +3852,10 @@ private fun PreCaptureStrip(
                 onRetry = onRetryAutoDetect,
                 onShowManual = onShowManualEntry,
                 onHideManual = onHideManualEntry,
+                // ROUND 29 item 170: the same flag that suppresses the mount
+                // block suppresses the clause the Sensor row above already
+                // carries — one page, one statement of one blocker.
+                underReadinessRow = !showMountBlock,
             )
 
             if (autoConnectState.manualEntryOpen) {
@@ -3758,7 +3879,7 @@ private fun PreCaptureStrip(
         // applies to — a 2-D lidar's mount geometry is the whole reason the
         // capture is 3D at all, which is as true of ROUND 25 item 119's
         // STL-27L as it is of the D6.
-        if (poseTrackingRequired && sensor.isPhoneTrackedPushbroom) {
+        if (showMountBlock && poseTrackingRequired && sensor.isPhoneTrackedPushbroom) {
             Spacer(Modifier.height(4.dp))
             // ROUND 24 item 110(a): was 33 words including "6-DoF". The rest
             // of the explanation is now TutorialStep.SCAN_BUTTON / START_HOLD.
@@ -3894,14 +4015,28 @@ private fun MountReferenceDetail(
     }
 }
 
-/** The auto-detect status line: what is happening, plus Retry / Enter manually. */
+/**
+ * The auto-detect status line: what is happening, plus Retry / Enter manually.
+ *
+ * @param underReadinessRow ROUND 29 item 170 — true when this line is drawn
+ *   INSIDE §D.1's Sensor row, which already says `Sensor · Not found`, already
+ *   carries *"Plug it in, then retry."* and already has its own **Retry**. The
+ *   failure clause and the Retry link are therefore suppressed: repeating a
+ *   blocker under itself is the defect item 158 removed from the top of this
+ *   screen, and re-adding it eight rows down is not an improvement. Everything
+ *   the row does NOT say — searching, connecting, the device it found — is
+ *   still printed here, because that is state the row has no place for.
+ */
 @Composable
 private fun AutoDetectLine(
     state: CaptureAutoConnectState,
     onRetry: () -> Unit,
     onShowManual: () -> Unit,
     onHideManual: () -> Unit,
+    underReadinessRow: Boolean = false,
 ) {
+    val redundant = underReadinessRow && state.phase == CaptureAutoConnectState.Phase.FAILED
+    if (!redundant) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         if (state.isBusy) {
             CircularProgressIndicator(
@@ -3927,18 +4062,29 @@ private fun AutoDetectLine(
     state.detection?.detail?.let {
         Text(it, style = ScanMetaCaps, color = ScanColors.inkFaint, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
+    }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        if (state.phase == CaptureAutoConnectState.Phase.FAILED) {
-            TextButton(onClick = onRetry, modifier = Modifier.testTag("retryAutoDetectButton")) { Text("Retry") }
+        if (state.phase == CaptureAutoConnectState.Phase.FAILED && !underReadinessRow) {
+            // ROUND 29 item 170 (review finding S13): the recovery action keeps
+            // the accent — it is the one thing on this row worth pressing.
+            TextButton(onClick = onRetry, modifier = Modifier.testTag("retryAutoDetectButton")) {
+                Text("Retry", color = ScanColors.primaryInk)
+            }
         }
         // "Enter manually" stays reachable at every phase, including a successful
         // detect (owner addition 1) — a rig with two devices can auto-detect the
         // wrong one.
+        //
+        // S13: it used to be styled identically to Retry AND be wider, so the
+        // disclosure out-shouted the fix. It is a disclosure; it reads like one.
         TextButton(
             onClick = if (state.manualEntryOpen) onHideManual else onShowManual,
             modifier = Modifier.testTag("manualEntryToggle"),
         ) {
-            Text(if (state.manualEntryOpen) "Hide manual entry" else "Enter manually")
+            Text(
+                if (state.manualEntryOpen) "Hide manual entry" else "Enter manually",
+                color = ScanColors.inkMute,
+            )
         }
     }
 }
@@ -4017,7 +4163,12 @@ private fun ManualEntryPanel(
             .padding(12.dp)
             .testTag("manualEntryPanel"),
     ) {
-        Text("USB scanner", style = ScanMetaCaps, color = Ember)
+        // ROUND 29 item 170 (review finding G6): a passive section label is
+        // not an action, and the owner's 0.9.13 connect flow spent two of its
+        // oranges on these two words and two more on the links below. §C's
+        // accent law: at most two oranges per screen, and they are the primary
+        // action and the active tab.
+        Text("USB scanner", style = ScanMetaCaps, color = ScanColors.inkMute)
         Spacer(Modifier.height(6.dp))
         // The two serial lidars, by the same badge labels the Projects cards
         // use — no new vocabulary for the operator to learn.
@@ -4061,7 +4212,7 @@ private fun ManualEntryPanel(
         }
 
         Spacer(Modifier.height(10.dp))
-        Text("LIVOX MID-360 · ETHERNET", style = ScanMetaCaps, color = Ember)
+        Text("LIVOX MID-360 · ETHERNET", style = ScanMetaCaps, color = ScanColors.inkMute)
         Spacer(Modifier.height(6.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(
@@ -4869,6 +5020,11 @@ private fun ScanFab(
     // of vanishing into an inert control.
     val armed = connected && !stopping && !starting
 
+    // §C.4's one disabled state, everywhere: ink-faint on trough. The armed
+    // button keeps `OnEmber`, which is the only ink that is legible on the
+    // brand orange in either theme.
+    val fabInk = if (armed || live) OnEmber else ScanColors.inkFaint
+
     // ── ROUND 27 item 132: A REFUSED PRESS IS ANSWERED, VISIBLY ────────────
     //
     // Round 23 item 101(b) made the button never inert and never silent: a
@@ -4914,9 +5070,24 @@ private fun ScanFab(
                     scaleY = pulse
                 }
             }
-            .alpha(if (armed || live) 1f else 0.45f)
-            .shadow(16.dp, CircleShape, ambientColor = Ember, spotColor = Ember)
-            .background(Ember, CircleShape)
+            // ── ROUND 29 item 170 (review finding S11) ─────────────────────
+            //
+            // A disabled FAB used to be the brand orange at 45 % with its glow
+            // intact — "a muddy brown-orange, still the loudest object on
+            // screen while being the one thing you cannot press", which reads
+            // as broken rather than as not-yet. The mockup is explicit
+            // (`.fab.off`): trough ground, ink-faint mark, **no shadow**. It is
+            // still tappable and still answers a press with item 132's shake —
+            // what changes is that it stops shouting.
+            .then(
+                if (armed || live) {
+                    Modifier
+                        .shadow(16.dp, CircleShape, ambientColor = Ember, spotColor = Ember)
+                        .background(Ember, CircleShape)
+                } else {
+                    Modifier.background(ScanColors.trough, CircleShape)
+                },
+            )
             // ── ROUND 23 item 101(b): NEVER INERT, NEVER SILENT ────────────
             //
             // `enabled = true` unconditionally. A press with no sensor attached
@@ -4947,7 +5118,7 @@ private fun ScanFab(
             if (starting && !live) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(22.dp),
-                    color = OnEmber,
+                    color = fabInk,
                     strokeWidth = 3.dp,
                 )
                 Spacer(Modifier.height(5.dp))
@@ -4958,7 +5129,7 @@ private fun ScanFab(
                 Box(
                     Modifier
                         .size(if (live) 22.dp else 20.dp)
-                        .background(OnEmber, if (live) RoundedCornerShape(5.dp) else CircleShape),
+                        .background(fabInk, if (live) RoundedCornerShape(5.dp) else CircleShape),
                 )
                 Spacer(Modifier.height(6.dp))
             }
@@ -4968,7 +5139,7 @@ private fun ScanFab(
                 fontWeight = FontWeight.Bold,
                 fontSize = 15.sp,
                 letterSpacing = 0.08.em,
-                color = OnEmber,
+                color = fabInk,
                 modifier = Modifier.testTag("recordButtonLabel"),
             )
         }
@@ -5731,6 +5902,22 @@ private fun ScanStatusBar(
  * Review. `CloudThumbnail` already renders a real cloud and the gallery already
  * uses it; the owner's decision is that it draws at **point size 1 px**, so the
  * card shows the actual scan rather than a scatter of fat dots.
+ *
+ * ## ROUND 29 item 170 — the caption, against the mockup
+ *
+ * The mockup's caption is `46.5 K pts · 1m 02s · ● FAIR` and 0.9.13 shipped
+ * `120.3 K pts`: the grade — the single most useful word on the card, and the
+ * reason item 162 put `ProjectManifest.grade` on disk — was missing, and so was
+ * the second clause.
+ *
+ * The **duration is not drawn**, and that is a deliberate deviation rather than
+ * an omission: no `.lscan` manifest carries one. It is a live figure that has
+ * never been sealed, so a card that printed it would be inventing it for every
+ * scan on the owner's phone. What replaces it is the clause the Projects row
+ * already uses — the capture date — through the **same** `metaLine` function,
+ * because item 150's rule is that two screens showing one fact must not have
+ * two formatters. The grade comes from `ProjectRowGrade`, which is also what
+ * the Projects row reads, and it renders as §C.6's dot-plus-Meta-Caps mark.
  */
 @Composable
 private fun LastScanCard(
@@ -5781,15 +5968,32 @@ private fun LastScanCard(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.testTag("lastScanName"),
                 )
-                Text(
-                    com.lidarscan.core.render.PointCountFormat.rowClause(
-                        project.manifest.pointCountEstimate,
-                    ),
-                    style = ScanMeta,
-                    color = com.lidarscan.app.ui.theme.InkMute,
-                    maxLines = 1,
-                    modifier = Modifier.testTag("lastScanMeta"),
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(ScanDims.S2),
+                ) {
+                    Text(
+                        com.lidarscan.app.ui.projects.metaLine(project),
+                        style = ScanMeta,
+                        // Fixed ink for the same reason the name above is: this
+                        // caption sits on a dark point cloud in BOTH themes.
+                        color = com.lidarscan.app.ui.theme.InkMute,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false).testTag("lastScanMeta"),
+                    )
+                    com.lidarscan.app.ui.projects.ProjectRowGrade.of(project.manifest)?.let { code ->
+                        Text("·", style = ScanMeta, color = com.lidarscan.app.ui.theme.InkMute)
+                        StatusDot(ScanColors.current.grade(code))
+                        Text(
+                            code,
+                            style = ScanMetaCaps,
+                            color = com.lidarscan.app.ui.theme.InkMute,
+                            maxLines = 1,
+                            modifier = Modifier.testTag("lastScanGrade"),
+                        )
+                    }
+                }
             }
         }
     }
@@ -5879,6 +6083,15 @@ private fun ScanReadyPage(
     onOpenLastScan: (String) -> Unit,
     readiness: List<com.lidarscan.core.capture.ScanReadiness.Row>,
     onReadinessAction: (String) -> Unit,
+    /**
+     * ROUND 29 item 170 — **the connect flow, as a state of the Sensor row.**
+     *
+     * Non-null exactly when there is nothing on the cable. It is drawn INSIDE
+     * the READY TO SCAN card, directly under the row that is red about it, so
+     * "no scanner" and "here is how you attach one" are one object rather than
+     * a status at the top of the screen and a form 900 px below it.
+     */
+    connectFlow: (@Composable () -> Unit)? = null,
     banners: @Composable () -> Unit,
     tutorialBanner: @Composable () -> Unit,
     fab: @Composable () -> Unit,
@@ -5926,17 +6139,38 @@ private fun ScanReadyPage(
             SectionLabel("Ready to scan")
             ScanRowCard(
                 modifier = Modifier.padding(horizontal = ScanDims.ScreenMargin),
-                rows = readiness.map { row ->
-                    {
-                        ReadinessRow(
-                            row = row,
-                            isBlocker = row === blocker,
-                            onAction = if (row.actionLabel != null) {
-                                { onReadinessAction(row.title) }
-                            } else {
-                                null
-                            },
-                        )
+                rows = buildList<@Composable () -> Unit> {
+                    for (row in readiness) {
+                        add {
+                            ReadinessRow(
+                                row = row,
+                                isBlocker = row === blocker,
+                                onAction = if (row.actionLabel != null) {
+                                    { onReadinessAction(row.title) }
+                                } else {
+                                    null
+                                },
+                            )
+                        }
+                        // ── ROUND 29 item 170: the SCANNER MISSING variant ──
+                        //
+                        // The mockup's second idle phone. The Sensor row goes
+                        // bad, keeps its own Retry, and the connect flow opens
+                        // under it as part of the same card — one object, not a
+                        // page. Everything else on the page is unchanged, which
+                        // is the point: round 28 built two different screens for
+                        // one state of one screen, and the owner only ever saw
+                        // the old one.
+                        if (connectFlow != null && row.title == "Sensor") {
+                            add {
+                                Column(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .padding(bottom = ScanDims.S3)
+                                        .testTag("scanConnectFlow"),
+                                ) { connectFlow() }
+                            }
+                        }
                     }
                 },
             )
@@ -6353,7 +6587,17 @@ private fun SessionSummaryContent(
         Text(
             when {
                 saveError != null -> saveError
-                savedPath != null -> "Saved to $savedPath — it is in the Projects tab now."
+                // ROUND 29 item 170(d): item 164 removed a raw filesystem path
+                // from the top of Settings; this sheet still printed one, two
+                // lines of `/storage/emulated/0/Android/data/…` at the end of
+                // every scan. The operator cannot use it, cannot read it and
+                // cannot act on it — the scan's NAME is what he can, and it is
+                // the word he will look for in the Projects tab one tap later.
+                // The full path is still written to the capture log at seal,
+                // which is where a path is actually read.
+                savedPath != null ->
+                    "Saved as ${savedPath.trimEnd('/').substringAfterLast('/')} — " +
+                        "it is in the Projects tab now."
                 else -> "Nothing was written for this session."
             },
             style = ScanMeta,

@@ -131,6 +131,16 @@ class SettingsViewModel(
     val detailCeilingNote: String?
         get() = com.lidarscan.core.capture.DetailLevels.ceilingNote(settingsRepository.deviceTier)
 
+    /**
+     * ROUND 29 item 172 — what a rung reads out on this phone.
+     *
+     * The same `:core` function the Scan sheet calls, so the Detail row in
+     * Settings and the Detail row in the Advanced sheet cannot describe the
+     * same setting differently.
+     */
+    fun detailReadout(level: com.lidarscan.core.capture.DetailLevel): String =
+        com.lidarscan.core.capture.DetailLevels.readoutFor(level, settingsRepository.deviceTier)
+
     private val _detailLevel = MutableStateFlow(com.lidarscan.core.capture.DetailLevels.DEFAULT)
     val detailLevel: StateFlow<com.lidarscan.core.capture.DetailLevel> = _detailLevel.asStateFlow()
 

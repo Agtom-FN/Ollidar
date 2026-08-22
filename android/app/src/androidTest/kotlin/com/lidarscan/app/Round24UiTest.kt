@@ -55,6 +55,22 @@ class Round24UiTest {
     private fun has(tag: String): Boolean =
         composeRule.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
 
+    /**
+     * ROUND 29 item 170 — **the tour is opened from the Advanced sheet.**
+     *
+     * The corner `?` is gone from both idle variants: it floated inside the one
+     * region of the idle page with nothing to explain, and item 158 moved it to
+     * the Advanced sheet's Tutorial row (which is also where Settings ›
+     * Tutorial lands). The tag is unchanged, so what this helper adds is one
+     * tap on the faders button and one wait — and the tour itself, six steps of
+     * it, is asserted exactly as before.
+     */
+    private fun openTheTour() {
+        composeRule.onNodeWithTag("advancedButton").performClick()
+        composeRule.waitUntil(timeoutMillis = 15_000) { has("tutorialButton") }
+        composeRule.onNodeWithTag("tutorialButton").performScrollTo().performClick()
+    }
+
     // ── item 107 ───────────────────────────────────────────────────────────
 
     /**
@@ -234,7 +250,7 @@ class Round24UiTest {
             awaitProjectsTab()
             openScanTab()
 
-            composeRule.onNodeWithTag("tutorialButton").performClick()
+            openTheTour()
             composeRule.waitUntil(timeoutMillis = 10_000) { has("tutorialOverlay") }
             composeRule.onNodeWithTag("tutorialCard").assertIsDisplayed()
             composeRule.onNodeWithTag("tutorialTitle").assertIsDisplayed()
@@ -259,7 +275,7 @@ class Round24UiTest {
         ActivityScenario.launch(MainActivity::class.java).use {
             awaitProjectsTab()
             openScanTab()
-            composeRule.onNodeWithTag("tutorialButton").performClick()
+            openTheTour()
             composeRule.waitUntil(timeoutMillis = 10_000) { has("tutorialOverlay") }
             composeRule.onNodeWithTag("tutorialSkip").performClick()
             composeRule.waitUntil(timeoutMillis = 10_000) { !has("tutorialOverlay") }
@@ -334,11 +350,17 @@ class Round24UiTest {
             // manual verification on the same AVD — which is exactly how it
             // surfaced.
             //
-            // `performScrollTo` rather than weakening this to `assertExists`:
-            // "Profile is the top row of Settings" is the claim item 113
-            // actually makes, and an existence check would no longer make it.
-            composeRule.onNodeWithTag("settingsProfileRow").performScrollTo()
-            composeRule.onNodeWithTag("settingsProfileRow").assertIsDisplayed()
+            // ROUND 29 item 171: the Profile ROW is gone and the header's
+            // avatar is the one door. Asserted at the TOP of the page rather
+            // than scrolled to — an avatar that needs scrolling to is not a
+            // header — which is also why the round-28 hotfix's `performScrollTo`
+            // is not needed here any more.
+            composeRule.onNodeWithTag("settingsAvatar").assertIsDisplayed()
+            assertEquals(
+                "item 171: one door per surface — the ABOUT row is gone",
+                0,
+                composeRule.onAllNodesWithTag("settingsProfileRow").fetchSemanticsNodes().size,
+            )
             composeRule.onNodeWithTag("settingsTutorialRow").assertExists()
             composeRule.onNodeWithTag("advancedFeaturesSwitch").assertExists()
             composeRule.onNodeWithTag("keepEmptyScansRow").assertExists()
@@ -376,29 +398,60 @@ class Round24UiTest {
     }
 
     /**
-     * **Item 109 + 113.** Settings' own Profile row reaches the same page the
-     * avatar does — one destination, two doors, which is the shape item 109
-     * asked for (as opposed to the two doors to ONE TAB it replaced).
+     * **Item 109 + 113, as ROUND 29 item 171 left them.** Settings reaches the
+     * same Profile page the Projects avatar does — through the same component,
+     * in the same corner.
+     *
+     * The owner: *"Add profile button in setting page as the profile icon."*
+     * The ABOUT card's Profile row went with it, because an avatar in the
+     * header AND a row in the body is two doors to one page on one screen. The
+     * round-28 hotfix's `performScrollTo` is gone too: a header does not need
+     * scrolling to, and if this ever does, that is the regression.
      */
     @Test
-    fun settingsProfileRowOpensTheSamePage() {
+    fun settingsAvatarOpensTheSameProfilePage() {
         ActivityScenario.launch(MainActivity::class.java).use {
             awaitProjectsTab()
             composeRule.onNodeWithTag("tab_settings").performClick()
             composeRule.waitUntil(timeoutMillis = 15_000) { has("settingsScreen") }
-            // ROUND 28 HOTFIX: §D.x gave Settings its DISPLAY / SCANNING /
-            // STORAGE sections, and the ABOUT block that carries this row now
-            // starts around 1500 px down a 2400 px screen. `settingsScreen` is
-            // a `Column` with `verticalScroll`, so every row stays COMPOSED and
-            // `onNodeWithTag` still finds this one — `performClick` then
-            // dispatched a tap at off-screen coordinates, nothing happened, and
-            // the failure surfaced 15 s later on the wait below as "Profile
-            // never opened" rather than as "the row was not on screen". Scroll
-            // first, which is what the operator does and what this file's own
-            // `app_version_footer` assertions have always done.
-            composeRule.onNodeWithTag("settingsProfileRow").performScrollTo().performClick()
+            composeRule.onNodeWithTag("settingsAvatar").assertIsDisplayed().performClick()
             composeRule.waitUntil(timeoutMillis = 15_000) { has("profileScreen") }
             composeRule.onNodeWithTag("sendLogsButton").assertIsDisplayed()
+        }
+    }
+
+    // ── ROUND 29 item 173 ───────────────────────────────────────────────────
+
+    /**
+     * **Item 173(b).** Send diagnostics asks where the bundle goes, and the
+     * three doors that always exist are all there.
+     *
+     * The tap is deliberately NOT followed through: **Save to phone** writes a
+     * real zip into `Downloads/LidarScan` and **GitHub** launches a browser, and
+     * a UI suite that opens a Chrome tab has stopped being a UI suite. What is
+     * pinned here is the state machine — the row opens a chooser, the chooser
+     * offers the doors `DiagnosticsChooser` says it should, and dismissing it
+     * puts the page back — with the URLs themselves pinned in `:core`
+     * (`GitHubIssueTest`), where they are strings rather than an Activity.
+     */
+    @Test
+    fun sendDiagnosticsOffersThreeDoorsRatherThanGuessingOne() {
+        ActivityScenario.launch(MainActivity::class.java).use {
+            awaitProjectsTab()
+            composeRule.onNodeWithTag("projectsAvatar").performClick()
+            composeRule.waitUntil(timeoutMillis = 15_000) { has("profileScreen") }
+
+            composeRule.onNodeWithTag("sendLogsButton").performClick()
+            composeRule.waitUntil(timeoutMillis = 15_000) { has("diagnosticsChooserSheet") }
+            composeRule.onNodeWithTag("diagnosticsGithub").assertIsDisplayed()
+            composeRule.onNodeWithTag("diagnosticsSave").assertIsDisplayed()
+            composeRule.onNodeWithTag("diagnosticsShare").assertIsDisplayed()
+            // No cloud fields on a fresh AVD, so the server door must not exist.
+            assertEquals(
+                "item 173: the server door appears only when it is configured",
+                0,
+                composeRule.onAllNodesWithTag("diagnosticsServer").fetchSemanticsNodes().size,
+            )
         }
     }
 }

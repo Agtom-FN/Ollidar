@@ -68,11 +68,38 @@ class ProfileViewModel(
         val totalPoints: Long = 0L,
         val georeferencedCount: Int = 0,
     ) {
-        val note: String get() = FeedbackWording.noteFor(route)
+        /**
+         * ROUND 29 item 173 — the Send-diagnostics row's second line.
+         *
+         * It used to predict the route, which was honest while the app chose
+         * one. The operator chooses now, so the line says so; [route] is still
+         * carried because it decides whether the **Your server** door is in the
+         * chooser at all.
+         */
+        val note: String get() = FeedbackWording.CHOOSE_NOTE
+
+        /** True when the cloud fields are filled in, i.e. a server door exists. */
+        val serverConfigured: Boolean get() = route == FeedbackRoute.SERVER
     }
 
     private val _uiState = MutableStateFlow(UiState())
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
+
+    /**
+     * ROUND 29 item 173 — **a URL the screen must open, once.**
+     *
+     * The ViewModel builds it (the whole of `GitHubIssue` is `:core` and
+     * testable) and the route launches it, because an `Intent` needs a Context
+     * and a ViewModel holding an Activity is a leak with a nice name. It is
+     * consumed rather than observed: a rotation that re-opened the browser
+     * would be the classic version of this bug.
+     */
+    private val _pendingUrl = MutableStateFlow<String?>(null)
+    val pendingUrl: StateFlow<String?> = _pendingUrl.asStateFlow()
+
+    fun consumeUrl() {
+        _pendingUrl.value = null
+    }
 
     /** The typed message. Held here so rotation does not lose a paragraph. */
     private val _message = MutableStateFlow("")
@@ -132,32 +159,66 @@ class ProfileViewModel(
     }
 
     /**
-     * SEND LOGS (empty [message]) and SEND FEEDBACK (a typed one) are the same
-     * call. A second send while one is running is refused rather than queued —
-     * two zips of the same log is not what a double tap means.
+     * ROUND 29 item 173(a) — **SEND FEEDBACK opens a GitHub issue.**
+     *
+     * Nothing is packed and nothing is uploaded: the operator's words and the
+     * six device facts he can already read on the page go into a prefilled
+     * `issues/new` URL, and his own browser session posts it under his own
+     * account. The app has never held a GitHub credential and this is the
+     * design that keeps it that way — see [GitHubIssue].
+     *
+     * The message is spent immediately rather than on success, because there is
+     * no success to wait for: the app's part is finished the moment the browser
+     * opens, and a box that still holds the paragraph after that is a box that
+     * files it twice.
      */
-    fun send(withMessage: Boolean) {
+    fun openFeedbackIssue() {
+        val text = _message.value
+        _pendingUrl.value = com.lidarscan.core.feedback.GitHubIssue.feedbackUrl(
+            message = text,
+            facts = _uiState.value.facts,
+        )
+        _message.value = ""
+        _uiState.value = _uiState.value.copy(result = FeedbackWording.OPENED_GITHUB)
+    }
+
+    /**
+     * ROUND 29 item 173(b) — **SEND DIAGNOSTICS, to the door he picked.**
+     *
+     * One code path for all four destinations, as round 24 had for two: the zip
+     * is packed and lands in `Downloads/LidarScan` whatever happens next, and
+     * only then does the route decide whether anything else is attempted. On
+     * [FeedbackRoute.GITHUB] the issue URL is built **after** the copy, so its
+     * body can name the file that is now certainly there.
+     *
+     * A second send while one is running is refused rather than queued — two
+     * zips of the same log is not what a double tap means.
+     */
+    fun sendDiagnostics(route: FeedbackRoute) {
         if (_uiState.value.sending != null) return
-        val text = if (withMessage) _message.value else ""
         _uiState.value = _uiState.value.copy(sending = 0f, result = null)
         jobScope.launch {
             val settings = settingsRepository.settings.first()
+            val facts = _uiState.value.facts
             val result: FeedbackResult = sender.send(
                 config = FeedbackConfig(settings.cloudBaseUrl, settings.cloudToken),
-                facts = _uiState.value.facts,
-                message = text,
+                facts = facts,
+                message = "",
+                route = route,
                 onProgress = { fraction ->
                     _uiState.value = _uiState.value.copy(sending = fraction)
                 },
             )
+            if (route == FeedbackRoute.GITHUB) {
+                _pendingUrl.value = com.lidarscan.core.feedback.GitHubIssue.diagnosticsUrl(
+                    facts = facts,
+                    zipName = result.downloadsPath?.trimEnd('/')?.substringAfterLast('/'),
+                )
+            }
             _uiState.value = _uiState.value.copy(
                 sending = null,
                 result = FeedbackWording.resultFor(result),
-                route = result.route,
             )
-            // The message is spent on a successful send: leaving it in the box
-            // is how the same paragraph gets sent three times.
-            if (result.sent && withMessage) _message.value = ""
         }
     }
 

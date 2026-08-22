@@ -1,6 +1,6 @@
 # Ollidar — User Manual
 
-App version 0.9.13 (Android). Written for the owner and for field testers.
+App version 0.9.14 (Android). Written for the owner and for field testers.
 If you only want a first scan, read [QUICK_START.md](QUICK_START.md) instead.
 
 The app is called **Ollidar** as of 0.9.11. The repository, the Android
@@ -128,7 +128,45 @@ runs by itself after every Stop. If no scan is active, the tab opens a picker
 
 ## 3. The Scan tab
 
-### 3.1 Connecting the sensor
+### 3.1 The idle page — rebuilt in 0.9.14
+
+The Scan tab, before you press SCAN, is one page in two states:
+
+```
+COIN-D6 · Ready                                    [⋮⋮⋮]
+LAST SCAN
+┌──────────────────────────────────────────────┐
+│  (the last scan, drawn)                       │
+│  Scan-085-2026-08-21-1803                     │
+│  46.5 K pts · 21 Aug        ·  ● FAIR         │
+└──────────────────────────────────────────────┘
+READY TO SCAN
+ ● Sensor      COIN-D6 connected
+ ● Mount       Set · 91.0°
+ ● Tracking    Ready
+                    ( ● SCAN )
+```
+
+Three rows, and **each states its own state and carries its own fix**. Green
+is ready, amber will work and be worse, red cannot start — and only the *first*
+red row is drawn red, because a screen with two red rows has stopped ranking
+its own problems. The SCAN button is enabled when nothing is red.
+
+**With no scanner attached** the Sensor row goes red, says *"Not found · Plug
+it in, then retry."*, carries its own **Retry**, and **opens the connect flow
+inside the card underneath it** — scan name, the auto-detect line, and the
+manual panel. Nothing else about the page changes. Until 0.9.14 this state was
+a different screen entirely (a dead black viewport, a `00:00 / 0 pts / 0.0 m`
+card and a row of pills); that page is gone.
+
+The tour that used to hang off a floating **?** is now a row in the Advanced
+⚙ sheet and in Settings › Tutorial. Zero-valued readouts are not drawn at all:
+`0 pts` is not information.
+
+Tapping **LAST SCAN** opens it in the viewer. The card is absent only when the
+phone holds no scans.
+
+### 3.1a Connecting the sensor
 
 Open the Scan tab with the sensor plugged in. Auto-detect runs on entry and
 races both probes (USB serial and Ethernet). You will see one of:
@@ -148,23 +186,30 @@ auto-detect names the wrong one, come here and say which it is.
 
 There is no self-test step. *"Points on screen mean it works."*
 
-### 3.2 The chip row
+### 3.2 The Advanced ⚙ sheet
 
-Along the top of the Scan screen, scrollable sideways:
+The three-fader button at the top right of the Scan page is the one door to
+everything that is not one of the three readiness rows. It has two halves,
+**Display** and **Connection**:
 
-- **?** — a small circle, first. Opens the six-step tour (§8).
-- **the scan chip** — the scan's name (or "Capture") with the performance
-  preset beside it. Opens the Capture sheet: name, workflow profile,
-  connection, mount reference, Live 3D map, Live SLAM.
-- **Diag** — read-only diagnostics: device state, points/sec, rotation,
-  checksum pass rate, packet loss, tracking, keyframes, tracking-loss
-  episodes, poses pushed to the engine, mount extrinsic, georeference source.
-- **Mid-360 setup** and **RTK position** — shown only when a Mid-360 is the
-  selected sensor (or Advanced features is on). A D6 operator never sees them.
-- **New capture** — clears this scan's settings and starts a fresh one.
-- ~~a tracking chip~~ — **gone in 0.9.12.** The tracking state was being shown
-  twice at once (here and on the viewport) and the device name twice as well.
-  Both now live in the status pill, once each.
+- **Display** — view, live view on/off, colour mode, colormap, point size,
+  gamma, brightness, live refresh and **Detail** (§10). Nothing in it touches
+  the recording, and it says so in one line.
+- **Connection** — the same connect controls the Sensor row shows when nothing
+  is attached, for when something *is*.
+- **Tutorial** — the six-step tour (§8).
+- **Diagnostics** — read-only: device state, points/sec, rotation, checksum
+  pass rate, packet loss, tracking, keyframes, tracking-loss episodes, poses
+  pushed to the engine, mount extrinsic, georeference source.
+
+**Mid-360 setup** and **RTK position** appear on the page only when a Mid-360
+is the selected sensor (or Lab features is on). A D6 operator never sees them.
+
+~~The chip row~~ — **gone in 0.9.13/0.9.14.** `Capture OPTIMAL`, `Diag`, `New
+capture`, the mount pill and the `?` were five visual treatments in two ragged
+rows, none of them the primary action. The scan is auto-named, the preset lives
+in the sheet, renaming lives in the viewer, and leaving the tab already clears
+the previous scan's readouts.
 
 Loud banners appear above the body when something is wrong: **NO SENSOR
 DATA**, **NO POSITION TRACKING**, **MOUNT REFERENCE NOT SET**.
@@ -410,7 +455,7 @@ is a list.
 - **Tap a card** to open it in the viewer. The hint under the list says
   *"Tap a scan to open it."*
 - **The ⋯ menu on each card** carries **Export**, **Share**, **Process
-  again**, **Delete** (and **Details** when Advanced features is on). Export
+  again**, **Delete** (and **Details** when Lab features is on). Export
   and Share open the scan, where the format row lives.
 - **Delete** asks first: **"Delete this scan?"** / *"The scan and its data
   go. Cannot undo."*
@@ -520,8 +565,10 @@ and grey chosen *after* that is respected and never overridden again.
 
 ## 7. Profile, Send logs, Feedback
 
-The person icon at the top right of Projects opens **Profile**. So does
-**Settings › Profile**.
+The person icon at the top right of Projects opens **Profile**. So does the
+**same icon at the top right of Settings** (new in 0.9.14 — it replaces the
+Profile *row* that used to sit in the ABOUT card; an icon in the header and a
+row in the body were two doors to one page on one screen).
 
 ### This phone
 
@@ -563,21 +610,35 @@ result callback and an absent server fails after a timeout you have walked
 away from, so the one thing the app can guarantee happens first. You can
 always find the file and send it by hand.
 
-**How it is sent.** If a server URL **and** a token are configured (Settings
-› Advanced features › the cloud fields) it POSTs the zip. Otherwise it falls
-back to the **Android share sheet** — pick your mail app, a chat, Drive,
-anything. The result line is honest either way: **"Sent."** or **"Could not
-send. Saved to Downloads."**
+**Where it goes — you pick (0.9.14).** Tapping **Send diagnostics** opens a
+sheet with three doors, and a fourth when a cloud server is configured:
+
+- **GitHub** — the zip is written to Downloads and your browser opens on a
+  prefilled issue at `github.com/Agtom-FN/Ollidar`, with the device table
+  already filled in. A link cannot carry a file, so the issue body names the
+  zip and asks you to drag it in before you post. The app holds no GitHub
+  credential; the issue is posted from your own browser session, under your
+  own account, when you press the button in it.
+- **Save to phone** — the zip and nothing else, with the path on screen.
+- **Share…** — the Android share sheet: mail, chat, Drive, anything.
+- **Your server** — only when Settings › Lab features › the cloud fields are
+  filled in. It POSTs the zip exactly as it always did.
 
 Progress is shown on the card while it runs, and the job survives you leaving
-the screen.
+the screen. The result line is honest about which of those actually happened:
+**"Opened GitHub. Post it there."**, **"Saved to …"**, **"Sent."** or
+**"Could not save the zip."**
 
 ### Feedback
 
-A text box — placeholder *"What went wrong?"* — and a **Send feedback**
-button. It sends the same bundle with your message attached as
-`feedback.txt`. The button stays disabled until you type something; an empty
-box is what the **Send logs** button above it is for.
+**Send feedback** opens a sheet with one labelled box — *"What went wrong?"* —
+and one button, **Open GitHub**. It does not upload anything: it opens a
+prefilled issue in your browser with your text, the six device facts from the
+This-phone table, and a note saying logs can be attached. Nothing leaves the
+phone until you press **Submit new issue** yourself.
+
+Very long reports are trimmed to fit a URL, and the issue says where it was
+cut — attach the diagnostics zip for the rest.
 
 ---
 
@@ -620,8 +681,9 @@ the explanation of the SCAN button would start a scan nobody asked for.
 Round 24 collapsed twelve headings into a short page. Nothing was deleted;
 developer-only items moved behind the seven-tap unlock.
 
-**Profile**
-- **Profile** → the page in §7. *"Version, storage, send logs."*
+**The header**
+- the **person icon**, top right → **Profile** (§7). Same component, same
+  corner and same page as the Projects avatar.
 
 **Scanning**
 - **Where the D6 sits** — the mount profile. Says whether the rotation has
@@ -646,8 +708,11 @@ developer-only items moved behind the seven-tap unlock.
 - **Units** — Meters / Feet.
 - **Theme** — System / Light / Dark. Dark is the default.
 
-**Advanced features**
-- One switch, **default off**. *"Floor plan, merge, cloud, survey tools."*
+**Lab features**
+- One switch, **default off**. *"Floor plan, merge, cloud, survey
+  tools."* (It was called **Advanced features** until 0.9.14. The rows behind
+  it are unfinished, not expert — and "Advanced" collided with the Scan tab's
+  Advanced ⚙ sheet, which is a different thing entirely.)
   Nothing behind it is deleted; it is hidden. Turning it on brings back the
   floor plan, the merge screen, the Survey and Research display profiles, the
   cloud processing mode and the per-project Details hub.
@@ -682,8 +747,19 @@ log to someone, **Profile › Send logs** is the better door.
 **Detail** decides how many points the app draws. It never changes what is
 recorded — not one byte of any scan file depends on it.
 
-Three settings: **Auto**, **High**, **Max**. Auto is the default and is the
-right answer unless you have a reason.
+Three settings: **Auto**, **High**, **Max**, in that order, and they ascend.
+Auto is the default and is the right answer unless you have a reason.
+
+| Setting | What it asks for | Reads out |
+| --- | --- | --- |
+| **Auto** | what this phone was measured to be good for | **Fits this device** |
+| **High** | the full budget, clamped to the phone | e.g. `16 M` |
+| **Max** | everything the phone can hold | e.g. `16 M` |
+
+**Auto shows no number**, on purpose: it does not have one — it adapts. Until
+0.9.14 it showed the tier ceiling, which is *Max's* number, so a Standard
+phone read "Auto 16 M, High 5 M" and the ladder ran downhill. That was a
+mapping bug and it is fixed; the ceiling law below is unchanged.
 
 It appears in three places, and they are the same setting: Settings ›
 Scanning › Detail, the Scan tab's Advanced ⚙ sheet, and the viewer's display
@@ -704,9 +780,10 @@ may live on the GPU at once:
 
 Any Detail setting above your phone's ceiling is **not shown at all** — not
 greyed out, absent — and a four-word note appears under the row:
-**"Limited by this device"**. On a modest phone, High and Max clamp to the
-same number as Auto, so only Auto is offered. That is the honest presentation
-of a device with one usable setting.
+**"Limited by this device"**. On a Modest and on a Standard phone, High and
+Max clamp to the same number, so two rungs are offered rather than three; a
+Flagship gets all three. That is the honest presentation of a ladder whose top
+is the hardware.
 
 A scan whose saved display settings came from a bigger phone is clamped when
 you open it, silently and safely.
@@ -833,7 +910,7 @@ heartbeat.)
 ### The setup wizard
 
 Reach it from the **Mid-360 setup** chip on the Scan tab, which appears
-whenever a Mid-360 is the selected sensor. Advanced features does not need to
+whenever a Mid-360 is the selected sensor. Lab features does not need to
 be on.
 
 The wizard runs **Auto-detect** — it listens for the Mid-360's own heartbeat
@@ -1058,4 +1135,4 @@ the scan's name, and the bundle.
 - **The Detail setting I want is missing.** Your phone's ceiling removed it.
   See §10. There is no override.
 - **An option I remember is gone.** It is probably behind **Settings ›
-  Advanced features**, which is off by default. Nothing was deleted.
+  Lab features**, which is off by default. Nothing was deleted.

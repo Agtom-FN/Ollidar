@@ -5340,3 +5340,327 @@ mid-suite and relaunching has the same effect. Before starting a connected run,
 check for a live one — `adb logcat` for `installPackageLI` / `start instr`, plus
 the Gradle daemon list — and wait for it. A suite whose longest test is three
 minutes cannot survive a neighbour that relaunches every two.
+
+
+---
+
+## ROUND 29 (v0.9.14) — the owner's 0.9.13 Pixel session: one Scan page, one accent, one detail ladder
+
+The owner installed 0.9.13 on the Pixel and sent five sentences and three
+screenshots. Every one of them lands on a surface round 28 either did not reach
+or reached only half of, and the first is the round's whole shape: **round 28
+built §D.1 for the connected idle page and left the disconnected page — the one
+he opens first, and the only one an emulator can ever render — on round 27's
+layout.** So the redesign the owner approved has, on his phone, never once been
+the screen he opens.
+
+### 170 — the Scan page is still not the mockup, on the page he actually sees
+
+> *"the scan page design not aligned with your [mockups]"*
+
+The round-28 HOTFIX section above says this in its own words and calls it an
+owner decision rather than taking it (§4, "Open, and an owner call"): item 158's
+removals landed on the `compact && !isLandscape` branch, `compact` is
+`useCompactChrome(connected, …)`, and **no D6 connects to an emulator**, so the
+AVD — and the owner with the cable out — fell to `IdleScanLayout`. The owner has
+now made the call, and it is the obvious one: **both idle variants are §D.1.**
+
+His two disconnected screenshots (`Screenshot_20260822-125505`, `-130135`) are a
+complete inventory of what round 27's page still draws, and every item on it is
+something §D.1 already deleted on the other branch:
+
+* the floating status card carrying `D6` · `00:00` · `0 pts · 0.0 m` · `No data`
+  — four readouts whose entire content is "nothing has happened", in the most
+  valuable position on the screen (item 158 deleted exactly these);
+* `NO GEOREF` beside `No rover` — the same kind of fact in two cases, which is
+  item 167's defect in one row;
+* a **dead black viewport** taking ~40 % of the page with the `?` FAB anchored
+  in the one region that has nothing to explain;
+* orange section headers (`USB SCANNER`, `LIVOX MID-360 · ETHERNET`) and orange
+  text links (`Retry`, `Hide manual entry` / `Enter manually`) — G6 accent
+  inflation, at four oranges before the FAB;
+* `Mount trim 91.0° · set 18 h ago — that is old. Re-zero if the D6 has been off
+  the phone since.` — **24 words** where the law allows twelve;
+* the `Capture OPTIMAL` / `Diag` / `New capture` pill row — item 158's S5, still
+  drawn here;
+* `Connect the scanner first.` floating with nothing to attach to;
+* the **washed-orange disabled FAB** with its glow intact — review finding S11,
+  and the mockup is explicit that a disabled FAB is `trough` + `ink-faint` with
+  no shadow (`.fab.off`), never desaturated brand.
+
+**The resolution.** One portrait idle page. The disconnected state is the
+mockup's own *"scanner missing"* variant: the **Sensor** row goes `bad`, carries
+its own `Retry`, and **expands inside the card** into the connect flow (scan
+name, sensor picker, auto-detect line, the manual panel) — so the connect flow
+is a state of the readiness row rather than a separate page. LAST SCAN collapses
+only when there is no scan at all. The `?` and every zero-valued readout leave
+both variants; the tour stays reachable from the Advanced sheet and from
+Settings › Tutorial, which is where item 158 already sent it.
+
+Carried with it, from the same screenshots and the round-28 deferral list:
+
+* **(a) the accent law in the Advanced sheet.** `Screenshot_20260822-125922`
+  counts **six** oranges at once: the Scan/Connection tab pill, a full-width
+  orange `3D orbit` **that is the only option there is**, two slider tracks,
+  `30 fps`, `Auto`, and `Done`. A segmented control with one option is not a
+  control — it is a read-out wearing a button's clothes, and the read-out is
+  already on the row above it. Single-option segments are not drawn; slider
+  tracks go neutral and only the thumb keeps the accent; `Done` is the one
+  Primary.
+* **(b) `A14 · LIVE`** in the sheet header — a Filament API level, top-right of
+  a sheet an operator opens to change the point size. Gone, and `A14` joins
+  `A15` in `WordingLaw.JARGON` so it cannot come back.
+* **(c) the sheet's 40-word footer** ("Recording, connection, performance and
+  the mount reference are in the Capture sheet — this one is only about how the
+  cloud is drawn. Nothing here touches the recording.") → one line under the
+  law.
+* **(d) the raw path in the scan summary sheet.** `Saved to
+  /storage/emulated/0/Android/data/com.lidarscan.app/files/Projects/scan-085-…`
+  is item 164's defect one sheet over: the operator cannot use the path, cannot
+  read it, and cannot act on it. The scan's **name** is what he can.
+
+### 171 — Settings gets the profile avatar
+
+> *"Add profile button in setting page as the profile icon."*
+
+The same 46 dp avatar the Projects hero carries, top-right of the Settings
+header, opening Profile. The **Profile row in the ABOUT card goes**: an avatar
+in the header and a row in the body are two doors to one page on one screen,
+and §C's rule is one door per surface. The header avatar wins because it is
+where the operator already looks for "me" — it is the position Projects taught
+him.
+
+### 172 — Auto is 16 M and High is 5 M
+
+> *"detail of auto is 16M while high is 5M"*
+
+`DetailLevels.requestedPointsFor` mapped `AUTO` to `GpuPageBudget
+.maxSelectableLodPoints(tier)` — the tier **ceiling** — and `HIGH`/`MAX` to the
+`OPTIMAL`/`FULL` preset budgets. On the owner's STANDARD-tier phone that is
+`AUTO = 16.8 M`, `HIGH = 5 M`, `MAX = 20 M → clamped 16.8 M`; `selectableOn`
+then de-duplicates by budget and drops `MAX` as a repeat of `AUTO`. So the sheet
+offers **Auto | High**, reads `16 M`, and the ladder descends. Auto meant "the
+most this device can hold", which is what **Max** means.
+
+**The new mapping**, which is the same three words finally in order:
+
+| rung | asks for | STANDARD | shown |
+|---|---|---|---|
+| **Auto** | the tier's own `OPTIMAL` recommendation | 5 M | **`Fits this device`** — no number |
+| **High** | the `FULL` preset budget, clamped | 16 M | `16 M` |
+| **Max** | the tier ceiling | 16 M | `16 M` |
+
+Auto carries **no number** because it does not have one: it is whatever this
+phone was measured to be good for, and printing `5 M` beside `16 M` invites the
+operator to "fix" it. Item 100's ceiling law is untouched — every rung still
+runs through `clampLodPointBudget`, and a rung that clamps onto the one below it
+is still **absent** rather than disabled, which is why a STANDARD phone offers
+two rungs and a FLAGSHIP three (8 M / 20 M / 33 M).
+
+### 173 — the repo is public, so feedback goes where the code is
+
+`github.com/Agtom-FN/Ollidar`.
+
+**(a) Send feedback** opens a prefilled GitHub issue in the operator's own
+browser: title = his first line (or `Feedback from Ollidar 0.9.14`), body = his
+text, the device table from the bundle's `device.txt` rendered as markdown, and
+one line saying logs can be attached. No GitHub auth in the app, ever — he posts
+from the session he is already signed into.
+
+**(b) Send diagnostics** becomes a chooser with **three** doors, because all
+three are real and the third is the one that works on a phone with no browser
+session: **GitHub** (zip to `Downloads/LidarScan` *first*, then the prefilled
+issue whose body says, honestly, that a URL cannot attach a file and names the
+zip he must drag in), **Save to phone** (the zip and the inline success row),
+and **Share…** (the existing share-sheet path, unchanged). The server POST path
+stays exactly where it was, behind the cloud config.
+
+**(c)** URL construction is `:core` with its own tests: percent-encoding,
+`+`-vs-`%20`, and the ~8 000-character ceiling GitHub truncates at — the body is
+clamped and says so rather than being silently cut mid-table.
+
+### 174 — "Advanced features" → "Lab features"
+
+> *"the Advanced features remark (Lab features)"*
+
+The switch reveals unfinished work; "Advanced" says "you are not expert enough
+for this", and it also collides with the **Advanced sheet** on the Scan screen,
+which is a different thing entirely. Detail line unchanged. Every reference
+moves with it: `Wording.ADVANCED_TITLE`, the manual, QUICK_START and the wording
+tests.
+
+
+### Resolution — 2026-08-22 (0.9.14, round 29)
+
+**The shape of the round.** One structural change and four repairs around it.
+The structural change is item 170, and it is a deletion: round 27's
+`IdleScanLayout` no longer runs in portrait, so the app has **one** idle Scan
+page instead of two, and the page it has is §D.1's. Everything the owner
+photographed on 0.9.13 left with the layout that drew it, rather than being
+individually removed — which is why the item lists twelve defects and the fix is
+one predicate.
+
+**170 — `compact && !isLandscape` became `!isLandscape`.** That is the whole
+branch change (`CaptureScreen.kt:2467`). What it cost was the connect flow,
+which had lived in the deleted layout's chrome column, and what it bought was
+the answer to where the connect flow belongs: **inside the Sensor row**.
+`ScanReadyPage` takes a `connectFlow` slot, non-null exactly when nothing is on
+the cable, and renders it as a row of the READY TO SCAN card directly under the
+row that is red about it. A blocker and its fix are one object now, and the page
+does not change shape between the two states — the same status bar, the same
+LAST SCAN card, the same three rows, the same FAB.
+
+Three things had to stop being said twice, and each was found by looking at the
+bench rather than at a test:
+
+* the **tutorial offer rendered twice**, one line under the other, because
+  §D.1's page has its own item-166 slot for it *and* passes `loudBanners`, which
+  also drew it. The band now draws it only for the pages with no slot;
+* the connect flow repeated the Sensor row's own words — *"No scanner found.
+  Plug it in, then Retry."* under *"Sensor · Not found / Plug it in, then
+  retry."* — with a second **Retry** beside it. `AutoDetectLine` takes
+  `underReadinessRow` and suppresses the failure clause and its link there,
+  keeping everything the row cannot say (searching, connecting, the device it
+  found);
+* the mount block did the same thing to the Mount row, in 24 words. Suppressed
+  by `PreCaptureStrip(showMountBlock = false)`.
+
+`ScanReadiness.statusLine` gained the missing half of its own sentence: it
+returned the blocker's *value*, so a disconnected phone's status bar read
+`Not found` — a verdict with no subject, where the other state reads
+`COIN-D6 · Ready`. It is `Sensor · Not found` now, one clause either way.
+
+The **disabled FAB** stopped being brand orange at 45 % with its glow intact
+(review finding S11): trough ground, ink-faint mark, no shadow, exactly as the
+mockup's `.fab.off` specifies. It is still tappable and still answers a refused
+press with item 132's shake — what changed is that it stopped being the loudest
+object on a screen it cannot act on. The connect flow's two orange section
+headers and its two orange text links went the same way; `Retry` keeps
+`primaryInk` because it is the fix, and `Enter manually` is ink-mute because a
+disclosure must not out-shout it (S13).
+
+**170(a) — the accent law, and a component rule rather than a call-site fix.**
+The owner's sheet screenshot counts six oranges. The largest was a **full-width
+filled `3D orbit` button that was the only option there was**, under a row
+already reading out `3D orbit`. `SegmentedPill` now draws **nothing** below two
+options — the rule is in the component, because `DetailLevels.selectableOn` and
+the refresh notches can both collapse to one on some device and a rule at one
+call site is a rule the next caller forgets. Slider tracks went neutral and only
+the thumb kept the accent: a track is a scale, a thumb is the control. `Done` is
+the sheet's one Primary.
+
+Two more from the same screenshot. The **orphaned slider** was not a detached
+label: the View block was *pinned* above the scrolling body, so the label of
+whatever row was at the top of the scroll hid behind it. With View no longer a
+control there was no reason to pin it, and everything below the tabs scrolls
+together now — a label and its slider cannot be separated. And `A14 · LIVE` left
+the header, with `A14` joining `A15` in `WordingLaw.JARGON` so it cannot come
+back; the 40-word footer became five words.
+
+**170(d) — and one regression the suite caught.** Deleting the chip row from
+both idle pages deleted the **only door to the Capture sheet** in portrait:
+preset, workflow profile, Live 3D map and Live SLAM became unreachable, and
+`Round27UiTest.theCaptureSheetHasExactlyOneDoorAndTheMapChipIsGone` reported
+`expected:<1> but was:<0>`. It is a row in the Advanced sheet now, which is
+where §D.1 sends everything scan-local; the test keeps its tag, because the
+claim it pins is "exactly one owner", not "a chip". The scan summary's raw path
+became the scan's **name** — item 164's defect one sheet over, and the full path
+is still written to the capture log, which is where a path is read.
+
+**171 — the avatar, and one door per surface.** `AvatarButton` in the Settings
+header, the same component in the same corner as Projects', and the ABOUT card's
+Profile row is gone. The emulator assertion moved with it and got shorter: the
+round-28 hotfix needed `performScrollTo()` to reach a row 1500 px down a
+scrolling page, and a header needs no scrolling — if it ever does, that is the
+regression.
+
+**172 — Auto had been given Max's meaning.** `requestedPointsFor` mapped `AUTO`
+to the tier ceiling, so a STANDARD phone read `Auto 16 M, High 5 M` and
+`selectableOn` then dropped `MAX` as a duplicate of `AUTO`. The rungs are
+`AUTO → OPTIMAL`, `HIGH → FULL clamped`, `MAX → the ceiling`, and Auto prints
+**no number at all** (`Fits this device`) because it does not have one. Item
+100's ceiling law is untouched — every rung still goes through
+`clampLodPointBudget`, and a rung that flattens onto the one below it is still
+absent rather than disabled.
+
+The change exposed a second defect that had been invisible behind the first: the
+budget round-trips through `_lodBudgetMPoints`, an Int **in millions**, so
+`HIGH`'s 16 777 216 points is stored as `16` and read back as 16 000 000 —
+matching no rung, so the row said `Auto` a moment after the operator picked
+`High`. `levelForBudget` compares in millions now, which is the resolution the
+setting actually has. It only ever worked before because `AUTO` used to BE the
+ceiling, so the fallback happened to be the right answer.
+
+The row's detail line carries the read-out and **not** the ceiling note:
+measured on the bench, `Fits this device · Limited by this device` ellipsises to
+`…Limited by this de…`, which is item 164's own defect in a new row. The note
+lives in the picker, where the rungs are.
+
+**173 — the repo is public, so the feedback goes where the code is.** No GitHub
+credential is in the app and none can be: a token in the APK is a credential
+every install carries for opening issues on the owner's repository. A prefilled
+`issues/new` URL needs none — the browser is already signed in as whoever the
+operator is, the issue is posted under *their* account, and the app's part ends
+when the browser opens. `?template=` was considered and not used: `template` and
+`body` are alternatives, and our body — his words plus the device table he would
+otherwise retype off the Profile page — is the whole value.
+
+`GitHubIssue` is `:core` with 17 tests, because the entire feature is a string
+and a wrong string looks to the operator like his report vanishing. The encoder
+is hand-rolled: `URLEncoder` writes a space as `+` (which GitHub renders
+literally inside a code fence) and leaves `*` unescaped (a markdown emphasis
+marker). The 8 000-character clamp cuts the **decoded** body and re-encodes, so
+a cut can never land inside a `%E2%80%A6`, and it says it was cut.
+
+`Send diagnostics` is a chooser with three doors and a fourth when the cloud
+fields are filled in — `DiagnosticsChooser` in `:core`, so *which doors exist on
+this phone* is a JVM test rather than an emulator screenshot. `FeedbackWording
+.resultFor` learned that a local route may not claim `Sent.`: GitHub says
+*"Opened GitHub. Post it there."* and Save names the file, because the app has
+opened a browser and written a zip and has not sent anything. The
+`FeedbackRoute.GITHUB` body says, in as many words, that a link cannot carry a
+file and names the zip to drag in — nobody enjoys writing that sentence, and the
+alternative is an issue whose "logs attached" line is false.
+
+**174 — "Lab features".** One constant, and every reference with it: the switch,
+the manual, QUICK_START, and the two doc sentences that named it in passing. The
+detail line did not move; what it reveals is unchanged.
+
+**What the suite caught that no unit test could.** Six connected failures on the
+first run, and five of them are the same shape: the AVD renders §D.1's page for
+the first time, so five assertions written against round 27's page were finally
+looking at the screen they claimed to be about.
+`Round27UiTest`'s pairwise overlap sweep failed twice on `scanStatusBar`
+containing `advancedButton` and `scanChromeColumn` containing `lastScanCard` —
+**containment is not collision**, and the sweep could not tell the difference
+because until this round every element in it floated independently.
+`assertNoOverlaps` skips containment now and only containment; two rectangles
+that clip each other's corners still fail, which is the geometry item 129 is
+about. `Round26UiTest.theScanViewportIsEdgeToEdge` asserts the **absence** of
+`captureViewport` on an idle page, which is item 158's argument stated as a
+measurement for the first time; `Round23ScanTabTest` waits on the Sensor row
+rather than on the deleted `startBlockedNote`; and `Round24UiTest` opens the
+tour through the Advanced sheet, which is where item 158 put it.
+`Round27UiTest.theHealthReadOutLivesInsideTheStatusPill` **assumes itself away**
+on this bench now — round 28 wrote that `Assume` for exactly this case, and with
+both idle variants on §D.1 there is no status pill for a health chip to be
+inside of.
+
+**Numbers.** Engine **untouched**; ABI stays **12**; ctest **8/8**. `:core`
+**1035 / 0** (was 999). `:app` unit **251 / 0** (unchanged — no unit test covers
+a composable, and the new `:core` values are where the logic went). Emulator:
+**61 executed, 0 failures, 1 assumed-skipped** on `b4_test`, one undisturbed run
+(`BUILD SUCCESSFUL in 3m 17s`). VERSION 0.9.14; versionCode **914** /
+versionName **0.9.14** / `application-label:'Ollidar'` verified by
+`aapt2 dump badging`.
+
+**What is NOT proven, said plainly.** The GitHub hand-off is proven as far as
+the browser: the URL is pinned by 17 JVM tests and the chooser state by 9 more,
+and the `ACTION_VIEW` launch is one `runCatching` in `ProfileRoute` that the
+emulator suite deliberately does not follow (a UI suite that opens a Chrome tab
+has stopped being a UI suite). **No issue has been posted from the app.** The
+`Save to phone` and `Share…` doors run round 24's unchanged sender, whose
+Downloads copy `DownloadsExporterTest` still covers on the device. And the whole
+of item 170 is verified against a **disconnected** page and a **replay** session,
+because no D6 connects to an emulator — the connected idle page with a real
+sensor on the cable is still only reachable on the owner's phone.

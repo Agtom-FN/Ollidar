@@ -18,6 +18,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
@@ -47,6 +48,7 @@ import com.lidarscan.app.data.AppSettings
 import com.lidarscan.app.data.ThemeMode
 import com.lidarscan.app.data.Units
 import com.lidarscan.app.di.AppContainer
+import com.lidarscan.app.ui.components.AvatarButton
 import com.lidarscan.app.ui.components.ScanDims
 import com.lidarscan.app.ui.components.ScanRow
 import com.lidarscan.app.ui.components.ScanRowCard
@@ -195,6 +197,7 @@ fun SettingsRoute(
         detailLevels = viewModel.detailLevels,
         detailLevel = detailLevel,
         detailCeilingNote = viewModel.detailCeilingNote,
+        detailReadoutFor = viewModel::detailReadout,
         onDetailChange = viewModel::setDetailLevel,
         onReplayTutorial = {
             // Seeing it again is still seeing it: replaying retires the
@@ -330,6 +333,14 @@ fun SettingsScreen(
     detailLevel: com.lidarscan.core.capture.DetailLevel =
         com.lidarscan.core.capture.DetailLevels.DEFAULT,
     detailCeilingNote: String? = null,
+    /**
+     * ROUND 29 item 172 — what a rung reads out: `Fits this device` for Auto,
+     * `16 M` for the rest. A function rather than one string because the picker
+     * labels every rung, not only the selected one — an operator choosing
+     * between `Auto` and `High` is choosing between two numbers he cannot see
+     * unless both are printed.
+     */
+    detailReadoutFor: (com.lidarscan.core.capture.DetailLevel) -> String = { "" },
     onDetailChange: (com.lidarscan.core.capture.DetailLevel) -> Unit = {},
     /** ROUND 24 item 110(b): replays the Scan-screen tour. */
     onReplayTutorial: () -> Unit = {},
@@ -352,7 +363,21 @@ fun SettingsScreen(
         // §C.2: ONE ScanDisplay per screen. The developer sub-line is the
         // mockup's own: an unlocked device says so at the top rather than only
         // in the section three scrolls down that it unlocked.
-        Column(
+        //
+        // ── ROUND 29 item 171 ──────────────────────────────────────────────
+        //
+        // The owner: *"Add profile button in setting page as the profile
+        // icon."* The same 46 dp `AvatarButton` the Projects hero carries, in
+        // the same corner, opening the same page — so "me" is in one place on
+        // every screen that has one rather than being a header on one tab and a
+        // row three scrolls down another.
+        //
+        // The ABOUT card's **Profile row is gone** with it. An avatar in the
+        // header and a row in the body are two doors to one page on one screen,
+        // which is exactly the duplication §C spent round 28 removing (item 152
+        // is the same shape one component down). The header wins because it is
+        // the position Projects already taught him.
+        Row(
             Modifier
                 .fillMaxWidth()
                 .padding(
@@ -361,11 +386,20 @@ fun SettingsScreen(
                     top = ScanDims.S4,
                     bottom = ScanDims.S2,
                 ),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("Settings", style = ScanDisplay, color = ScanColors.ink)
-            if (settings.developerMode) {
-                Text("Developer mode on", style = ScanMeta, color = ScanColors.warn)
+            Column(Modifier.weight(1f)) {
+                Text("Settings", style = ScanDisplay, color = ScanColors.ink)
+                if (settings.developerMode) {
+                    Text("Developer mode on", style = ScanMeta, color = ScanColors.warn)
+                }
             }
+            AvatarButton(
+                icon = Icons.Filled.Person,
+                contentDescription = "Profile",
+                onClick = onOpenProfile,
+                modifier = Modifier.testTag("settingsAvatar"),
+            )
         }
 
         // ── DISPLAY ─────────────────────────────────────────────────────────
@@ -422,7 +456,19 @@ fun SettingsScreen(
                     // where the question is asked.
                     ScanRow(
                         title = Wording.DETAIL_LABEL,
-                        detail = detailCeilingNote,
+                        // ROUND 29 item 172: the rung's own read-out. `Auto`
+                        // alone left the operator to open the sheet to find out
+                        // what it meant, and the sheet used to tell him 16 M —
+                        // the tier ceiling, which is Max's number.
+                        //
+                        // The ceiling note is NOT concatenated here: measured on
+                        // the bench, `Fits this device · Limited by this device`
+                        // ellipsises to `…Limited by this de…` on a 1080 px
+                        // screen, which is round 28 item 164's own defect in a
+                        // new row. It lives in the picker instead, where the
+                        // rungs are and where "why are there two and not three"
+                        // is the question actually being asked.
+                        detail = detailReadoutFor(detailLevel).ifBlank { null },
                         meta = detailLevel.displayName,
                         trailing = { Chevron() },
                         onClick = { sheet = SettingsSheet.DETAIL },
@@ -603,20 +649,8 @@ fun SettingsScreen(
                         modifier = Modifier.testTag("settingsTutorialRow"),
                     )
                 },
-                {
-                    // ROUND 24 item 109: the second door to the Profile page —
-                    // the first is the Projects avatar. §D.8 moved the version,
-                    // the storage figure and Send logs onto that page, so this
-                    // row is now about support rather than about "settings you
-                    // could not fit above".
-                    ScanRow(
-                        title = "Profile",
-                        detail = "This phone, diagnostics, feedback.",
-                        trailing = { Chevron() },
-                        onClick = onOpenProfile,
-                        modifier = Modifier.testTag("settingsProfileRow"),
-                    )
-                },
+                // ROUND 29 item 171: the Profile ROW was here. It is the
+                // header's avatar now — one door per surface.
                 {
                     // ROUND 17 item 67: the app holds the rear camera open for
                     // every second of every walk, because that is what places
@@ -818,7 +852,12 @@ fun SettingsScreen(
         )
         SettingsSheet.DETAIL -> OptionSheet(
             title = Wording.DETAIL_LABEL,
-            options = detailLevels.map { it to it.displayName },
+            // ROUND 29 item 172: every rung carries its own number, so the
+            // ladder is visible in the one place a rung is chosen.
+            options = detailLevels.map {
+                it to listOf(it.displayName, detailReadoutFor(it)).filter { p -> p.isNotBlank() }
+                    .joinToString(" · ")
+            },
             selected = if (detailLevel in detailLevels) detailLevel else detailLevels.first(),
             onSelect = onDetailChange,
             onDismiss = { sheet = null },

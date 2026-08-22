@@ -20,6 +20,7 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.lidarscan.app.debug.EXTRA_LAUNCH_REPLAY_CAPTURE
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -138,11 +139,16 @@ class ReplayCaptureSmokeTest {
             // displayed" — which is the honest question about a form anyway.
             // `Round27UiTest.theConnectFlowCanBeScrolledToItsEnd` pins the
             // scrollability itself in both orientations.
+            // ROUND 29 item 170: the connect flow is a state of §D.1's Sensor
+            // row now, and the row carries the Retry — so `retryAutoDetectButton`
+            // (the second one, inside the flow) is deliberately absent and
+            // `readinessAction_sensor` is the one that exists. The rest of the
+            // flow is unchanged and is still reached by scrolling.
             listOf(
                 "manualLidarIpField",
                 "manualHostIpField",
                 "manualConnectMid360",
-                "retryAutoDetectButton",
+                "readinessAction_sensor",
             ).forEach { tag ->
                 runCatching { composeRule.onNodeWithTag(tag).performScrollTo() }
                 composeRule.waitForIdle()
@@ -151,7 +157,25 @@ class ReplayCaptureSmokeTest {
 
             // "Enter manually" stays reachable (it is the toggle that is now
             // showing "Hide manual entry"), which is the other half of addition 1.
+            runCatching { composeRule.onNodeWithTag("manualEntryToggle").performScrollTo() }
+            composeRule.waitForIdle()
             composeRule.onNodeWithTag("manualEntryToggle").assertIsDisplayed()
+
+            // ROUND 29 item 170: and exactly ONE statement of the blocker. The
+            // Sensor row says it; the flow beneath it does not repeat it, and
+            // the old floating "Connect the scanner first." line is gone from
+            // this page entirely.
+            assertEquals(
+                "item 170: one Retry on the scanner-missing page, on the row",
+                0,
+                composeRule.onAllNodesWithTag("retryAutoDetectButton").fetchSemanticsNodes().size,
+            )
+            assertEquals(
+                "item 170: the Sensor row states the blocker, so the stray " +
+                    "\"Connect the scanner first.\" line is not drawn as well",
+                0,
+                composeRule.onAllNodesWithTag("startBlockedNote").fetchSemanticsNodes().size,
+            )
         }
     }
 

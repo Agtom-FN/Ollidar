@@ -74,6 +74,24 @@ enum class FeedbackRoute {
 
     /** Hand the zip to the system share sheet. */
     SHARE,
+
+    // ── ROUND 29 item 173: two destinations the operator picks by hand ─────
+
+    /**
+     * Write the zip to `Downloads/LidarScan` and open a prefilled GitHub issue.
+     *
+     * The app does **not** post anything: a URL cannot carry a file and this
+     * app holds no GitHub credential (see [GitHubIssue]). What it guarantees is
+     * the zip on disk and a browser open on a form whose body already names it.
+     */
+    GITHUB,
+
+    /** Write the zip to `Downloads/LidarScan` and stop there. */
+    SAVE,
+    ;
+
+    /** True where the app is only responsible for the file. */
+    val isLocal: Boolean get() = this == SAVE || this == GITHUB
 }
 
 /**
@@ -152,13 +170,79 @@ object FeedbackWording {
     fun noteFor(route: FeedbackRoute): String = when (route) {
         FeedbackRoute.SERVER -> "Sends to your server."
         FeedbackRoute.SHARE -> "Opens the share sheet."
+        FeedbackRoute.GITHUB -> DIAGNOSTICS_GITHUB_DETAIL
+        FeedbackRoute.SAVE -> DIAGNOSTICS_SAVE_DETAIL
     }
 
-    /** The last word, from a finished [FeedbackResult]. */
-    fun resultFor(result: FeedbackResult): String = if (result.sent) SENT else NOT_SENT
+    /**
+     * ROUND 29 item 173 — the Send-diagnostics row's second line.
+     *
+     * It used to state the route the app had already chosen, which was honest
+     * while there was exactly one. There are three now and the operator picks,
+     * so the line says that instead of predicting it.
+     */
+    const val CHOOSE_NOTE = "Choose where it goes."
+
+    /** The compose sheet's button, once feedback became a GitHub issue. */
+    const val OPEN_GITHUB = "Open GitHub"
+
+    /** The fourth diagnostics door, offered only when a server is configured. */
+    const val DIAGNOSTICS_SERVER = "Your server"
+
+    /**
+     * The last word, from a finished [FeedbackResult].
+     *
+     * ROUND 29 item 173: a local route never says "Sent." — the app has not
+     * sent anything, it has written a file (and possibly opened a browser on a
+     * form the operator still has to submit). Claiming otherwise is the exact
+     * failure round 7 named, one destination later.
+     */
+    fun resultFor(result: FeedbackResult): String = when {
+        !result.sent -> if (result.route.isLocal) NOT_SAVED else NOT_SENT
+        result.route == FeedbackRoute.GITHUB -> OPENED_GITHUB
+        result.route == FeedbackRoute.SAVE -> savedTo(result.downloadsPath ?: "Downloads")
+        else -> SENT
+    }
 
     /** The chooser's own title on the share path. */
     const val SHARE_TITLE = "Send logs"
+
+    // ── ROUND 29 item 173: the three doors out of Send diagnostics ─────────
+
+    /**
+     * The sheet's title, and its three options.
+     *
+     * Three rather than two because all three are genuinely different
+     * destinations and the operator knows which one he wants before he taps:
+     * the issue tracker (where the owner reads), the phone (where a file can be
+     * found again), and whatever app he already mails logs with. Item 165's
+     * rule holds — one job per row, and the row says which.
+     */
+    const val DIAGNOSTICS_TITLE = "Send diagnostics"
+    const val DIAGNOSTICS_GITHUB = "GitHub"
+    const val DIAGNOSTICS_GITHUB_DETAIL = "Opens an issue in your browser."
+    const val DIAGNOSTICS_SAVE = "Save to phone"
+    const val DIAGNOSTICS_SAVE_DETAIL = "Puts the zip in Downloads."
+    const val DIAGNOSTICS_SHARE = "Share…"
+    const val DIAGNOSTICS_SHARE_DETAIL = "Mail it, or put it in Drive."
+
+    /** **Send feedback**, which no longer packs anything: it opens a browser. */
+    const val FEEDBACK_GITHUB_DETAIL = "Opens an issue in your browser."
+
+    /**
+     * What the GitHub path says when it has finished.
+     *
+     * It is deliberately NOT "Sent.": the app has opened a browser, and the
+     * issue is posted when the operator presses the button in it. Claiming a
+     * send the app did not make is the failure mode round 7 named.
+     */
+    const val OPENED_GITHUB = "Opened GitHub. Post it there."
+
+    /** The zip landed and nothing else was attempted. */
+    fun savedTo(path: String): String = "Saved to $path"
+
+    /** The zip could not be written at all. */
+    const val NOT_SAVED = "Could not save the zip."
 
     val ALL: List<String> = listOf(
         SEND_LOGS,
@@ -167,12 +251,70 @@ object FeedbackWording {
         SENDING,
         SENT,
         SHARE_TITLE,
+        DIAGNOSTICS_TITLE,
+        DIAGNOSTICS_GITHUB,
+        DIAGNOSTICS_SAVE,
+        DIAGNOSTICS_SHARE,
+        OPENED_GITHUB,
+        NOT_SAVED,
+        OPEN_GITHUB,
+        DIAGNOSTICS_SERVER,
+        CHOOSE_NOTE,
         noteFor(FeedbackRoute.SERVER),
         noteFor(FeedbackRoute.SHARE),
     )
 
     /** The detail lines (twelve words). */
-    val DETAILS: List<String> = listOf(PRIVACY_NOTE, NOT_SENT)
+    val DETAILS: List<String> = listOf(
+        PRIVACY_NOTE,
+        NOT_SENT,
+        DIAGNOSTICS_GITHUB_DETAIL,
+        DIAGNOSTICS_SAVE_DETAIL,
+        DIAGNOSTICS_SHARE_DETAIL,
+        FEEDBACK_GITHUB_DETAIL,
+    )
+}
+
+/**
+ * ROUND 29 item 173(b/c) — **the chooser, as a value.**
+ *
+ * The three (or four) doors out of *Send diagnostics* are a list rather than
+ * four `if`s in a composable, for the same reason `FeedbackConfig` was a value
+ * in round 24: the interesting question — *which doors exist on this phone* —
+ * is then answerable by a JVM test instead of by an emulator screenshot.
+ *
+ * The order is fixed and is not alphabetical. GitHub is first because it is
+ * where the owner reads; **Save to phone** is second because it is the one that
+ * always works; Share is third because it is the general case; the server is
+ * last and conditional, because a phone with no cloud fields filled in must not
+ * be offered a destination that will 401.
+ */
+object DiagnosticsChooser {
+
+    fun optionsFor(serverConfigured: Boolean): List<FeedbackRoute> = buildList {
+        add(FeedbackRoute.GITHUB)
+        add(FeedbackRoute.SAVE)
+        add(FeedbackRoute.SHARE)
+        if (serverConfigured) add(FeedbackRoute.SERVER)
+    }
+
+    /** The row's title. */
+    fun titleFor(route: FeedbackRoute): String = when (route) {
+        FeedbackRoute.GITHUB -> FeedbackWording.DIAGNOSTICS_GITHUB
+        FeedbackRoute.SAVE -> FeedbackWording.DIAGNOSTICS_SAVE
+        FeedbackRoute.SHARE -> FeedbackWording.DIAGNOSTICS_SHARE
+        FeedbackRoute.SERVER -> FeedbackWording.DIAGNOSTICS_SERVER
+    }
+
+    /** The row's one detail line. */
+    fun detailFor(route: FeedbackRoute): String = when (route) {
+        FeedbackRoute.SHARE -> FeedbackWording.DIAGNOSTICS_SHARE_DETAIL
+        else -> FeedbackWording.noteFor(route)
+    }
+
+    /** The test tag each row carries, so one list drives the suite too. */
+    fun testTagFor(route: FeedbackRoute): String = "diagnostics${route.name.lowercase()
+        .replaceFirstChar { it.uppercase() }}"
 }
 
 /**
@@ -212,6 +354,26 @@ data class DeviceFacts(
 
     /** `1.2 GB` / `840 MB` / `12 KB` — the Profile card's storage read-out. */
     fun storageLabel(): String = formatBytes(storageBytes)
+
+    /**
+     * ROUND 29 item 173 — **the same six facts, for a browser.**
+     *
+     * [asText] is read in a terminal and grepped; a GitHub issue is read in a
+     * browser, where six `key=value` lines collapse into one paragraph and the
+     * maintainer has to re-split them by eye. Same fields, same order, same
+     * source — a second list of "what we tell support about this phone" is a
+     * second list that can disagree with the bundle sitting next to it.
+     */
+    fun asMarkdownTable(): String = buildString {
+        appendLine("| field | value |")
+        appendLine("| --- | --- |")
+        appendLine("| app | $appVersion ($versionCode) |")
+        appendLine("| device | ${deviceModel.ifBlank { "unknown" }} |")
+        appendLine("| android | ${androidVersion.ifBlank { "unknown" }} |")
+        appendLine("| engine ABI | $engineAbi |")
+        appendLine("| scans | $scanCount |")
+        append("| scan storage | ${storageLabel()} |")
+    }
 
     companion object {
         fun formatBytes(bytes: Long): String = when {

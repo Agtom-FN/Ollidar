@@ -554,6 +554,22 @@ fun SecondaryPill(
  * — and an unweighted child that fills starves the weighted title beside it, so
  * the row's name collapsed to nothing. Every existing caller wants the full
  * width and gets it by default; a trailing control passes false.
+ *
+ * ## ROUND 29 item 170(a) — **one option is not a control**
+ *
+ * With `FeatureFlags.FOLLOW_CAMERA_ENABLED` off, the Advanced sheet's View row
+ * offered a single `3D orbit` segment — which renders as a **full-width filled
+ * orange button** that does nothing when pressed, directly under a row already
+ * reading out `3D orbit` on its right. The owner counted it among six oranges
+ * on one sheet.
+ *
+ * A segmented control with nothing to choose between is a read-out wearing a
+ * button's clothes. It draws **nothing**, and the value row above it — which
+ * every call site already has, because that is the pattern — is what states the
+ * value. The rule is here rather than at the one call site because
+ * `DetailLevels.selectableOn` and the refresh notches can both collapse to one
+ * option on some device, and a rule that lives in the component cannot be
+ * forgotten by the next caller.
  */
 @Composable
 fun <T> SegmentedPill(
@@ -565,6 +581,7 @@ fun <T> SegmentedPill(
     enabled: Boolean = true,
     fillWidth: Boolean = true,
 ) {
+    if (options.size < 2) return
     val shape = RoundedCornerShape(percent = 50)
     Row(
         modifier = modifier
@@ -821,9 +838,17 @@ fun SheetSlider(
             .fillMaxWidth()
             .height(ScanDims.Touch)
             .then(if (contentDescription != null) Modifier.describedAs(contentDescription) else Modifier),
+        // ── ROUND 29 item 170(a): the accent is the KNOB, not the bar ──────
+        //
+        // Two sliders with a full orange active track put four orange objects
+        // on the Advanced sheet before the Done button — the owner counted
+        // six in one screenshot. The track is a scale (how far along am I),
+        // the thumb is the control (the thing under my finger), and §C's accent
+        // law spends the brand colour on controls. Neutral bar, ember knob:
+        // the position still reads at arm's length because the knob is 28 dp.
         colors = SliderDefaults.colors(
             thumbColor = MaterialTheme.colorScheme.primary,
-            activeTrackColor = MaterialTheme.colorScheme.primary,
+            activeTrackColor = MaterialTheme.colorScheme.outline,
             inactiveTrackColor = MaterialTheme.colorScheme.surfaceContainerHigh,
         ),
         thumb = {
@@ -843,7 +868,7 @@ fun SheetSlider(
             SliderDefaults.Track(
                 sliderState = sliderState,
                 colors = SliderDefaults.colors(
-                    activeTrackColor = MaterialTheme.colorScheme.primary,
+                    activeTrackColor = MaterialTheme.colorScheme.outline,
                     inactiveTrackColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                 ),
                 drawStopIndicator = null,

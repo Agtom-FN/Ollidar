@@ -115,7 +115,19 @@ private fun SheetHead(title: String, hint: String) {
             color = MaterialTheme.colorScheme.onSurface,
         )
         Spacer(Modifier.weight(1f))
-        Text(hint.uppercase(), style = ScanMetaCaps, color = ScanColors.inkFaint)
+        // ROUND 29 item 170(b) / item 167: `.uppercase()` was right while every
+        // hint here was a code (`A14 · LIVE`). Once the Display hint became
+        // words, Meta Caps put instrument-panel tracking on a sentence — item
+        // 167's exact defect. Meta Caps only for the hint that IS still a
+        // code list; sentence case for the one a person would say aloud.
+        val isCode = hint.none { it == ' ' } || hint.contains(" · ")
+        Text(
+            if (isCode) hint.uppercase() else hint,
+            style = if (isCode) ScanMetaCaps else ScanMeta,
+            color = ScanColors.inkFaint,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -153,6 +165,26 @@ fun CaptureSettingsSheet(
     onLiveViewChange: (Boolean) -> Unit = {},
     /** ROUND 28 item 158: the `?` FAB's destination — see the Tutorial row. */
     onOpenTutorial: () -> Unit = {},
+    /**
+     * ROUND 29 item 170 — **the Capture sheet's one door.**
+     *
+     * Round 27 item 133(c) made the chip row the single owner of
+     * `CaptureConfigSheet`; item 158 then deleted the chip row from §D.1's
+     * connected page, and this round deleted it from the disconnected one — at
+     * which point the preset, the workflow profile, Live 3D map and Live SLAM
+     * had **no door at all** in portrait. The emulator suite caught it as
+     * `theCaptureSheetHasExactlyOneDoorAndTheMapChipIsGone` returning 0.
+     *
+     * It is a row in this sheet now, which is where §D.1 sends everything
+     * scan-local. Still exactly one door, and still the same sheet.
+     */
+    onOpenCaptureSheet: (() -> Unit)? = null,
+    /**
+     * ROUND 29 item 172 — what the Detail row reads out, from
+     * `DetailLevels.readoutFor`. Null falls back to the applied budget, which
+     * is what a caller that does not know the device tier can honestly say.
+     */
+    detailReadout: String? = null,
     // ── ROUND 23 item 106(a): DETAIL — Auto / High / Max ────────────────────
     /** The rungs THIS device may be offered (item 100's ceiling has already dropped the rest). */
     detailLevels: List<com.lidarscan.core.capture.DetailLevel> =
@@ -218,9 +250,17 @@ fun CaptureSettingsSheet(
         modifier = Modifier.testTag("captureSettingsSheet"),
     ) {
         Column(Modifier.height(screenHeight * 0.74f)) {
+            // ── ROUND 29 item 170(b) ──────────────────────────────────────
+            //
+            // This read `A14 · LIVE` — a Filament feature level, top-right of
+            // the sheet an operator opens to change the point size. `A14` is in
+            // `WordingLaw.JARGON` now, beside `A15`, for the same reason item
+            // 169 put the Jobs sentence there: the law has to name the word or
+            // the word comes back. What the hint says instead is what the sheet
+            // is about.
             SheetHead(
                 if (tab == AdvancedTab.SCAN) "Display" else "Connection",
-                if (tab == AdvancedTab.SCAN) "A14 · live" else "sensor · cable · network",
+                if (tab == AdvancedTab.SCAN) "how the cloud is drawn" else "sensor · cable · network",
             )
 
             // ── ROUND 27 item 139: the two halves ────────────────────────
@@ -255,8 +295,25 @@ fun CaptureSettingsSheet(
                 return@ModalBottomSheet
             }
 
-            // ── pinned: view mode ────────────────────────────────────────
-            Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp)) {
+            // ── ROUND 29 item 170(a): the View block is NOT pinned any more ─
+            //
+            // Round 3 pinned it so the view mode stayed on screen while the
+            // body scrolled, and that was worth ~120 dp while it was a control.
+            // It is a read-out now (a segmented control with one option draws
+            // nothing — see `SegmentedPill`), and a pinned read-out is a band
+            // that other rows' LABELS scroll behind: the owner's screenshot has
+            // an orange slider directly under this divider with no label at all,
+            // because "Gamma / 0.1 – 4.0 / 1.00" was underneath the pinned
+            // block. Everything below the tabs scrolls together now, so a label
+            // and its slider can no longer be separated.
+            //
+            // ── scrolling: View, Tracking & camera, then Display ────────────
+            Column(
+                Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 18.dp),
+            ) {
                 SheetRowLabel(
                     label = "View",
                     hint = "how the cloud is framed",
@@ -306,16 +363,6 @@ fun CaptureSettingsSheet(
                     modifier = Modifier.testTag("captureViewRow"),
                 )
                 Spacer(Modifier.height(10.dp))
-            }
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-
-            // ── scrolling: AR & Camera, then Display ─────────────────────
-            Column(
-                Modifier
-                    .weight(1f)
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 18.dp),
-            ) {
                 // ROUND 7 (owner directive): the phone + D6 IS the 3D lidar, not "an AR
                 // app with a lidar". Camera keyframes are a COLORIZATION feature and
                 // stay; the section is named for what it does.
@@ -398,6 +445,28 @@ fun CaptureSettingsSheet(
                     onClick = onOpenTutorial,
                     modifier = Modifier.fillMaxWidth().testTag("tutorialButton"),
                 )
+
+                // ── ROUND 29 item 170: the Capture sheet's door ─────────────
+                //
+                // Secondary, not Primary: §C's accent law gives this sheet one
+                // orange control and it is `Done`. See `onOpenCaptureSheet` for
+                // why the door had to move here at all.
+                if (onOpenCaptureSheet != null) {
+                    Spacer(Modifier.height(12.dp))
+                    SheetRowLabel(
+                        label = "Capture",
+                        hint = "preset · profile · live map",
+                        readout = "",
+                    )
+                    com.lidarscan.app.ui.components.SecondaryPill(
+                        text = "Capture settings",
+                        onClick = onOpenCaptureSheet,
+                        // The tag round 27 item 133(c) counts doors by. The
+                        // CONTROL changed shape; the claim it pins — exactly
+                        // one owner for that sheet — did not.
+                        modifier = Modifier.fillMaxWidth().testTag("captureConfigChip"),
+                    )
+                }
 
                 SheetSection("Display")
 
@@ -574,10 +643,16 @@ fun CaptureSettingsSheet(
                 // says so in four words. `onLodChange` is untouched and still
                 // reaches the same renderer path — this control simply picks
                 // the number instead of asking the operator to.
+                // ROUND 29 item 172: the read-out belongs to the RUNG, not to
+                // the applied budget. `Auto` has no number — it is whatever
+                // this phone was measured to be good for — and printing one
+                // beside `High`'s invites the operator to "fix" a setting that
+                // is already right. One function in `:core` so this sheet and
+                // the Settings row cannot answer differently.
                 SheetRowLabel(
                     label = com.lidarscan.core.Wording.DETAIL_LABEL,
                     hint = com.lidarscan.core.Wording.DETAIL_BUDGET_HINT,
-                    readout = "$lodBudgetMPoints M",
+                    readout = detailReadout ?: "$lodBudgetMPoints M",
                 )
                 SegmentedPill(
                     options = detailLevels.map { it to it.displayName },
@@ -603,9 +678,10 @@ fun CaptureSettingsSheet(
                 // a property of the PICTURE. Splitting them is what lets the
                 // capture screen carry two chips instead of half a screen of
                 // controls — see CaptureLayout.
+                // ROUND 29 item 170(c): forty words at the bottom of a sheet
+                // nobody scrolls to, restating the header. Five.
                 Hint(
-                    "Recording, connection, performance and the mount reference are in the Capture sheet — " +
-                        "this one is only about how the cloud is drawn. Nothing here touches the recording.",
+                    "Nothing here changes the recording.",
                     color = ScanColors.inkFaint,
                 )
                 Spacer(Modifier.height(14.dp))

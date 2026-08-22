@@ -95,7 +95,12 @@ object ScanReadiness {
      */
     fun statusLine(sensorName: String?, rows: List<Row>): String {
         val blocked = blocker(rows)
-        if (blocked != null) return blocked.value
+        // ROUND 29 item 170: the blocker's SUBJECT and its state, not the state
+        // alone. Round 28 returned `blocked.value`, so a disconnected phone's
+        // whole status bar read *"Not found"* — a verdict with no subject, in a
+        // bar whose other state names one (`COIN-D6 · Ready`). One clause
+        // either way, and the two clauses are the same shape.
+        if (blocked != null) return "${blocked.title} · ${blocked.value}"
         val name = sensorName?.takeIf { it.isNotBlank() } ?: return "Ready"
         return "$name · Ready"
     }

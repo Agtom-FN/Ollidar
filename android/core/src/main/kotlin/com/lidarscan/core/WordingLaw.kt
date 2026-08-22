@@ -73,7 +73,11 @@ object WordingLaw {
      * a person holding a phone in a flat.
      */
     val JARGON: List<String> = listOf(
-        "§", "A12", "A15", "RANSAC", "CRS", "ECEF",
+        // ROUND 29 item 170(b): `A14` joins its neighbours. The Scan screen's
+        // Advanced sheet greeted the operator with `A14 · LIVE` in its header —
+        // a Filament feature level, top-right of the surface he opens to change
+        // the point size. Naming it here is what stops it coming back.
+        "§", "A12", "A14", "A15", "RANSAC", "CRS", "ECEF",
     )
 
     // ── ROUND 28 item 169: who a sentence is talking to ────────────────────

@@ -77,9 +77,22 @@ class FeedbackSender(
         config: FeedbackConfig,
         facts: DeviceFacts,
         message: String,
+        /**
+         * ROUND 29 item 173 — **where this one is going**, when the operator
+         * has said so.
+         *
+         * Null keeps round 24's behaviour exactly: the config decides, and a
+         * phone with no server gets the share sheet. What is new is that
+         * `Send diagnostics` now asks first, and the two answers it can give
+         * that the config could never express — "just save it" and "open a
+         * GitHub issue about it" — are routes rather than a second code path.
+         * Both of them stop after step 2, because for both of them the file IS
+         * the delivery.
+         */
+        route: FeedbackRoute? = null,
         onProgress: (Float) -> Unit = {},
     ): FeedbackResult = withContext(Dispatchers.IO) {
-        val route = config.route
+        val route = route ?: config.route
         onProgress(0.1f)
 
         // ── 1: pack ────────────────────────────────────────────────────────
@@ -104,6 +117,17 @@ class FeedbackSender(
         val result = when (route) {
             FeedbackRoute.SERVER -> postToServer(config, facts, message, zip, downloadsPath)
             FeedbackRoute.SHARE -> shareSheet(zip, downloadsPath)
+            // ROUND 29 item 173: the file was the whole job. `sent` is true
+            // exactly when the file landed somewhere the operator can reach,
+            // which is the only claim either of these routes is entitled to
+            // make — the GitHub issue is opened by the caller and submitted by
+            // a person.
+            FeedbackRoute.GITHUB, FeedbackRoute.SAVE -> FeedbackResult(
+                sent = downloadsPath != null,
+                route = route,
+                downloadsPath = downloadsPath,
+                failure = if (downloadsPath == null) "could not write to Downloads" else null,
+            )
         }
         onProgress(1f)
         captureLog.log(

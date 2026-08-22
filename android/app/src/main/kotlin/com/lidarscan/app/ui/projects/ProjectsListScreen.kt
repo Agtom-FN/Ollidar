@@ -1373,7 +1373,7 @@ private fun aggregateLine(projects: List<Project>): String {
  * of noise — and the one scan that lacks it now says so with a chip, which is
  * the only place that fact is worth a pixel.
  */
-private fun metaLine(project: Project): String {
+internal fun metaLine(project: Project): String {
     val m = project.manifest
     val points = PointCountFormat.rowClause(m.pointCountEstimate)
     val created = com.lidarscan.app.ui.common.formatCreatedDate(m.createdAtEpochMillis)

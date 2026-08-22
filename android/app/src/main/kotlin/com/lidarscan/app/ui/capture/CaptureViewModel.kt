@@ -5950,6 +5950,16 @@ class CaptureViewModel(
     val detailCeilingNote: String?
         get() = com.lidarscan.core.capture.DetailLevels.ceilingNote(deviceTier, displayCeilingHz)
 
+    /**
+     * ROUND 29 item 172 — what the Detail row reads out for [level].
+     *
+     * `Fits this device` for Auto and `16 M` for the rest, decided once in
+     * `:core` so the Scan sheet and the Settings row cannot disagree about the
+     * same setting on the same phone.
+     */
+    fun detailReadout(level: com.lidarscan.core.capture.DetailLevel): String =
+        com.lidarscan.core.capture.DetailLevels.readoutFor(level, deviceTier, displayCeilingHz)
+
     /** Which rung the current budget corresponds to. */
     val detailLevel: StateFlow<com.lidarscan.core.capture.DetailLevel> =
         _lodBudgetMPoints

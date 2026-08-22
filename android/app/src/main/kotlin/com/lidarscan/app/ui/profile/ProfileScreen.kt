@@ -94,12 +94,34 @@ fun ProfileRoute(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
 
+    // ── ROUND 29 item 173: the browser hand-off ────────────────────────────
+    //
+    // The ViewModel builds the URL (`:core`, tested); this launches it, because
+    // an Intent needs a Context. `consumeUrl()` fires whether or not the
+    // chooser opened: a phone with no browser must not re-open the same issue
+    // on the next recomposition, and the honest fallback is the result line the
+    // page already shows.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val pendingUrl by viewModel.pendingUrl.collectAsStateWithLifecycle()
+    LaunchedEffect(pendingUrl) {
+        val url = pendingUrl ?: return@LaunchedEffect
+        runCatching {
+            context.startActivity(
+                android.content.Intent(
+                    android.content.Intent.ACTION_VIEW,
+                    android.net.Uri.parse(url),
+                ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        }
+        viewModel.consumeUrl()
+    }
+
     ProfileScreen(
         uiState = uiState,
         message = message,
         onMessageChange = viewModel::setMessage,
-        onSendLogs = { viewModel.send(withMessage = false) },
-        onSendFeedback = { viewModel.send(withMessage = true) },
+        onSendDiagnostics = viewModel::sendDiagnostics,
+        onSendFeedback = viewModel::openFeedbackIssue,
         onDismissResult = viewModel::dismissResult,
         onBack = onBack,
     )
@@ -146,7 +168,7 @@ fun ProfileScreen(
     uiState: ProfileViewModel.UiState,
     message: String,
     onMessageChange: (String) -> Unit,
-    onSendLogs: () -> Unit,
+    onSendDiagnostics: (com.lidarscan.core.feedback.FeedbackRoute) -> Unit,
     onSendFeedback: () -> Unit,
     onDismissResult: () -> Unit,
     onBack: () -> Unit,
@@ -156,6 +178,8 @@ fun ProfileScreen(
     // F2/F3: composing feedback is a surface of its own, not four controls
     // stacked on a page.
     var composing by remember { mutableStateOf(false) }
+    // ROUND 29 item 173(b): and so is choosing where a bundle goes.
+    var choosing by remember { mutableStateOf(false) }
 
     Column(
         Modifier
@@ -206,10 +230,16 @@ fun ProfileScreen(
                     // honesty: "Sent." later must not be a surprise about a
                     // server nobody configured.
                     SupportRow(
-                        title = if (sending != null) FeedbackWording.SENDING else "Send diagnostics",
+                        title = if (sending != null) {
+                            FeedbackWording.SENDING
+                        } else {
+                            FeedbackWording.DIAGNOSTICS_TITLE
+                        },
                         privacyNote = FeedbackWording.PRIVACY_NOTE,
                         routeNote = uiState.note,
-                        onClick = onSendLogs,
+                        // ROUND 29 item 173(b): the row opens a chooser rather
+                        // than taking the one route the config implied.
+                        onClick = { choosing = true },
                         enabled = sending == null,
                         testTag = "sendLogsButton",
                     )
@@ -217,7 +247,11 @@ fun ProfileScreen(
                 add {
                     ScanRow(
                         title = FeedbackWording.SEND_FEEDBACK,
-                        detail = "Tell us what went wrong.",
+                        // ROUND 29 item 173(a): it says where it goes, because
+                        // "Send" and "opens your browser on github.com" are
+                        // different promises and the operator is entitled to
+                        // know which one he is about to accept.
+                        detail = FeedbackWording.FEEDBACK_GITHUB_DETAIL,
                         trailing = { Chevron() },
                         onClick = { composing = true },
                         modifier = Modifier.testTag("sendFeedbackRow"),
@@ -320,6 +354,94 @@ fun ProfileScreen(
             },
             onDismiss = { composing = false },
         )
+    }
+
+    if (choosing) {
+        DiagnosticsSheet(
+            serverConfigured = uiState.serverConfigured,
+            onPick = { route ->
+                choosing = false
+                onSendDiagnostics(route)
+            },
+            onDismiss = { choosing = false },
+        )
+    }
+}
+
+/**
+ * ROUND 29 item 173(b) — **where the bundle goes, asked once.**
+ *
+ * Round 24 decided the destination from the cloud config, which was right while
+ * there was one destination worth having and no repository to send anything to.
+ * With the repo public there are three genuinely different answers and the
+ * operator knows which he wants before he taps:
+ *
+ *  * **GitHub** — the zip lands in Downloads and his browser opens on a
+ *    prefilled issue. The body says, in as many words, that a link cannot
+ *    attach a file and names the one he must drag in. Nobody likes writing that
+ *    sentence; the alternative is an issue whose "logs attached" line is false.
+ *  * **Save to phone** — the zip, and the inline success row §C.6 requires. The
+ *    door for a phone with no browser session and for "I will mail it later".
+ *  * **Share…** — round 24's path, unchanged, for whatever he already sends
+ *    files with.
+ *  * **Your server** — only when the cloud fields are filled in. The POST path
+ *    is untouched behind them.
+ *
+ * §C.4's rows, one job each, no chips: this is `ScanRowCard` in a sheet.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DiagnosticsSheet(
+    serverConfigured: Boolean,
+    onPick: (com.lidarscan.core.feedback.FeedbackRoute) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = ScanColors.card,
+        contentColor = ScanColors.ink,
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(
+            topStart = ScanDims.SheetRadius,
+            topEnd = ScanDims.SheetRadius,
+        ),
+        modifier = Modifier.testTag("diagnosticsChooserSheet"),
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = ScanDims.ScreenMargin)
+                .padding(bottom = ScanDims.S8)
+                .navigationBarsPadding(),
+        ) {
+            Text(FeedbackWording.DIAGNOSTICS_TITLE, style = ScanTitle, color = ScanColors.ink)
+            Spacer(Modifier.height(ScanDims.S3))
+            // The rows ARE `DiagnosticsChooser.optionsFor` — which doors this
+            // phone has is a `:core` value with its own test, not four `if`s
+            // inside a composable nothing but an emulator can read.
+            ScanRowCard(
+                rows = com.lidarscan.core.feedback.DiagnosticsChooser
+                    .optionsFor(serverConfigured)
+                    .map { route ->
+                        {
+                            ScanRow(
+                                title = com.lidarscan.core.feedback.DiagnosticsChooser
+                                    .titleFor(route),
+                                detail = com.lidarscan.core.feedback.DiagnosticsChooser
+                                    .detailFor(route),
+                                trailing = { Chevron() },
+                                onClick = { onPick(route) },
+                                modifier = Modifier.testTag(
+                                    com.lidarscan.core.feedback.DiagnosticsChooser
+                                        .testTagFor(route),
+                                ),
+                            )
+                        }
+                    },
+            )
+            Spacer(Modifier.height(ScanDims.S3))
+            Text(FeedbackWording.PRIVACY_NOTE, style = ScanMeta, color = ScanColors.inkMute)
+        }
     }
 }
 
@@ -462,14 +584,21 @@ private fun FeedbackSheet(
                 modifier = Modifier.fillMaxWidth().testTag("feedbackField"),
             )
             Spacer(Modifier.height(ScanDims.S3))
+            // ROUND 29 item 173(a): this sheet no longer packages anything, so
+            // the old "Sends your logs and device info." would have been false.
+            // What it does send is the device table — the same six facts the
+            // page behind it is already showing.
             Text(
-                FeedbackWording.PRIVACY_NOTE,
+                "Adds your phone and app version.",
                 style = ScanMeta,
                 color = ScanColors.inkMute,
             )
             Spacer(Modifier.height(ScanDims.S3))
+            // ROUND 29 item 173(a): the button names what pressing it does.
+            // "Send" would be a claim about a post the app does not make — the
+            // issue is submitted in the browser, by him.
             PrimaryPill(
-                text = FeedbackWording.SEND_FEEDBACK,
+                text = FeedbackWording.OPEN_GITHUB,
                 enabled = sending == null && message.isNotBlank(),
                 onClick = onSend,
                 modifier = Modifier.fillMaxWidth().testTag("sendFeedbackButton"),

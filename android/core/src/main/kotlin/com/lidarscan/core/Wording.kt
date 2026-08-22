@@ -182,9 +182,25 @@ object Wording {
      */
     fun processFailed(why: String): String = "Processing failed: $why. Tap Process to retry."
 
-    // ── the Advanced switch (item 97) ──────────────────────────────────────
+    // ── the Lab switch (item 97, renamed by ROUND 29 item 174) ─────────────
 
-    const val ADVANCED_TITLE = "Advanced features"
+    /**
+     * ROUND 29 item 174 — the owner: *"the Advanced features remark (Lab
+     * features)"*.
+     *
+     * Two things were wrong with "Advanced features". It told the operator the
+     * problem was him — that the rows behind it are for people who are advanced
+     * — when what they actually are is **unfinished**: floor plan, merge, the
+     * cloud fields and the survey tools are work in progress the owner wanted
+     * reachable without being promised. And it collided with the Scan screen's
+     * **Advanced sheet**, which is neither a lab nor a switch, so one word led
+     * to two unrelated doors.
+     *
+     * "Lab" says the true thing in one syllable, and it is the word the rest of
+     * the industry already uses for exactly this switch. The detail line does
+     * not move: what it reveals is unchanged.
+     */
+    const val ADVANCED_TITLE = "Lab features"
 
     /** The one detail line under the switch. */
     const val ADVANCED_DETAIL = "Floor plan, merge, cloud, survey tools."

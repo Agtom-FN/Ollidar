@@ -84,12 +84,35 @@ class Round27UiTest {
             a.top < b.bottom - tol && b.top < a.bottom - tol
     }
 
+    /**
+     * ROUND 29 item 170 — **a control inside its own band is not a collision.**
+     *
+     * The sweep is a pairwise "do these two share pixels" over every named
+     * element, and until §D.1 that was the same question as "do these two
+     * collide", because every element in the list floated independently. It is
+     * not the same question any more: §D.1's status BAR contains the Advanced
+     * faders button, so `advancedButton` sits inside `scanStatusBar` by
+     * construction — which is what a bar with a control in it looks like, and
+     * which this sweep read as the exact defect it was written to catch.
+     *
+     * Containment is therefore skipped, and only containment: two rectangles
+     * that merely clip each other's corners still fail, which is the geometry
+     * item 129 is about. (Round 27 never hit this because the AVD rendered a
+     * floating pill and a floating gear, two siblings.)
+     */
+    private fun contains(outer: Rect, inner: Rect): Boolean {
+        val tol = 1f
+        return outer.left <= inner.left + tol && outer.top <= inner.top + tol &&
+            outer.right >= inner.right - tol && outer.bottom >= inner.bottom - tol
+    }
+
     private fun assertNoOverlaps(orientation: String, named: Map<String, Rect>) {
         val entries = named.entries.toList()
         for (i in entries.indices) {
             for (j in i + 1 until entries.size) {
                 val (an, ar) = entries[i]
                 val (bn, br) = entries[j]
+                if (contains(ar, br) || contains(br, ar)) continue
                 assertTrue(
                     "$orientation: \"$an\" $ar overlaps \"$bn\" $br — item 129",
                     !overlaps(ar, br),
@@ -122,6 +145,11 @@ class Round27UiTest {
         boundsOrNull("scanStatusPill")?.let { "status pill" to it },
         boundsOrNull("scanStatusBar")?.let { "status bar" to it },
         boundsOrNull("advancedButton")?.let { "advanced" to it },
+        // ROUND 29 item 170: the LAST SCAN card is a CHILD of
+        // `scanChromeColumn` on §D.1's page, and the Advanced button is a child
+        // of `scanStatusBar`. Both stay in the sweep — what changed is that
+        // `assertNoOverlaps` skips containment, which is the honest reading of
+        // "a control drawn inside its own band".
         boundsOrNull("lastScanCard")?.let { "last scan card" to it },
         boundsOrNull("recordButton")?.let { "SCAN button" to it },
         boundsOrNull("pauseButton")?.let { "pause" to it },
@@ -609,8 +637,16 @@ class Round27UiTest {
      * 133(c) asked for one owner per door and made the map-mode chip a toggle;
      * the owner's own session then said the chip *"seems useless"* and it was
      * removed. Both halves of that survive as one assertion: the capture sheet
-     * has exactly ONE door (the config chip), and the map chip is not in the
-     * tree at all. The live-map switch itself is untouched, inside the sheet.
+     * has exactly ONE door, and the map chip is not in the tree at all. The
+     * live-map switch itself is untouched, inside the sheet.
+     *
+     * **ROUND 29 item 170 moved the door and this test found the gap.** Item
+     * 158 deleted the chip row from §D.1's connected page and this round
+     * deleted it from the disconnected one — at which point the count was
+     * **zero** and the preset, the workflow profile, Live 3D map and Live SLAM
+     * were unreachable in portrait. The door is a row in the Advanced sheet
+     * now, which is where §D.1 sends everything scan-local; it keeps the tag,
+     * because the claim being pinned is "exactly one owner", not "a chip".
      */
     @Test
     fun theCaptureSheetHasExactlyOneDoorAndTheMapChipIsGone() {
@@ -621,8 +657,14 @@ class Round27UiTest {
                 0,
                 composeRule.onAllNodesWithTag("mapModeChip").fetchSemanticsNodes().size,
             )
+            // The door is one tap in, behind the Advanced sheet — which is why
+            // it is opened here rather than counted on the page.
+            composeRule.onNodeWithTag("advancedButton").performClick()
+            composeRule.waitUntil(timeoutMillis = 15_000) {
+                composeRule.onAllNodesWithTag("captureSettingsSheet").fetchSemanticsNodes().isNotEmpty()
+            }
             assertEquals(
-                "item 133(c): the capture sheet has one door",
+                "item 133(c) / item 170: the capture sheet has one door",
                 1,
                 composeRule.onAllNodesWithTag("captureConfigChip").fetchSemanticsNodes().size,
             )

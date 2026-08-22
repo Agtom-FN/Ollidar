@@ -76,34 +76,37 @@ class Round26UiTest {
     fun theScanViewportIsEdgeToEdge() {
         ActivityScenario.launch(MainActivity::class.java).use {
             openScanTab()
-            val viewport = composeRule.onNodeWithTag("captureViewport").fetchSemanticsNode()
-            val root = viewport.root!!
-            val rootWidth = root.semanticsOwner.rootSemanticsNode.size.width
-            val box = viewport.boundsInRoot
 
-            // ── ROUND 27 item 136 SUPERSEDES ROUND 26 item 124 HERE ────────
+            // ── ROUND 29 item 170 SUPERSEDES BOTH EARLIER READINGS ─────────
             //
-            // The owner's own session: *"Nothing should overlay except warning.
-            // … show the settings of connection in the main window and not
-            // overlay."* So the IDLE Scan tab — which is the only state an AVD
-            // can reach — is a laid-out page now, and its viewport is a framed
-            // preview inside a column rather than the whole window. Round 26's
-            // fullscreen claim survives for the state it was actually about: a
-            // RECORDING, where the picture is the product.
+            // Round 26 asserted the viewport was the whole window; round 27
+            // item 136 restated it as "the preview takes the page's width and
+            // sits below the status band", because the idle tab had become a
+            // laid-out page with a framed preview in it.
             //
-            // The claim is therefore restated rather than deleted, and it is
-            // still a measurement: the preview takes the window's full usable
-            // width (only the page's own 10 dp gutters are removed) and sits
-            // BELOW the status band instead of under the status bar.
-            assertTrue(
-                "item 136: the preview takes the page's width (was ${box.width} of $rootWidth)",
-                box.width >= rootWidth * 0.9f,
+            // §D.1 removes the premise. The idle page has **no live view at
+            // all** — item 158's whole argument is that the floor was gated on
+            // "is a sensor attached" when the question is "is there anything to
+            // draw", and before Start the answer is no. Round 28 built that for
+            // the connected page; this round built it for the disconnected one,
+            // which is the only page an AVD can render. So `captureViewport` is
+            // not merely smaller here, it is absent, and the claim to assert is
+            // the absence.
+            //
+            // Round 26's fullscreen claim survives untouched for the state it
+            // was actually about — a RECORDING, where the picture is the
+            // product and `ScanRecordingPage` gives it every weighted pixel.
+            // `ReplayCaptureSmokeTest` is what reaches that state on this bench.
+            assertEquals(
+                "item 170: the idle page composes no live view — there is " +
+                    "nothing in it until Start is pressed",
+                0,
+                count("captureViewport"),
             )
-            assertTrue(
-                "item 136: the preview is below the status band, not under the status bar " +
-                    "(top was ${box.top})",
-                box.top > 2f,
-            )
+            // What the space became — the LAST SCAN card — is not asserted
+            // here: it is present only on a phone that HAS a scan, and this
+            // suite runs against whatever the AVD happens to hold. §D.1's own
+            // rule is that the card collapses when there is nothing to show.
         }
     }
 
@@ -153,37 +156,27 @@ class Round26UiTest {
             //  * `0 pts` was one of three zero-valued readouts — `00:00`,
             //    `0 pts`, `0.0 m` — occupying the most valuable position on the
             //    screen to say that nothing had happened.
-            // ── ROUND 28 HOTFIX: this one claim was scoped wrong ────────────
+            // ── ROUND 29 item 170: the owner call the hotfix reported ───────
             //
-            // The `?` is the only one of item 158's three removals this bench
-            // can NOT see, and the reason is which layout the AVD renders.
-            // §D.1's idle page is the `compact && !isLandscape` branch of
-            // `CaptureScreen`, and `compact` is
-            // `CaptureLayout.useCompactChrome(connected, …)` — **connected**.
-            // No D6 is connected to an emulator, so this screen falls to the
-            // `else` branch, round 27's `IdleScanLayout`, which still draws
-            // `TutorialChip` in the bottom-end corner. The eye below really did
-            // leave both pages — it moved into the Advanced sheet, which is a
-            // shared surface — but the `?` and the point readout hang off the
-            // LAYOUT, and only the layout §D.1 replaced lost them.
+            // The round-28 hotfix scoped this assertion to ONE and said why:
+            // §D.1's page was the `compact && !isLandscape` branch, `compact`
+            // is `useCompactChrome(connected, …)`, no D6 connects to an
+            // emulator, so the AVD fell to round 27's `IdleScanLayout` and its
+            // corner `?`. It also reported the open question — should the `?`
+            // and the zero readout leave the DISCONNECTED page too — as an
+            // owner call rather than taking it.
             //
-            // Asserted as ONE rather than as zero, because one is what the AVD
-            // renders and because two would be the real defect: the `?` is also
-            // a row in the Advanced sheet now (`CaptureSheets`), and
-            // `Round24UiTest` drives the whole six-step tour through this tag —
-            // `CaptureScreen`'s own note beside the chip row says an ambiguous
-            // `tutorialButton` selector is what breaks that suite.
-            //
-            // What is NOT proven here, and is reported upward instead: whether
-            // the corner `?` should ALSO leave the disconnected page. That is a
-            // visible affordance on the screen the owner opens first, so it is
-            // an owner call, not a hotfix's.
+            // He took it: *"the scan page design not aligned with your
+            // [mockups]"*. Portrait idle is §D.1 in both states now, so this
+            // bench finally renders the page item 158 designed, and all three
+            // of its removals are visible here. **Zero**, not one: the tour is
+            // reached from the Advanced sheet and from Settings › Tutorial,
+            // which is where item 158 sent it, and `Round24UiTest` opens the
+            // sheet to run it.
             assertEquals(
-                "item 158: exactly one ? — the corner chip on round 27's idle " +
-                    "page (the AVD is disconnected, so §D.1's page is not the " +
-                    "one under test); a second would be the Advanced-sheet row " +
-                    "leaking and would break Round24UiTest's tour",
-                1,
+                "item 170: no corner ? on either idle page — the tour is a row " +
+                    "in the Advanced sheet and a row in Settings",
+                0,
                 count("tutorialButton"),
             )
             assertEquals(
@@ -191,19 +184,17 @@ class Round26UiTest {
                 0,
                 count("liveViewSwitch"),
             )
-            // ROUND 28 HOTFIX, and the same scoping as the `?` above: item 158
-            // deleted the `00:00 / 0 pts / 0.0 m` band from §D.1's page, which
-            // needs a connected sensor. Round 27's `IdleScanLayout` — the one
-            // an emulator gets — still carries the old status band, so the
-            // readout is present and there is exactly one of it. The second
-            // `pointsCapturedValue` in `CaptureScreen` belongs to item 159's
-            // REC strip and is only composed while recording; seeing two here
-            // would mean both bands were live at once.
+            // ROUND 29 item 170, same reversal: `00:00 / 0 pts / 0.0 m` was
+            // three readouts whose entire content is "nothing has happened",
+            // and the owner photographed them again on 0.9.13 because the
+            // disconnected page still carried round 27's status band. The only
+            // other `pointsCapturedValue` in `CaptureScreen` belongs to item
+            // 159's REC strip, which is composed while recording and never on
+            // an idle page — so zero is the whole assertion.
             assertEquals(
-                "item 158: exactly one point readout — round 27's status band, " +
-                    "which is the page a disconnected AVD renders; two would " +
-                    "mean item 159's REC strip is composed on an idle screen",
-                1,
+                "item 170: never render a zero-valued readout — the idle page " +
+                    "has no point count on either variant",
+                0,
                 count("pointsCapturedValue"),
             )
             // ROUND 28 item 168: the ATTITUDE instrument takes the eye's slot
@@ -306,8 +297,8 @@ class Round26UiTest {
                 .getOrNull(androidx.compose.ui.semantics.SemanticsProperties.Text)
                 ?.joinToString(" ")
                 .orEmpty()
-            assertTrue("the footer is this round's version: \"$footer\"", footer.contains("0.9.13"))
-            assertTrue("…and its code: \"$footer\"", footer.contains("913"))
+            assertTrue("the footer is this round's version: \"$footer\"", footer.contains("0.9.14"))
+            assertTrue("…and its code: \"$footer\"", footer.contains("914"))
 
             composeRule.onNodeWithTag("tab_projects").performClick()
         }

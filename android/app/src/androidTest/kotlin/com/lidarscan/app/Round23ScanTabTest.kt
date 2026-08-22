@@ -140,8 +140,17 @@ class Round23ScanTabTest {
             openScanTab()
 
             // The standing reason, before anything is even pressed.
+            //
+            // ROUND 29 item 170: it is the **Sensor row** now, not a floating
+            // `startBlockedNote`. The note said *"Connect the scanner first."*
+            // in ink-faint under a row of pills; §D.1's row says
+            // `Sensor · Not found` in bad colour, carries *"Plug it in, then
+            // retry."* and has its own **Retry** — so the note became a second
+            // sentence about one blocker and was removed from this page. The
+            // claim item 101(b) makes is unchanged: the reason is on screen
+            // before the press, and the press is answered.
             composeRule.waitUntil(timeoutMillis = 20_000) {
-                composeRule.onAllNodesWithTag("startBlockedNote").fetchSemanticsNodes().isNotEmpty()
+                composeRule.onAllNodesWithTag("readinessRow_sensor").fetchSemanticsNodes().isNotEmpty()
             }
 
             composeRule.onNodeWithTag("recordButton").performClick()

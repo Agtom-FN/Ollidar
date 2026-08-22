@@ -60,11 +60,30 @@ class ScanReadinessTest {
         assertEquals("COIN-D6 · Ready", ScanReadiness.statusLine("COIN-D6", allGood))
     }
 
-    /** A blocked screen says what is wrong, not what is plugged in. */
+    /**
+     * A blocked screen says what is wrong, not what is plugged in — and ROUND
+     * 29 item 170 adds the half that was missing: **what it is wrong about.**
+     * Round 28 returned the blocker's value alone, so a disconnected phone's
+     * status bar read `Not found`, a verdict with no subject sitting where
+     * `COIN-D6 · Ready` sits in the other state.
+     */
     @Test
-    fun `the status line yields to the blocker`() {
+    fun `the status line yields to the blocker, and names what is blocked`() {
         val rows = listOf(bad("Sensor"), good("Mount"), good("Tracking"))
-        assertEquals("Not found", ScanReadiness.statusLine("COIN-D6", rows))
+        assertEquals("Sensor · Not found", ScanReadiness.statusLine("COIN-D6", rows))
+    }
+
+    /** Both shapes are one clause, so the bar never needs a second line. */
+    @Test
+    fun `both status lines are one clause and obey the wording law`() {
+        val rows = listOf(bad("Sensor"), good("Mount"), good("Tracking"))
+        for (line in listOf(
+            ScanReadiness.statusLine("COIN-D6", allGood),
+            ScanReadiness.statusLine("COIN-D6", rows),
+        )) {
+            assertTrue(line, com.lidarscan.core.WordingLaw.isInstruction(line))
+            assertEquals("one clause", 1, line.split(" · ").size - 1)
+        }
     }
 
     @Test
