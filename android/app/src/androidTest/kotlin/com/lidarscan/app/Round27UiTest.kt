@@ -145,12 +145,17 @@ class Round27UiTest {
         boundsOrNull("scanStatusPill")?.let { "status pill" to it },
         boundsOrNull("scanStatusBar")?.let { "status bar" to it },
         boundsOrNull("advancedButton")?.let { "advanced" to it },
-        // ROUND 29 item 170: the LAST SCAN card is a CHILD of
-        // `scanChromeColumn` on §D.1's page, and the Advanced button is a child
-        // of `scanStatusBar`. Both stay in the sweep — what changed is that
+        // ROUND 29 item 170: the Advanced button is a child of
+        // `scanStatusBar`, and it stays in the sweep — what changed is that
         // `assertNoOverlaps` skips containment, which is the honest reading of
         // "a control drawn inside its own band".
-        boundsOrNull("lastScanCard")?.let { "last scan card" to it },
+        //
+        // ROUND 34 item 180: `lastScanCard` was in this list, as the other
+        // child of `scanChromeColumn`. The card is removed from both idle
+        // variants, so the tag is gone rather than skipped — an
+        // `boundsOrNull` that can never be non-null is a line that says
+        // nothing.
+        boundsOrNull("readinessRow_sensor")?.let { "sensor row" to it },
         boundsOrNull("recordButton")?.let { "SCAN button" to it },
         boundsOrNull("pauseButton")?.let { "pause" to it },
         boundsOrNull("attitudeIndicator")?.let { "attitude" to it },
@@ -432,9 +437,9 @@ class Round27UiTest {
                 "scanChromeColumn",
                 "recordButton",
                 "scanStatusPill",
-                // ROUND 28 item 158: the connected page's own two.
+                // ROUND 28 item 158: the connected page's own. (Its second,
+                // `lastScanCard`, left with round 34 item 180.)
                 "scanStatusBar",
-                "lastScanCard",
                 "captureViewport",
             )) {
                 val r = boundsOrNull(tag) ?: continue

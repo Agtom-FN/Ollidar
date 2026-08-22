@@ -1,6 +1,6 @@
 # Ollidar — User Manual
 
-App version 0.9.18 (Android). Written for the owner and for field testers.
+App version 0.9.19 (Android). Written for the owner and for field testers.
 If you only want a first scan, read [QUICK_START.md](QUICK_START.md) instead.
 
 The app is called **Ollidar** as of 0.9.11. The repository, the Android
@@ -134,16 +134,11 @@ The Scan tab, before you press SCAN, is one page in two states:
 
 ```
 COIN-D6 · Ready                                    [⋮⋮⋮]
-LAST SCAN
-┌──────────────────────────────────────────────┐
-│  (the last scan, drawn)                       │
-│  Scan-085-2026-08-21-1803                     │
-│  46.5 K pts · 21 Aug        ·  ● FAIR         │
-└──────────────────────────────────────────────┘
 READY TO SCAN
  ● Sensor      COIN-D6 connected
  ● Mount       Set · 91.0°
  ● Tracking    Ready
+
                     ( ● SCAN )
 ```
 
@@ -163,8 +158,11 @@ The tour that used to hang off a floating **?** is now a row in the Advanced
 ⚙ sheet and in Settings › Tutorial. Zero-valued readouts are not drawn at all:
 `0 pts` is not information.
 
-Tapping **LAST SCAN** opens it in the viewer. The card is absent only when the
-phone holds no scans.
+**The LAST SCAN card was removed in 0.9.19.** Between 0.9.13 and 0.9.18 this
+page carried a thumbnail of the newest scan above the readiness rows. It is
+gone, and nothing replaces it — the rows and the SCAN button have the page to
+themselves. Your scans are all in the **Projects** tab, which is one tap away
+and is where opening one belongs.
 
 ### 3.1a Connecting the sensor
 
@@ -635,8 +633,8 @@ logs and device info."* Under that, a line saying which way it will go —
 Nothing else is read from the phone. No account, no location, no advertising
 identifier.
 
-**Where it lands.** The zip is written to **`Downloads/LidarScan`** *first*,
-before any attempt to send it. That is deliberate: the share sheet gives no
+**Where it lands.** On every path that produces a file, the zip is written to
+**`Downloads/LidarScan`** *first*, before any attempt to send it. That is deliberate: the share sheet gives no
 result callback and an absent server fails after a timeout you have walked
 away from, so the one thing the app can guarantee happens first. You can
 always find the file and send it by hand.
@@ -644,12 +642,16 @@ always find the file and send it by hand.
 **Where it goes — you pick (0.9.14).** Tapping **Send diagnostics** opens a
 sheet with three doors, and a fourth when a cloud server is configured:
 
-- **GitHub** — the zip is written to Downloads and your browser opens on a
-  prefilled issue at `github.com/Agtom-FN/Ollidar`, with the device table
-  already filled in. A link cannot carry a file, so the issue body names the
-  zip and asks you to drag it in before you post. The app holds no GitHub
-  credential; the issue is posted from your own browser session, under your
-  own account, when you press the button in it.
+- **GitHub** — your browser opens on a prefilled issue at
+  `github.com/Agtom-FN/Ollidar` with the device table **and the log itself**
+  already in it. **No zip is written on this path (0.9.19).** A link cannot
+  carry a file, so the log goes in as text: as much of the tail as fits, whole
+  lines only, and the block says how many lines of how many it is. The lines
+  that matter most — crashes, connection sweeps and *NO DATA* stalls — are
+  kept even when a chatty session would have pushed them off the end, and any
+  gap is marked. Use **Save to phone** when you need the complete log. The app
+  holds no GitHub credential; the issue is posted from your own browser
+  session, under your own account, when you press the button in it.
 - **Save to phone** — the zip and nothing else, with the path on screen.
 - **Share…** — the Android share sheet: mail, chat, Drive, anything.
 - **Your server** — only when Settings › Lab features › the cloud fields are
@@ -669,7 +671,7 @@ This-phone table, and a note saying logs can be attached. Nothing leaves the
 phone until you press **Submit new issue** yourself.
 
 Very long reports are trimmed to fit a URL, and the issue says where it was
-cut — attach the diagnostics zip for the rest.
+cut — use **Send diagnostics › Save to phone** and attach the zip for the rest.
 
 ---
 
@@ -739,12 +741,15 @@ developer-only items moved behind the seven-tap unlock.
 - **Units** — Meters / Feet.
 - **Theme** — System / Light / Dark. Dark is the default.
 - **Welcome animation** — *"Plays once when the app starts."* **On by
-  default.** Three seconds of the Ollidar llama, once per app start — not on
-  tab switches, not when you rotate the phone. **Touch anywhere to skip it**;
-  it goes at once and the app is already loaded underneath. If your phone has
-  animations turned off (Accessibility › Remove animations, or the developer
-  animation scales set to zero) it never plays at all, and this switch is left
-  alone. New in 0.9.17.
+  default.** Four seconds of the Ollidar llama, once per app start — not on
+  tab switches, not when you rotate the phone. **Three seconds of film, then a
+  one-second hold on the finished pose** with the lidar seated and lit, and
+  then the app (0.9.19). **Touch anywhere to skip it**, including during the
+  hold; it goes at once and the app is already loaded underneath. If your phone
+  has animations turned off (Accessibility › Remove animations, or the
+  developer animation scales set to zero) it never plays at all, and this
+  switch is left alone. New in 0.9.17; in 0.9.19 it lost its frame and the
+  llama now stands free on the page.
 
 **Lab features**
 - One switch, **default off**. *"Floor plan, merge, cloud, survey
@@ -767,10 +772,12 @@ developer-only items moved behind the seven-tap unlock.
 
 **The version footer**
 
-At the very bottom: `Ollidar v0.9.18 (build 918)`. **Tap it seven times**
+At the very bottom: `Ollidar v0.9.19 (build 919)`. **Tap it seven times**
 to unlock a **Developer** section, and seven more to lock it away again. The
 counter resets when you re-lock, so a single stray tap afterwards does not
 re-open it.
+
+Turning it **on** is worth doing once with the sound of the room turned up.
 
 Developer holds: the per-capture debug log switch, the capture-log card (path,
 size, last line, Export log, Clear), the D6 sensor-latency slider, the

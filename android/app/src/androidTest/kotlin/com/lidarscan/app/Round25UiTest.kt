@@ -200,6 +200,9 @@ class Round25UiTest {
             composeRule.onNodeWithTag("app_version_footer").performScrollTo()
             repeat(7) { composeRule.onNodeWithTag("app_version_footer").performClick() }
             composeRule.waitUntil(timeoutMillis = 15_000) { has("connectionDebugRow") }
+            // ROUND 34 item 181: the unlock plays the easter egg, which eats
+            // the next touch. See `dismissWelcomeEgg`.
+            dismissWelcomeEgg()
 
             // Both controls, because a sweep you cannot copy is a sweep that
             // does not reach the person who needs to read it.

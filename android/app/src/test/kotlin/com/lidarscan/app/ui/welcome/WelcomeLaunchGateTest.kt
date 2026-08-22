@@ -66,13 +66,34 @@ class WelcomeLaunchGateTest {
         fun decide() = WelcomeAnimation.variantFor(
             WelcomeAnimation.Launch(
                 enabled = true,
-                developerMode = true,
                 reducedMotion = false,
                 firstInProcess = WelcomeLaunchGate.claimFirstLaunch(),
             ),
         )
-        org.junit.Assert.assertEquals(WelcomeAnimation.Variant.LLAMA_SPIT, decide())
+        org.junit.Assert.assertEquals(WelcomeAnimation.Variant.LIDAR_FLIP, decide())
         assertNull(decide())
         assertNull(decide())
+    }
+
+    /**
+     * **ROUND 34 item 181(e).** The launch gate and the egg are independent:
+     * unlocking developer mode does not consume the launch claim, and the
+     * launch claim does not suppress an egg.
+     *
+     * They are separate objects for a separate reason each — the launch is
+     * once per PROCESS and the egg is once per TRANSITION — and the way that
+     * goes wrong is somebody making one of them serve both.
+     */
+    @Test
+    fun `the egg does not touch the launch claim`() {
+        assertTrue(WelcomeLaunchGate.claimFirstLaunch())
+        org.junit.Assert.assertEquals(
+            WelcomeAnimation.Variant.LLAMA_SPIT,
+            WelcomeAnimation.eggFor(WelcomeAnimation.DeveloperToggle(from = false, to = true)),
+        )
+        assertFalse(
+            "the egg must not have re-armed the launch",
+            WelcomeLaunchGate.claimFirstLaunch(),
+        )
     }
 }

@@ -78,11 +78,19 @@ enum class FeedbackRoute {
     // ── ROUND 29 item 173: two destinations the operator picks by hand ─────
 
     /**
-     * Write the zip to `Downloads/LidarScan` and open a prefilled GitHub issue.
+     * Open a prefilled GitHub issue **carrying the log as text**.
      *
-     * The app does **not** post anything: a URL cannot carry a file and this
-     * app holds no GitHub credential (see [GitHubIssue]). What it guarantees is
-     * the zip on disk and a browser open on a form whose body already names it.
+     * The app does not post anything: this app holds no GitHub credential (see
+     * [GitHubIssue]), so what it guarantees is a browser open on a form the
+     * operator submits himself.
+     *
+     * **ROUND 35 item 186**: it no longer packs or writes a zip. A URL cannot
+     * carry a file, and round 29's answer to that was to write one into
+     * `Downloads` and ask the operator to go and find it and drag it in — which
+     * is why diagnostics issues arrived with no diagnostics in them. The log
+     * goes into the body instead, tail-first and tag-prioritised, inside the
+     * clamp `GitHubIssue.diagnosticsUrl` already enforced. [SAVE] is still the
+     * route that produces a complete bundle.
      */
     GITHUB,
 
@@ -90,7 +98,14 @@ enum class FeedbackRoute {
     SAVE,
     ;
 
-    /** True where the app is only responsible for the file. */
+    /**
+     * True where the app is **not the thing doing the delivering** — [SAVE]
+     * leaves a file for a person to find, [GITHUB] opens a form for a person to
+     * submit. Neither may ever say "Sent."
+     *
+     * Not "is responsible for the file": since ROUND 35 item 186 the GitHub
+     * route has no file at all.
+     */
     val isLocal: Boolean get() = this == SAVE || this == GITHUB
 }
 

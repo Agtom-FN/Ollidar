@@ -105,9 +105,17 @@ class Round32WelcomeTest {
         assertEquals(1, finished)
     }
 
-    /** Left alone, it ends by itself — once, at three seconds, and not before. */
+    /**
+     * Left alone, it ends by itself — once, and **not** when the film ends.
+     *
+     * ROUND 35 item 187: A runs its three seconds and is then held for one
+     * more on its finished pose. The claim that matters is the negative one —
+     * that the overlay is still up a whole second after the last frame of the
+     * film — because "the animation finished so the app appeared" is exactly
+     * what the owner asked to stop happening.
+     */
     @Test
-    fun itFinishesOnItsOwnAtThreeSeconds() {
+    fun itHoldsTheLastFrameForASecondBeforeItFinishes() {
         var finished = 0
         composeRule.mainClock.autoAdvance = false
         stage(WelcomeAnimation.Variant.LIDAR_FLIP) { finished++ }
@@ -116,7 +124,30 @@ class Round32WelcomeTest {
         composeRule.waitForIdle()
         assertEquals("it must not have ended early", 0, finished)
 
+        // The film is over here, and the overlay must still be up.
         composeRule.mainClock.advanceTimeBy(600)
+        composeRule.waitForIdle()
+        assertEquals("it ended when the film ended, not after the hold", 0, finished)
+        composeRule.onNodeWithTag("welcomeOverlay").assertIsDisplayed()
+
+        composeRule.mainClock.advanceTimeBy(WelcomeAnimation.HOLD_MS + 200L)
+        composeRule.waitForIdle()
+        assertEquals(1, finished)
+    }
+
+    /** …and the hold is skippable like everything else. */
+    @Test
+    fun aTapDuringTheHoldStillSkips() {
+        var finished = 0
+        composeRule.mainClock.autoAdvance = false
+        stage(WelcomeAnimation.Variant.LIDAR_FLIP) { finished++ }
+
+        composeRule.mainClock.advanceTimeBy(WelcomeAnimation.DURATION_MS + 300L)
+        composeRule.waitForIdle()
+        assertEquals(0, finished)
+
+        composeRule.onNodeWithTag("welcomeOverlay").performTouchInput { click() }
+        composeRule.mainClock.advanceTimeBy(16)
         composeRule.waitForIdle()
         assertEquals(1, finished)
     }

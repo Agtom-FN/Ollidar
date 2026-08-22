@@ -185,11 +185,16 @@ class ProfileViewModel(
     /**
      * ROUND 29 item 173(b) — **SEND DIAGNOSTICS, to the door he picked.**
      *
-     * One code path for all four destinations, as round 24 had for two: the zip
-     * is packed and lands in `Downloads/LidarScan` whatever happens next, and
-     * only then does the route decide whether anything else is attempted. On
-     * [FeedbackRoute.GITHUB] the issue URL is built **after** the copy, so its
-     * body can name the file that is now certainly there.
+     * One code path for the destinations that produce a file, as round 24 had
+     * for two: the zip is packed and lands in `Downloads/LidarScan` whatever
+     * happens next, and only then does the route decide whether anything else
+     * is attempted.
+     *
+     * **ROUND 35 item 186** carves [FeedbackRoute.GITHUB] out of that: it packs
+     * nothing, writes nothing, and its whole payload is the URL built below
+     * from the log itself. Round 29 wrote a zip on this path so the issue body
+     * could name it — and the issue then asked the operator to go and find it
+     * and drag it in, which is the manoeuvre the owner has removed.
      *
      * A second send while one is running is refused rather than queued — two
      * zips of the same log is not what a double tap means.
@@ -209,11 +214,11 @@ class ProfileViewModel(
                     _uiState.value = _uiState.value.copy(sending = fraction)
                 },
             )
+            // ROUND 35 item 186: the issue carries the log AS TEXT, so the URL
+            // is built from the log rather than from the name of a zip — and
+            // there is no zip on this route any more to name.
             if (route == FeedbackRoute.GITHUB) {
-                _pendingUrl.value = com.lidarscan.core.feedback.GitHubIssue.diagnosticsUrl(
-                    facts = facts,
-                    zipName = result.downloadsPath?.trimEnd('/')?.substringAfterLast('/'),
-                )
+                _pendingUrl.value = sender.diagnosticsIssueUrl(facts)
             }
             _uiState.value = _uiState.value.copy(
                 sending = null,

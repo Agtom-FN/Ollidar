@@ -132,7 +132,6 @@ import com.lidarscan.app.ui.components.ScanRow
 import com.lidarscan.app.ui.components.ScanRowCard
 import com.lidarscan.app.ui.components.SectionLabel
 import com.lidarscan.app.ui.components.StatusDot
-import com.lidarscan.app.ui.projects.ProjectThumbnail
 import com.lidarscan.app.ui.theme.ScanMeta
 import com.lidarscan.app.ui.theme.ScanTitle
 import com.lidarscan.app.ui.theme.Ember
@@ -765,8 +764,7 @@ fun CaptureRoute(
     val mountTrimNote by viewModel.mountTrimNote.collectAsStateWithLifecycle()
     // ── ROUND 7 ─────────────────────────────────────────────────────────────
     val mountTrimProvenance by viewModel.mountTrimProvenance.collectAsStateWithLifecycle()
-    // ROUND 28 items 155 + 158.
-    val lastScan by viewModel.lastScan.collectAsStateWithLifecycle()
+    // ROUND 28 item 155.
     val startBlock by viewModel.startBlock.collectAsStateWithLifecycle()
     val noDataAlert by viewModel.noDataAlert.collectAsStateWithLifecycle()
     val noPoseAlert by viewModel.noPoseAlert.collectAsStateWithLifecycle()
@@ -1255,11 +1253,6 @@ fun CaptureRoute(
         onCancelMountHold = viewModel::cancelMountHold,
         onClearMountReference = viewModel::clearMountReference,
         onDismissMountTrimNote = viewModel::dismissMountTrimNote,
-        // ROUND 28 item 158: the LAST SCAN card. `onOpenReview` is the Projects
-        // route's own handler, threaded through so the card lands where the
-        // Projects row lands — one destination for "open this scan".
-        lastScan = lastScan,
-        onOpenLastScan = { onScanSealed?.invoke(it) },
         attitude = container.attitudeSource.attitude,
         // ROUND 33 item 179(b): the hold-still card's one haptic tick, on the
         // edge where the posture goes out of tolerance. Through the ViewModel
@@ -1493,10 +1486,6 @@ fun CaptureScreen(
     onCancelMountHold: () -> Unit = {},
     onClearMountReference: () -> Unit = {},
     onDismissMountTrimNote: () -> Unit = {},
-    /** ROUND 28 item 158: the newest sealed scan, for the LAST SCAN card. */
-    lastScan: com.lidarscan.core.store.Project? = null,
-    /** Opens [lastScan] in Review. */
-    onOpenLastScan: (String) -> Unit = {},
     /**
      * ROUND 28 item 168 + **ROUND 30 item 175**: the attitude instrument's
      * source, as a flow rather than as a value.
@@ -2553,8 +2542,8 @@ fun CaptureScreen(
                         // question as whether there is anything to draw, and
                         // the answer to the second one, before Start, is no.
                         //
-                        // §D.1's page instead: status bar, LAST SCAN, three
-                        // readiness rows, one FAB. The live viewport is not
+                        // §D.1's page instead: status bar, three readiness
+                        // rows, one FAB. The live viewport is not
                         // composed here at all — there is nothing in it — which
                         // is what lets the FAB take the slack rather than a
                         // 940-px rectangle.
@@ -2590,8 +2579,6 @@ fun CaptureScreen(
                             ),
                             blocked = !com.lidarscan.core.capture.ScanReadiness.canStart(readiness),
                             onOpenAdvanced = { sheet = CaptureSheet.SETTINGS },
-                            lastScan = lastScan,
-                            onOpenLastScan = onOpenLastScan,
                             readiness = readiness,
                             onReadinessAction = { title ->
                                 when (title) {
@@ -5960,117 +5947,6 @@ private fun ScanStatusBar(
 }
 
 /**
- * §D.1's LAST SCAN card — **what the 940-px empty rectangle became.**
- *
- * The owner's idle screen spent roughly half its height on a dark slab
- * reserved, arithmetically, for a live view that does not exist until Start is
- * pressed (round 27 item 136 gated the 60 % floor on `connected`, and his rig
- * IS connected and NOT recording). The condition tested the wrong thing: "is a
- * sensor attached" rather than "is there anything to draw".
- *
- * What goes there instead is the thing he most often wants on opening this tab
- * — the scan he just took, as a picture, with its grade. Tapping it opens
- * Review. `CloudThumbnail` already renders a real cloud and the gallery already
- * uses it; the owner's decision is that it draws at **point size 1 px**, so the
- * card shows the actual scan rather than a scatter of fat dots.
- *
- * ## ROUND 29 item 170 — the caption, against the mockup
- *
- * The mockup's caption is `46.5 K pts · 1m 02s · ● FAIR` and 0.9.13 shipped
- * `120.3 K pts`: the grade — the single most useful word on the card, and the
- * reason item 162 put `ProjectManifest.grade` on disk — was missing, and so was
- * the second clause.
- *
- * The **duration is not drawn**, and that is a deliberate deviation rather than
- * an omission: no `.lscan` manifest carries one. It is a live figure that has
- * never been sealed, so a card that printed it would be inventing it for every
- * scan on the owner's phone. What replaces it is the clause the Projects row
- * already uses — the capture date — through the **same** `metaLine` function,
- * because item 150's rule is that two screens showing one fact must not have
- * two formatters. The grade comes from `ProjectRowGrade`, which is also what
- * the Projects row reads, and it renders as §C.6's dot-plus-Meta-Caps mark.
- */
-@Composable
-private fun LastScanCard(
-    project: com.lidarscan.core.store.Project,
-    onOpen: (String) -> Unit,
-) {
-    ScanCard(
-        modifier = Modifier
-            .padding(horizontal = ScanDims.ScreenMargin)
-            .height(180.dp)
-            .testTag("lastScanCard"),
-        onClick = { onOpen(project.id) },
-        contentPadding = PaddingValues(0.dp),
-    ) {
-        Box(Modifier.fillMaxSize()) {
-            ProjectThumbnail(
-                project = project,
-                modifier = Modifier.fillMaxSize(),
-                cornerRadius = ScanDims.CardRadius,
-            )
-            // A bottom gradient rather than a solid caption bar: the name has to
-            // be legible over whatever the cloud happens to be, and a solid bar
-            // would cut the picture the card exists to show.
-            Column(
-                Modifier
-                    .align(Alignment.BottomStart)
-                    .fillMaxWidth()
-                    .background(
-                        androidx.compose.ui.graphics.Brush.verticalGradient(
-                            listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f)),
-                        ),
-                    )
-                    .padding(
-                        start = ScanDims.S3,
-                        end = ScanDims.S3,
-                        top = ScanDims.S8,
-                        bottom = ScanDims.S2,
-                    ),
-            ) {
-                Text(
-                    project.manifest.name,
-                    style = ScanTitle,
-                    // The card's ink is fixed rather than themed: it sits on a
-                    // dark point cloud in BOTH themes, so `onSurface` would be
-                    // near-black on near-black in light.
-                    color = com.lidarscan.app.ui.theme.Ink,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.testTag("lastScanName"),
-                )
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(ScanDims.S2),
-                ) {
-                    Text(
-                        com.lidarscan.app.ui.projects.metaLine(project),
-                        style = ScanMeta,
-                        // Fixed ink for the same reason the name above is: this
-                        // caption sits on a dark point cloud in BOTH themes.
-                        color = com.lidarscan.app.ui.theme.InkMute,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false).testTag("lastScanMeta"),
-                    )
-                    com.lidarscan.app.ui.projects.ProjectRowGrade.of(project.manifest)?.let { code ->
-                        Text("·", style = ScanMeta, color = com.lidarscan.app.ui.theme.InkMute)
-                        StatusDot(ScanColors.current.grade(code))
-                        Text(
-                            code,
-                            style = ScanMetaCaps,
-                            color = com.lidarscan.app.ui.theme.InkMute,
-                            maxLines = 1,
-                            modifier = Modifier.testTag("lastScanGrade"),
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-/**
  * §D.1's readiness row — the pattern that replaced the loose control row.
  *
  * The whole argument is in [com.lidarscan.core.capture.ScanReadiness]: a row
@@ -6116,11 +5992,6 @@ private fun ReadinessRow(
  *
  * ```
  * COIN-D6 · Ready                    [faders]   56   status bar, flat, hairline
- * LAST SCAN                                          section label
- * ┌ thumbnail ─────────────────────────────┐  180    the repurposed viewport region
- * │ Scan-085-2026-08-21-1803               │
- * │ 46.5 K pts                             │
- * └────────────────────────────────────────┘
  * READY TO SCAN                                      section label
  * ● Sensor      COIN-D6 connected           56       three ROWs, hairline-separated
  * ● Mount       Set · 91.0°                 56
@@ -6132,6 +6003,24 @@ private fun ReadinessRow(
  * **Counts: 0 chips, 0 pills, 1 card, 1 FAB, 3 rows** — against six chips and
  * pills in five treatments, one floating card, three circular buttons in two
  * sizes, one FAB and a floating tab pill, sharing no padding value between them.
+ *
+ * ## ROUND 34 item 180 — the LAST SCAN card is gone
+ *
+ * Item 158 gave this page a thumbnail of the newest sealed scan, on the
+ * argument that ~940 px of dark rectangle should become the thing the operator
+ * most often wants on opening the tab. The owner's order removes it, from both
+ * idle variants. **Nothing takes its place.** The page keeps §D.1's order —
+ * status bar → READY TO SCAN → flex → FAB → tab bar — and the flex region
+ * absorbs the freed height, which is what it is for; the content block is
+ * top-aligned inside the scroll column exactly as it already was, so on a tall
+ * screen the readiness card sits under the status bar and the FAB keeps its
+ * own band above the tab bar. Filling the gap with something invented would be
+ * the mistake item 158 made in the other direction.
+ *
+ * `internal` rather than `private` for the reason [StartHoldModal] is: round
+ * 34's screenshots of the CONNECTED variant have to be pictures of the page the
+ * owner opens, and no COIN-D6 connects to an emulator, so the harness in
+ * `Round34UiTest` composes **this** function rather than a copy of it.
  *
  * The removals, with destinations, because every one of them was somebody's
  * decision at the time: `00:00` / `0 pts` / `0.0 m` are deleted outright (never
@@ -6146,12 +6035,10 @@ private fun ReadinessRow(
  * operator that controls are decorative.
  */
 @Composable
-private fun ScanReadyPage(
+internal fun ScanReadyPage(
     statusLine: String,
     blocked: Boolean,
     onOpenAdvanced: () -> Unit,
-    lastScan: com.lidarscan.core.store.Project?,
-    onOpenLastScan: (String) -> Unit,
     readiness: List<com.lidarscan.core.capture.ScanReadiness.Row>,
     onReadinessAction: (String) -> Unit,
     /**
@@ -6203,10 +6090,6 @@ private fun ScanReadyPage(
             // and its lifetime is the recording's: created at Start, disposed
             // at Stop, never relocated. Round 27's fix solved a problem this
             // layout does not have.
-            if (lastScan != null) {
-                SectionLabel("Last scan")
-                LastScanCard(project = lastScan, onOpen = onOpenLastScan)
-            }
             SectionLabel("Ready to scan")
             ScanRowCard(
                 modifier = Modifier.padding(horizontal = ScanDims.ScreenMargin),

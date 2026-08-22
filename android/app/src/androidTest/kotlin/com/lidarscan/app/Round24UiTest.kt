@@ -423,6 +423,10 @@ class Round24UiTest {
             composeRule.onNodeWithTag("app_version_footer").performScrollTo()
             repeat(7) { composeRule.onNodeWithTag("app_version_footer").performClick() }
             composeRule.waitUntil(timeoutMillis = 15_000) { has("captureLogPath") }
+            // ROUND 34 item 181: the unlock now plays the easter egg over the
+            // page, and it eats the next touch. Skip it, exactly as a person
+            // does, or the re-lock below arrives one tap short.
+            dismissWelcomeEgg()
             composeRule.onNodeWithTag("replaySyntheticCaptureButton").assertExists()
             // Lock it again so the next test in the suite meets a clean device.
             composeRule.onNodeWithTag("app_version_footer").performScrollTo()

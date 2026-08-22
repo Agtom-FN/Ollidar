@@ -6681,3 +6681,996 @@ and not as a buzz: an AVD has no vibrator, so the tick's amplitude and length
 are a pattern in a table until the owner feels one. And the camera distance is
 tuned against **this renderer**; on a hardware GPU the perspective may read a
 little stronger, which is the direction that costs nothing.
+
+---
+
+## ROUND 34 (v0.9.19) — two owner orders: a card that goes, and a film that becomes a secret
+
+Both items in this round are the owner's, given directly rather than found in a
+session log, and both are subtractions in the same direction: the Scan tab
+stops showing something it was showing, and the developer film stops being a
+launch animation. Nothing new appears on any screen a normal operator opens.
+
+### 180 — remove the LAST SCAN card from the Scan tab
+
+> **OWNER ORDER (2026-08-22):** the §D.1 idle Scan page currently shows a LAST
+> SCAN thumbnail card. Remove it entirely from BOTH idle variants (connected
+> and disconnected).
+
+The freed space is not to be refilled. The readiness card and the FAB breathe
+into it, the §D.1 order is unchanged — status bar → READY TO SCAN rows → flex →
+FAB → tab bar — and the **flex region absorbs the space**: no new filler
+content, and no dead-looking void either. The compact 320 × 687 profile is the
+one to check the page still looks intentional on; if it looks empty on a tall
+screen the content block is **top-aligned per the design grid** rather than
+padded out with something invented.
+
+What goes with the card: the `Last scan` section label, the card itself, its
+tap-to-Review handler, and its tests. The geometry tests (`Round27UiTest`, and
+round 33's additions) are updated for the new layout rather than left asserting
+an element that is not there.
+
+**`CloudThumbnail` renders stay** — the Projects list uses them, and this item
+is about one card on one page, not about the renderer underneath it.
+
+### 181 — the developer animation becomes a one-time easter egg
+
+> **OWNER ORDER (2026-08-22):** cold launches always play animation A. B plays
+> exactly once, at the moment developer mode is toggled — on ENABLE and on
+> DISABLE — full screen over whatever is on screen.
+
+Round 32 shipped B as a *replacement* for A while developer mode was on, which
+means a developer never sees the app's actual welcome film again and sees the
+joke every single morning. Both halves of that are wrong. The film is a
+**reward for the toggle**, so it belongs on the toggle:
+
+ * **(a)** Cold launches **always** play A, subject to the gates that already
+   exist — the Settings toggle, tap-to-skip, reduced motion.
+ * **(b)** B plays **exactly once per toggle event**, full-screen over the
+   current screen, on enable **and** on disable. Tap-to-skip works. The
+   Settings screen stays composed beneath it and is interactive the moment it
+   ends.
+ * **(c)** It is an **easter egg**: no setting lists it, and the documentation
+   is one line in the manual's developer section — no more.
+ * **(d)** The **"Welcome animation"** toggle governs **A only**. B plays
+   regardless of it, because it is feedback for an action rather than a launch
+   animation — but it still respects **reduced motion** and **tap-to-skip**.
+ * **(e)** Edge cases, decided: toggling twice quickly means the second play
+   **replaces** the first (no queue); process death between the toggle and the
+   play loses the play, which is fine (**no persisted debt**); the once-per-
+   process launch gate for A is **unchanged**.
+ * **(f)** Tests: the gate logic (A always on launch; B on the toggle
+   transition in **both** directions; B **not** on launch; a toggle during B;
+   reduced motion skips both), plus a connected test that toggles developer
+   mode, sees the overlay, taps it, and sees it gone.
+
+`WelcomeLaunch` / `WelcomeAnimation` carry the gate, `REVIEW_FEEDBACK` and the
+manual are updated, and the new idle Scan page is photographed in both variants,
+both themes, compact and normal, with a screen recording of the egg firing from
+the Settings toggle.
+
+### Amendment — the owner watched the 0.9.17 footage (items 182–183)
+
+Round 32's deliverable was two recordings, and this is what they were for: the
+owner played them frame by frame and sent three corrections. They supersede
+part of item 181's trigger spec and all of animation B's art.
+
+### 182 — the launch animation loses its frame
+
+> **OWNER (2026-08-22):** *"replace the icon showing frame as the welcome
+> animation and remove the boundary and shows as the welcome icon same style."*
+
+The film plays inside the launcher icon's cream card with the orange rounded
+border round it. Both go. The llama and the lidar perform **free-standing over
+the launch background** — the page's own scrim — in the same art style, with no
+boundary box of any kind.
+
+That requires fixing, properly, the thing round 32 worked around by putting the
+card there: **the cut body layer's fleece interior is transparent.** An opaque
+fleece fill is to be **baked into the body sprite**, regenerated from
+`anim-assets/llama-body.png` by the asset agent's own enclosed-region method —
+flood from outside through the non-outline pixels; everything unreached and
+non-outline is interior; fill it with the art's cream (`#F3F2EE`). The result
+is saved as `llama-body-filled.png` and used in the app.
+
+The free-standing llama must read cleanly on **both** launch backgrounds, dark
+and light, and both are to be photographed. If the cream lacks edge contrast on
+light, a very soft level-1 drop shadow is permitted — the film is an overlay, so
+it is allowed to float.
+
+The scan rings at the end now spread from the lidar across the **open screen**.
+There is no frame for them to escape; they still reach the screen's edges.
+
+### 183 — the developer animation: trigger, and quality
+
+**(a) The trigger, superseding item 181's "both directions".** The egg plays
+**only when developer mode is ENABLED** — at the moment the seventh tap on the
+version footer turns it on. **Not** on disable. Once per enable event. Item
+181's other rules stand: no queue, no persisted debt, plays regardless of the
+"Welcome animation" toggle, respects reduced motion and tap-to-skip, and draws
+over whatever screen is up.
+
+**(b) The front pose.** > *"the front view of the llama is not the normal llama
+look."* Redraw it to genuinely match the icon llama: the same fluffy
+cloud-outline silhouette as the side profile (scalloped bumps, outline weight
+equal to the sprites' at render scale), **tall upright ears with inner-ear
+shapes** — the shipped ones read wrong — round dark eyes matching the sprite
+eye, a small rounded muzzle low on the face with a subtle nostril and mouth
+curve, and fleece filled in the same cream as item 182. Build it from the
+side-profile sprite's own geometry where possible rather than free-handing it,
+and photograph it **large, beside the side sprite**, as a style-match check.
+
+**(c) The spit.** > *"the spit not look real."* The flat ellipse goes. What
+replaces it: a proper **teardrop that stretches with velocity**, a slight
+tumble on the way, a **two-to-three droplet trail**, and arcing growth toward
+the viewer. The splat becomes an **irregular wet splat with four to six
+radiating droplets** and a brief **downward drip** before it fades. The
+water-blue and the ink outline stay. Still inside the 3.0 s.
+
+**(d) Both films are re-recorded** — A frameless, B triggered from the version
+footer with the new art — into `uishots8/`, with fresh 6 fps frame strips, and
+they go back to the owner for review.
+
+### Resolution — 2026-08-23 (0.9.19, round 34)
+
+> **REVISED IN PLACE, 2026-08-23 (round 35).** Round 34 was staged and never
+> shipped. The owner watched `uishots8/animA2.mp4` and `animB2.mp4` and sent
+> items 184–185, and two further items (186–187) arrived while round 35 was
+> open. Everything below still describes what was built, with **three
+> exceptions that round 35's own resolution supersedes**: animation A's four
+> pivots are now one emit point (item 184), animation B's single tumbling
+> droplet and its cheek puff are gone entirely (item 185), and the GitHub
+> diagnostics route no longer writes a zip (item 186). **VERSION did not
+> move**: this is still 0.9.19 / 919, and `dist/Ollidar-0.9.19-919.apk` is the
+> round-35 build.
+
+
+**180 — the LAST SCAN card is gone, and nothing took its place.**
+
+The card, its section label, its tap-to-Review handler and its four test tags
+are removed from `ScanReadyPage` (`CaptureScreen.kt:6038`), which is now
+`SectionLabel("Ready to scan")` directly under the status bar (`:6093`). The
+ViewModel's `_lastScan` / `lastScan` / `refreshLastScan` went with it, along
+with **both** of its call sites — the tab-entry refresh and the post-seal one.
+Leaving the flow in place would have cost a `projectStore.list()` on the IO
+dispatcher twice per visit to feed a composable that no longer exists, and a
+`CloudThumbnail` decode with it; that is exactly the drift this codebase argues
+against everywhere else. `ProjectThumbnail` and `CloudThumbnail` are untouched
+and the Projects list still uses them, which is what the item says.
+
+**The freed height goes to the flex region and to nothing else**, which is the
+half of this item that needed a decision rather than a deletion. The scroll
+column between the status bar and the FAB already carried `weight(1f)`, and its
+content already top-aligned inside it — so the correct implementation of *"let
+the readiness card and the FAB breathe"* turned out to be **removing code and
+adding none**, and the risk was the opposite one: a page that now looks empty.
+It does not, and the reason is that §D.1's order is a page composition rather
+than a stack — status bar at the top, the one card under it, the one action
+above the tab bar. `Round34UiTest.theIdlePageIsStatusBarThenReadinessThenFab`
+asserts that in rectangles, and the assertion that matters is the **first** one:
+the Sensor row's top is within 220 px of the scroll column's top. A page that
+had centred its remaining content, or left the card where the card used to
+end, fails that and only that.
+
+The compact profile the item asks about is a test as well as a photograph —
+`theIdlePageSurvivesTheCompactProfile` drives `wm size 320x687` / `wm density
+160` and requires that the FAB does not print through the card, which is the
+one thing that only goes wrong on a short window.
+
+**181 + 183(a) — the film that became a secret.**
+
+`WelcomeAnimation` (`:core`) now has **two** gates rather than one with a mode
+flag, because they answer questions about two different events.
+`variantFor` (`WelcomeAnimation.kt:93`) is the launch, and it has no developer
+branch at all any more: a cold launch is **A** or nothing. `eggFor`
+(`:140`) takes a `DeveloperToggle` (`:123`) — a **pair**, `from` and `to` — and
+that shape is the whole design. The app learns developer mode by collecting a
+settings store, and the store's first emission after a process start is not a
+toggle, it is the state the app was already in; a gate written against the
+value alone would fire the egg on every cold launch of a developer's phone,
+which is the exact behaviour item 181 exists to remove. `from == null` is
+therefore "this is the launch reading" and is never an egg.
+
+**183(a) narrows it to one direction**, on the owner's amendment: `false → true`
+only. Round 34 built both directions first, as item 181 asked, and the owner
+changed his mind having seen it — locking developer mode away is tidying up,
+and being sung at for tidying up gets old on the second time.
+
+`MainActivity` watches the transition at the **root of the Activity's content**
+(`MainActivity.kt:143`), not from the Settings screen, because the film is
+"full-screen over the current screen" and the page must stay composed and
+interactive underneath it. It watches the **store** rather than the row's
+callback, so anything that changes developer mode gets the egg without a second
+call site to keep in step. `playId` (`:105`) plus `key(playId)` (`:205`) is item
+181(e)'s *"the second play replaces the first, no queue"*: two plays of one
+variant are the same value and could not restart the film by themselves, and a
+new key is a new overlay from frame zero. Nothing is persisted, so a process
+death between the toggle and the play loses the play, which is what the item
+asks for.
+
+**182 — the frame is gone, and the transparency bug is fixed rather than
+hidden.**
+
+Round 32 drew the launcher icon — orange frame, cream paper — behind both films,
+and said so honestly: the cut body layer is an OUTLINE whose fleece interior is
+transparent, and on a dark page it composited as a see-through scribble with a
+floating white face. The card was a workaround and the owner has removed it.
+
+So the fill is **baked into the sprite** (`scratchpad/anim-assets/fill.py`,
+kept with the round's evidence). The method is the layer cut's own
+enclosed-region logic — barrier = any drawn pixel, flood the transparent pixels
+inward from every border, everything unreached is interior — **plus the one
+thing that logic needs and this sprite does not have: a closed silhouette.** The
+artist ran the fleece off the bottom of the icon's card and never drew a bottom
+edge, so a bare flood leaks straight into the body and fills nothing; that is
+exactly what an earlier attempt produced (`anim-assets/fill-preview.png`: face
+and ears filled, body still transparent). The seal is drawn between the two
+lowest points of the silhouette — measured, `(115, 916)` to `(641, 972)` in
+master units — and **the fill is faded out along it over 150 units**, so the
+bust dissolves into the page instead of ending on a machined edge. 228 563
+interior pixels filled. The result is `llama-body-filled.png`, downscaled to
+512 px as round 32's ceiling requires, and shipped as `welcome_llama_body.webp`
+— **57 922 bytes**, up 8 744 on the outline-only version.
+
+**Photographed on both grounds, which is what the item asks and what settles the
+drop-shadow question**: `uishots8/182-frameless-both-themes.png`. On dark the
+fleece carries the silhouette and the ink outline is invisible against the page;
+on light the ink outline carries it and the cream is almost the page's own
+colour — which is precisely how the launcher icon reads on its own paper. **No
+drop shadow was added**, because neither reading needs one, and a shadow under
+an illustration that is not standing on anything would be an invention.
+
+**183(b) — the front pose, rebuilt from what the side sprite actually is.**
+
+The owner: *"the front view of the llama is not the normal llama look."* The
+fault was structural. The side sprite is a **fluffy cloud silhouette with a
+smooth face patch inside it**, each carrying one continuous ink outline, with
+the fleece scalloping over the top of the patch. Round 32's front pose had
+fluff on the **crown only**, no face patch at all, two tapered ears and one eye
+— a sheep in a hat.
+
+This one is built the way the side art is built
+(`WelcomeOverlay.kt:659` onward): a head ellipse ∪ **seventeen** scallops round
+the *whole* perimeter ∪ two ears, `Path.op`-unioned into one silhouette; a
+smooth face patch ∪ seven fluff bumps along its forehead (`:742`); **two** eyes
+and they are the real eye sprite twice; the hat is the real puck sprite; and a
+small rounded muzzle low on the face.
+
+Two things were changed after photographing it beside the side sprite at size,
+which is the check the item asks for and the only one that could have caught
+them:
+
+ * **the ears.** Wide leaves with a **rounded tip** — three curves, and the
+   third is the tip's own arc (`earPath`, `:702`). At `EAR_HALF_WIDTH = 84`
+   with the inner fold drawn at the facial stroke weight they photographed as
+   two dark blades. They ship at **98** with the fold at `INNER_EAR_WEIGHT = 12`
+   (`:726`), the lightest weight in the file, ending two thirds of the way up;
+ * **the muzzle.** Two nostril **hooks** and a lip curve, not dots: three dots
+   inside an oval read as a snout, and the master art's nostril is a hook.
+
+`uishots8/front-pose-vs-side-sprite.png` is the comparison, both halves cropped
+from the **shipped film's own frames** rather than from a preview — the side
+pose at 2.25 s and the front pose at 3.05 s of `animB2.mp4`.
+
+**183(c) — a drop of water instead of an ellipse.**
+
+Four things a thrown drop does that an ellipse does not, and each of them is
+either a track in `:core` or geometry in the draw:
+
+ * it **stretches** along its flight when it is fast and rounds up as it slows
+   — `bDropletStretch` (`WelcomeTimeline.kt:417`), peaking at 1.55 mid-flight;
+ * it **tumbles** — `bDropletTilt` (`:424`), −16° to +9° and settling;
+ * it **arcs** rather than falling on a plumb line — `sin(π · travel) · 44`
+   master units, zero at the mouth and zero again at the glass, so the flight
+   bends without the splat having to move to meet it;
+ * it drags **two** smaller drops behind it — `B_TRAIL_DROPS` (`:444`) with
+   `trailLag` / `trailScale` / `trailAlpha`, each a fraction of the leader's,
+   so the trail cannot drift away from the one flight the timeline describes.
+
+The shape is `teardropPath` (`WelcomeOverlay.kt:870`): a bulb with a tail
+pointing back the way it came, its length driven by the stretch track — which is
+the single thing that most makes a moving drop read as liquid rather than as a
+shape being translated.
+
+The splat is **irregular and lumpy** rather than toothed: eighteen radii
+wandering inside ±14 % (`SPLAT_LOBES`, `:922`) instead of round 32's two
+alternating radii, which is a flower and photographed as one on the first
+recording of this round. Five droplets carry on past the impact
+(`SPLAT_SPRAY`, `:904`) as separate paths — a droplet that has left has air
+round it — and a **drip** runs out of the bottom of the body and dries with it
+(`bSplatDrip`, `WelcomeTimeline.kt:430`). Both tables are fixed rather than
+random, for the reason every constant in this file is fixed: the film has to be
+the same film every time it plays.
+
+**The connected test, and the two ways it could not be written.**
+
+`Round34EggTest` is the one class in this module with **no Compose test rule**,
+and that absence cost three runs to arrive at.
+
+ * Written with `onNodeWithTag`, the question *"is the film up?"* is answered
+   **after the film has ended** — every Compose accessor waits for the
+   composition to go idle and a three-second animation is not idle.
+ * Written with `input tap` and the accessibility tree but with a
+   `createEmptyComposeRule` still on the class, the film **never appears at
+   all**: the rule installs a test frame clock for the whole test, and with
+   `autoAdvance` on that clock only advances while the test is inside a Compose
+   API. A test that taps and then watches from outside Compose gives the
+   composition no frames, so the state change that raises the overlay is never
+   applied. The `EGL_emulation` line captured during that run — `count=16` for
+   a twenty-second test — is what the diagnosis was made from.
+
+The film is played by the real `MainActivity` in response to a real settings
+write, so the test uses the real clock throughout: `ActivityScenario`, `input
+tap`, and `AccessibilityNodeInfo` for the eyes. Round 32's own suite avoids all
+of this by owning its composition and driving `mainClock` by hand, which is the
+right answer for a test of the film's *timing* and no answer at all for a test
+of what a seventh tap *does*.
+
+**And the harness proved the reduced-motion gate by accident.** A connected run
+sets `testOptions.animationsDisabled = true`, which writes zero into the three
+global animation scales — which is exactly what Accessibility → *Remove
+animations* writes, and exactly what `WelcomeReducedMotion` reads. So during an
+instrumentation run this app is, correctly, a phone with animations off and
+**no welcome film plays at all**. Two of round 34's failing runs were that, and
+it is now two things rather than a nuisance: `withAnimationsOn`
+(`androidTest/.../WelcomeEgg.kt`) hands the animations back for the one test
+that needs them and puts them where it found them, and
+`withAnimationsOffTheUnlockIsSilentAndStillUnlocks` asserts the other half —
+zero scales, no film, and developer mode still comes on. An instrument that
+refused to work because a film was suppressed would be the worse bug.
+
+Three existing suites unlock developer mode as part of their own preconditions
+and then keep tapping; the film swallows the next touch, because round 32's
+argument for consuming the event is that a lid which leaks is worse than no lid.
+`dismissWelcomeEgg` skips it exactly as a person does, and returns at once on a
+device that plays nothing.
+
+**Numbers.** Engine **untouched**; ABI stays **12**; `ctest` **8/8**. `:core`
+unit **1152 / 0** (was 1146: +6 `WelcomeAnimationTest`, which lost two
+developer-launch cases and gained eight about the egg). `:app` unit **279 / 0**
+(was 278: +1 `WelcomeLaunchGateTest`, the claim that the egg does not consume
+the launch claim). Emulator: **80 tests, 0 failures, 3 assumed-skipped** on
+`b4_test` (was 74: +3 `Round34UiTest` — the card's absence, the page's order
+and the compact profile — +2 `Round34EggTest`, +1 assumed-skipped
+`Round34ScanPageShots`). VERSION 0.9.19; versionCode
+**919** / versionName **0.9.19** / `application-label:'Ollidar'` verified by
+`aapt2 dump badging` on `dist/Ollidar-0.9.19-919.apk`.
+
+**The deliverables, which are the point of both animation items.**
+`uishots8/animA2.mp4` (frameless, dark) and `uishots8/animA2-light.mp4`, plus
+`animB2.mp4` — the egg, triggered from the version footer, over the live
+Settings page — with **6 fps frame strips** for each (`animA2-strip.png`,
+`animA2-light-strip.png`, `animB2-strip.png`), the style-match sheet
+(`front-pose-vs-side-sprite.png`), the two-theme frameless proof
+(`182-frameless-both-themes.png`), and eight photographs of the idle Scan page:
+`180-scan-idle-{connected,disconnected}-{dark,light}-{normal,compact}.png`. The
+disconnected four are the real app; the connected four are the **production**
+`ScanReadyPage` through `Round34ScanPageShots`, because no COIN-D6 connects to
+an emulator and round 29 item 170 is what happens when that is forgotten.
+
+---
+
+## ROUND 35 (v0.9.19, in place) — the owner watched the round-34 footage
+
+Round 34 is **staged and not shipped**. The owner played `uishots8/animA2.mp4`
+and `uishots8/animB2.mp4` before the build went anywhere and sent two
+corrections, so this round is not a new version: it is round 34's own version,
+revised. **VERSION stays 0.9.19 / 919**, `dist/Ollidar-0.9.19-919.apk` is
+overwritten, and round 34's resolution above is amended in place rather than
+superseded.
+
+His verdict, in full: **A is approved with one fix. B has to be reworked
+against a real llama.**
+
+### 184 — animation A: one emit point
+
+> **OWNER (2026-08-23):** *"the lidar light, the spot and spin should align on
+> the same point."*
+
+He is describing four things that are drawn about four different centres, and
+he can see it. As shipped in round 34:
+
+ * the **LED** renders at the puck's emitter, `(670, 248)` in master units —
+   `layers.json`'s `fanOrigin`, which is also the fan bitmap's own cone apex;
+ * the **fan dots** sweep about the puck's *centre*, `(574, 275)` — 100 units
+   away from their own apex, so the cone does not rotate, it **orbits**;
+ * both **rings** expand from the puck's centre as well, so the pulse leaves
+   from a point the light is not at;
+ * and the **spin** pivots on the puck's centre while the landing **squash**
+   pivots on the puck's foot, `(574, 374)` — a fourth point.
+
+The fix is one definition and four users of it. **The emit point is the LED**,
+because the owner named the light first and the other three are what have to
+come to it: the lidar's optical centre, taken from the `fanOrigin` anchor that
+is already in `layers.json` and already where the light is drawn. Nothing about
+the art moves. What moves is:
+
+ * **(a)** the fan orbits the emit point — which is its own apex, so the cone
+   now rotates about its point instead of being carried round a circle;
+ * **(b)** both rings expand from the emit point, and the "reach the screen's
+   corner" measurement is taken from there too;
+ * **(c)** the puck's spin pivots on the emit point;
+ * **(d)** the landing squash's axis **passes through** the emit point — the
+   vertical line through it, at the puck's contact line;
+ * **(e)** the LED is drawn from the emit point with no transform between it
+   and the ring centre, so at the flash the light, the cone's apex and both
+   rings are the same pixel and not four points within a few units of each
+   other.
+
+**Verification is a photograph, not an assertion**: a zoomed keyframe at the
+flash moment, cropped tight round the emitter, showing the concentricity. The
+`:core` suite pins the arithmetic underneath it.
+
+### 185 — animation B: the real llama spit
+
+> **SUPERSEDED by item 188 (round 36).** The owner watched the round-35
+> footage, then sent the reference video itself and asked for its two sections
+> translated directly. B's choreography below — the tell, the two bursts, the
+> six marks on the glass — is **gone**; what replaced it is at the end of this
+> document. Item 185(e) survives it: the front pose is still round 34's, and
+> its ears still animate.
+
+> **OWNER (2026-08-23):** the reference is a *"llama spit — expectations vs
+> reality"* short. What round 34 built is the **expectation** — one cartoon
+> teardrop, tumbling politely across the screen. He wants the **reality**.
+
+The reality has a choreography, it is well documented, and it is unmistakable
+to anyone who has seen it once. Round 34's film has none of it.
+
+ * **(a) THE TELL**, which **replaces the cheek puff** as the wind-up. The
+   **ears pin flat back** against the head — the front pose's ears rotate and
+   lay back — the **chin lifts** and the head **cocks back** slightly. About
+   half a second of *it is about to happen*. The cheek puff is a cartoon
+   convention and comes out.
+ * **(b) THE SPIT.** Not a droplet. A sudden, explosive **spray burst** at the
+   viewer: a **cone of 10–16 small particles** at varied sizes and velocities,
+   plus **2–3 soft mist puffs** — semi-transparent blobs, no outline — erupting
+   fast, about a quarter of a second, with the **head snapping forward** as it
+   fires. Then a **second, shorter burst** about 0.3 s after the first, which
+   is the double-spit read. The **water-blue and the ink outline stay** on the
+   larger particles; the mist is outline-free and low-alpha.
+ * **(c) THE AFTERMATH.** The particles hit the "glass" as **5–8 small splats
+   scattered across the screen** — not one central splat — plus **1–2 slow
+   drips**. The llama's **lip stays curled and open a beat** (smug), and only
+   then the grin.
+ * **(d) The timing, and the total stays 3.0 s**: tell 0–0.6, burst 1 0.6–0.9,
+   burst 2 0.9–1.3, splats and drips 1.3–2.4, grin 2.4–3.0, tunable within
+   ±0.2 s for feel.
+ * **(e)** Round 34's **redrawn front pose stays** as the base. Only the
+   **ears become animatable** and the **mouth gains a curl state**.
+
+Both films are re-recorded into `uishots9/` with fresh 6 fps strips, the
+zoomed concentricity keyframe goes with them, and the `:core` waypoint tests
+are rewritten against B's new timeline rather than left pinning a droplet that
+no longer exists.
+
+### Amendment — two more owner items, same version (186–187)
+
+Round 35 was already open when these arrived, so they land in it rather than in
+a round 36: **VERSION stays 0.9.19 / 919** and both films are re-recorded with
+them in.
+
+### 186 — diagnostics to GitHub as pure text, and no zip on that path
+
+> **OWNER (2026-08-23):** *"The send diagnostics to github can it all in the
+> text without zip?"*
+
+He is describing the round-29 design's one weak joint. **Send diagnostics →
+GitHub** writes a zip into `Downloads/LidarScan`, opens a prefilled issue, and
+the issue then *asks him to go and find the zip and drag it in* — a two-device
+manoeuvre on a phone, and the reason a diagnostics issue arrives with no
+diagnostics in it. A URL cannot carry a file, but it can carry several
+kilobytes of text, and the log **is** text.
+
+So the GitHub route becomes text-only:
+
+ * **(a)** the issue body keeps the device/app info table exactly as it is, and
+   then carries the **tail of the capture log inside a markdown code block**;
+ * **(b)** as many of the most recent lines as fit inside the existing 8 000
+   character decoded-URL clamp once the info block is paid for, **never
+   splitting a line**, with an honest statement at the top of the block —
+   *"Last N lines of the log — the full log is on the phone via Save to
+   phone."*;
+ * **(b2)** and the budget is **not** a naive tail. `[crash]`, `[net-debug]`
+   and `[session] NO DATA` lines are the ones a maintainer actually needs, and
+   they are exactly the ones a chatty session pushes off the end. Two passes:
+   up to **half** the budget is reserved for the last forty lines carrying
+   those tags, and the remainder is a plain tail. Where the two are not
+   contiguous the block says so rather than pretending it is one run of lines;
+ * **(c)** the **zip step is removed from the GitHub route entirely** — no
+   packaging, no `Downloads` write, nothing on that path but the URL.
+   **Save to phone** keeps producing the full zip and remains the answer for a
+   complete log;
+ * **(d)** tests: the budget arithmetic, the line-boundary clamp, the
+   tag-priority selection, and the finished URL still under the ceiling with a
+   synthetic log far larger than it.
+
+### 187 — the welcome animation holds a beat before the app
+
+> **OWNER (2026-08-23):** *"the welcome animation please run all the frame then
+> wait for 1s then open the app."*
+
+Round 32 built animation A to dissolve into the app **on the flash's own tail**
+— the overlay starts fading at 90 % of the three seconds, so the last thing the
+film does is disappear while it is still happening. The owner wants the film to
+**finish**, be looked at, and *then* get out of the way.
+
+ * **(a)** A plays its **full 3.0 s** timeline and stays fully opaque doing it:
+   the tail fade is removed;
+ * **(b)** it then **holds for 1.0 s** on the finished pose — the llama with
+   the lidar seated on its head and the **LED lit**. Anything that was in
+   flight (the rings, the fan sweep) has left by then, which is what the last
+   keyframe of each of those tracks already says; what changes is that the LED
+   and the overlay no longer fade out with them;
+ * **(c)** the overlay is dismissed at **4.0 s** total and the app is revealed;
+ * **(d)** **tap-to-skip is instant at any moment**, including during the hold,
+   and the reduced-motion gate is unchanged — a phone with animations off still
+   plays nothing at all;
+ * **(e)** animation B, the developer egg, is **not** affected: it is feedback
+   for a toggle rather than a launch film, and it still ends at 3.0 s.
+
+### Resolution — 2026-08-23 (0.9.19, round 35)
+
+**184 — there is one emit point now, and it is the light's.**
+
+The owner could see four centres because there were four. As round 34 shipped:
+the LED burned at the puck's emitter `(670, 248)`; the fan bitmap — whose own
+cone apex *is* that point — was swept about the puck's **centre** `(574, 275)`,
+so the cone did not rotate, it was carried round a circle a hundred units
+across; both rings expanded from that centre as well; and the landing squash
+pivoted on a fourth point, the puck's foot.
+
+`Art.EMIT_X` / `EMIT_Y` (`WelcomeTimeline.kt:89`) is the one definition, taken
+from the `fanOrigin` anchor that was already in `layers.json` and already where
+the light was drawn. **The light does not move; the other three come to it** —
+which is the reading the owner's own sentence forces, since he names the light
+first. `FAN_ORIGIN_X/Y` is now literally `= EMIT_X/Y` and a `:core` test asserts
+the equality rather than trusting it, because the two facts have different
+owners: one is the fan art's geometry, the other is the app's pivot.
+
+Four users, all in `drawLidarFlip`: the ring centre and `ringReachInMasterUnits`
+(`WelcomeOverlay.kt:160`), the fan's `rotate` pivot, the puck's `rotate` pivot
+(`:446`), and the squash's axis — `Offset(Art.EMIT_X, Art.PUCK_FOOT_Y)`, the
+vertical line **through** the emit point at the contact line, which is item
+184(d) exactly.
+
+Two decisions inside that are worth stating:
+
+ * **the puck pinwheels now.** Its rotation pivot moved from its own middle to
+   a point on its right edge, so between the toss and the landing it swings
+   round the heavy end instead of spinning on the spot. It costs nothing at
+   either end — 0° and 360° are the same frame whatever the pivot is — and it
+   is what a tossed instrument does;
+ * **the LED is drawn outside the puck's transform stack** (`:464`). Inside it,
+   the landing squash drags the light 25 units down the screen on the frame it
+   ignites on, and the flash is the one frame this item is judged by.
+
+`uishots9/184-emit-concentricity.png` is the verification the item asks for, and
+it is a **measurement** and not only a picture: the three rings in the shipped
+recording, circle-fitted, come out at centres (673.0, 929.0), (673.0, 929.0) and
+(673.2, 928.9) against a computed emit point of **(673.3, 929.2)** — worst
+offset **0.4 px**, mean radial residual under a pixel — and the LED's own orange
+centroid at the flash is (672, 929). Round 34's rings were 84 px off on this
+screen.
+
+Animation B got the same fix in the one place it was visibly wrong: the front
+pose wears the puck at a different anchor, so `drawLed` now **takes** its point
+and the front pose passes the emitter's offset inside the sprite
+(`EMIT_IN_PUCK`, `:376`, used at `:675`). Round 34 drew B's LED at the master
+anchor, which put an orange glow in the air to the right of the hat.
+
+**185 — the reality, in five parts.**
+
+Round 34's B was the *expectation*: one polite teardrop. Every beat of it is
+replaced.
+
+**(a) The tell.** `bEarPin` (`WelcomeTimeline.kt:503`) takes the ears from
+upright to flat back over 250 ms, **holds them back through both bursts and the
+whole aftermath** — an animal that has just spat does not put its ears up while
+it is still glaring at you — and lets them up on the grin. `bHeadRise` /
+`bHeadTilt` / `bHeadLunge` (`:512` on) lift the chin, cock the head back and
+pull it a hair smaller, then throw all three the other way as each burst fires.
+The cheek puff is gone: it is a cartoon convention and the item said so.
+
+Making the ears animate is the only change to round 34's approved drawing (item
+185(e)). They came **out** of the baked silhouette and are unioned back into it
+every frame at their current pin (`drawFrontLlama`, `WelcomeOverlay.kt`), which
+is two `Path.op` calls a frame and keeps the single unbroken outline the whole
+pose is built around. Ears drawn as separate shapes behind the head would have
+been free and would have put a seam where the icon's language has none. They
+also **foreshorten** as they go (`EarFrame`, `:810`): an ear that rotates at
+full length is a blade sweeping round a hub, and a real ear laid back is also
+pointing away from the camera.
+
+**(b) The burst.** `B_SPRAY` (`:598`) is **fourteen drops and three mist puffs**
+— the item's ranges are 10–16 and 2–3 — as a fixed table of nine numbers each,
+nine drops and two puffs in the first burst and five and one in the second,
+which is what makes the second read as an after-thought rather than a repeat. A
+`Random(seed)` would have been fewer lines and would have made "one frame looks
+wrong" unreproducible, which is the argument every other constant in this file
+is fixed for.
+
+Each particle's **position** and its **size** are two different curves and that
+is the round's one real discovery. The first cut used one accelerating curve for
+both and photographed as a llama drooling — the whole cone still crowding the
+muzzle a third of a second after it fired. Position is now `burst(p)`, explosive
+and easing in, so the spray is clear of the animal's own face within a fifth of
+the flight; size is `approach(p)`, slow then fast, which is what something
+coming at a camera does. The tail of each teardrop points **back along the
+flight it actually flew** (`atan2(−dx, dy)`), which is a fact about the flight
+rather than a number somebody chose, and with fourteen of them at fourteen
+speeds it is what stops the burst reading as confetti.
+
+The **mist** cost three cuts and each failure is recorded in the file. Water-blue
+at 0.22 alpha over this app's near-black page composites to a dark teal, so the
+first version photographed as grey smudges beside the chin — semi-transparent
+has to be semi-transparent *against the ground it is on*, so there is now a
+`Mist` colour that is [Water] lifted most of the way to white. And flat discs,
+at any alpha, keep a perfectly legible rim as they fade, so the burst ended with
+grey rings hanging in the air; the puffs are drawn with a **radial gradient**
+(`:553`) that reaches zero at its own edge and therefore has no rim to leave
+behind.
+
+**(c) The aftermath.** Six marks (the item asks for 5–8), scattered across the
+lower screen, **derived from where their own particles landed** rather than
+placed — `splatAt` reads the same `spread`/`reach` the flight did, so a mark can
+never be somewhere its drop was not, and the last 12 % of every flight is a
+crossfade between the drop and its mark. Two of the six run (the item asks for
+1–2). Round 34's ±14 % lobe wander was widened to ±28 % and each mark gained
+three satellite droplets (`SPLAT_SATELLITES`, `:1090`) because six small marks
+at the old settings photographed as six blue potatoes; a droplet that has left
+the puddle has air round it, and that is the difference between a mark that was
+*hit* and a blob that was placed. Each mark is phased by **its particle's**
+index rather than its position in the on-screen list — a positional index
+renumbers every mark already on the glass each time another one lands, and they
+would all change shape.
+
+The lip curls and stays curled through the aftermath (`bLipCurl`, `:545`),
+asymmetrically, because a lip that curls evenly is a smile.
+
+**(d) The timing, as built** — the item's window, and what shipped inside it:
+
+| beat | item asks | as built | as recorded |
+|---|---|---|---|
+| side pose + twinkle | — | 0.00–0.28 s | ✓ |
+| turn to front | — | 0.28–0.35 s | ✓ |
+| the tell | 0–0.6 s | 0.35–0.60 s | ears flat by 0.60 s |
+| burst 1 | 0.6–0.9 s | 0.61–0.74 s out of the mouth | ✓ |
+| burst 2 | 0.9–1.3 s | 0.91–0.98 s out of the mouth | ✓ |
+| splats + drips | 1.3–2.4 s | first mark 1.16 s, last 1.36 s, drips run to 2.4 s | ✓ |
+| grin, ears up | 2.4–3.0 s | 2.40–2.79 s | ✓ |
+| total | 3.0 s | **3.0 s** | ✓ |
+
+The two that sit outside the stated window are inside the ±0.2 s the item
+allows: the first mark lands at 1.16 s rather than 1.30, because the burst it
+came from left at 0.61 and a half-second flight is what "erupting fast" means.
+
+**186 — the log goes in the issue, and the zip does not go anywhere.**
+
+The owner is describing round 29's one weak joint. The GitHub route wrote a zip
+into `Downloads/LidarScan`, opened an issue, and the issue then asked him to go
+and find the zip and drag it in — a two-device manoeuvre on a phone, and the
+reason a diagnostics issue arrives with no diagnostics in it.
+
+`GitHubIssue.logExcerpt` (`GitHubIssue.kt:182`) is the whole of item 186(b) and
+(b2) in one pure function. **Two passes**: up to *half* the budget goes to the
+last forty lines carrying `[crash]`, `[net-debug]` or `[session]`
+(`LOG_PRIORITY_TAGS`, `:135`), newest first; the rest is a plain tail. Half
+rather than all, because an issue that is nothing but forty `[net-debug]` lines
+has thrown away the context that says what the operator was doing — a test
+asserts that ordinary `[ar]` lines survive alongside the crash. **Nothing is
+ever cut mid-line**: a truncated log line is a line with a plausible wrong value
+in it, which is worse than an absent one. Where the two passes are not
+contiguous the block prints `… N lines omitted …` and the heading says gaps are
+marked, rather than presenting two distant lines as consecutive.
+
+The budget cannot be computed in one pass and the file says why: the clamp is on
+the **encoded** URL, and a log line encodes at roughly two and a half times its
+length because every space, colon, bracket and equals sign becomes three
+characters. So `diagnosticsUrl` (`:286`) measures the head — the part that
+always ships — grows the excerpt into what is left, and shrinks it by a quarter
+until it fits — **by bisection**, and that detail is worth a sentence: the
+first version stopped at the first budget that happened to fit and left a
+kilobyte of the ceiling unused, which is fifteen log lines a maintainer does not
+get. Fourteen halvings land within a character of the largest excerpt that fits.
+A synthetic 40 000-line log produces a URL of **7 923 characters against the
+8 000 ceiling** carrying **67 lines**, with the crash line, the sweep line and
+the stall line all among them.
+
+**One bug this feature had that no unit test would have found.** The first cut
+used a single `LOG_FENCE` constant for both ends of the code block, so the
+issue closed with ```` ```text ```` — and CommonMark forbids an info string on a
+*closing* fence, which means that line opens a second block instead of ending
+the first and the whole log renders inside a block that never ends. It was
+caught by **opening the URL the app actually launched** off the device
+(`dumpsys activity intents`), which is the only place it is visible;
+`LOG_FENCE_OPEN` / `LOG_FENCE_CLOSE` are now two constants and a test counts one
+of each and asserts the body's last line.
+
+**Verified on the device rather than only in a test**, because item 186(c) is a
+claim about a file that is *not* written: `Downloads/LidarScan` held 72 files
+before the tap and 72 after, the capture log carries
+`[export] feedback: route=GITHUB text-only, nothing packed`, and the browser
+opened on a body with the device table and a properly closed code block in it.
+
+**(c)** `FeedbackSender.send` returns for `GITHUB` **before step 1**
+(`FeedbackSender.kt:111`): no pack, no `MediaStore` insert, no megabytes of zip
+on a path where none of it was ever read. `diagnosticsIssueUrl` (`:172`) reads
+the log on `Dispatchers.IO` and hands it to `:core`, and `ProfileViewModel`
+(`:221`) is one line shorter than it was. **Save to phone is untouched** and is
+still the answer for a complete log — the manual now says so in those words.
+
+**187 — the film finishes, and then it is looked at.**
+
+Round 32 dissolved A into the app on the flash's own tail: `aOverlay` ran from 1
+to 0 over the last tenth of the film, so the last thing it did was disappear
+while it was still happening. That track is now flat (`WelcomeTimeline.kt:251`)
+and the dismissal belongs to the caller.
+
+A **hold** and not a longer film, for the reason `DURATION_MS`'s own comment
+gives: every keyframe in the timeline is a percentage of it, so stretching the
+film to four seconds would re-time the toss, the landing and the flash rather
+than add a pause after them. `HOLD_MS` (`WelcomeAnimation.kt:60`), `totalMsFor`
+(`:70`) and `filmProgress` (`:83`) are the mechanism, and the last of those is
+the part worth reading: it **clamps the film's own clock at 1**, so the hold is
+the film's last frame held rather than a second drawing that has to be kept in
+step with the first. There is exactly one description of the resting pose and it
+is the timeline's own.
+
+Two tracks had to change for that frame to be worth holding. The **LED now stays
+lit** (`:303`) instead of fading over the last tenth — the pose the owner asked
+to hold is *the llama with the lidar seated and the light on*, and a light that
+faded would have left a dead instrument on screen for a whole second. And the
+**rings finish by 96 %** rather than at 100 %: ring 2 is ring 1 read
+`A_RING2_DELAY` late, so a fade that only reached zero at the very end left a
+faint orange arc on the frame that is now held for a second.
+
+The egg does **not** hold (item 187(e)): it is feedback for a toggle, and a
+second of a pleased llama over a Settings page nobody can touch is a second of a
+frozen app. `totalMsFor` says so in two lines.
+
+Tap-to-skip works during the hold and there is a connected test for exactly
+that, because "the film ended so the app appeared" is the behaviour this item
+removes and the negative claim — *the overlay is still up a full second after
+the last frame* — is the one that can regress silently.
+
+**Numbers.** Engine **untouched**; ABI stays **12**; `ctest` **8/8**. `:core`
+unit **1166 / 0** (was 1152: +6 for the emit point and B's new choreography, +6
+for item 186's excerpt, +2 for the hold). `:app` unit **279 / 0**, unchanged.
+Emulator **81 tests, 0 failures, 3 assumed-skipped** on `b4_test` (was 80: +1,
+`Round32WelcomeTest.aTapDuringTheHoldStillSkips`). VERSION **0.9.19**;
+versionCode **919** / versionName **0.9.19** / `application-label:'Ollidar'`
+verified by `aapt2 dump badging` on `dist/Ollidar-0.9.19-919.apk`.
+
+**The deliverables.** `uishots9/animA3.mp4` (dark) and `animA3-light.mp4` — the
+frameless launch film with the one-second hold and the app appearing after it —
+plus `animB3.mp4`, the reworked egg triggered from the version footer over the
+live Settings page; 6 fps frame strips for all three (`animA3-strip.png`,
+`animA3-light-strip.png`, `animB3-strip.png`); and
+`184-emit-concentricity.png`, the zoomed keyframe with the fitted ring centres.
+
+## ROUND 36 (v0.9.19, in place) — the owner sent the reference itself
+
+Round 35 is **staged and not shipped**. The owner watched `uishots9/animB3.mp4`
+and then sent the short his round-35 note had been describing — The Pet
+Collective's *"Llama Spit! Expectations Vs. Reality"*, 12.3 s — with an
+instruction that is not a correction but a replacement. So this round is not a
+new version either: it is round 34's version, revised twice. **VERSION stays
+0.9.19 / 919**, `dist/Ollidar-0.9.19-919.apk` is overwritten again, and
+**animation A is untouched** — it was approved in round 35 and nothing here
+goes near it.
+
+### 188 — animation B is the reference video's two sections
+
+> **OWNER (2026-08-23):** *"turn the 2 sections of spit into animation style
+> directly and use it."*
+
+Not "make it more like the reference": **translate the reference**. What the
+video actually contains, watched frame by frame:
+
+ * **SECTION 1, "EXPECTATION"** (0 ‥ 5.3 s) — a llama **gently leans in and
+   takes a treat from a person's hand**. Sweet, calm, no spit at all.
+ * **SECTION 2, "REALITY"** (5.3 ‥ 12.3 s) — a *different* llama faces the
+   camera dead-on and **grinds its jaw side to side** while staring: several
+   seconds of chewing menace. Then, **between two frames**, the **entire lens
+   is covered** in murky translucent splatter — a full-screen wipeout held to
+   the end, blobs and streaks, the llama a blur behind it.
+
+Round 35's B choreography is **replaced entirely**. The 3.0 s, as a direct
+translation (tunable ±0.2 s for feel):
+
+ * **0 ‥ 1.0 s — EXPECTATION.** Our side-profile llama leans gently toward the
+   viewer with a soft eye blink. An endearing beat. A treat or a hand is
+   **optional** — only if it reads clean in this minimal style at this size;
+   otherwise the lean and the blink carry it.
+ * **1.0 ‥ 1.2 s** — quick cut/turn to the **front-facing pose** (round 35's
+   rebuilt front pose).
+ * **1.2 ‥ 2.1 s — THE REALITY TELL.** The jaw/muzzle **grinds side to side**
+   — lateral chew cycles, 2–3 grinds. This replaces and joins the ear-pin as
+   the primary tell; the ears stay pinned back through it. The eyes narrow
+   slightly. Dead stare.
+ * **~2.1 s — THE WIPEOUT.** Near-instant: **one frame** of spray cone, then
+   the **whole screen** covered in large irregular translucent splatter blobs
+   and streaks — in our style: a murky pale blue-green wash, ink-outlined
+   larger blobs, high coverage (~90 % of the screen), the llama dimly visible
+   through it — with 1–2 drips running down.
+ * **2.1 ‥ 3.0 s** — **hold** the covered lens with slow drips; through one
+   clearer patch the llama's **grin** is visible; fade at 3.0 s.
+
+The `:core` waypoint tests are updated to the new timeline. The egg's trigger,
+the tap-to-skip and the reduced-motion behaviour are **unchanged** — items
+181, 183(a) and 187(e) still stand.
+
+### Resolution — 2026-08-23 (0.9.19, round 36)
+
+**188 — the film is the video, in the icon's own ink.**
+
+The owner did not ask for a better spit. He handed over the thing his previous
+note had been *about* and said translate it, which is a different job: the
+question stops being "what would a llama do" and becomes "what is in these
+twelve seconds". Watched at four frames a second and then at fifteen through
+the gag, the answer is that the reference contains **two shots and one cut**,
+and that round 35 had built neither of them. Round 35's B was a tell, two
+bursts and six marks on the glass — a *description* of llama spit. The
+reference is a llama being sweet, a llama chewing, and then nothing at all.
+
+**The mapping is the whole item**, so it is written into the file that carries
+it (`WelcomeTimeline.kt:420`, as a table) rather than left in this document:
+
+| the reference | as built | file |
+|---|---|---|
+| 0 ‥ 5.3 s — leans in, takes the treat | 0.00 ‥ 1.00 s — the lean, and one blink | `bLean` `:523`, `bBlink` `:536` |
+| 5.3 s — cut to a different animal | 1.02 ‥ 1.20 s — the pinch to the front pose | `B_TURN` `:461`, `bTurnScaleX` `:551` |
+| 5.3 ‥ 11.0 s — the jaw grinds, the stare | 1.20 ‥ 2.10 s — 2½ chew cycles, lidded eyes, pinned ears | `bJawGrind` `:572`, `bEyeNarrow` `:594`, `bEarPin` `:588` |
+| 11.05 s — two frames, and the lens is gone | 2.10 ‥ 2.20 s — one frame of cone, then the cover | `B_SPRAY` `:699`, `B_LENS` `:966` |
+| 11.1 ‥ 12.3 s — held, drips, a shape behind it | 2.20 ‥ 3.00 s — the hold, the drips, the grin | `lensAt` `:1023`, `bGrinAlpha` `:653` |
+
+Five seconds of treat becomes one and six of stare becomes nine tenths, because
+a three-second film cannot spend half of itself on the set-up and still land
+the gag. Everything else is proportion, not invention.
+
+**Section one: no hand, and no treat.** The item makes it optional and the
+answer is no, for a reason that is about this art and not about effort. The
+icon has an ink vocabulary for exactly one character — one fleece, one outline
+weight, one face — and a human hand drawn in it is a second character the
+vocabulary has no words for; a treat with no hand holding it is a pellet
+floating in the air. What the reference's first section actually *is*, once you
+stop describing its props, is **an animal coming to you**, and that is a
+transform: seven degrees about the llama's own base plus seven per cent of
+scale (`LEAN_PIVOT`, `WelcomeOverlay.kt:657`). Rotating about the base and not
+about the head is the difference between a reach and a nod — the muzzle swings
+*forward and down* on the arc a neck describes. Twelve degrees was tried and
+reads as a stumble.
+
+The **blink** is what the treat was carrying. It replaces round 35's twinkle,
+and `drawStar` is deleted: a four-point sparkle is a *cartoon* saying "isn't
+this nice", and the animal doing it itself is better. It is drawn as a squash
+**and a lid** (`drawEye`, `WelcomeOverlay.kt:362`) — the sprite scaled toward a
+line about its own centre, with an ink stroke laid across it past halfway. The
+squash alone photographed as a llama looking down rather than a llama blinking.
+`drawEye` gained the parameter with a default of open, so **animation A is
+byte-for-byte the film it was**.
+
+**Section two: the jaw is the tell.** Six seconds of the reference are an
+animal chewing *at* the lens, and it is entirely lateral — a jaw that opens and
+shuts is an animal eating, and a jaw that goes side to side is an animal
+deciding. `bJawGrind` is two and a half cycles in nine tenths of a second (the
+item asks for 2–3), and everything below the eyes rides it: the muzzle, both
+nostrils, the mouth and the lip go across the face **together**
+(`drawFrontFace`, `WelcomeOverlay.kt:1098`), because a muzzle that slides while
+its nostrils stay put is two drawings rather than one animal. The pivot is up
+under the eyes and not on the muzzle, because a jaw is hinged behind the face;
+rotating about the muzzle's own centre spins the nose and leaves the chin where
+it was, which is a face made of rubber. Twenty-six units of slide with four and
+a half degrees of roll: the slide is most of it and the roll is the part that
+stops the muzzle reading as a sticker being dragged about.
+
+Round 35's **ear-pin is kept and joined to it**, as the item says, and the ears
+now stay pinned to the last frame — there is no beat in this cut where they
+would come up. The eyes **lid** (`bEyeNarrow`) as a squash plus a brow that
+slopes toward the nose. The head does almost nothing through all of it, and the
+test asserts that: everything before the hit stays inside a third of the snap
+the hit itself makes, because the difference between menace and a tantrum is
+that the menace holds still.
+
+**The wipeout is a cut, so it is measured in frames.** `B_FRAME` (`:452`) is
+one thirtieth of a second in film time and it is a named constant because the
+reference's gag *is* that interval: at 11.02 s the animal is sharp, at 11.09 s
+the lens is opaque, and there is a single smeared frame between them. So the
+cone (`B_SPRAY`) launches on the hit and is **entirely gone within one frame**
+— twelve drops and three mist puffs, wide and large, out and over. This is not
+round 35's burst re-timed: that was a quarter-second flight anyone could
+follow, and the reference contains no such thing.
+
+**The cover is the only thing in either film drawn in screen space.** Every
+other number in both animations is in master-art units on the 1024 px icon
+canvas, because everything else is a drawing of a llama. This is a drawing of
+**the lens**, and the lens is the whole phone, so `B_LENS` is stated in screen
+fractions and `drawLensCover` (`WelcomeOverlay.kt:689`) multiplies them out —
+the same problem animation A's rings solve from the other end.
+
+**Three numbers in it were wrong the first time and the recording said so.**
+The first cut had the wash at 0.76 with eighteen blobs at 0.62 on top, and it
+photographed as a flat pale-green sheet with a scribble of ink lines on it and
+no llama at all. Two things were wrong with that and both are worth stating:
+
+ * **translucent does not survive being overlapped.** Three blobs at 0.62 over
+   a 0.76 wash is 95 % opaque, and most of the screen has three. The wash is
+   now **0.55** and a blob is **0.24** (`B_WASH_ALPHA`, `B_LENS_ALPHA`), which
+   puts the densest place on the screen at about 79 % and the thinnest at 55 %
+   — so the animal is a shape behind all of it, which is what item 188 asks
+   for, and the blobs are still individually legible;
+ * **an outline on everything is a contour map.** The item says *"ink-outlined
+   **larger** blobs"* and it is right: only blobs above
+   `B_LENS_INK_MIN_RADIUS` carry ink now, the three streaks carry none, and
+   the ink has **its own alpha** rather than a fraction of the fill's — at
+   0.24 a proportional outline is not there at all.
+
+The **clear patch** is taken *out* of the finished cover rather than painted
+over the top of it: all three layers go into one `saveLayer` and a radial
+`DstOut` brush removes `1 − B_PATCH_ALPHA / B_WASH_ALPHA` of the alpha over the
+llama's mouth. Painting a pale disc on top would have put a pale disc on top —
+the grin has to be seen *through* the goo, not beside it — and the brush is
+radial rather than a flat disc because a flat one is a porthole, and stuff
+running off glass does not leave a circle. Its centre is read off the **art
+box**, not off a screen fraction near it: the box is fitted to the narrower of
+80 % of the width and 46 % of the height, so the mouth sits at 0.536 of the
+height on a 21:9 handset and at 0.622 on anything squarer than about 5:9. Its
+radius came down from 0.24 of the width to **0.17** after the first recording,
+where the patch was wider than the whole head and what came through it was the
+entire animal, lit up.
+
+The **drips** were rebuilt once too. Drawn from the lower edge of their blob at
+the same alpha as it, two of them photographed as pale skittles hanging on the
+glass. They now leave from **inside** the mass, are three times wider at the
+neck, carry `B_DRIP_DENSITY` — 1.45× the blob's own alpha, because a drip drawn
+at the same alpha over a screen that is already this colour is not there — and
+have **no outline**, since ink round a drip draws the eye to the one thing on
+that screen that is supposed to be a smear.
+
+**The one refactor.** `SPLAT_LOBES` and the welded lobes moved from the
+composable into `:core` (`WelcomeTimeline.kt:891`). The item's *"~90 % of the
+screen"* is a claim about the area those shapes enclose, and a test that
+rasterises an ellipse standing in for them measures the wrong thing by a
+quarter — the largest ellipse that fits inside one of these outlines covers
+72 % of a handset's screen where the outlines themselves cover **94 %**. The
+composable and the test now build the same polygon from the same two tables,
+and `the blobs cover about ninety per cent of the screen` measures it at three
+aspect ratios. It asserts a **ceiling** as well as a floor, and that is the
+half worth reading: at radii a third larger the same eighteen shapes close into
+one sheet and stop being blobs, which is exactly the failure the first
+recording had.
+
+Its companion, `no blob sits on the patch the grin shows through`, is the
+property the layout exists to have. A soft `DstOut` bite can thin the wash but
+it cannot dig an opaque core out of the middle of it, so no blob's centre may
+be within its own radius of the mouth **anywhere in the range the mouth can
+land** — which is why row four of the table has no middle at all. Row five had
+to move out to the edges and down as well: the property was measured at 16:9
+before it was measured at 21:9, and on the squarer screen the art box is bigger
+and the mouth comes down with it, which put two of row five's blobs on top of
+it. Measured, the cover is **92.8 % / 94.4 % / 96.4 %** at 21:9, 19.5:9 and
+16:9.
+
+**What was deleted.** `splatAt`, `SplatMark`, `FrameB.splats`, `bLipCurl`,
+`bTwinkle*`, `drawStar`, `B_SPLAT_RADIUS` and `SprayShot.splat` / `.drip`.
+Round 35's aftermath does not exist any more: nothing lands in front of you in
+the reference, the lens itself goes.
+
+**Unchanged, deliberately.** The egg's gate (`eggFor`, one direction only), the
+tap-to-skip, the reduced-motion refusal, `totalMsFor` (B does not hold — item
+187(e)), and animation A in every particular.
+
+**Numbers.** Engine **untouched**; ABI stays **12**; `ctest` **8/8**. `:core`
+unit **1169 / 0** (was 1166: round 35's eight B tests are replaced by eleven,
+including the two that measure the cover). `:app` unit **279 / 0**, unchanged.
+Emulator **81 tests, 0 failures, 3 assumed-skipped** on `b4_test`, unchanged.
+VERSION **0.9.19**; versionCode **919** / versionName **0.9.19** /
+`application-label:'Ollidar'` verified by `aapt2 dump badging` on
+`dist/Ollidar-0.9.19-919.apk`.
+
+**The deliverables.** `uishots10/animB4.mp4` — the rebuilt egg, triggered from
+the version footer over the live Settings page — and `animB4-strip.png`, its
+6 fps frame strip across the whole three seconds. Animation A's round-35
+recordings (`uishots9/animA3.mp4`, `animA3-light.mp4` and their strips) stand:
+nothing in this round touches it.

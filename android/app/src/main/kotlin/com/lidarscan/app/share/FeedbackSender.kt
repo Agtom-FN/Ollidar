@@ -12,6 +12,7 @@ import com.lidarscan.core.feedback.FeedbackEndpoint
 import com.lidarscan.core.feedback.FeedbackResult
 import com.lidarscan.core.feedback.FeedbackRoute
 import com.lidarscan.core.feedback.FeedbackWording
+import com.lidarscan.core.feedback.GitHubIssue
 import com.lidarscan.core.feedback.Multipart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -95,6 +96,27 @@ class FeedbackSender(
         val route = route ?: config.route
         onProgress(0.1f)
 
+        // ── ROUND 35 item 186(c): the GitHub route packs nothing ───────────
+        //
+        // > "The send diagnostics to github can it all in the text without
+        // > zip?"
+        //
+        // It used to fall through all three steps below and then open an issue
+        // whose body pointed at the file step 2 had just written — which meant
+        // a Downloads write, a MediaStore insert and a few megabytes of zip on
+        // a path where none of it was ever read. The log goes into the issue as
+        // text now (`GitHubIssue.diagnosticsUrl`), so there is nothing to pack
+        // and nothing to publish. `Save to phone` is untouched and is still the
+        // answer for a complete log.
+        if (route == FeedbackRoute.GITHUB) {
+            onProgress(1f)
+            captureLog.log(
+                CaptureLog.TAG_EXPORT,
+                "feedback: route=GITHUB text-only, nothing packed",
+            )
+            return@withContext FeedbackResult(sent = true, route = route, downloadsPath = null)
+        }
+
         // ── 1: pack ────────────────────────────────────────────────────────
         val zip = runCatching { pack(facts, message) }.getOrElse { t ->
             captureLog.log(CaptureLog.TAG_EXPORT, "feedback: could not package the log: $t")
@@ -119,10 +141,9 @@ class FeedbackSender(
             FeedbackRoute.SHARE -> shareSheet(zip, downloadsPath)
             // ROUND 29 item 173: the file was the whole job. `sent` is true
             // exactly when the file landed somewhere the operator can reach,
-            // which is the only claim either of these routes is entitled to
-            // make — the GitHub issue is opened by the caller and submitted by
-            // a person.
-            FeedbackRoute.GITHUB, FeedbackRoute.SAVE -> FeedbackResult(
+            // which is the only claim this route is entitled to make. GITHUB
+            // returned above and never reaches here — ROUND 35 item 186(c).
+            FeedbackRoute.SAVE, FeedbackRoute.GITHUB -> FeedbackResult(
                 sent = downloadsPath != null,
                 route = route,
                 downloadsPath = downloadsPath,
@@ -138,6 +159,20 @@ class FeedbackSender(
         )
         result
     }
+
+    /**
+     * ROUND 35 item 186 — **the GitHub route's entire payload.**
+     *
+     * The log is read here rather than in the ViewModel because this class is
+     * the one that owns [captureLog], and it is read on [Dispatchers.IO]
+     * because `readAll()` is two files off internal storage and the caller is a
+     * tap. Everything after the read is [GitHubIssue]'s, on a bare JVM, where
+     * the budget arithmetic can be held still by a test.
+     */
+    suspend fun diagnosticsIssueUrl(facts: DeviceFacts, message: String = ""): String =
+        withContext(Dispatchers.IO) {
+            GitHubIssue.diagnosticsUrl(facts, captureLog.readAll(), message)
+        }
 
     /**
      * The zip: the live log, its one rotation if there is one, and the device

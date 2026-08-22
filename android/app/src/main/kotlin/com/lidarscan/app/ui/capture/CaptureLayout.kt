@@ -389,9 +389,10 @@ object CaptureLayout {
      * The viewport's guaranteed share, given [viewportEarnsTheScreen].
      *
      * Zero when there is nothing to draw: §D.1 does not shrink the viewport on
-     * the idle page, it *replaces* it — with the LAST SCAN card and three
-     * readiness rows — so the honest number for that state is not a small
-     * fraction, it is none.
+     * the idle page, it *replaces* it — with the READY TO SCAN rows and the one
+     * FAB (round 34 item 180 removed the LAST SCAN card that used to sit above
+     * them) — so the honest number for that state is not a small fraction, it
+     * is none.
      */
     fun minViewportFraction(recording: Boolean, isReplay: Boolean): Float =
         if (viewportEarnsTheScreen(recording, isReplay)) MIN_VIEWPORT_FRACTION else 0f

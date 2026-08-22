@@ -1,6 +1,6 @@
 # Ollidar — Quick Start
 
-App version 0.9.18. This page gets you one COIN-D6 scan on disk. For
+App version 0.9.19. This page gets you one COIN-D6 scan on disk. For
 everything else, see [USER_MANUAL.md](USER_MANUAL.md).
 
 (The app is called Ollidar. The repository, the Android package and the

@@ -1375,32 +1375,18 @@ class CaptureViewModel(
      * summary sheet. A path on screen is the cheapest possible answer to "is it
      * saved?", and it is the thing the owner could not get last time.
      */
-    // ── ROUND 28 item 158: the LAST SCAN card's subject ────────────────────
+    // ── ROUND 34 item 180: the LAST SCAN card's subject, removed ───────────
     //
-    // The idle Scan page's most valuable region was ~940 px of empty dark
-    // rectangle: the 60 % viewport floor reserved for a live view that does not
-    // exist until Start is pressed. §D.1 repurposes it, and what belongs there
-    // is the thing the operator most often wants after opening this tab — the
-    // scan he just took, with its picture, so he can check it or open it.
+    // Round 28 item 158 put the newest sealed scan here so the idle Scan page
+    // could draw it as a thumbnail. The owner's order removes that card, and
+    // the flow goes with it rather than being left loaded on every tab entry
+    // for nobody: a `projectStore.list()` on the IO dispatcher, twice per
+    // visit, feeding a composable that no longer exists is exactly the drift
+    // this file argues against everywhere else.
     //
-    // Loaded from the store rather than tracked in this ViewModel, because "the
-    // most recent scan" outlives any one capture session and must survive a tab
-    // hop; `_lastSavedProject` below is a different fact (what THIS session
-    // sealed) and remains what the seal flow uses.
-    private val _lastScan = MutableStateFlow<com.lidarscan.core.store.Project?>(null)
-    val lastScan: StateFlow<com.lidarscan.core.store.Project?> = _lastScan.asStateFlow()
-
-    fun refreshLastScan() {
-        viewModelScope.launch {
-            val newest = withContext(Dispatchers.IO) {
-                runCatching {
-                    projectStore.list().maxByOrNull { it.manifest.createdAtEpochMillis }
-                }.getOrNull()
-            }
-            _lastScan.value = newest
-        }
-    }
-
+    // `_lastSavedProject` below is a DIFFERENT fact — what THIS session sealed,
+    // which is what the seal flow and item 31's navigate both read — and it
+    // stays.
     private val _lastSavedProject = MutableStateFlow<String?>(null)
     val lastSavedProject: StateFlow<String?> = _lastSavedProject.asStateFlow()
 
@@ -2493,10 +2479,6 @@ class CaptureViewModel(
             logEvent(LOG_TAG_SESSION, "scan tab entered: fresh entry — previous scan's readouts cleared")
             clearPreviousScanArtifacts()
         }
-        // ROUND 28 item 158: the LAST SCAN card is re-read on every entry, not
-        // cached for the ViewModel's life — a scan deleted from Projects must
-        // not keep its picture on the Scan tab.
-        refreshLastScan()
         // A latch with no sequence behind it is exactly the "Start is dead
         // until the app is killed" failure of ROUND 21, arriving by a
         // different road: the sequence's owner was disposed, not released.
@@ -5264,9 +5246,6 @@ class CaptureViewModel(
             // "saved to <path>" — saying so would send the operator to a
             // directory this method deletes three lines from now.
             if (!pruneEmptyScan) _lastSavedProject.value = verified.directory.absolutePath
-            // ROUND 28 item 158: a seal is the one event that always changes
-            // which scan is the last one.
-            refreshLastScan()
             logEvent(
                 LOG_TAG_SEAL,
                 "sealed OK id=$activeId name=\"${verified.manifest.name}\" " +

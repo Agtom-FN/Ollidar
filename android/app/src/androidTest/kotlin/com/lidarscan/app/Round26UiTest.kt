@@ -103,10 +103,10 @@ class Round26UiTest {
                 0,
                 count("captureViewport"),
             )
-            // What the space became — the LAST SCAN card — is not asserted
-            // here: it is present only on a phone that HAS a scan, and this
-            // suite runs against whatever the AVD happens to hold. §D.1's own
-            // rule is that the card collapses when there is nothing to show.
+            // What the space became was, for six rounds, the LAST SCAN card.
+            // ROUND 34 item 180 removes it: nothing takes the space, the flex
+            // region absorbs it, and `Round34ScanPageTest` is where that is
+            // asserted.
         }
     }
 

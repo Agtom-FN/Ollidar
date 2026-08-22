@@ -912,7 +912,14 @@ fun SettingsScreen(
 }
 
 /** ROUND 17 item 66: Android's own number, for Android's own reason. */
-private const val DEVELOPER_UNLOCK_TAPS = 7
+/**
+ * ROUND 17 item 66's seven taps.
+ *
+ * `internal` since round 34: `Round34UiTest` drives this unlock to trigger the
+ * easter egg, and a test that counted to seven on its own would keep passing
+ * after somebody changed this number.
+ */
+internal const val DEVELOPER_UNLOCK_TAPS = 7
 
 /**
  * The one sheet that can be open, or none.
