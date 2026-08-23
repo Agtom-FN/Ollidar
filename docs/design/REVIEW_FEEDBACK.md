@@ -7462,6 +7462,15 @@ goes near it.
 
 ### 188 — animation B is the reference video's two sections
 
+> **SUPERSEDED by item 189 (round 37).** The owner replaced the brief
+> rather than correcting it: the spit egg is gone and a unicorn
+> transformation stands where it was. Everything choreographic below —
+> the lean, the cut, the jaw grind, the covered lens — was **deleted**,
+> code and tests, in round 37; it shipped nowhere. What survives is the
+> egg's gate, the tap-skip, the reduced-motion refusal and the three
+> seconds. Round 36's resolution is kept below as the record of what was
+> built and why it came out.
+
 > **OWNER (2026-08-23):** *"turn the 2 sections of spit into animation style
 > directly and use it."*
 
@@ -7674,3 +7683,267 @@ the version footer over the live Settings page — and `animB4-strip.png`, its
 6 fps frame strip across the whole three seconds. Animation A's round-35
 recordings (`uishots9/animA3.mp4`, `animA3-light.mp4` and their strips) stand:
 nothing in this round touches it.
+
+## ROUND 37 (v0.9.20) — the egg becomes a unicorn
+
+Round 36 is **staged and not shipped**. The owner watched `uishots10/animB4.mp4`
+and replaced the brief rather than corrected it: the spit is out, and what
+takes its place is a transformation. He drew it first — the storyboard
+`ollidar-unicorn-egg.html` (v2) was approved on 2026-08-23 and **its CSS
+`@keyframes` blocks and captions are the specification**, the same standing
+round 32's storyboard had.
+
+This is a **new version**: VERSION **0.9.20 / 920**, `dist/Ollidar-0.9.20-920.apk`.
+**Animation A is untouched** — approved in round 35, and nothing here goes near
+it.
+
+### 188 — SUPERSEDED by item 189
+
+Round 36's reference-video translation — the lean, the cut, the jaw grind, the
+covered lens — is **removed entire**, code and tests. It shipped nowhere; the
+owner replaced the brief before the build left the bench. What survives it is
+structural and not choreographic: the egg's gate (`eggFor`, one direction), the
+tap-skip, the reduced-motion refusal, the 3.0 s duration and the
+welcome-toggle independence.
+
+### 189 — the unicorn egg
+
+> **OWNER (2026-08-23):** the approved storyboard, `ollidar-unicorn-egg.html`
+> v2 — *"rainbow ribbons circle the llama in quick revolutions, THE LIDAR
+> ITSELF grows into the horn, then the transformation completes and the unicorn
+> gallops off-screen. 3.0 seconds."*
+
+Built from the **real icon sprites** (`anim-assets`, as animation A uses), not
+from the storyboard's stand-in drawing. The 3.0 s, beat by beat:
+
+ * **0 ‥ 1.3 s — THE RIBBONS.** Two rainbow ribbons orbit the standing llama in
+   quick revolutions — **two full orbits each**, phase-offset. A ribbon is a
+   rainbow gradient band with a soft glow on an **elliptical** orbit that
+   passes **in front of and behind** the animal, so the layer order **swaps at
+   the orbit's front and back crossings**. The storyboard's flat version could
+   not show that and the build must do it. The llama watches; a subtle eye or
+   head follow is a plus if it is cheap.
+ * **1.3 ‥ 1.6 s — THE TRANSFORMATION.** A white radial flash and three
+   four-point sparkles. **The lidar puck sprite stretches into the spiral
+   horn** — a morph anchored at the puck's seat, the puck growing in y from its
+   own base with its silhouette blending into the horn's, the horn
+   rainbow-gradient with an ink outline and three spiral grooves, per the
+   storyboard. The **fleece floods rainbow** — a gradient overlay masked to the
+   sprite's opaque fleece, which the round-35 filled body layer is what makes
+   possible — and a **rainbow mane** appears along the neck edge.
+ * **1.6 ‥ 2.0 s — THE REAR-UP.** A rotation about the base, the front lifted
+   **6–10°**.
+ * **2.0 ‥ 3.0 s — THE GALLOP.** Off the **right** edge: a horizontal translate
+   with **2–3 gallop bounce cycles** (a translateY oscillation and a slight
+   rotation), a **rainbow trail band** stretching behind and fading, and **one
+   dust puff at the launch point**. The stage is **empty for about 0.2 s**, and
+   then the overlay is dismissed.
+
+**The gates are unchanged from the spit egg**: it fires **once**, on the
+developer-mode **ENABLE** via the seven-tap version footer; **tap anywhere
+skips**; **reduced motion plays nothing**; it plays **over the current screen**;
+it is **independent of the welcome toggle**. Total **3.0 s**, no hold.
+
+**The spit is deleted**, not disabled: item 188's choreography and drawing code
+come out, and the front-facing pose goes with it if nothing else uses it. The
+side-profile sprites and animation A are untouched. The `:core` waypoint tests
+are **rewritten for the unicorn** — ribbon orbit count, the horn-growth window,
+the gallop exit actually reaching off-screen, and the total duration.
+
+Re-recorded as `uishots11/unicorn.mp4` with a 6 fps strip and four keyframes
+(ribbons, horn-growth, rear, gallop-exit). The manual's developer-section
+one-liner is updated and stays **vague** — it is an easter egg.
+
+### Resolution — 2026-08-23 (0.9.20, round 37)
+
+**189 — the storyboard, on the real animal.**
+
+The owner did not correct round 36; he replaced it, and he drew the replacement
+first. So this round is the same job round 32 was — *transcribe the CSS* — with
+one difference that is the whole of the work: the storyboard's stage is a
+340 × 420 box containing a stand-in llama drawn in six paths, and the film has
+to be the same film on the **cut icon sprites**, on a phone, in a coordinate
+system where the puck's seat is at `(574, 374)` and the animal's base is at
+`(430, 960)`.
+
+**The mapping is written into the file that carries it** (`WelcomeTimeline.kt:400`,
+as a table) rather than left here:
+
+| storyboard | as built | file |
+|---|---|---|
+| `.orbit` — `orbitspin 0.65s linear 2` | 0.00 ‥ 1.30 s — two orbits each, phase-offset | `ribbonAt` `:592`, `B_RIBBONS` `:531` |
+| `.flash` 44 → 49 → 56 % | 1.32 ‥ 1.65 s | `bFlash`, `drawTransformFlash` `WelcomeOverlay.kt:956` |
+| `.spark` ×3, 46 → 52 → 62 % | three, staggered, turning | `B_SPARKLES` `:800`, `drawSparkle` `:989` |
+| `.puck` `puckgone` + `.hornwrap` `horngrow` | 1.30 ‥ 1.60 s — one morph on one anchor | `bPuckStretch` `:712`, `bHornGrow` `:743`, `drawHornMorph` `:842` |
+| `bodycolor` `steps(1)` at 53 % | 1.37 ‥ 1.60 s — a front, not a swap | `bFleeceFlood` `:766`, `drawFloodedBody` `:705` |
+| `.mane` 54 → 60 % | 1.41 ‥ 1.60 s, on the silhouette's own back edge | `bManeAlpha` `:779`, `maneArt` `:764` |
+| `act` 60 → 66 → 72 % | 1.60 crouch, 1.80 rear (−9°), 2.00 down | `bBodyRotDeg` `:877`, `B_REAR_DEG` `:854` |
+| `act` 72 → 100 % | 2.00 ‥ 2.85 s, three bounces, and gone | `bGallopX` `:915`, `gallopBob` `:956` |
+| `.trail`, `.dust` | the wake and the push-off | `drawGallopTrail` `:1022`, `drawDustPuff` `:1082` |
+
+**The ribbons are the item's one structural demand.** *"Layer order must swap at
+the orbit's front/back crossings, which the storyboard's flat version could not
+show but the build must do."* CSS has one `rotate()` and no depth, so its ribbon
+is a bar always drawn on top; the caption is an admission.
+
+A ribbon here is therefore **not a bar**. It is an **arc of its own ellipse** —
+twenty-eight samples along the orbit, each carrying its own `depth` — and
+`drawRibbonRun` (`WelcomeOverlay.kt:637`) is called **twice**, once for the
+samples behind the animal and once for the ones in front, with the animal drawn
+between. **Nothing times the swap and no state records which side a ribbon is
+on**: `depth` is `sin` of the orbit angle, the sort is the swap, and it happens
+twice a revolution for free. A band crossing the ellipse's end therefore hands
+itself over *sample by sample*, which is what going behind something looks like,
+and the test asserts exactly that — `everSplit`, a frame on which the same
+ribbon has samples on both sides at once.
+
+Two details in it are worth the sentence each:
+
+ * **the joint, not the sample, decides the side.** Splitting on the sample
+   leaves a one-stroke gap at every crossing, because the stroke *between* two
+   samples on opposite sides belongs to neither run. It is drawn by the run its
+   midpoint is on;
+ * **the crossing count is computed, not assumed.** Ribbon 0's phase is zero,
+   which is itself a crossing, so it shows **three** sign changes inside the
+   window where ribbon 1 shows four. The first version of the test asserted
+   four for both and was wrong about the film rather than the other way round;
+   it now derives the expected count from each ribbon's own phase and asserts a
+   floor of two per orbit underneath it.
+
+**The morph is one anchor.** `SEAT` (`:867`) is the middle of the puck's contact
+line — not `EMIT` and not the sprite's centre — and both shapes are scaled about
+it: the puck grows to 2.45× in y and narrows to 0.42 in x as it fades
+(`bPuckStretch`, `bPuckNarrow`), so the silhouette it hands over is already
+horn-shaped, and the horn grows out of the same point from a sixth of its height
+with the storyboard's own `cubic-bezier(.3,1.4,.5,1)` overshoot. A horn that
+arrives at its length and stops has been *placed*; one that goes past and comes
+back has **grown**, and that is why `bHornGrow` is a track and not a ramp. The
+grooves are generated **off the taper** rather than placed, so they are still on
+the horn at 0.15 and at 1.12.
+
+**The flood needed the round-35 fill and one specific blend.** The item says
+*"tint the body sprite via a gradient overlay masked to the sprite's opaque
+fleece — the round-35 filled body layer makes this possible"*, and it is right
+that it made it possible: until round 34 baked an opaque fleece into the cut
+layer, the sprite was an **outline with a transparent interior** and there was
+nothing to tint. The mask is `BlendMode.Modulate` inside a `saveLayer`
+(`drawFloodedBody`, `:705`), and the three candidates are worth recording because
+two of them are what a reader would reach for first:
+
+ * `SrcIn` / `SrcAtop` replace the sprite's colour **ink and all**, and this
+   icon's language is one continuous dark outline;
+ * plain `Multiply` keeps the ink — dark × anything is dark — but Porter-Duff
+   coverage lets the source through where the destination is empty, so a
+   full-canvas rainbow fills the layer;
+ * **`Modulate` is multiply including alpha** (`a = sa × da`): multiply where
+   the sprite is, nothing where it is not.
+
+And the flood has a **front**, because the owner's word is *floods*: each stop is
+lerped **from white**, which under a multiply is a no-op, so at `flood = 0` the
+whole pass is arithmetic that changes nothing and there is no second code path
+for the un-flooded llama to drift out of step with.
+
+**Four deviations from the CSS, all of them the caption overruling the
+keyframes**, and each is marked in the file at the constant it affects:
+
+ 1. `.actor` only reaches `translateX(430px)` at 100 %, so the storyboard's stage
+    is still emptying on its last frame; the note says *"empty stage ~0.2 s"*.
+ 2. `.orbit.o2`'s `animation-delay: 0.18s` would leave the second ribbon still
+    going round at 1.48 s, with the flash already up; the note puts both inside
+    the first 1.3 s, so the delay is spent as a **phase** (0.277 of a turn — the
+    same 0.18 s, expressed where it does not run over).
+ 3. `puckgone` is `steps(1)`: an instant swap, which is what CSS can do with two
+    `<svg>`s and no morph target. The caption says *stretches*.
+ 4. `.mane` runs 54 → 60 %, which is *after* the window its own caption puts the
+    transformation in; it arrives with the horn instead.
+
+**Three things the first recording said were wrong**, and it said them in a way
+no test could have:
+
+ * **the flash bleached the reveal.** 0.92 alpha over 0.72 of the diagonal gave
+   three tenths of a second of a near-white screen — with the flood and the mane,
+   the two things the flash exists to hide the arrival of, happening behind a
+   sheet where they could neither be seen to arrive nor be a surprise. 0.66 over
+   0.62 keeps the llama a shape all the way through and the rainbow is still a
+   reveal on the frame after;
+ * **the mane was a strap.** Its first spine started at `(474, 236)`, up on the
+   crown, and cut down across the ear and the face: a rainbow bandolier. It is
+   now traced off the sprite's **alpha at eight rows** — x is 258 at y = 420, 214
+   at 616 — so it hugs the back edge the fleece actually has, with six scallops
+   welded on that sit deliberately **proud** of the silhouette, because hair
+   hangs past the animal it grows on;
+ * **the gallop hesitated and then jump-cut.** At `cubic-bezier(.36,0,.78,1)` the
+   animal's centroid moved 82 px in the first third of a second of the run and
+   320 in the last tenth. Measured off the recording rather than argued:
+   `(.25,.05,.55,1)` puts half the travel in the first half of the run, so the
+   bounce cycles happen while the animal is still on screen — which is the only
+   reason to have them. Centroid, on the shipped recording: 496 → 711 → 872 → off.
+
+**The exit is a fraction, and 1 is measured off the device.** `gallopX` is 0‥1
+exactly as animation A's ring scale is, for exactly the same reason — the
+storyboard's `translateX(430px)` is true of a 340 px stage and of nothing else —
+and `exitTravelMasterUnits` (`:926`) turns it into master units from the screen's
+own width and the art box's left edge. It is **pure and in `:core`** so that
+*"gallops off the RIGHT edge"* can be checked on screens nobody has built: the
+test walks five, from a 4:3 tablet to 21:9, and asserts the trailing edge is past
+the right edge and not absurdly past it.
+
+**The beat has two numbers and they differ honestly.** `B_EXIT` is when the
+*travel* completes and the travel is measured to the master canvas's own left
+edge — a definition that cannot come out wrong if the sprite is ever re-cut. The
+leftmost *drawn* pixel is about seventy units in from there, so the screen is
+bare from about 2.74 s: 0.15 s by the constant, about a quarter of a second to
+the eye. The first cut had `B_EXIT` at 0.93 and photographed with more than a
+third of a second of nothing at the end.
+
+**What was deleted.** All of round 36's B, code and tests: `B_FRAME`, `B_TAKE`,
+`B_CUT`, `B_TURN`, `B_FRONT`, `B_HIT`, `B_COVERED`, `B_GRIN`, `bLean`, `bBlink`,
+`bSideAlpha`, `bFrontAlpha`, `bTurnScaleX`, `bJawGrind`, `bEarPin`,
+`bEyeNarrow`, `bHeadRise`, `bHeadTilt`, `bHeadLunge`, `bMouthOpen`,
+`bGrinAlpha`, `SprayShot`, `B_SPRAY`, `sprayAt`, `SprayDrop`, `burst`,
+`approach`, `LensBlob`, `B_LENS`, `lensAt`, `LensSplat`, `lensGapClearance`,
+`SPLAT_LOBES`, `SPLAT_BLOBS`, `splatLobe`, `splatAngle`, `splatBlob`,
+`SPLAT_SQUASH`, `B_WASH_ALPHA`, `B_PATCH_ALPHA`, `B_PATCH_RADIUS`,
+`B_LENS_ALPHA`, `B_LENS_INK`, `B_LENS_INK_MIN_RADIUS`, `B_DRIP_DENSITY`,
+`B_LENS_COVERAGE`, `B_MOUTH_Y_MIN/MAX`, `B_SPRAY_TRAVEL`, `B_SPRAY_SPREAD`,
+`B_DROP_RADIUS`, `B_MIST_ALPHA`, and the `SPIT` easing that had been dead since
+round 35.
+
+In the composable: `drawLlamaSpit`, `drawLensCover`, `drawFrontLlama`,
+`drawFrontFace`, `teardropPath`, `splatPath`, `MIST_PUFF`, `SPLAT_SATELLITES`,
+the colours `Water`, `Mist` and `Murk`, `OUTLINE_FINE`, `EMIT_IN_PUCK`, and
+`drawEye`'s `blink` parameter.
+
+**And the front pose with it**, which the item asked to be checked rather than
+assumed: `FrontPose`, `FrontPoseArt`, `frontPoseArt`, `frontHeadPath`,
+`frontFacePatchPath`, `FRONT_SCALLOPS`, `earPath`, `innerEarPath`, `EarFrame`,
+`EAR_PIN_DEG`, `INNER_EAR_WEIGHT`, `JAW_PIVOT`, `JAW_SHIFT`, `JAW_ROLL_DEG`.
+Nothing else referenced it — it existed for animation B alone, and B does not
+turn to face you any more. `kotlin.math.PI`, `cos` and `sin` came out of the
+composable's imports with it. **Both films are now the side sprites and
+nothing else.**
+
+**One rename.** `Variant.LLAMA_SPIT` → `Variant.UNICORN`
+(`WelcomeAnimation.kt:114`). Nothing spits, and an enum that still said so is the
+last place a reader would look for the reason they expected a droplet. The
+**description the overlay publishes is unchanged** — `"Welcome animation,
+developer"` — because that string is what the connected suite polls for and what
+a screen reader announces, and it deliberately does not name the joke.
+
+**Unchanged, deliberately.** `eggFor` and its one direction, the tap-to-skip, the
+reduced-motion refusal, `totalMsFor` (the egg does not hold — item 187(e)), the
+welcome-toggle independence, and **animation A in every particular**.
+
+**Numbers.** Engine **untouched**; ABI stays **12**; `ctest` **8/8**. `:core`
+unit **1170 / 0** (was 1169: round 36's eleven B tests are replaced by twelve).
+`:app` unit **279 / 0**, unchanged. Emulator **81 tests, 0 failures, 3
+assumed-skipped** on `b4_test`, unchanged. VERSION **0.9.20**; versionCode
+**920** / versionName **0.9.20** / `application-label:'Ollidar'` verified by
+`aapt2 dump badging` on `dist/Ollidar-0.9.20-920.apk`.
+
+**The deliverables.** `uishots11/unicorn.mp4` — the egg, triggered from the
+version footer over the live Settings page — `unicorn-strip.png`, its 6 fps frame
+strip across the whole three seconds, and the four keyframes the item asks for:
+`key1-ribbons.png`, `key2-horn-growth.png`, `key3-rear.png` and
+`key4-gallop-exit.png`. Animation A's round-35 recordings stand; nothing in this
+round touches it.

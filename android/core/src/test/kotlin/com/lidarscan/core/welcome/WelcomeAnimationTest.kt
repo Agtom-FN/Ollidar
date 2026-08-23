@@ -80,7 +80,7 @@ class WelcomeAnimationTest {
     @Test
     fun `switching developer mode on plays B`() {
         assertEquals(
-            WelcomeAnimation.Variant.LLAMA_SPIT,
+            WelcomeAnimation.Variant.UNICORN,
             WelcomeAnimation.eggFor(WelcomeAnimation.DeveloperToggle(from = false, to = true)),
         )
     }
@@ -133,7 +133,7 @@ class WelcomeAnimationTest {
     fun `the welcome toggle does not govern the egg`() {
         assertNull(WelcomeAnimation.variantFor(WelcomeAnimation.Launch(enabled = false)))
         assertEquals(
-            WelcomeAnimation.Variant.LLAMA_SPIT,
+            WelcomeAnimation.Variant.UNICORN,
             WelcomeAnimation.eggFor(WelcomeAnimation.DeveloperToggle(from = false, to = true)),
         )
     }
@@ -150,9 +150,9 @@ class WelcomeAnimationTest {
         val first = WelcomeAnimation.eggFor(WelcomeAnimation.DeveloperToggle(from = false, to = true))
         val relock = WelcomeAnimation.eggFor(WelcomeAnimation.DeveloperToggle(from = true, to = false))
         val second = WelcomeAnimation.eggFor(WelcomeAnimation.DeveloperToggle(from = false, to = true))
-        assertEquals(WelcomeAnimation.Variant.LLAMA_SPIT, first)
+        assertEquals(WelcomeAnimation.Variant.UNICORN, first)
         assertNull(relock)
-        assertEquals(WelcomeAnimation.Variant.LLAMA_SPIT, second)
+        assertEquals(WelcomeAnimation.Variant.UNICORN, second)
     }
 
     /** Owner-approved at exactly three seconds, for both films. */
@@ -174,7 +174,7 @@ class WelcomeAnimationTest {
     fun `the launch film holds a second before the app, and the egg does not`() {
         assertEquals(1_000, WelcomeAnimation.HOLD_MS)
         assertEquals(4_000, WelcomeAnimation.totalMsFor(WelcomeAnimation.Variant.LIDAR_FLIP))
-        assertEquals(3_000, WelcomeAnimation.totalMsFor(WelcomeAnimation.Variant.LLAMA_SPIT))
+        assertEquals(3_000, WelcomeAnimation.totalMsFor(WelcomeAnimation.Variant.UNICORN))
     }
 
     /**
@@ -194,7 +194,7 @@ class WelcomeAnimationTest {
             assertEquals("held at $p", 1f, WelcomeAnimation.filmProgress(a, p), 1e-4f)
         }
         // The egg has no hold, so its two clocks are the same clock.
-        val b = WelcomeAnimation.Variant.LLAMA_SPIT
+        val b = WelcomeAnimation.Variant.UNICORN
         assertEquals(0.6f, WelcomeAnimation.filmProgress(b, 0.6f), 1e-4f)
     }
 

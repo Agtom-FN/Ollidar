@@ -153,20 +153,24 @@ class Round32WelcomeTest {
     }
 
     /**
-     * B draws — the crossfade, the constructed front pose with its unioned
-     * crown, the droplet and the splat — on a real GPU, and skips the same way.
+     * B draws — **ROUND 37 item 189**: the orbiting ribbons with their depth
+     * sort, the puck-to-horn morph, the `Modulate` flood over the fleece and
+     * the mane's welded path — on a real GPU, and skips the same way.
      *
-     * The clock is walked through every act rather than jumped to the end,
-     * because each act composes different geometry and "it drew the last frame"
-     * would not have exercised the `Path.op` union or the droplet transform.
+     * The clock is walked through every beat rather than jumped to the end,
+     * because each beat composes different geometry: an emulator that can draw
+     * the last frame of this film has not necessarily drawn a `saveLayer` with
+     * a blend mode in it, and that is the one thing in here that a software
+     * renderer has ever been observed to disagree about.
      */
     @Test
     fun theDeveloperFilmDrawsAndSkipsToo() {
         var finished = 0
         composeRule.mainClock.autoAdvance = false
-        stage(WelcomeAnimation.Variant.LLAMA_SPIT) { finished++ }
+        stage(WelcomeAnimation.Variant.UNICORN) { finished++ }
 
-        // Twinkle, turn, puff — stopping short of the end so the skip is real.
+        // Ribbons, the morph, the rear — stopping short of the gallop's end so
+        // the skip is real.
         for (ms in listOf(200L, 500L, 500L, 400L)) {
             composeRule.mainClock.advanceTimeBy(ms)
             composeRule.waitForIdle()

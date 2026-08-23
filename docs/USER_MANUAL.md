@@ -1,6 +1,6 @@
 # Ollidar — User Manual
 
-App version 0.9.19 (Android). Written for the owner and for field testers.
+App version 0.9.20 (Android). Written for the owner and for field testers.
 If you only want a first scan, read [QUICK_START.md](QUICK_START.md) instead.
 
 The app is called **Ollidar** as of 0.9.11. The repository, the Android
@@ -772,12 +772,13 @@ developer-only items moved behind the seven-tap unlock.
 
 **The version footer**
 
-At the very bottom: `Ollidar v0.9.19 (build 919)`. **Tap it seven times**
+At the very bottom: `Ollidar v0.9.20 (build 920)`. **Tap it seven times**
 to unlock a **Developer** section, and seven more to lock it away again. The
 counter resets when you re-lock, so a single stray tap afterwards does not
 re-open it.
 
-Turning it **on** is worth doing once with the sound of the room turned up.
+Turning it **on** is worth watching. Turning it **off** is not — the
+seven taps that lock it away are silent, and always have been.
 
 Developer holds: the per-capture debug log switch, the capture-log card (path,
 size, last line, Export log, Clear), the D6 sensor-latency slider, the

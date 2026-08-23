@@ -69,7 +69,7 @@ object WelcomeAnimation {
      */
     fun totalMsFor(variant: Variant): Int = when (variant) {
         Variant.LIDAR_FLIP -> DURATION_MS + HOLD_MS
-        Variant.LLAMA_SPIT -> DURATION_MS
+        Variant.UNICORN -> DURATION_MS
     }
 
     /**
@@ -94,14 +94,24 @@ object WelcomeAnimation {
         LIDAR_FLIP,
 
         /**
-         * B — the easter egg. The llama turns to face you and spits at the
-         * glass, once, at the moment developer mode is toggled.
+         * B — the easter egg. **ROUND 37 item 189**: two rainbow ribbons orbit
+         * the llama, the lidar on its head grows into a horn, and the unicorn
+         * gallops off the right-hand edge — once, at the moment developer mode
+         * is switched on.
+         *
+         * It was `LLAMA_SPIT` through rounds 32–36 and the name is retired with
+         * the film: nothing spits any more, and an enum that still said so
+         * would be the last place anybody looked for the reason a reader
+         * expected a droplet. The **description** the overlay publishes is
+         * unchanged (`"Welcome animation, developer"`) — that string is what
+         * the connected suite and a screen reader see, and it deliberately does
+         * not name the joke.
          *
          * ROUND 34 item 181: it used to replace [LIDAR_FLIP] on every cold
          * launch while developer mode was on. It is never a launch film now —
          * see [eggFor].
          */
-        LLAMA_SPIT,
+        UNICORN,
     }
 
     /**
@@ -188,6 +198,6 @@ object WelcomeAnimation {
         toggle.from -> null
         !toggle.to -> null
         toggle.reducedMotion -> null
-        else -> Variant.LLAMA_SPIT
+        else -> Variant.UNICORN
     }
 }

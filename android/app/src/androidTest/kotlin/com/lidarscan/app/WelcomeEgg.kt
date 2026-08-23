@@ -115,7 +115,7 @@ fun awaitDescribed(description: String, timeoutMillis: Long = 8_000): Boolean {
 /**
  * The on-screen rectangle of the first node whose text contains [substring],
  * or null. The Settings rows merge their semantics, so the version footer
- * arrives here as one node reading `Version 0.9.19 (919)`.
+ * arrives here as one node reading `Version 0.9.20 (920)`.
  */
 fun nodeBoundsContaining(substring: String): android.graphics.Rect? {
     var hit: android.graphics.Rect? = null

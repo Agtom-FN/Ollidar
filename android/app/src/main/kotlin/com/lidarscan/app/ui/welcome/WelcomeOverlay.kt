@@ -43,10 +43,7 @@ import com.lidarscan.app.ui.theme.ScanColors
 import com.lidarscan.core.welcome.WelcomeAnimation
 import com.lidarscan.core.welcome.WelcomeTimeline
 import com.lidarscan.core.welcome.WelcomeTimeline.Art
-import kotlin.math.PI
-import kotlin.math.cos
 import kotlin.math.hypot
-import kotlin.math.sin
 
 /**
  * ROUND 32 item 177 — **the welcome animation, drawn.**
@@ -69,14 +66,15 @@ import kotlin.math.sin
  * reach the **screen's** corner rather than the art box's — see
  * [ringReachInMasterUnits].
  *
- * ## Why the front pose is drawn and not a bitmap
+ * ## ROUND 37 item 189 — what is drawn and what is a sprite
  *
- * A front-facing llama does not exist in the master art and could not be cut
- * from it. It is therefore the one drawn element in this round, built from the
- * same fleece, the same ink and the same outline weight, exactly as the
- * approved storyboard's front face was — and built as a single **unioned**
- * silhouette (head ∪ nine crown scallops ∪ two ears) so it carries one
- * continuous outline instead of a pile of overlapping circles.
+ * Both films are now **the side sprites and nothing else**. Round 32's
+ * front-facing pose — a drawn silhouette of head, crown scallops and two ears —
+ * existed for animation B alone, and B does not turn to face you any more; it
+ * was deleted with the choreography that needed it. What this file draws by
+ * hand is what the master art has no sprite for and never will: the horn, the
+ * mane, the ribbons, the sparkles and the dust, all in the icon's own ink
+ * weight and all rooted on anchors measured off the sprites they sit on.
  */
 
 // ── the art's own palette ──────────────────────────────────────────────────
@@ -95,38 +93,8 @@ private val Ink = Color(0xFF211C18)
 /** Agtom orange — the same value as `ScanColors.primary`, stated here because the art is. */
 private val Flame = Color(0xFFF26A1B)
 
-/** The storyboard's water-blue droplet. */
-private val Water = Color(0xFF7FD4E8)
-
-/**
- * ROUND 35 item 185(b) — the mist's own colour: [Water] lifted most of the way
- * to white.
- *
- * Not [Water] at a low alpha. Mist is drawn over this app's page, which is
- * nearly black on the dark theme, and a translucent mid-blue over black is a
- * dark blue — the first two cuts photographed as grey smudges hanging beside
- * the llama's chin, which is the opposite of "airy". A pale tint at the same
- * alpha composites UP off the page and reads as spray in the air.
- */
-private val Mist = Color(0xFFCDEAF4)
-
-/**
- * ROUND 36 item 188 — **the covered lens.** A murky pale blue-green.
- *
- * Not [Water] and not [Mist]. What is on the reference's lens for its last
- * second and a bit is not water and is not clean: it is a translucent
- * green-grey film with the hillside behind it, and the two things that make it
- * read are that it is DESATURATED and that it is LIGHTER than everything it
- * covers. A cyan at this coverage would have been a colour wash on the film;
- * this is a substance on the glass.
- */
-private val Murk = Color(0xFFA9CEC2)
-
 /** The icon's outline weight, measured off the master art (median run 19, mean 23). */
 private const val OUTLINE = 21f
-
-/** The lighter weight the ears and facial strokes carry. */
-private const val OUTLINE_FINE = 18f
 
 /**
  * The dead lidar: desaturated to luminance, halved, and pushed slightly blue.
@@ -264,9 +232,12 @@ fun WelcomeOverlay(
     }
 
     val page = ScanColors.page
+    // The egg's description is what the connected suite watches for and what a
+    // screen reader announces; it says "developer" and not "unicorn", because
+    // naming the joke in the accessibility tree gives it away.
     val description = when (variant) {
         WelcomeAnimation.Variant.LIDAR_FLIP -> "Welcome animation"
-        WelcomeAnimation.Variant.LLAMA_SPIT -> "Welcome animation, developer"
+        WelcomeAnimation.Variant.UNICORN -> "Welcome animation, developer"
     }
 
     Box(
@@ -294,7 +265,9 @@ fun WelcomeOverlay(
         val puck = ImageBitmap.imageResource(R.drawable.welcome_lidar_puck)
         val fan = ImageBitmap.imageResource(R.drawable.welcome_fan_dots)
         val eye = ImageBitmap.imageResource(R.drawable.welcome_llama_eye)
-        val front = remember { frontPoseArt() }
+        // The mane is the same shape every frame it is on screen, and building
+        // it is four `Path.op` unions.
+        val mane = remember { maneArt() }
 
         Canvas(Modifier.fillMaxSize()) {
             val film = WelcomeAnimation.filmProgress(variant, progress.value)
@@ -302,8 +275,8 @@ fun WelcomeOverlay(
                 WelcomeAnimation.Variant.LIDAR_FLIP ->
                     drawLidarFlip(WelcomeTimeline.frameA(film), page, body, puck, fan, eye)
 
-                WelcomeAnimation.Variant.LLAMA_SPIT ->
-                    drawLlamaSpit(WelcomeTimeline.frameB(film), page, body, puck, eye, front)
+                WelcomeAnimation.Variant.UNICORN ->
+                    drawUnicornEgg(WelcomeTimeline.frameB(film), page, body, eye, puck, mane)
             }
         }
     }
@@ -350,47 +323,31 @@ private fun DrawScope.drawBody(body: ImageBitmap, bob: Float, alpha: Float = 1f)
 /**
  * The eye, at its anchor, carried by the body's [bob] and its own [look].
  *
- * ROUND 36 item 188 — and shut by [blink], which defaults to open so that
- * animation A, which has no blink in it, is the film it always was.
+ * ROUND 37 item 189 — and by [lookX] / [lookY], which is the whole of *"llama
+ * watches (subtle eye/head follow is a plus if cheap)"*. It is cheap because
+ * the eye has been a separate sprite since round 32: the cost of an animal
+ * tracking something round its own head is one translate.
  *
- * A blink is a **squash and a lid**, not a swap to a second drawing: the sprite
- * is scaled toward a line about its own centre, and past halfway an ink stroke
- * of the icon's own weight is laid across it. The sprite alone would have been
- * a black eye becoming a black slit, which at this size is a llama looking down
- * rather than a llama blinking.
+ * Round 36's blink parameter is **gone** with the film that used it. Animation
+ * A never passed either, and passes neither now.
  */
 private fun DrawScope.drawEye(
     eye: ImageBitmap,
     bob: Float,
     look: Float,
     alpha: Float = 1f,
-    blink: Float = 0f,
+    lookX: Float = 0f,
+    lookY: Float = 0f,
 ) {
-    withTransform({ translate(0f, bob + look) }) {
-        val open = 1f - 0.94f * blink.coerceIn(0f, 1f)
-        val centre = Offset(Art.EYE_CENTER_X, Art.EYE_CENTER_Y)
-        withTransform({ scale(1f, open, pivot = centre) }) {
-            drawLayer(
-                eye,
-                Art.EYE_CENTER_X - Art.EYE_SPRITE_WIDTH / 2f,
-                Art.EYE_CENTER_Y - Art.EYE_SPRITE_HEIGHT / 2f,
-                Art.EYE_SPRITE_WIDTH,
-                Art.EYE_SPRITE_HEIGHT,
-                alpha,
-            )
-        }
-        if (blink > 0.45f) {
-            val lid = ((blink - 0.45f) / 0.55f).coerceIn(0f, 1f)
-            val half = Art.EYE_RADIUS * (1.05f + 0.25f * lid)
-            drawLine(
-                color = Ink,
-                start = Offset(centre.x - half, centre.y),
-                end = Offset(centre.x + half, centre.y),
-                strokeWidth = OUTLINE,
-                cap = StrokeCap.Round,
-                alpha = (alpha * lid).coerceIn(0f, 1f),
-            )
-        }
+    withTransform({ translate(lookX, bob + look + lookY) }) {
+        drawLayer(
+            eye,
+            Art.EYE_CENTER_X - Art.EYE_SPRITE_WIDTH / 2f,
+            Art.EYE_CENTER_Y - Art.EYE_SPRITE_HEIGHT / 2f,
+            Art.EYE_SPRITE_WIDTH,
+            Art.EYE_SPRITE_HEIGHT,
+            alpha,
+        )
     }
 }
 
@@ -419,9 +376,6 @@ private fun DrawScope.drawLed(at: Offset, alpha: Float) {
  * on the puck's centre or its foot now pivots on it.
  */
 private val EMIT = Offset(Art.EMIT_X, Art.EMIT_Y)
-
-/** The emitter's offset inside the puck sprite, for wherever else the puck is worn. */
-private val EMIT_IN_PUCK = Offset(Art.EMIT_X - Art.PUCK_LEFT, Art.EMIT_Y - Art.PUCK_TOP)
 
 // ══ ANIMATION A ═══════════════════════════════════════════════════════════
 
@@ -513,816 +467,651 @@ private fun DrawScope.drawLidarFlip(
     }
 }
 
-// ══ ANIMATION B ═══════════════════════════════════════════════════════════
+
+// ══ ANIMATION B — THE UNICORN EGG ═════════════════════════════════════════
 
 /**
- * ROUND 32 item 177 → ROUND 34 item 183 → ROUND 35 item 185 → **ROUND 36 item
- * 188: the reference video, drawn.**
+ * ROUND 32 item 177 → ROUND 34 item 183 → ROUND 35 item 185 → ROUND 36 item
+ * 188 → **ROUND 37 item 189: the unicorn, drawn.**
  *
- * The owner handed over the short his note had been about and asked for its
- * *"2 sections of spit"* turned into this art style directly, so round 35's
- * choreography is gone entire. What is here is the reference's own structure:
+ * The owner replaced the brief rather than correcting it, and approved a
+ * storyboard for the replacement (`ollidar-unicorn-egg.html` v2). Round 36's
+ * film — the lean, the cut, the jaw grind, the covered lens — is **gone**, and
+ * with it the whole front-facing pose it was the only user of. What is here is
+ * the storyboard's four beats, on the **side sprites**, which is the second
+ * thing the item asks for by name: *built from the REAL icon sprites, as the
+ * welcome film uses.*
  *
- *  * **the expectation** — the side llama leans in and blinks
- *    ([WelcomeTimeline.FrameB.lean], [WelcomeTimeline.FrameB.blink]);
- *  * **the cut** — the pinch to the front pose;
- *  * **the reality** — the jaw grinds side to side under a lidded stare
- *    ([WelcomeTimeline.FrameB.jawGrind], [WelcomeTimeline.FrameB.eyeNarrow]);
- *  * **the lens** — one frame of cone, and then the screen is gone
- *    ([drawLensCover]).
+ *  * **the ribbons** — two rainbow bands orbiting on an ellipse that passes in
+ *    front of and behind the animal ([drawRibbonRun]);
+ *  * **the transformation** — the flash, three sparkles, the puck stretching
+ *    into the horn ([drawHornMorph]), the fleece flooding ([drawFloodedBody])
+ *    and the mane ([drawMane]);
+ *  * **the rear-up** — one rotation about the base;
+ *  * **the gallop** — off the right edge, with a trail and a dust puff.
  *
- * The last of those is the only thing in either film that is drawn in **screen
- * space** rather than in master-art units, and it has to be: the joke is that
- * the *lens* is covered, and the lens is the whole phone. It is therefore
- * outside the art box's transform, at the very end, over everything.
+ * The draw order is the item's own sentence: **back ribbons, animal, front
+ * ribbons.** Nothing times the swap, because nothing has to — the samples carry
+ * their own depth and the sort is the swap.
  */
-private fun DrawScope.drawLlamaSpit(
+private fun DrawScope.drawUnicornEgg(
     f: WelcomeTimeline.FrameB,
     page: Color,
     body: ImageBitmap,
-    puck: ImageBitmap,
     eye: ImageBitmap,
-    front: FrontPoseArt,
+    puck: ImageBitmap,
+    mane: Path,
 ) {
     if (f.overlayAlpha <= 0f) return
     drawRect(page, alpha = f.overlayAlpha)
 
     val box = artBox()
+    // ROUND 37 item 189 — how far "off the RIGHT edge" is, on THIS screen.
+    // Measured the way animation A's rings measure their reach, and for the
+    // same reason: the storyboard's `translateX(430px)` is true of a 340 px
+    // stage and of nothing else.
+    val exit = WelcomeTimeline.exitTravelMasterUnits(size.width, box.left, box.scale)
+
     withTransform({
         translate(box.left, box.top)
         scale(box.scale, box.scale, pivot = Offset.Zero)
     }) {
-        val turnPivot = Offset(Art.CANVAS / 2f, FrontPose.CENTER_Y)
+        val a = f.overlayAlpha
 
-        // ── SECTION ONE: THE EXPECTATION ───────────────────────────────────
-        //
-        // The reference spends five seconds on an animal lowering its head into
-        // a hand. Ours has one, and spends it the same way: a rotation about
-        // the llama's own base, so the muzzle swings FORWARD and DOWN on the
-        // arc a neck actually describes, plus seven per cent of scale, which is
-        // what "toward you" is when there is no perspective to work with.
-        //
-        // Rotating about the base and not about the head: a head that pivots on
-        // itself is a nod, and this is a reach.
-        if (f.sideAlpha > 0f) {
-            val a = f.sideAlpha * f.overlayAlpha
-            withTransform({ scale(f.turnScaleX, 1f, pivot = turnPivot) }) {
-                withTransform({
-                    rotate(LEAN_DEG * f.lean, pivot = LEAN_PIVOT)
-                    scale(1f + LEAN_SCALE * f.lean, 1f + LEAN_SCALE * f.lean, pivot = LEAN_PIVOT)
-                }) {
-                    drawBody(body, 0f, a)
-                    drawEye(eye, 0f, 0f, a, f.blink)
-                    drawLayer(puck, Art.PUCK_LEFT, Art.PUCK_TOP, Art.PUCK_WIDTH, Art.PUCK_HEIGHT, a)
-                    drawLed(EMIT, a)
-                }
-            }
+        // ── what the gallop leaves behind, under everything it passes.
+        drawGallopTrail(f, exit, a)
+        drawDustPuff(f, a)
+
+        // ── the half of each ribbon that is BEHIND the animal.
+        for (samples in f.ribbons) drawRibbonRun(samples, front = false, alpha = a)
+
+        // ── the animal itself, carried by one transform: the exit, the
+        // crouch-and-rear, the gallop's bounce and roll. All of it about the
+        // BASE, so the rear is a rear and not a hinge.
+        withTransform({
+            translate(f.gallopX * exit, f.bodyDy)
+            rotate(f.bodyRotDeg, pivot = BASE_PIVOT)
+        }) {
+            drawFloodedBody(body, f.fleeceFlood, a)
+            drawMane(mane, f.maneAlpha * a)
+            drawEye(eye, 0f, 0f, a, f.eyeLookX, f.eyeLookY)
+            drawHornMorph(puck, f, a)
         }
 
-        // ── SECTION TWO: THE REALITY ───────────────────────────────────────
-        if (f.frontAlpha > 0f) {
-            val a = f.frontAlpha * f.overlayAlpha
-            withTransform({ scale(f.turnScaleX, 1f, pivot = turnPivot) }) {
-                // The head barely moves through the stare — the jaw does all of
-                // it, inside [drawFrontFace] — and then snaps forward and at the
-                // viewer on the hit. One transform, three tracks.
-                withTransform({
-                    translate(0f, f.headRise)
-                    rotate(f.headTiltDeg, pivot = FrontPose.NECK)
-                    scale(f.headLunge, f.headLunge, pivot = FrontPose.NECK)
-                }) {
-                    drawFrontLlama(front, puck, eye, f, a)
-                }
-            }
+        // ── …and the half of each ribbon that is IN FRONT of it.
+        for (samples in f.ribbons) drawRibbonRun(samples, front = true, alpha = a)
 
-            // The cone, for its one frame. Outside the head's transform: what
-            // has left the mouth is in the room, and does not lunge or pinch
-            // with the animal that threw it.
-            val mouth = Offset(Art.CANVAS / 2f, FrontPose.MOUTH_Y + f.headRise)
-            for (drop in f.spray) {
-                val centre = Offset(mouth.x + drop.dx, mouth.y + drop.dy)
-                val alpha = (drop.alpha * a).coerceIn(0f, 1f)
-                if (alpha <= 0f || drop.radius <= 0f) continue
-                if (drop.mist) {
-                    // Soft, outline-free, low alpha — and drawn with a RADIAL
-                    // GRADIENT rather than flat discs, which is the whole
-                    // difference between mist and a smudge. Flat circles, at any
-                    // alpha, keep a perfectly legible rim as they fade, so the
-                    // burst ends with grey rings hanging in the air. A brush
-                    // that reaches zero at its own edge has no rim to leave.
-                    for ((ox, oy, or) in MIST_PUFF) {
-                        val r = drop.radius * or
-                        val at = Offset(centre.x + drop.radius * ox, centre.y + drop.radius * oy)
-                        drawCircle(
-                            brush = Brush.radialGradient(
-                                0.0f to Mist.copy(alpha = alpha),
-                                0.42f to Mist.copy(alpha = alpha * 0.72f),
-                                1.0f to Color.Transparent,
-                                center = at,
-                                radius = r,
-                            ),
-                            radius = r,
-                            center = at,
-                        )
-                    }
-                } else {
-                    val path = teardropPath(centre, drop.radius, drop.stretch)
-                    withTransform({ rotate(drop.tiltDeg, pivot = centre) }) {
-                        drawPath(path, Water, alpha = alpha)
-                        drawPath(
-                            path, Ink,
-                            alpha = alpha,
-                            style = Stroke(width = (drop.radius * 0.24f).coerceIn(4f, 10f)),
-                        )
-                    }
-                }
-            }
-        }
+        // ── the sparkles, over everything, because they are the event and not
+        // an object in the scene.
+        for (s in f.sparkles) drawSparkle(s, a)
     }
 
-    // ── AND THEN THE LENS IS GONE ─────────────────────────────────────────
-    drawLensCover(f, box)
+    // ── the flash is drawn in SCREEN space, like animation A's rings and for
+    // the same reason: it is a thing that happens to the picture rather than a
+    // thing in it, so it has to reach the corners of whatever it is on.
+    drawTransformFlash(f, box)
 }
 
-/**
- * ROUND 36 item 188 §1 — **where the lean pivots, and how far it goes.**
- *
- * The pivot is the standing llama's own base, low and a little forward of the
- * fleece's centre of mass, measured off `welcome_llama_body.webp`. Seven
- * degrees about it carries the muzzle — which is up at roughly (760, 540) on
- * the master canvas, since this animal faces right — about eighty units
- * forward and forty down, which is a llama leaning in and is not a llama
- * falling over. Twelve degrees was tried and reads as a stumble.
- */
-private val LEAN_PIVOT = Offset(430f, 960f)
-private const val LEAN_DEG = 7f
-
-/** …plus this much scale, which is "toward you" in a drawing with no perspective. */
-private const val LEAN_SCALE = 0.07f
+// ── the animal's own base ──────────────────────────────────────────────────
 
 /**
- * ROUND 36 item 188 — **the covered lens, in screen space.**
+ * ROUND 36 item 188 → **ROUND 37 item 189: the standing llama's own base**, low
+ * and a little forward of the fleece's centre of mass, measured off
+ * `welcome_llama_body.webp`.
  *
- * Three layers, in the order the reference has them:
- *
- *  1. **the wash** — the whole screen, at [WelcomeTimeline.B_WASH_ALPHA],
- *     which is what makes the llama a dim shape rather than a hidden one;
- *  2. **the blobs and streaks** — [WelcomeTimeline.B_LENS], each with the
- *     lumpy ink outline the icon's language gives anything with an edge;
- *  3. **the drips** — two of them, running for the whole hold.
- *
- * The **clear patch** is taken *out* of the finished cover rather than painted
- * over the top of it, and that is the one structural thing in this function:
- * all three layers go into one `saveLayer`, and a radial `DstOut` brush then
- * removes about two thirds of the alpha over the llama's mouth. Painting a pale
- * disc on top would have put a pale disc on top — the grin has to be seen
- * *through* the goo, not beside it. And the brush is radial rather than a flat
- * disc because a flat one is a porthole, and stuff running off glass does not
- * leave a circle.
- *
- * Two thirds and not all of it: [WelcomeTimeline.B_PATCH_ALPHA] over
- * [WelcomeTimeline.B_WASH_ALPHA] is exactly the ratio, so the patch is as thin
- * as the timeline says and no thinner. The blob table is separately laid out
- * with its centres clear of that spot ([WelcomeTimeline.lensGapClearance]), so
- * there is never an opaque core sitting where the hole is.
+ * Round 36 leaned about it; round 37 rears, rolls and bounces about it. It is
+ * the same point for the same reason both times: a bust that pivots on its head
+ * nods, and a bust that pivots on its base is an animal moving.
  */
-private fun DrawScope.drawLensCover(f: WelcomeTimeline.FrameB, box: ArtBox) {
-    val cover = f.lensWash * f.overlayAlpha
-    if (cover <= 0f) return
-    val w = size.width
-    val h = size.height
+private val BASE_PIVOT = Offset(430f, 960f)
 
-    // The thin place goes on the llama's OWN mouth, read off the art box, not
-    // on a screen fraction that happens to be near it: the box is fitted to the
-    // narrower of 80 % of the width and 46 % of the height, so on a squarer
-    // screen the mouth is most of a tenth of the screen lower than it is on a
-    // tall handset.
-    val patch = Offset(box.x(Art.CANVAS / 2f), box.y(FrontPose.MOUTH_Y))
-    val patchR = w * WelcomeTimeline.B_PATCH_RADIUS
-    fun murk(alpha: Float) = Murk.copy(alpha = (alpha * cover).coerceIn(0f, 1f))
+// ── the rainbow ────────────────────────────────────────────────────────────
+
+/**
+ * ROUND 37 item 189 — **the storyboard's two rainbows, and they are two on
+ * purpose.**
+ *
+ * [RAIN] is the storyboard's `<linearGradient id="rain">`, a pastel ramp, and
+ * it is what anything made of *llama* turns: the fleece, the horn, the mane,
+ * the trail. [RIBBON] is its `.ribbon` background, the saturated one, and it is
+ * what the two orbiting bands are — objects in the air rather than the animal.
+ *
+ * Keeping them apart is what stops the transformation from being one flat
+ * colour event: a saturated ribbon reads against a pastel llama, and a pastel
+ * ribbon against a pastel llama is a smear.
+ */
+private val RAIN = listOf(
+    Color(0xFFFF8A80), Color(0xFFFFD180), Color(0xFFFFFF8D),
+    Color(0xFFB9F6CA), Color(0xFF82B1FF), Color(0xFFEA80FC),
+)
+
+private val RIBBON = listOf(
+    Color(0xFFFF3B30), Color(0xFFFF9500), Color(0xFFFFCC00),
+    Color(0xFF34C759), Color(0xFF007AFF), Color(0xFFAF52DE),
+)
+
+/**
+ * A colour off a ramp at [p], **wrapping** — so a hue that runs off the violet
+ * end comes back at the red one and a ribbon going round twice does not have a
+ * seam in it.
+ */
+private fun rainbowAt(ramp: List<Color>, p: Float): Color {
+    val n = ramp.size
+    val x = (p - kotlin.math.floor(p)) * n
+    val i = x.toInt().coerceIn(0, n - 1)
+    val t = x - i
+    val next = ramp[(i + 1) % n]
+    val c = ramp[i]
+    return Color(
+        red = c.red + (next.red - c.red) * t,
+        green = c.green + (next.green - c.green) * t,
+        blue = c.blue + (next.blue - c.blue) * t,
+    )
+}
+
+// ── the ribbons ────────────────────────────────────────────────────────────
+
+/**
+ * ROUND 37 item 189 — **one ribbon's front half, or its back half.**
+ *
+ * > *"layer order must swap at the orbit's front/back crossings, which the
+ * > storyboard's flat version could not show but the build must do."*
+ *
+ * The swap is not timed and there is no state anywhere that says which side a
+ * ribbon is on. Each sample carries its own `depth`, this function draws the
+ * ones whose sign matches, and the caller calls it twice with the animal in
+ * between. A ribbon crossing the ellipse's end therefore hands itself over
+ * mid-band, sample by sample, which is what going behind something looks like.
+ *
+ * Each sample is a **round-capped stroke** from its neighbour, not a segment of
+ * one filled path, and that is the mechanism rather than a shortcut: a path has
+ * one z. Round caps weld the strokes into a continuous band, and the colour is
+ * taken per sample off the ramp, which is how the gradient survives being
+ * chopped into twenty-eight pieces.
+ *
+ * The **glow** the item asks for is a second pass underneath at three times the
+ * width and a fifth of the alpha. Drawn per sample rather than as one blurred
+ * layer because a `saveLayer` and a blur for this is a full-screen buffer per
+ * frame for something a wide translucent stroke does honestly.
+ */
+private fun DrawScope.drawRibbonRun(
+    samples: List<WelcomeTimeline.RibbonSample>,
+    front: Boolean,
+    alpha: Float,
+) {
+    if (samples.isEmpty() || alpha <= 0f) return
+    for (i in 0 until samples.size - 1) {
+        val s = samples[i]
+        val next = samples[i + 1]
+        // A joint belongs to the side its own midpoint is on; splitting on the
+        // sample rather than the joint would leave a one-stroke gap at each
+        // crossing.
+        val mid = (s.depth + next.depth) / 2f
+        if ((mid > 0f) != front) continue
+        val paint = rainbowAt(RIBBON, s.hue)
+        val a = (s.alpha * alpha).coerceIn(0f, 1f)
+        if (a <= 0f) continue
+        val from = Offset(s.x, s.y)
+        val to = Offset(next.x, next.y)
+        drawLine(
+            color = paint,
+            start = from,
+            end = to,
+            strokeWidth = s.halfWidth * 6f,
+            cap = StrokeCap.Round,
+            alpha = a * 0.16f,
+        )
+        drawLine(
+            color = paint,
+            start = from,
+            end = to,
+            strokeWidth = s.halfWidth * 2f,
+            cap = StrokeCap.Round,
+            alpha = a,
+        )
+    }
+}
+
+// ── the fleece, flooded ────────────────────────────────────────────────────
+
+/**
+ * ROUND 37 item 189 — **the fleece floods rainbow.**
+ *
+ * > *"tint the body sprite via a gradient overlay masked to the sprite's opaque
+ * > fleece — the round-35 filled body layer makes this possible."*
+ *
+ * It does, and this is why it had to: until round 34 baked an opaque fleece
+ * into the cut body layer, the sprite was an **outline** with a transparent
+ * interior, and there was nothing to tint.
+ *
+ * The mask is [BlendMode.Modulate] inside a `saveLayer`, and the choice of
+ * blend is the whole of the trick:
+ *
+ *  * `SrcIn` and `SrcAtop` would have replaced the sprite's colour, **ink and
+ *    all**, and the icon's language is one continuous dark outline;
+ *  * plain `Multiply` keeps the ink (dark × anything is dark) but Skia's
+ *    Porter-Duff coverage lets the source through where the destination is
+ *    empty, so a full-canvas rainbow would have filled the layer;
+ *  * `Modulate` is multiply **including alpha** — `a = sa × da` — so it is
+ *    multiply where the sprite is and nothing at all where it is not. The
+ *    fleece goes rainbow, the outline stays black, the page is untouched.
+ *
+ * And the flood has a **front**: each stop is lerped from white — which under a
+ * multiply is a no-op — toward its colour by how far the front has passed it.
+ * At [flood] = 0 every stop is white and the whole pass is arithmetic that
+ * changes nothing, which is worth more than a branch: there is no second code
+ * path for the un-flooded llama, so there is nothing to keep in step.
+ */
+private fun DrawScope.drawFloodedBody(body: ImageBitmap, flood: Float, alpha: Float) {
+    if (flood <= 0f) {
+        drawLayer(body, 0f, 0f, Art.CANVAS, Art.CANVAS, alpha)
+        return
+    }
+    // The front runs from the crown to below the feet, with a soft edge: the
+    // colour arrives from the horn, so it comes DOWN.
+    val front = -FLOOD_SOFTNESS + flood * (Art.CANVAS + 2f * FLOOD_SOFTNESS)
+    val stops = RAIN.mapIndexed { i, colour ->
+        val at = i.toFloat() / (RAIN.size - 1)
+        val y = at * Art.CANVAS
+        val wet = ((front - y) / FLOOD_SOFTNESS).coerceIn(0f, 1f)
+        at to Color(
+            red = 1f + (colour.red - 1f) * wet,
+            green = 1f + (colour.green - 1f) * wet,
+            blue = 1f + (colour.blue - 1f) * wet,
+        )
+    }.toTypedArray()
 
     drawIntoCanvas { canvas ->
-        canvas.saveLayer(Rect(0f, 0f, w, h), Paint())
-
-        // 1. the wash — the whole screen, which is what makes the llama a dim
-        // shape behind it rather than a hidden one.
-        drawRect(color = murk(WelcomeTimeline.B_WASH_ALPHA))
-
-        // 2. the blobs, the streaks and what ran off them.
-        for (blob in f.lens) {
-            val alpha = (blob.alpha * f.overlayAlpha).coerceIn(0f, 1f)
-            if (alpha <= 0f) continue
-            val centre = Offset(w * blob.x, h * blob.y)
-            val r = w * blob.radius
-            val edge = (r * 0.06f).coerceIn(3f, 13f)
-            // The ink does NOT follow the fill. At these alphas the fill is a
-            // tint and an outline drawn as a fraction of it would vanish; and
-            // the streaks get no outline at all, because a smear is what a blob
-            // looks like when it has been dragged and a smear has no rim.
-            val ink = if (blob.radius >= WelcomeTimeline.B_LENS_INK_MIN_RADIUS) {
-                (blob.ink * f.overlayAlpha).coerceIn(0f, 1f)
-            } else {
-                0f
-            }
-            // Rotate FIRST and stretch second, so the stretch lies along the
-            // angle rather than along the screen: that is the difference
-            // between a streak thrown across the glass and a squashed blob.
-            withTransform({
-                rotate(blob.angleDeg, pivot = centre)
-                scale(blob.stretch, 1f, pivot = centre)
-            }) {
-                val path = splatPath(centre, r, blob.seed)
-                drawPath(path, Murk, alpha = alpha)
-                if (ink > 0f) drawPath(path, Ink, alpha = ink, style = Stroke(width = edge))
-            }
-
-            // …and the couple of specks that carried on past each one. Separate
-            // shapes and not lobes of the blob, because a droplet that has left
-            // the puddle has air round it.
-            for (k in 0 until 2) {
-                val (bearing, distance, scale) =
-                    SPLAT_SATELLITES[(k * 3 + blob.seed) % SPLAT_SATELLITES.size]
-                val sr = r * scale * 0.55f
-                val at = Offset(
-                    centre.x + (cos(bearing.toDouble()) * r * distance).toFloat(),
-                    centre.y + (sin(bearing.toDouble()) * r * distance * 0.86f).toFloat(),
-                )
-                val topLeft = Offset(at.x - sr, at.y - sr * 0.9f)
-                val ovalSize = Size(sr * 2f, sr * 1.8f)
-                drawOval(Murk, topLeft, ovalSize, alpha = alpha)
-                drawOval(
-                    Ink, topLeft, ovalSize,
-                    alpha = ink * 0.8f,
-                    style = Stroke(width = edge * 0.6f),
-                )
-            }
-
-            // 3. …and the two that run, for the whole of the hold.
-            if (blob.drip > 0f) {
-                // It leaves from INSIDE the blob, not from its lower edge: a
-                // tongue that starts where the mass ends is a shape hanging in
-                // the air, and the first cut of this photographed as two pale
-                // skittles on the glass.
-                val from = Offset(centre.x + r * 0.10f, centre.y + r * 0.45f)
-                val len = h * blob.drip
-                val neck = (r * 0.34f).coerceIn(20f, 110f)
-                val trail = Path().apply {
-                    moveTo(from.x - neck, from.y)
-                    quadraticTo(from.x - neck * 0.85f, from.y + len * 0.7f, from.x, from.y + len)
-                    quadraticTo(from.x + neck * 0.85f, from.y + len * 0.7f, from.x + neck, from.y)
-                    close()
-                }
-                // Denser than the blob it came off. A drip drawn at the same
-                // alpha over a screen that is already this colour is not there.
-                drawPath(
-                    trail, Murk,
-                    alpha = (alpha * WelcomeTimeline.B_DRIP_DENSITY).coerceIn(0f, 1f),
-                )
-                // …and no outline on it. Ink round a drip draws the eye to the
-                // one thing on this screen that is supposed to be a smear.
-            }
-        }
-
-        // …and then the bite, out of all three at once.
-        if (f.lensPatch > 0f) {
-            val bite =
-                (1f - WelcomeTimeline.B_PATCH_ALPHA / WelcomeTimeline.B_WASH_ALPHA) * f.lensPatch
-            drawCircle(
-                brush = Brush.radialGradient(
-                    0.00f to Color.Black.copy(alpha = bite),
-                    0.55f to Color.Black.copy(alpha = bite * 0.74f),
-                    1.00f to Color.Transparent,
-                    center = patch,
-                    radius = patchR,
-                ),
-                radius = patchR,
-                center = patch,
-                blendMode = BlendMode.DstOut,
-            )
-        }
-
+        canvas.saveLayer(Rect(0f, 0f, Art.CANVAS, Art.CANVAS), Paint())
+        drawLayer(body, 0f, 0f, Art.CANVAS, Art.CANVAS, alpha)
+        drawRect(
+            brush = Brush.verticalGradient(
+                colorStops = stops,
+                startY = 0f,
+                endY = Art.CANVAS,
+            ),
+            topLeft = Offset.Zero,
+            size = Size(Art.CANVAS, Art.CANVAS),
+            blendMode = BlendMode.Modulate,
+        )
         canvas.restore()
     }
 }
 
-/**
- * The front-facing llama, in the order the side art is built in: the fleece as
- * one silhouette, the inner-ear folds inside it, the smooth face patch over the
- * top of it, then the hat, the light and the face.
- *
- * ROUND 35 item 185(e): the pose is round 34's, unchanged, with **one**
- * addition — the ears are no longer baked into the silhouette. They are unioned
- * into it every frame at their current pin, which is two `Path.op` calls and
- * keeps the single unbroken outline that the whole pose is built around. Ears
- * drawn as separate shapes behind the head would have been free and would have
- * put a seam where the icon's language has none.
- */
-private fun DrawScope.drawFrontLlama(
-    front: FrontPoseArt,
-    puck: ImageBitmap,
-    eye: ImageBitmap,
-    f: WelcomeTimeline.FrameB,
-    a: Float,
-) {
-    val silhouette = Path().apply {
-        val withLeft = Path()
-        withLeft.op(front.head, earPath(-1f, f.earPin), PathOperation.Union)
-        op(withLeft, earPath(1f, f.earPin), PathOperation.Union)
-    }
-    drawPath(silhouette, Fleece, alpha = a)
-    drawPath(silhouette, Ink, alpha = a, style = Stroke(width = OUTLINE))
-    for (side in floatArrayOf(-1f, 1f)) {
-        drawPath(
-            innerEarPath(side, f.earPin), Ink,
-            alpha = a,
-            style = Stroke(width = INNER_EAR_WEIGHT, cap = StrokeCap.Round),
-        )
-    }
-    drawPath(front.facePatch, Fleece, alpha = a)
-    drawPath(front.facePatch, Ink, alpha = a, style = Stroke(width = OUTLINE))
+/** How wide the flood's own edge is, master units. A hard line is a wipe. */
+private const val FLOOD_SOFTNESS = 260f
 
-    // The hat rides the crown, clear of the fluff so the brim is readable — the
-    // same object the side pose wears, not a drawn stand-in for it.
-    val hatLeft = Art.CANVAS / 2f - Art.PUCK_WIDTH / 2f
-    drawLayer(puck, hatLeft, FrontPose.HAT_TOP, Art.PUCK_WIDTH, Art.PUCK_HEIGHT, a)
-    // ROUND 35 item 184 — the light goes where the emitter actually is on the
-    // sprite the llama is wearing. Round 34 drew it at the master anchor, which
-    // put an orange glow in the air to the right of the front pose's hat.
-    drawLed(
-        Offset(hatLeft + EMIT_IN_PUCK.x, FrontPose.HAT_TOP + EMIT_IN_PUCK.y),
-        a,
-    )
-    drawFrontFace(eye, a, f.mouthOpen, f.jawGrind, f.eyeNarrow, f.grinAlpha)
-}
-
-// ── the drawn front pose ───────────────────────────────────────────────────
+// ── the mane ───────────────────────────────────────────────────────────────
 
 /**
- * ROUND 32 item 177 → ROUND 34 item 183(b) → **ROUND 35 item 185(a)(e).**
+ * ROUND 37 item 189 — **a rainbow mane along the neck edge.**
  *
- * The owner, on the 0.9.17 footage: *"the front view of the llama is not the
- * normal llama look."* He was right, and the reason was structural. The side
- * sprite is a fluffy cloud silhouette with a **smooth face patch** inside it,
- * each carrying one continuous ink outline, and the fleece of the cloud
- * overlaps the top of the patch in scallops. Round 32's front pose had fluff on
- * the CROWN only, no face patch at all, two tapered ears and one eye — a sheep
- * in a hat.
+ * The storyboard draws it as a narrow crescent down the back of the neck,
+ * rainbow-filled with an ink stroke on it (`.mane`, `fill="url(#rain)"
+ * stroke="#1c2430"`). Ours follows the **real** silhouette's back edge, traced
+ * off `welcome_llama_body.webp`: the nape at roughly (470, 250), out to the
+ * fleece's left shoulder at (250, 470), and down the back to (215, 800).
  *
- * Round 34 rebuilt it the way the side art is built and the owner accepted it;
- * **round 35 changes nothing about the drawing** except what item 185(e) asks
- * for: the ears come out of the baked silhouette so they can lay back, and the
- * mouth gains an open and a curled state. Every other number here was set
- * against a large side-by-side of this pose and the side sprite, which is the
- * only way to answer "does it match the art".
+ * Built once and not per frame — it is the same shape every time it is on
+ * screen — and given the icon's own fluff language with four scallops welded
+ * onto its outer edge, because a smooth crescent on this animal is a saddle.
+ *
+ * It keeps its **ink outline** even after the fleece has flooded, and that is
+ * the one thing holding it apart from the body it sits on: at 1.60 s the llama
+ * and the mane are the same six colours, and without the outline the mane is a
+ * darker patch of nothing.
  */
-private object FrontPose {
-    const val CENTER_X = 512f
-    const val CENTER_Y = 556f
-    const val RADIUS_X = 268f
-    const val RADIUS_Y = 300f
-
-    /** The smooth face patch inside the fleece. */
-    const val FACE_RADIUS_X = 168f
-    const val FACE_RADIUS_Y = 210f
-    const val FACE_CENTER_Y = CENTER_Y + 40f
-
-    /** The ears: base offset, base line, height, half-width, and the tip's half-width. */
-    const val EAR_DX = 132f
-    const val EAR_BASE_Y = CENTER_Y - RADIUS_Y + 118f
-    const val EAR_HEIGHT = 268f
-    const val EAR_HALF_WIDTH = 98f
-    const val EAR_TIP_HALF = 36f
-
-    const val MUZZLE_CENTER_Y = FACE_CENTER_Y + 98f
-    const val MUZZLE_RADIUS_X = 80f
-    const val MUZZLE_RADIUS_Y = 60f
-
-    /** Where the spray leaves, and therefore where every mark is measured from. */
-    const val MOUTH_Y: Float = MUZZLE_CENTER_Y + 24f
-
-    /** The crown, where the hat sits. */
-    const val HAT_TOP: Float = CENTER_Y - RADIUS_Y - 88f
-
-    /**
-     * ROUND 35 item 185(a) — the base of the neck: the pivot the head cocks
-     * back on and lunges from. Below the silhouette, so the chin travels and
-     * the neck does not.
-     */
-    val NECK: Offset = Offset(CENTER_X, CENTER_Y + RADIUS_Y)
-}
-
-/**
- * The static half of the front pose, built once per composition.
- *
- * The **ears are not in it** any more (item 185(e)): they change every frame,
- * so they are unioned in at draw time. Everything that does not move is still
- * built once, because `Path.op` on seventeen scallops is not a per-frame cost
- * anybody needs to pay.
- */
-private class FrontPoseArt(
-    val head: Path,
-    val facePatch: Path,
-)
-
-private fun frontPoseArt(): FrontPoseArt = FrontPoseArt(
-    head = frontHeadPath(),
-    facePatch = frontFacePatchPath(),
-)
-
-/**
- * Head ∪ seventeen scallops, as **one** path.
- *
- * Unioned rather than stacked: a stack of filled-and-stroked shapes leaves
- * every interior arc showing, and the icon's language is a single unbroken
- * outline round the whole animal.
- */
-private fun frontHeadPath(): Path {
-    var union = Path().apply {
-        addOval(
-            Rect(
-                FrontPose.CENTER_X - FrontPose.RADIUS_X,
-                FrontPose.CENTER_Y - FrontPose.RADIUS_Y,
-                FrontPose.CENTER_X + FrontPose.RADIUS_X,
-                FrontPose.CENTER_Y + FrontPose.RADIUS_Y,
-            ),
-        )
-    }
-    // The fleece, all the way round. Alternating radii, because a ring of
-    // equal bumps reads as a gear and the master art's fluff is irregular.
-    for (i in 0 until FRONT_SCALLOPS) {
-        val angle = PI * (0.80 + 2.0 * i / FRONT_SCALLOPS)
-        val cx = FrontPose.CENTER_X + (cos(angle) * FrontPose.RADIUS_X * 0.96).toFloat()
-        val cy = FrontPose.CENTER_Y + (sin(angle) * FrontPose.RADIUS_Y * 0.96).toFloat()
-        val r = if (i % 2 == 0) 74f else 56f
-        val bump = Path().apply { addOval(Rect(cx - r, cy - r, cx + r, cy + r)) }
-        val next = Path()
-        next.op(union, bump, PathOperation.Union)
-        union = next
-    }
-    return union
-}
-
-private const val FRONT_SCALLOPS = 17
-
-/**
- * ROUND 35 item 185(a) — **how far back a pinned ear goes.**
- *
- * Seventy-eight degrees, which from the front puts the tip out sideways and
- * very slightly down: the silhouette loses its two uprights and gains two
- * horizontal blades against the skull, which is the shape the tell is. Ninety
- * would have laid them dead flat and read as a shrug; sixty still reads as an
- * ear that is merely tilted.
- */
-private const val EAR_PIN_DEG = 78f
-
-/**
- * The ear's own frame: rotate about the base by the pin, and **foreshorten**
- * along its length as it goes.
- *
- * The foreshortening is the half that makes it three-dimensional. An ear that
- * rotates at full length is a blade sweeping round a hub; a real ear laid back
- * is also pointing away from the camera, so it gets shorter, and a third of its
- * length is what that looks like at this angle.
- */
-private class EarFrame(side: Float, pin: Float) {
-    private val bx = FrontPose.CENTER_X + side * FrontPose.EAR_DX
-    private val by = FrontPose.EAR_BASE_Y
-    private val rad = side * EAR_PIN_DEG * pin * PI.toFloat() / 180f
-    private val cs = cos(rad.toDouble()).toFloat()
-    private val sn = sin(rad.toDouble()).toFloat()
-    private val squash = 1f - 0.34f * pin
-
-    fun x(ax: Float, ay: Float): Float = bx + (ax - bx) * cs - (ay - by) * squash * sn
-    fun y(ax: Float, ay: Float): Float = by + (ax - bx) * sn + (ay - by) * squash * cs
-}
-
-/**
- * One ear: wide at the base, canted out, **round at the tip**, laid back by
- * [pin].
- *
- * Three curves rather than two, and the third is the whole point — it is the
- * tip's own arc. Round 32's ears met at a single point and came out as horns;
- * the master art's ears are leaves with a rounded end, and a rounded end needs
- * two points and a curve between them.
- */
-private fun earPath(side: Float, pin: Float): Path {
-    val bx = FrontPose.CENTER_X + side * FrontPose.EAR_DX
-    val by = FrontPose.EAR_BASE_Y
-    val h = FrontPose.EAR_HEIGHT
-    val w = FrontPose.EAR_HALF_WIDTH
-    val tip = FrontPose.EAR_TIP_HALF
-    val e = EarFrame(side, pin)
-    fun move(path: Path, x: Float, y: Float) = path.moveTo(e.x(x, y), e.y(x, y))
-    fun quad(path: Path, cx: Float, cy: Float, x: Float, y: Float) =
-        path.quadraticTo(e.x(cx, cy), e.y(cx, cy), e.x(x, y), e.y(x, y))
-    return Path().apply {
-        move(this, bx - side * w, by)
-        quad(this, bx - side * (w + 30f), by - h * 0.55f, bx + side * (18f - tip), by - h)
-        quad(this, bx + side * 22f, by - h - 26f, bx + side * (18f + tip), by - h + 10f)
-        quad(this, bx + side * (w + 52f), by - h * 0.45f, bx + side * w, by)
+private fun maneArt(): Path {
+    val band = Path().apply {
+        // The outer edge, on the fleece's own back contour — traced off the
+        // sprite's alpha at eight rows rather than eyeballed: x is 258 at
+        // y = 420, 214 at 616 and 220 at the bottom, which is where the silhouette
+        // actually is. A mane that follows a curve somebody liked sits on the
+        // animal's shoulder and reads as a strap.
+        moveTo(424f, 250f)
+        cubicTo(352f, 272f, 292f, 336f, 258f, 420f)
+        cubicTo(228f, 506f, 214f, 616f, 220f, 802f)
+        // …and back up the inner edge, the same curve pulled toward the animal
+        // by the band's own width.
+        lineTo(300f, 790f)
+        cubicTo(300f, 640f, 316f, 520f, 352f, 436f)
+        cubicTo(388f, 356f, 430f, 316f, 474f, 306f)
         close()
     }
-}
-
-/**
- * The inner ear — a stroke, the way the side sprite draws its own.
- *
- * Kept well inside the ear and drawn at the LIGHTEST weight in the file. The
- * first cut used the same fine weight as the facial strokes and ran the shape
- * three quarters of the way up: photographed beside the side sprite it filled
- * the ear and the pair read as two dark blades rather than as two ears with a
- * fold in each. This is the same drawing, thinner and shorter, and it rides the
- * same [EarFrame] as the ear it is inside.
- */
-private const val INNER_EAR_WEIGHT = 12f
-
-private fun innerEarPath(side: Float, pin: Float): Path {
-    val bx = FrontPose.CENTER_X + side * FrontPose.EAR_DX
-    val by = FrontPose.EAR_BASE_Y - 40f
-    val h = FrontPose.EAR_HEIGHT
-    val e = EarFrame(side, pin)
-    fun p(x: Float, y: Float) = Offset(e.x(x, y), e.y(x, y))
-    val a = p(bx - side * 24f, by)
-    val c1 = p(bx - side * 30f, by - h * 0.34f)
-    val t = p(bx + side * 14f, by - h * 0.62f)
-    val c2 = p(bx + side * 42f, by - h * 0.30f)
-    val z = p(bx + side * 26f, by)
-    return Path().apply {
-        moveTo(a.x, a.y)
-        quadraticTo(c1.x, c1.y, t.x, t.y)
-        quadraticTo(c2.x, c2.y, z.x, z.y)
-    }
-}
-
-/** The smooth face, with the fleece scalloping over its forehead. */
-private fun frontFacePatchPath(): Path {
-    var union = Path().apply {
-        addOval(
-            Rect(
-                FrontPose.CENTER_X - FrontPose.FACE_RADIUS_X,
-                FrontPose.FACE_CENTER_Y - FrontPose.FACE_RADIUS_Y,
-                FrontPose.CENTER_X + FrontPose.FACE_RADIUS_X,
-                FrontPose.FACE_CENTER_Y + FrontPose.FACE_RADIUS_Y,
-            ),
-        )
-    }
-    for (i in 0 until 7) {
-        val angle = PI * (1.08 + 0.84 * i / 6.0)
-        val cx = FrontPose.CENTER_X + (cos(angle) * FrontPose.FACE_RADIUS_X * 1.02).toFloat()
-        val cy = FrontPose.FACE_CENTER_Y + (sin(angle) * FrontPose.FACE_RADIUS_Y * 1.02).toFloat()
-        val r = if (i % 2 == 0) 50f else 40f
+    var union = band
+    for ((cx, cy, r) in MANE_TUFTS) {
         val bump = Path().apply { addOval(Rect(cx - r, cy - r, cx + r, cy + r)) }
-        val next = Path()
-        next.op(union, bump, PathOperation.Union)
-        union = next
-    }
-    return union
-}
-
-/**
- * ROUND 36 item 188 §2 — **where the jaw pivots, and how far it grinds.**
- *
- * The pivot is up under the eyes rather than on the muzzle itself, because a
- * jaw is hinged behind the face: rotating about the muzzle's own centre spins
- * the nose and leaves the chin where it was, which is a face made of rubber.
- * Twenty-six units of slide with four and a half degrees of roll on top is what
- * the reference's animal does — the slide is most of it, and the roll is the
- * part that stops the muzzle looking like a sticker being dragged about.
- */
-private val JAW_PIVOT =
-    Offset(FrontPose.CENTER_X, FrontPose.MUZZLE_CENTER_Y - FrontPose.MUZZLE_RADIUS_Y - 40f)
-private const val JAW_SHIFT = 26f
-private const val JAW_ROLL_DEG = 4.5f
-
-/** Eyes narrowed onto the stare, the jaw grinding under them, and the grin. */
-private fun DrawScope.drawFrontFace(
-    eye: ImageBitmap,
-    alpha: Float,
-    mouthOpen: Float,
-    jawGrind: Float,
-    eyeNarrow: Float,
-    grinAlpha: Float,
-) {
-    // TWO eyes, and they are the real sprite, because the side pose's eye is a
-    // real sprite and a drawn circle beside it would not be the same black.
-    //
-    // ROUND 36 item 188 — they LID as the stare sets in: the sprite squashes
-    // toward a line about its own centre and a brow comes down over it, sloping
-    // toward the nose. The squash alone is an eye half shut; the brow is the
-    // half that says the animal has decided something.
-    for (side in intArrayOf(-1, 1)) {
-        val s = side.toFloat()
-        val cx = FrontPose.CENTER_X + s * 80f
-        val cy = FrontPose.FACE_CENTER_Y - 62f
-        val open = 1f - 0.44f * eyeNarrow
-        withTransform({ scale(1f, open, pivot = Offset(cx, cy)) }) {
-            drawLayer(
-                eye,
-                cx - Art.EYE_SPRITE_WIDTH / 2f,
-                cy - Art.EYE_SPRITE_HEIGHT / 2f,
-                Art.EYE_SPRITE_WIDTH,
-                Art.EYE_SPRITE_HEIGHT,
-                alpha,
-            )
-        }
-        if (eyeNarrow > 0f) {
-            val browY = cy - Art.EYE_SPRITE_HEIGHT / 2f * open - 14f
-            val brow = Path().apply {
-                moveTo(cx + s * 46f, browY - 10f * eyeNarrow)
-                quadraticTo(cx, browY + 2f * eyeNarrow, cx - s * 44f, browY + 22f * eyeNarrow)
-            }
-            drawPath(
-                brow, Ink,
-                alpha = (alpha * eyeNarrow).coerceIn(0f, 1f),
-                style = Stroke(width = INNER_EAR_WEIGHT, cap = StrokeCap.Round),
-            )
-        }
-    }
-
-    // ROUND 36 item 188 §2 — **THE JAW.** Everything below the eyes rides it:
-    // the muzzle, both nostrils, the mouth and the lip go across the face
-    // together, because a muzzle that slides while its nostrils stay put is two
-    // drawings rather than one animal.
-    withTransform({
-        translate(jawGrind * JAW_SHIFT, 0f)
-        rotate(jawGrind * JAW_ROLL_DEG, pivot = JAW_PIVOT)
-    }) {
-        // The muzzle: small, rounded, low on the face — filled fleece and
-        // outlined at the finer weight the facial strokes carry.
-        val muzzle = Rect(
-            FrontPose.CENTER_X - FrontPose.MUZZLE_RADIUS_X,
-            FrontPose.MUZZLE_CENTER_Y - FrontPose.MUZZLE_RADIUS_Y,
-            FrontPose.CENTER_X + FrontPose.MUZZLE_RADIUS_X,
-            FrontPose.MUZZLE_CENTER_Y + FrontPose.MUZZLE_RADIUS_Y,
-        )
-        drawOval(Fleece, muzzle.topLeft, muzzle.size, alpha = alpha)
-        drawOval(
-            Ink, muzzle.topLeft, muzzle.size,
-            alpha = alpha,
-            style = Stroke(width = OUTLINE_FINE),
-        )
-        // The nostrils are CURVES, not dots. Three dots inside an oval — which
-        // is what the first cut drew — reads as a snout; the master art's
-        // nostril is a hook, and two hooks over a mouth is a llama's face.
-        for (side in intArrayOf(-1, 1)) {
-            val s = side.toFloat()
-            val cx = FrontPose.CENTER_X + s * 33f
-            val cy = FrontPose.MUZZLE_CENTER_Y - 26f
-            val hook = Path().apply {
-                moveTo(cx - s * 15f, cy - 9f)
-                quadraticTo(cx - s * 4f, cy + 9f, cx + s * 14f, cy + 1f)
-            }
-            drawPath(
-                hook, Ink,
-                alpha = alpha,
-                style = Stroke(width = INNER_EAR_WEIGHT, cap = StrokeCap.Round),
-            )
-        }
-
-        // The mouth: a crack that works with each grind and goes WIDE on the
-        // hit. One dark oval growing in both axes rather than three drawings,
-        // so there is no frame where one shape swaps for another.
-        val mw = 28f + 30f * mouthOpen
-        val mh = 18f + 58f * mouthOpen
-        drawOval(
-            Ink,
-            Offset(FrontPose.CENTER_X - mw / 2f, FrontPose.MOUTH_Y - 9f),
-            Size(mw, mh),
-            alpha = alpha,
-        )
-
-        // The lip, flat and level. Round 35 curled it as a smug beat between
-        // the mess and the grin; item 188 has no such beat — the mess IS the
-        // last beat — so it is a line again and the grin does the work.
-        val lip = Path().apply {
-            moveTo(FrontPose.CENTER_X - 30f, FrontPose.MOUTH_Y + 20f)
-            quadraticTo(
-                FrontPose.CENTER_X, FrontPose.MOUTH_Y + 30f,
-                FrontPose.CENTER_X + 30f, FrontPose.MOUTH_Y + 20f,
-            )
-        }
-        drawPath(
-            lip, Ink,
-            alpha = alpha,
-            style = Stroke(width = INNER_EAR_WEIGHT, cap = StrokeCap.Round),
-        )
-
-        if (grinAlpha > 0f) {
-            val grin = Path().apply {
-                moveTo(FrontPose.CENTER_X - 44f, FrontPose.MOUTH_Y + 6f)
-                quadraticTo(
-                    FrontPose.CENTER_X, FrontPose.MOUTH_Y + 34f,
-                    FrontPose.CENTER_X + 44f, FrontPose.MOUTH_Y + 6f,
-                )
-            }
-            drawPath(
-                grin, Ink,
-                alpha = (grinAlpha * alpha).coerceIn(0f, 1f),
-                style = Stroke(width = OUTLINE_FINE, cap = StrokeCap.Round),
-            )
-        }
-    }
-}
-
-/**
- * ROUND 34 item 183(c) → ROUND 35 item 185(b) — **a drop of water.**
- *
- * A bulb with a tail, drawn about [centre] with the tail pointing **up**, which
- * the caller then rotates so it points back along the flight the particle
- * actually flew. [stretch] is length ÷ width and comes from the timeline, so
- * the shape carries the speed: fast is long and thin, slow rounds up again.
- * That is the single thing that most makes a moving drop read as liquid rather
- * than as a shape being translated — and with fourteen of them at fourteen
- * different speeds it is what stops the burst from looking like confetti.
- */
-private fun teardropPath(centre: Offset, halfWidth: Float, stretch: Float): Path {
-    val w = halfWidth
-    val h = w * 2.0f * stretch
-    val tipY = centre.y - h
-    return Path().apply {
-        moveTo(centre.x, tipY)
-        cubicTo(
-            centre.x + w * 0.62f, tipY + h * 0.42f,
-            centre.x + w, centre.y - w * 0.55f,
-            centre.x + w, centre.y,
-        )
-        cubicTo(
-            centre.x + w, centre.y + w * 1.28f,
-            centre.x - w, centre.y + w * 1.28f,
-            centre.x - w, centre.y,
-        )
-        cubicTo(
-            centre.x - w, centre.y - w * 0.55f,
-            centre.x - w * 0.62f, tipY + h * 0.42f,
-            centre.x, tipY,
-        )
-        close()
-    }
-}
-
-/**
- * ROUND 35 item 185(b) — one mist puff's own shape: three soft blobs, as
- * offsets and radii in fractions of the puff's radius.
- *
- * Fixed, like everything else in this file, and asymmetric on purpose: a
- * rosette that is symmetric about either axis reads as a flower again.
- */
-private val MIST_PUFF = listOf(
-    Triple(0.00f, 0.00f, 1.00f),
-    Triple(0.52f, -0.30f, 0.74f),
-    Triple(-0.58f, 0.24f, 0.68f),
-)
-
-/**
- * ROUND 35 item 185(c) — the few droplets that carry on past each impact:
- * bearing (radians), distance as a fraction of the mark's radius, and size as
- * another.
- *
- * Separate paths and not lobes of the mark: a droplet that has left the puddle
- * has air round it, and this is the difference between a mark that was **hit**
- * and a blob that was placed. Phased by the mark's own seed, so no two of the
- * six carry the same pattern.
- */
-private val SPLAT_SATELLITES = listOf(
-    Triple(-2.35f, 1.44f, 0.19f),
-    Triple(-0.55f, 1.32f, 0.15f),
-    Triple(0.72f, 1.58f, 0.12f),
-    Triple(2.34f, 1.28f, 0.17f),
-    Triple(1.55f, 1.62f, 0.11f),
-)
-
-/**
- * One splat's outline, built from [WelcomeTimeline]'s own two tables.
- *
- * ROUND 36 item 188: the tables moved to `:core`, because the item's *"~90 %
- * of the screen"* is a claim about the area this path encloses and a unit test
- * has to be able to build the same polygon. Nothing about the shape changed.
- *
- * @param seed which blob this is. It rolls both tables by a different amount
- *   for each one, so that eighteen blobs on one screen are eighteen shapes
- *   rather than one shape eighteen times.
- */
-private fun splatPath(centre: Offset, radius: Float, seed: Int): Path {
-    val path = Path()
-    val lobes = WelcomeTimeline.SPLAT_LOBES.size
-    for (i in 0 until lobes) {
-        val r = radius * WelcomeTimeline.splatLobe(seed, i)
-        val a = WelcomeTimeline.splatAngle(seed, i)
-        val x = centre.x + (cos(a) * r).toFloat()
-        val y = centre.y + (sin(a) * r * WelcomeTimeline.SPLAT_SQUASH).toFloat()
-        if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
-    }
-    path.close()
-    var splat = path
-    for (b in WelcomeTimeline.SPLAT_BLOBS.indices) {
-        val (dx, dy, dr) = WelcomeTimeline.splatBlob(seed, b)
-        val cx = centre.x + dx * radius
-        val cy = centre.y + dy * radius * WelcomeTimeline.SPLAT_SQUASH
-        val r = dr * radius
-        val blob = Path().apply { addOval(Rect(cx - r, cy - r, cx + r, cy + r)) }
         val merged = Path()
-        merged.op(splat, blob, PathOperation.Union)
-        splat = merged
+        merged.op(union, bump, PathOperation.Union)
+        union = merged
     }
-    return splat
+    return union
 }
+
+/**
+ * The scallops on the mane's outer edge, in master units.
+ *
+ * They sit a little **proud** of the fleece rather than inside it, which is
+ * deliberate: hair hangs past the animal it grows on, and a mane whose outer
+ * edge is flush with the silhouette is a painted stripe.
+ */
+private val MANE_TUFTS = listOf(
+    Triple(372f, 268f, 42f),
+    Triple(300f, 336f, 46f),
+    Triple(252f, 428f, 46f),
+    Triple(226f, 540f, 46f),
+    Triple(220f, 660f, 44f),
+    Triple(228f, 762f, 40f),
+)
+
+private fun DrawScope.drawMane(mane: Path, alpha: Float) {
+    if (alpha <= 0f) return
+    drawPath(
+        mane,
+        brush = Brush.verticalGradient(
+            colors = RAIN,
+            startY = 250f,
+            endY = 800f,
+        ),
+        alpha = alpha.coerceIn(0f, 1f),
+    )
+    drawPath(mane, Ink, alpha = alpha.coerceIn(0f, 1f), style = Stroke(width = OUTLINE))
+}
+
+// ── the puck becomes the horn ──────────────────────────────────────────────
+
+/**
+ * ROUND 37 item 189 — **the morph, anchored at the puck's seat.**
+ *
+ * > *"THE LIDAR PUCK SPRITE STRETCHES INTO THE SPIRAL HORN — a morph anchored
+ * > at the puck's seat (scaleY growth from the puck's base with the puck's
+ * > silhouette blending into the horn shape)."*
+ *
+ * Both shapes are scaled about **[SEAT]** — the middle of the puck's own
+ * contact line, which is where it stands on the llama's crown — and that single
+ * shared anchor is what makes this a morph rather than a crossfade between two
+ * pictures. The puck grows in y and narrows in x as it fades, so by the time it
+ * is half gone it is already horn-shaped; the horn grows out of the same point
+ * from a sixth of its height, overshoots by an eighth and settles, which is the
+ * storyboard's `cubic-bezier(.3,1.4,.5,1)`.
+ *
+ * Drawing the puck **first** and the horn over it is the other half: for the
+ * two frames they overlap, the horn's ink outline is what the eye reads, so the
+ * fading puck looks like the thing inside it rather than a ghost beside it.
+ */
+private fun DrawScope.drawHornMorph(puck: ImageBitmap, f: WelcomeTimeline.FrameB, alpha: Float) {
+    if (f.puckAlpha > 0f) {
+        withTransform({ scale(f.puckNarrow, f.puckStretch, pivot = SEAT) }) {
+            drawLayer(
+                puck, Art.PUCK_LEFT, Art.PUCK_TOP, Art.PUCK_WIDTH, Art.PUCK_HEIGHT,
+                f.puckAlpha * alpha,
+            )
+        }
+        // ROUND 35 item 184 — the LED, on the emit point, outside the stretch:
+        // a light that stretches is a light with a shape, and this one has to
+        // stay the same lamp until the instant it is not there any more.
+        drawLed(EMIT, f.puckAlpha * alpha)
+    }
+    if (f.hornAlpha > 0f) drawHorn(f.hornGrow, f.hornWidth, f.hornAlpha * alpha)
+}
+
+/**
+ * The seat: the middle of the puck's contact line.
+ *
+ * Not [EMIT] and not the puck's centre. A horn grows out of the skull it is
+ * rooted in, so the anchor is where the object **meets the animal** — and the
+ * two things scaled about it are therefore both pinned to the crown for the
+ * whole of the transformation, which is the only way neither of them can be
+ * seen to float.
+ */
+private val SEAT = Offset(Art.PUCK_CENTER_X, Art.PUCK_FOOT_Y)
+
+/** The horn's height at full growth, master units. */
+private const val HORN_HEIGHT = 300f
+
+/** …and its half-width where it leaves the crown. */
+private const val HORN_HALF_BASE = 56f
+
+/**
+ * The forward lean, degrees. The animal is in profile facing right, and a horn
+ * drawn dead vertical on a profile head is an aerial. Six is the angle at which
+ * it reads as growing out of the brow rather than out of the ear.
+ */
+private const val HORN_TILT_DEG = 6f
+
+/**
+ * ROUND 37 item 189 — **the spiral horn**, as the storyboard draws it: a
+ * tapered shape with a rainbow gradient, an ink outline and **three** spiral
+ * grooves.
+ *
+ * The grooves are generated off the horn's own outline rather than placed —
+ * each one runs from the left edge to the right edge at its own height, sloping
+ * up as it crosses. That is the difference between three lines that are on the
+ * horn and three lines that are near it: at [grow] = 0.15 and at 1.12 they are
+ * still exactly on the taper, because they are computed from it.
+ *
+ * The storyboard's horn is a triangle (`M6 46 L14 2 L22 46 Z`). Ours has a
+ * slight belly on each side, which is the same shape the master art gives
+ * everything else it draws — there is not a straight line anywhere on this
+ * llama.
+ */
+private fun DrawScope.drawHorn(grow: Float, widthScale: Float, alpha: Float) {
+    if (alpha <= 0f || grow <= 0f) return
+    val h = HORN_HEIGHT * grow
+    val w = HORN_HALF_BASE * widthScale
+    val cx = SEAT.x
+    val baseY = SEAT.y
+    val tipY = baseY - h
+
+    // Half-width at a height p (0 = the crown, 1 = the tip), with the belly.
+    fun halfAt(p: Float): Float = w * (1f - p) * (1f + 0.34f * p)
+
+    withTransform({ rotate(HORN_TILT_DEG, pivot = SEAT) }) {
+        val horn = Path().apply {
+            moveTo(cx - w, baseY)
+            quadraticTo(cx - w * 0.86f, baseY - h * 0.52f, cx, tipY)
+            quadraticTo(cx + w * 0.86f, baseY - h * 0.52f, cx + w, baseY)
+            close()
+        }
+        drawPath(
+            horn,
+            brush = Brush.verticalGradient(colors = RAIN.reversed(), startY = tipY, endY = baseY),
+            alpha = alpha,
+        )
+        drawPath(horn, Ink, alpha = alpha, style = Stroke(width = OUTLINE))
+        // Three grooves, each a chord of the taper with a rise on it — which is
+        // what one turn of a spiral looks like from the side.
+        for (at in HORN_GROOVES) {
+            val y = baseY - h * at
+            val half = halfAt(at)
+            val rise = h * 0.055f
+            val groove = Path().apply {
+                moveTo(cx - half * 0.92f, y + rise * 0.5f)
+                quadraticTo(cx, y - rise * 0.7f, cx + half * 0.92f, y - rise * 0.5f)
+            }
+            drawPath(
+                groove, Ink,
+                alpha = (alpha * 0.62f).coerceIn(0f, 1f),
+                style = Stroke(width = OUTLINE * 0.55f, cap = StrokeCap.Round),
+            )
+        }
+    }
+}
+
+/** Where the three grooves sit, as fractions of the horn's height. */
+private val HORN_GROOVES = floatArrayOf(0.24f, 0.50f, 0.74f)
+
+// ── the flash and the sparkles ─────────────────────────────────────────────
+
+/**
+ * ROUND 37 item 189 — the storyboard's `.flash`: a white radial burst centred
+ * on the horn.
+ *
+ * In **screen** space, like animation A's rings and for the same reason — it is
+ * something that happens to the picture, so it has to reach the corners of
+ * whatever screen the picture is on. Its centre is read off the art box so that
+ * it leaves from the horn on every device rather than from a screen fraction
+ * that happens to be near it on one.
+ */
+private fun DrawScope.drawTransformFlash(f: WelcomeTimeline.FrameB, box: ArtBox) {
+    val flash = f.flash * f.overlayAlpha
+    if (flash <= 0f) return
+    val centre = Offset(box.x(Art.PUCK_CENTER_X), box.y(Art.PUCK_TOP - HORN_HEIGHT * 0.4f))
+    val radius = hypot(size.width, size.height) * 0.62f
+    // The first cut of this was 0.92 at the core over 0.72 of the diagonal, and
+    // the recording said what was wrong with it: three tenths of a second of a
+    // near-white screen, with the flood and the mane — the two things the flash
+    // is there to *hide the arrival of* — happening behind a sheet where nobody
+    // could see them arrive OR be surprised by them. A flash is a wince, not an
+    // exposure. At these numbers the llama is a shape all the way through it and
+    // the rainbow is still a reveal on the frame after.
+    drawCircle(
+        brush = Brush.radialGradient(
+            0.00f to Color.White.copy(alpha = 0.66f * flash),
+            0.30f to Color.White.copy(alpha = 0.38f * flash),
+            1.00f to Color.Transparent,
+            center = centre,
+            radius = radius,
+        ),
+        radius = radius,
+        center = centre,
+    )
+}
+
+/**
+ * One four-point sparkle — the storyboard's `&#10022;`, drawn rather than set
+ * in a font.
+ *
+ * Four concave-sided points, which is the shape a glyph gives and a cross does
+ * not: a plain cross reads as a plus sign at this size. The long axis is twice
+ * the short one, and it turns as it goes, per `.spark`'s own rotate.
+ */
+private fun DrawScope.drawSparkle(s: WelcomeTimeline.SparkleFrame, alpha: Float) {
+    val a = (s.alpha * alpha).coerceIn(0f, 1f)
+    if (a <= 0f || s.radius <= 0f) return
+    val long = s.radius
+    val short = s.radius * 0.30f
+    val waist = s.radius * 0.14f
+    val star = Path().apply {
+        moveTo(s.x, s.y - long)
+        quadraticTo(s.x + waist, s.y - waist, s.x + short, s.y)
+        quadraticTo(s.x + waist, s.y + waist, s.x, s.y + long)
+        quadraticTo(s.x - waist, s.y + waist, s.x - short, s.y)
+        quadraticTo(s.x - waist, s.y - waist, s.x, s.y - long)
+        close()
+    }
+    withTransform({ rotate(s.spinDeg, pivot = Offset(s.x, s.y)) }) {
+        drawPath(star, Color.White, alpha = a)
+    }
+}
+
+// ── the gallop's leavings ──────────────────────────────────────────────────
+
+/**
+ * ROUND 37 item 189 — **a rainbow trail band stretching behind and fading.**
+ *
+ * A **wedge** rather than a rectangle, and the taper is the fade: it is a
+ * hair's width where the animal launched and full height where the animal is
+ * now, so the far end of it is thin as well as faint. The storyboard's `.trail`
+ * fades a bar with `opacity`, which on a phone's black page leaves a grey bar
+ * for the last third of its life.
+ *
+ * It is drawn **before** the animal and under the ribbons, so the unicorn is
+ * always in front of its own wake.
+ */
+private fun DrawScope.drawGallopTrail(f: WelcomeTimeline.FrameB, exit: Float, alpha: Float) {
+    val a = (f.trailAlpha * alpha).coerceIn(0f, 1f)
+    if (a <= 0f || f.gallopX <= 0f) return
+    val from = TRAIL_FROM_X
+    val to = from + f.gallopX * exit
+    val mid = TRAIL_Y
+    val half = TRAIL_HALF_HEIGHT
+    val wedge = Path().apply {
+        moveTo(from, mid - half * 0.10f)
+        lineTo(to, mid - half)
+        lineTo(to, mid + half)
+        lineTo(from, mid + half * 0.10f)
+        close()
+    }
+    // Two gradients at right angles, which needs a layer: the rainbow runs down
+    // the band and the FADE runs along it. The taper alone was not enough — a
+    // wedge two units tall still carries the ramp's middle stops at full alpha,
+    // so the first recording ended in a hard olive spike hanging in the dark.
+    drawIntoCanvas { canvas ->
+        canvas.saveLayer(Rect(from - 20f, mid - half - 20f, to + 20f, mid + half + 20f), Paint())
+        drawPath(
+            wedge,
+            brush = Brush.verticalGradient(
+                colors = RAIN,
+                startY = mid - half,
+                endY = mid + half,
+            ),
+            alpha = a,
+        )
+        drawRect(
+            brush = Brush.horizontalGradient(
+                0.00f to Color.Transparent,
+                0.45f to Color.White.copy(alpha = 0.55f),
+                1.00f to Color.White,
+                startX = from,
+                endX = to,
+            ),
+            topLeft = Offset(from, mid - half),
+            size = Size(to - from, half * 2f),
+            blendMode = BlendMode.DstIn,
+        )
+        canvas.restore()
+    }
+}
+
+/** Where the trail leaves from, and the band it occupies, master units. */
+private const val TRAIL_FROM_X = 300f
+private const val TRAIL_Y = 640f
+private const val TRAIL_HALF_HEIGHT = 130f
+
+/**
+ * ROUND 37 item 189 — **one dust puff at the launch point.**
+ *
+ * Three soft discs on a radial brush that reaches zero at its own edge, for the
+ * reason round 35 wrote down the hard way: a flat translucent circle keeps a
+ * perfectly legible rim as it fades, so a puff drawn from flat discs ends its
+ * life as three grey rings hanging in the air.
+ *
+ * It stays where the hooves were. Dust that travels is smoke.
+ */
+private fun DrawScope.drawDustPuff(f: WelcomeTimeline.FrameB, alpha: Float) {
+    val a = (f.dustAlpha * alpha).coerceIn(0f, 1f)
+    if (a <= 0f) return
+    for ((dx, dy, scale) in DUST_PUFFS) {
+        val r = 78f * scale * (0.45f + 1.15f * f.dustSpread)
+        val at = Offset(
+            BASE_PIVOT.x + dx * (0.4f + 1.6f * f.dustSpread),
+            BASE_PIVOT.y + dy * (0.4f + 1.6f * f.dustSpread),
+        )
+        drawCircle(
+            brush = Brush.radialGradient(
+                0.0f to Dust.copy(alpha = a),
+                0.5f to Dust.copy(alpha = a * 0.62f),
+                1.0f to Color.Transparent,
+                center = at,
+                radius = r,
+            ),
+            radius = r,
+            center = at,
+        )
+    }
+}
+
+/** The puff's three lobes: offset from the base, and each one's size. */
+private val DUST_PUFFS = listOf(
+    Triple(-46f, -18f, 1.00f),
+    Triple(38f, -54f, 0.78f),
+    Triple(96f, -12f, 0.62f),
+)
+
+/**
+ * The dust's colour — pale and warm, lifted well off the page for the reason
+ * round 35's mist had to be: a mid grey at low alpha over a near-black page
+ * composites to a hole, not to a puff.
+ */
+private val Dust = Color(0xFFD8D2C6)

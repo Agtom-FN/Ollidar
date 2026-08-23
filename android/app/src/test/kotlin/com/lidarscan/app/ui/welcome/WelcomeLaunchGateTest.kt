@@ -88,7 +88,7 @@ class WelcomeLaunchGateTest {
     fun `the egg does not touch the launch claim`() {
         assertTrue(WelcomeLaunchGate.claimFirstLaunch())
         org.junit.Assert.assertEquals(
-            WelcomeAnimation.Variant.LLAMA_SPIT,
+            WelcomeAnimation.Variant.UNICORN,
             WelcomeAnimation.eggFor(WelcomeAnimation.DeveloperToggle(from = false, to = true)),
         )
         assertFalse(

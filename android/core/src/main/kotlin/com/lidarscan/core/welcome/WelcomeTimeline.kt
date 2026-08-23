@@ -174,9 +174,6 @@ object WelcomeTimeline {
     /** The storyboard's `.puck` easing: `cubic-bezier(.4,.1,.5,.9)`. */
     private val FLIP = cubicBezier(0.4f, 0.1f, 0.5f, 0.9f)
 
-    /** The storyboard's `.spit` easing: `cubic-bezier(.2,.6,.4,1)`. */
-    private val SPIT = cubicBezier(0.2f, 0.6f, 0.4f, 1f)
-
     // ── keyframe tracks ────────────────────────────────────────────────────
 
     /**
@@ -388,780 +385,684 @@ object WelcomeTimeline {
     }
 
 
-    // ══ ANIMATION B — the reference video, as two sections ════════════════
+    // ══ ANIMATION B — THE UNICORN EGG ═════════════════════════════════════
     //
-    // ROUND 36 item 188 — **the owner's reference, translated rather than
-    // interpreted.**
+    // ROUND 37 item 189 — **the approved storyboard, as arithmetic**, for the
+    // second time in this file.
     //
-    // > *"turn the 2 sections of spit into animation style directly and use
-    // > it."* — the owner, 2026-08-23, handing over The Pet Collective's
-    // > *"Llama Spit! Expectations Vs. Reality"* (12.3 s).
+    // > *"rainbow ribbons circle the llama in quick revolutions, THE LIDAR
+    // > ITSELF grows into the horn, then the transformation completes and the
+    // > unicorn gallops off-screen. 3.0 seconds."* — the owner, handing over
+    // > `ollidar-unicorn-egg.html` v2 on 2026-08-23.
     //
-    // Round 35 built a spit that nobody filmed: a tell, two bursts and six
-    // marks on the glass. It is **entirely replaced**. What the reference
-    // actually contains, watched frame by frame, is two shots and one gag:
+    // Round 36's B — the reference video's two sections, the jaw grind and the
+    // covered lens — is **gone entire** (item 188, superseded). It shipped
+    // nowhere. This is not a correction of it; it is a different film.
     //
-    //  * **EXPECTATION** (0 ‥ 5.3 s) — a llama leans in and takes a treat out
-    //    of a hand. Gentle, slow, no spit at all. The whole section is one
-    //    endearing beat, and the joke does not work without it;
-    //  * **REALITY** (5.3 ‥ 12.3 s) — a different animal faces the lens
-    //    dead-on and **grinds its jaw side to side** for several seconds while
-    //    staring down the camera. Then, *between two frames* at 11.05 s, the
-    //    lens is gone: the whole screen is murky translucent splatter, held to
-    //    the end, with the llama a blur somewhere behind it.
+    // The storyboard's `@keyframes` blocks are the specification, exactly as
+    // round 32's were for A, so the stops below read as its own percentages
+    // divided by a hundred. Where the owner's covering note names a window that
+    // the CSS does not quite land in, **the note wins and the CSS's shape is
+    // kept** — every such case is marked below, and there are four of them.
     //
-    // The two things that make the reference funny are therefore the **jaw**
-    // and the **cut to nothing**, and both are structural rather than
-    // decorative. Round 35's choreography had neither: its spray flew *past*
-    // the camera and politely left the view clear.
+    // ## The mapping, beat by beat
     //
-    // ## The mapping, section by section
-    //
-    // | reference | ours |
-    // |---|---|
-    // | 0 ‥ 5.3 s — leans in, takes the treat | 0.00 ‥ 1.00 s — [bLean] + [bBlink] on the side pose |
-    // | 5.3 s — cut to the other animal | 1.00 ‥ 1.20 s — [B_TURN], the pinch to the front pose |
-    // | 5.3 ‥ 11.0 s — the jaw grinds, the stare | 1.20 ‥ 2.10 s — [bJawGrind], [bEyeNarrow], [bEarPin] |
-    // | 11.05 s — two frames, and the lens is gone | 2.10 ‥ 2.20 s — [B_SPRAY] for one frame, then [B_LENS] |
-    // | 11.1 ‥ 12.3 s — held, drips, a shape behind it | 2.20 ‥ 3.00 s — the hold, [LensSplat.drip], the grin |
-    //
-    // Six seconds of stare becomes nine tenths of one, and five of treat
-    // becomes one: the ratio the reference keeps between its two sections is
-    // roughly 5:7, and ours is 1:2, because a three-second film cannot spend
-    // half of itself on the set-up and still land the gag.
-    //
-    // **No hand and no treat.** Item 188 makes it optional and the answer is
-    // no: this art has an ink language for exactly one character, and a human
-    // hand drawn in it is a second character with no vocabulary — while a
-    // treat with no hand holding it is a pellet floating in the air. The lean
-    // itself is what the reference's first section *is* (the animal comes to
-    // you), and a blink is the sweetness the treat was carrying.
+    // | storyboard | ours | file |
+    // |---|---|---|
+    // | `.orbit` — `orbitspin 0.65s linear 2` | 0.00 ‥ 1.30 s — two orbits each | [ribbonAt], [B_RIBBONS] |
+    // | `.flash` 44 → 49 → 56 % | 1.32 ‥ 1.65 s, peak 1.47 s | [bFlash] |
+    // | `.spark` 46 → 52 → 62 % ×3 | 1.38 ‥ 1.80 s, three of them | [sparkleAt] |
+    // | `.puck` `puckgone` 45 → 46 % | 1.30 ‥ 1.43 s, stretching as it goes | [bPuckStretch] |
+    // | `.hornwrap` `horngrow` 45 → 52 → 56 % | 1.30 ‥ 1.50 ‥ 1.60 s, overshoot and settle | [bHornGrow] |
+    // | `bodycolor` `steps(1)` at 53 % | 1.37 ‥ 1.60 s, a front sweeping down | [bFleeceFlood] |
+    // | `.mane` 54 → 60 % | 1.41 ‥ 1.60 s | [bManeAlpha] |
+    // | `act` 60 → 66 → 72 % | 1.60 crouch, 1.80 rear, 2.00 down | [bBodyDy], [bBodyRotDeg] |
+    // | `act` 72 → 100 % | 2.00 ‥ 2.79 s, and gone | [bGallopX], [gallopBob] |
+    // | `.trail` 70 → 80 → 100 % | 2.07 ‥ 2.76 s | [bTrailAlpha] |
+    // | `.dust` 74 → 82 → 100 % | 2.00 ‥ 2.70 s | [bDustAlpha] |
     //
     // Every number is fixed rather than random, for the reason every constant
     // in this file is fixed: the film has to be the same film every time.
 
-    /**
-     * **One frame**, in film time, at 30 fps.
-     *
-     * The reference's gag is a *cut*: at 11.02 s the animal is in focus and at
-     * 11.09 s the lens is opaque, with a single smeared frame between them.
-     * That is the beat, so it is a named constant rather than a number chosen
-     * to look fast — the cone lives for one of these and the cover arrives over
-     * two.
-     */
-    const val B_FRAME: Float = 1f / 90f
-
-    /** The lean is at full reach — the head is down and in. **0.62 s.** */
-    const val B_TAKE: Float = 0.207f
-
-    /** The cut: the side pose starts to go. **1.02 s.** */
-    const val B_CUT: Float = 0.34f
-
-    /** The pinch — both poses flat in x, which is the turn's own middle. **1.07 s.** */
-    const val B_TURN: Float = 0.3555f
-
-    /** The front pose is up, and the jaw starts working. **1.20 s.** */
-    const val B_FRONT: Float = 0.40f
+    /** **The ribbons are done. 1.30 s.** */
+    const val B_RIBBONS_END: Float = 0.4333f
 
     /**
-     * **THE HIT. 2.10 s.**
-     *
-     * The last grind, the mouth wide, and the cone leaves — all on one instant,
-     * because in the reference there is no wind-up at all. The animal is
-     * chewing, and then the lens is gone.
+     * How many times each ribbon goes round in that time. **Two**, the
+     * storyboard's `animation: orbitspin 0.65s linear 2`, and a test counts
+     * them rather than trusting the arithmetic that produces them.
      */
-    const val B_HIT: Float = 0.70f
-
-    /** …and it is completely gone by here, two frames later. **2.20 s.** */
-    const val B_COVERED: Float = 0.7333f
-
-    /** The grin, dimly, through the one patch that has run clear. **2.40 s.** */
-    const val B_GRIN: Float = 0.80f
+    const val B_ORBITS: Int = 2
 
     /**
-     * How far a particle at `reach = 1` travels toward the viewer, master
-     * units. The cone only lives for [B_FRAME], so this is how far it gets in
-     * that frame rather than a flight anyone can follow.
+     * **The transformation begins. 1.30 s** — the same instant the ribbons
+     * finish, which is what makes them read as the cause of it.
      */
-    val B_SPRAY_TRAVEL: Float = sb(150f)
+    const val B_TRANSFORM: Float = 0.4333f
 
-    /** …and how wide the cone opens, at `spread = ±1`. */
-    val B_SPRAY_SPREAD: Float = sb(150f)
+    /** **…and the horn is grown, the fleece flooded, the mane in. 1.60 s.** */
+    const val B_HORN_DONE: Float = 0.5333f
 
-    /** A particle's radius at `size = 1`, before the flight grows it. */
-    const val B_DROP_RADIUS: Float = 27f
+    /** **The rear-up is at its peak. 1.80 s.** */
+    const val B_REAR_PEAK: Float = 0.60f
+
+    /** **The front hooves come down and it goes. 2.00 s.** */
+    const val B_LAUNCH: Float = 0.6667f
 
     /**
-     * Mist is soft and nearly not there — no outline, and this much alpha at
-     * most.
+     * **Off the right edge. 2.85 s.**
      *
-     * Not lower: water-blue at 0.22 over this app's dark page composites to a
-     * dark teal, and three of them photographed as grey smudges — a hole in the
-     * screen rather than a puff in the air. Semi-transparent has to be
-     * semi-transparent *against the ground it is on*.
+     * The storyboard's `.actor` only reaches `translateX(430px)` at 100 %, so
+     * its stage is still emptying on the last frame. The owner's note is
+     * explicit that it should not be — *"empty stage ~0.2 s, then dismiss"*.
+     * Deviation 1 of 4.
+     *
+     * **The two numbers this beat has, and why they differ.** This constant is
+     * when the animal's *travel* completes, and [exitTravelMasterUnits] measures
+     * that to the master canvas's own left edge — a definition that cannot come
+     * out wrong if the sprite is ever re-cut. The animal's leftmost *drawn*
+     * pixel is about seventy units in from there, so on the recording the screen
+     * is bare from roughly 2.74 s: 0.15 s by this constant, and about a quarter
+     * of a second to the eye, which is the beat the owner asked for. The first
+     * cut had it at 0.93 and photographed with more than a third of a second of
+     * nothing at the end.
      */
-    const val B_MIST_ALPHA: Float = 0.42f
+    const val B_EXIT: Float = 0.95f
 
-    private val bOverlay = Track(LINEAR, 0f to 1f, 0.93f to 1f, 1f to 0f)
+    /** Gallop bounces on the way out. The item asks for 2–3. */
+    const val B_GALLOP_BOUNCES: Int = 3
 
-    // ── SECTION ONE — the expectation ──────────────────────────────────────
+    private val bOverlay = Track(LINEAR, 0f to 1f, B_EXIT to 1f, 1f to 0f)
 
-    /**
-     * ROUND 36 item 188 — **the lean**, 0 = standing, 1 = head down and in.
-     *
-     * The reference's first section is five seconds of an animal *coming to
-     * you*: it lowers its head, reaches, takes what is in the hand and lifts
-     * away again chewing. Three of those four beats are in this one track —
-     * reach (to [B_TAKE]), take (the hold), lift away (the release) — and the
-     * release only goes back to a third rather than to nothing, because an
-     * animal that has just been fed does not return to attention.
-     *
-     * The composable spends it as a rotation about the animal's own base plus a
-     * little scale, so the muzzle arcs **forward and down** the way a neck
-     * does. A translation would have slid the whole llama across the page.
-     */
-    private val bLean = Track(
-        EASE_IN_OUT,
-        0f to 0f, 0.03f to 0f, B_TAKE to 1f, 0.26f to 1f, B_CUT to 0.34f, 1f to 0.34f,
-    )
-
-    /**
-     * …and **the blink**, 0 = open, 1 = shut. One, soft, just after the take.
-     *
-     * This is what the treat is carrying in the reference and it is the whole
-     * reason the second section is funny: something has to be sweet first. A
-     * blink rather than round 35's sparkle — a starburst is a *cartoon*
-     * saying "isn't this nice", and the animal doing it itself is better.
-     */
-    private val bBlink = Track(
-        EASE_IN_OUT,
-        0f to 0f, 0.232f to 0f, 0.250f to 1f, 0.256f to 1f, 0.280f to 0f, 1f to 0f,
-    )
-
-    // ── THE CUT ────────────────────────────────────────────────────────────
+    // ── THE RIBBONS ────────────────────────────────────────────────────────
     //
-    // The reference cuts hard to a different animal on a different hillside.
-    // We have one llama, so the cut is a turn — the two alphas cross while the
-    // pair is pinched flat in x, which is what makes it read as a head coming
-    // round rather than as one drawing replacing another. Two tenths of a
-    // second, which is the item's window and is quick enough to be a cut.
-
-    private val bSideAlpha = Track(LINEAR, 0f to 1f, B_CUT to 1f, 0.362f to 0f, 1f to 0f)
-    private val bFrontAlpha = Track(LINEAR, 0f to 0f, 0.352f to 0f, 0.372f to 1f, 1f to 1f)
-    private val bTurnScaleX = Track(
-        EASE_IN_OUT,
-        0f to 1f, 0.315f to 1f, B_TURN to 0.18f, B_FRONT to 1f, 1f to 1f,
-    )
-
-    // ── SECTION TWO — the reality: the tell ────────────────────────────────
-
-    /**
-     * ROUND 36 item 188 — **the jaw**, −1 = ground fully left, +1 = fully
-     * right.
-     *
-     * This is the reference's tell and round 35 did not have it. Six seconds of
-     * that video are an animal chewing *at* the camera: the muzzle slides
-     * across the face, right, left, right, while the eyes never leave you. It
-     * is menace and it is entirely lateral — a jaw that opens and shuts is an
-     * animal eating, and a jaw that goes side to side is an animal deciding.
-     *
-     * **Two and a half cycles** in nine tenths of a second (item 188 asks for
-     * 2–3), and the last one is short of the far side because the mouth is
-     * already opening for the hit.
-     */
-    private val bJawGrind = Track(
-        EASE_IN_OUT,
-        0f to 0f, B_FRONT to 0f,
-        0.445f to 1f, 0.490f to -1f, 0.535f to 1f, 0.580f to -1f, 0.625f to 1f,
-        0.670f to -0.55f, B_HIT to 0f, 1f to 0f,
-    )
+    // The storyboard could only draw a bar swinging round a pivot, because CSS
+    // has one `rotate()` and no depth: its ribbon is always on top of the
+    // llama, and the caption admits it — *"elliptical orbit passing IN FRONT of
+    // and BEHIND the llama — layer order must swap at the orbit's front/back
+    // crossings, which the storyboard's flat version could not show but the
+    // build must do."*
+    //
+    // So a ribbon here is not a bar. It is an **arc of its own orbit** — a band
+    // sampled along the ellipse, every sample carrying its own depth — and the
+    // composable draws the samples behind the animal before it draws the
+    // animal, and the rest after. The swap is therefore not an event that has
+    // to be timed: it is what sorting by depth does, twice a revolution, for
+    // free, and it cannot go out of step with the motion because it *is* the
+    // motion.
 
     /**
-     * The ears, 0 = upright, 1 = flat back against the head.
+     * One ribbon's orbit, in master units, plus where in the cycle it starts.
      *
-     * They pin on the turn and they **stay** pinned: item 188 keeps round 35's
-     * ear-pin and joins the jaw to it rather than replacing it, and there is no
-     * beat in this cut where they would come up again — the film ends with the
-     * lens covered, and an animal that has just done that does not relax while
-     * you are still looking at it.
+     * The ellipse is the same trick a hand-drawn orbit is: wide in x, shallow
+     * in y, and tilted a few degrees so it is a ring seen from above rather
+     * than a rail. [b] is a quarter of [a] — flatter than that and the ribbon
+     * slides sideways without ever going round anything.
      */
-    private val bEarPin = Track(
-        EASE_IN_OUT,
-        0f to 0f, 0.372f to 0f, 0.45f to 1f, 1f to 1f,
-    )
-
-    /** …and the eyes narrow onto the stare, 0 = round, 1 = lidded. */
-    private val bEyeNarrow = Track(
-        EASE_IN_OUT,
-        0f to 0f, 0.372f to 0f, 0.47f to 1f, 1f to 1f,
+    class RibbonOrbit(
+        /** The ellipse's centre. */
+        val cx: Float,
+        val cy: Float,
+        /** Its half-width and half-height. */
+        val a: Float,
+        val b: Float,
+        /** …and the roll of the whole ring, degrees. */
+        val tiltDeg: Float,
+        /** Where this ribbon starts, in revolutions. */
+        val phase: Float,
+        /** Its own start colour along the rainbow, 0‥1. */
+        val hue: Float,
     )
 
     /**
-     * The head through the grind, master units, negative = up.
+     * **Two** ribbons, phase-offset.
      *
-     * Almost still, and that is the point — the reference's second animal holds
-     * its head at one height for six seconds and lets the jaw do all of the
-     * moving. What little there is here is the jaw's own weight (a few units
-     * with each pass), then a small draw-back a tenth before the hit and the
-     * snap through it.
+     * The storyboard offsets the second with `animation-delay: 0.18s`, which
+     * would leave it still going round at 1.48 s — a fifth of a second into the
+     * transformation, with the flash already up. The owner's note says both are
+     * inside the first 1.3 s, so the delay is spent as a **phase** instead:
+     * 0.18 s of a 0.65 s revolution is 0.277 of a turn, and that is what the
+     * second one starts at. Same look, and both are gone when the flash lands.
+     * Deviation 2 of 4.
+     *
+     * Their ellipses are deliberately not the same ellipse. Two identical rings
+     * a third of a turn apart photograph as one ring with two beads on it.
      */
-    private val bHeadRise = Track(
-        EASE_IN_OUT,
-        0f to 0f, B_FRONT to 0f, 0.47f to 7f, 0.535f to -5f, 0.60f to 6f, 0.66f to -4f,
-        0.69f to -20f, B_HIT to -12f, 0.716f to 30f, 0.77f to 14f, 1f to 14f,
-    )
-
-    /** …and the roll it carries, degrees, about the base of the neck. */
-    private val bHeadTilt = Track(
-        EASE_IN_OUT,
-        0f to 0f, B_FRONT to 0f, 0.47f to 2.4f, 0.535f to -2.4f, 0.60f to 2f, 0.66f to -1.8f,
-        0.69f to -5f, B_HIT to -3f, 0.716f to 6.5f, 0.78f to 0f, 1f to 0f,
+    val B_RIBBONS: List<RibbonOrbit> = listOf(
+        RibbonOrbit(cx = 500f, cy = 566f, a = 436f, b = 134f, tiltDeg = 8f, phase = 0f, hue = 0f),
+        RibbonOrbit(cx = 496f, cy = 508f, a = 458f, b = 108f, tiltDeg = -10f, phase = 0.277f, hue = 0.34f),
     )
 
     /**
-     * The creep toward the viewer, as a scale.
+     * How many samples a ribbon is drawn from.
      *
-     * It grows through the stare — five per cent over nine tenths of a second,
-     * which nobody watches happen and everybody feels — and is thrown at the
-     * camera on the hit. That is the frame the cone comes out of, and it is
-     * the last frame of the animal anyone sees.
+     * They are strokes rather than one filled path, and that is what makes the
+     * depth sort possible at all: a single path has one z, and a band that
+     * wraps round an animal has two. Twenty-eight is where the joints stop
+     * being visible at a phone's pixel density.
      */
-    private val bHeadLunge = Track(
-        EASE_IN_OUT,
-        0f to 1f, B_FRONT to 1f, 0.66f to 1.05f, 0.69f to 1.02f, B_HIT to 1.03f,
-        0.716f to 1.24f, 0.78f to 1.09f, 1f to 1.09f,
+    const val B_RIBBON_SEGMENTS: Int = 28
+
+    /** How much of the orbit the band spans, in revolutions. */
+    const val B_RIBBON_ARC: Float = 0.46f
+
+    /** Its half-width at the ellipse's own scale, master units. */
+    const val B_RIBBON_HALF_WIDTH: Float = 27f
+
+    /**
+     * One sample of a ribbon, in master units.
+     *
+     * [depth] is the only field that is not a coordinate: positive is **in
+     * front of** the llama and negative is **behind** it, and the composable
+     * draws the two runs on either side of the animal. It is `sin` of the
+     * orbit's angle, so it changes sign exactly twice a revolution — at the
+     * ellipse's ends, which are the crossings the item names.
+     */
+    data class RibbonSample(
+        val x: Float,
+        val y: Float,
+        val halfWidth: Float,
+        val depth: Float,
+        val alpha: Float,
+        /** Where along the rainbow this sample is, 0‥1, wrapped. */
+        val hue: Float,
     )
 
     /**
-     * How open the mouth is: working through the grind, **wide** on the hit.
+     * How far round ribbon [index] has gone at [t], **in revolutions**,
+     * including its phase.
      *
-     * It never shuts during the stare. A jaw grinding with the mouth closed is
-     * a shape sliding about under the fleece; a crack of dark that opens and
-     * narrows with each pass is a mouth.
+     * Public because it is the thing item 189 counts: *two full orbits each*.
+     * A test that counted peaks in a coordinate would be counting the ellipse,
+     * not the orbit.
      */
-    private val bMouthOpen = Track(
-        EASE_OUT,
-        0f to 0f, B_FRONT to 0.12f,
-        0.445f to 0.34f, 0.490f to 0.14f, 0.535f to 0.36f, 0.580f to 0.14f, 0.625f to 0.34f,
-        0.670f to 0.16f, 0.694f to 0.30f, B_HIT to 1f, 0.716f to 0.82f, 0.78f to 0.30f,
-        // …and it narrows again as the grin comes up behind the patch, so that
-        // what shows through the thin place is a grin and not a mouth with a
-        // line under it.
-        0.86f to 0.15f, 1f to 0.15f,
-    )
-
-    private val bGrinAlpha = Track(EASE_OUT, 0f to 0f, B_GRIN to 0f, 0.86f to 1f, 1f to 1f)
-
-    // ── THE CONE — one frame of it ─────────────────────────────────────────
-
-    /**
-     * One particle's whole life, as eight numbers.
-     *
-     * A **table** and not a particle system, and not a random draw, so the
-     * burst is the same burst on every play. Round 35's version of this class
-     * also carried the mark each drop left on the glass; item 188 takes that
-     * away, because in the reference nothing lands in front of you — the lens
-     * itself goes, all at once, and what covers it is [B_LENS].
-     */
-    class SprayShot(
-        /** When it leaves the mouth, in film time. */
-        val launch: Float,
-        /** How long it is in the air, in film time. */
-        val flight: Float,
-        /** Its bearing across the cone, −1‥1 of [B_SPRAY_SPREAD]. */
-        val spread: Float,
-        /** How far toward the viewer it gets, as a fraction of [B_SPRAY_TRAVEL]. */
-        val reach: Float,
-        /** Its radius, as a fraction of [B_DROP_RADIUS] (or of a mist puff's own scale). */
-        val size: Float,
-        /** A few degrees of tumble on top of the bearing its own flight gives it. */
-        val spin: Float,
-        /** Soft, outline-free and semi-transparent, rather than a drop with an edge. */
-        val mist: Boolean = false,
-    ) {
-        /** The instant it arrives at the glass. */
-        val landing: Float get() = launch + flight
+    fun ribbonTurns(index: Int, t: Float): Float {
+        val orbit = B_RIBBONS[index]
+        val p = (t / B_RIBBONS_END).coerceIn(0f, 1f)
+        return orbit.phase + p * B_ORBITS
     }
 
     /**
-     * ROUND 36 item 188 — **the single frame of spray cone.**
+     * The whole ribbon [index] at [t] — or an empty list once they are gone.
      *
-     * Twelve drops and three mist puffs, all of them out of the mouth inside
-     * four hundredths of a second and all of them gone within [B_FRAME] of
-     * leaving. This is not round 35's burst re-timed: that one was a
-     * quarter-second flight anyone could follow, and the reference contains no
-     * such thing. What it contains is **one** smeared frame between a llama and
-     * an opaque lens, and this table is that frame — wide, large, and over.
-     *
-     * It is deliberately more than covers the screen, because it is only ever
-     * seen once and behind it the cover is already arriving.
+     * The band trails **behind** the head: sample 0 is the head, sample
+     * `B_RIBBON_SEGMENTS − 1` is the tail, and the tail is thinner and fainter,
+     * which is what gives a rigid ring the look of something with fabric in it.
      */
-    val B_SPRAY: List<SprayShot> = listOf(
-        SprayShot(0.7000f, 0.0130f, -0.92f, 1.42f, 0.52f, -8f),
-        SprayShot(0.7000f, 0.0122f, -0.55f, 1.60f, 0.60f, 6f),
-        SprayShot(0.7002f, 0.0140f, -0.24f, 1.30f, 0.44f, 12f),
-        SprayShot(0.7002f, 0.0116f, 0.06f, 1.66f, 0.62f, -4f),
-        SprayShot(0.7004f, 0.0134f, 0.36f, 1.24f, 0.46f, 9f),
-        SprayShot(0.7004f, 0.0126f, 0.68f, 1.52f, 0.55f, -11f),
-        SprayShot(0.7006f, 0.0144f, 0.98f, 1.18f, 0.40f, 5f),
-        SprayShot(0.7008f, 0.0110f, -0.74f, 1.06f, 0.34f, -7f),
-        SprayShot(0.7010f, 0.0118f, -0.06f, 0.96f, 0.30f, 10f),
-        SprayShot(0.7012f, 0.0128f, 0.52f, 1.02f, 0.36f, -6f),
-        SprayShot(0.7014f, 0.0112f, -0.40f, 1.34f, 0.38f, 8f),
-        SprayShot(0.7016f, 0.0120f, 0.82f, 0.90f, 0.32f, -9f),
-        // …and the mist inside it, out to the sides rather than on the chin: a
-        // translucent puff centred on the muzzle photographs as a wet smudge on
-        // the fleece, which is a different animal noise entirely.
-        SprayShot(0.7000f, 0.0136f, -0.70f, 1.10f, 3.2f, 0f, mist = true),
-        SprayShot(0.7004f, 0.0142f, 0.62f, 1.05f, 3.6f, 0f, mist = true),
-        SprayShot(0.7008f, 0.0130f, 0.02f, 1.28f, 2.9f, 0f, mist = true),
-    )
-
-    /**
-     * **Where** a particle is along its flight, and **how big** it is, are two
-     * different curves, and that is deliberate.
-     *
-     * [burst] is the position: it leaves **explosively** and eases in, so the
-     * cone is clear of the animal's own face within a fifth of the flight.
-     * [approach] is the size: slow, then fast, which is what something coming
-     * at a camera does. Together they read as "thrown hard, and arriving" —
-     * and at this timing they are what stops the one frame being a ring of
-     * identical dots pasted round the muzzle.
-     */
-    private fun burst(p: Float): Float =
-        1f - Math.pow((1f - p).toDouble(), 1.4).toFloat()
-
-    private fun approach(p: Float): Float = p * (0.42f + 0.58f * p)
-
-    /**
-     * One particle, this frame — or `null` if it has not left yet or has
-     * arrived.
-     *
-     * Public, and indexed rather than handed a [SprayShot], so that a test can
-     * walk one particle's whole flight rather than trying to pick it out of
-     * [FrameB.spray], a list whose membership changes every frame.
-     */
-    fun sprayAt(index: Int, t: Float): SprayDrop? {
-        val shot = B_SPRAY[index]
-        if (t < shot.launch || t > shot.landing) return null
-        // Bounded by the landing INSTANT rather than by the progress it
-        // computes: `(landing − launch) / flight` is not exactly 1 in float for
-        // most of this table.
-        val p = ((t - shot.launch) / shot.flight).coerceIn(0f, 1f)
-        val a = approach(p)
-        val out = burst(p)
-        val dx = shot.spread * B_SPRAY_SPREAD * out
-        val dy = shot.reach * B_SPRAY_TRAVEL * out
-        // The tail points back the way it came, which is a fact about the
-        // flight rather than a number someone chose. `teardropPath` draws its
-        // tail up, so the rotation that takes "up" onto "back toward the
-        // mouth" is atan2(−dx, dy).
-        val bearing = Math.toDegrees(kotlin.math.atan2(-dx.toDouble(), dy.toDouble())).toFloat()
-        return if (shot.mist) {
-            SprayDrop(
-                dx = dx,
-                dy = dy,
-                radius = B_DROP_RADIUS * shot.size * (0.55f + 2.3f * p),
-                // In fast, out slowly — a puff of mist has no edge and no
-                // moment of arrival.
-                alpha = B_MIST_ALPHA * (1f - p) * (1f - p) * (p * 7f).coerceAtMost(1f),
-                stretch = 1f,
-                tiltDeg = 0f,
-                mist = true,
-            )
-        } else {
-            SprayDrop(
-                dx = dx,
-                dy = dy,
-                radius = B_DROP_RADIUS * shot.size * (0.30f + 3.4f * a),
-                // It hands over to the cover rather than vanishing: the last
-                // fifth of every flight fades, and the wash is already coming.
-                alpha = ((1f - p) / 0.20f).coerceIn(0f, 1f),
-                // Long and thin while it is fast, rounding up as it arrives.
-                stretch = 1.85f - 0.70f * a,
-                tiltDeg = bearing + shot.spin * (1f - p),
-                mist = false,
+    fun ribbonAt(index: Int, t: Float): List<RibbonSample> {
+        if (t > B_RIBBONS_END) return emptyList()
+        val orbit = B_RIBBONS[index]
+        val fade = ribbonFade(t)
+        if (fade <= 0f) return emptyList()
+        val head = ribbonTurns(index, t)
+        val rad = orbit.tiltDeg * Math.PI.toFloat() / 180f
+        val cs = kotlin.math.cos(rad)
+        val sn = kotlin.math.sin(rad)
+        return (0 until B_RIBBON_SEGMENTS).map { i ->
+            val along = i.toFloat() / (B_RIBBON_SEGMENTS - 1)
+            val turns = head - along * B_RIBBON_ARC
+            val theta = turns * 2.0 * Math.PI
+            val ex = (orbit.a * kotlin.math.cos(theta)).toFloat()
+            val ey = (orbit.b * kotlin.math.sin(theta)).toFloat()
+            // The depth is taken BEFORE the tilt, from the untilted ellipse:
+            // rolling the ring a few degrees changes where a sample is drawn,
+            // not which side of the animal it is on.
+            val depth = kotlin.math.sin(theta).toFloat()
+            // Perspective, as the one cue a flat drawing can afford: the near
+            // half of the ring is wider than the far half.
+            val width = B_RIBBON_HALF_WIDTH * (0.62f + 0.44f * depth)
+            // The tail thins and fades. Squared, so most of the band is at full
+            // weight and only the last few samples are ghosts.
+            val taper = 1f - along * along
+            RibbonSample(
+                x = orbit.cx + ex * cs - ey * sn,
+                y = orbit.cy + ex * sn + ey * cs,
+                halfWidth = width * (0.45f + 0.55f * taper),
+                depth = depth,
+                alpha = fade * (0.30f + 0.70f * taper),
+                hue = wrap01(orbit.hue + turns * 0.9f),
             )
         }
     }
 
-    /** A particle in flight, in master units measured from the mouth. */
-    data class SprayDrop(
-        val dx: Float,
-        val dy: Float,
-        val radius: Float,
-        val alpha: Float,
-        /** Length ÷ width: long while it is fast, rounding up as it slows. */
-        val stretch: Float,
-        /** Degrees, so its tail points back along the flight it actually flew. */
-        val tiltDeg: Float,
-        /** Soft, outline-free, low alpha. */
-        val mist: Boolean,
+    /**
+     * The ribbons' own opacity: on quickly, off on the last stride into the
+     * flash.
+     *
+     * The storyboard's `orbitspin` is `opacity:1` for 99 % of its two turns and
+     * 0 at the very end, which in CSS is a ribbon that vanishes between two
+     * frames. A tenth of a revolution of fade is what stops that reading as a
+     * dropped frame, and it is finished before [B_TRANSFORM] either way.
+     */
+    private fun ribbonFade(t: Float): Float {
+        if (t < 0f || t > B_RIBBONS_END) return 0f
+        val inRamp = (t / (B_RIBBONS_END * 0.06f)).coerceIn(0f, 1f)
+        val outRamp = ((B_RIBBONS_END - t) / (B_RIBBONS_END * 0.09f)).coerceIn(0f, 1f)
+        return inRamp * outRamp
+    }
+
+    private fun wrap01(v: Float): Float = v - kotlin.math.floor(v)
+
+    /**
+     * ROUND 37 item 189 — **the llama watches.**
+     *
+     * The item makes the follow *"a plus if cheap"*, and it is cheap: the eye
+     * is already a separate sprite that animation A slides about, so it costs a
+     * translate. It looks at the **near** ribbon — the one in front — because
+     * an animal tracking something behind its own head is a different and much
+     * more alarming drawing.
+     *
+     * @return the eye's offset from its anchor, master units, x then y.
+     */
+    fun eyeFollow(t: Float): Pair<Float, Float> {
+        if (t > B_RIBBONS_END) return 0f to 0f
+        val fade = ribbonFade(t)
+        if (fade <= 0f) return 0f to 0f
+        // Whichever of the two is in front right now; ties go to the first.
+        val heads = B_RIBBONS.indices.map { ribbonAt(it, t).firstOrNull() }
+        val near = heads.filterNotNull().maxByOrNull { it.depth } ?: return 0f to 0f
+        val dx = near.x - Art.EYE_CENTER_X
+        val dy = near.y - Art.EYE_CENTER_Y
+        val span = kotlin.math.hypot(dx.toDouble(), dy.toDouble()).toFloat().coerceAtLeast(1f)
+        return (dx / span * EYE_FOLLOW_X * fade) to (dy / span * EYE_FOLLOW_Y * fade)
+    }
+
+    /**
+     * How far the eye travels. Small: the face patch is about 250 units across
+     * and the pupil is 56, so anything past twenty units is a llama with its
+     * eye where its cheek should be.
+     */
+    private const val EYE_FOLLOW_X: Float = 15f
+    private const val EYE_FOLLOW_Y: Float = 10f
+
+    /**
+     * …and the head goes with it, barely — the whole animal rolls about its own
+     * base by this much, in phase with the near ribbon's x.
+     *
+     * Two degrees. It is under the threshold at which anybody could say what
+     * changed, which is the correct size for a thing described as *subtle*.
+     */
+    const val B_WATCH_TILT_DEG: Float = 2f
+
+    // ── THE TRANSFORMATION ─────────────────────────────────────────────────
+
+    /**
+     * ROUND 37 item 189 — **the puck stretches into the horn.**
+     *
+     * > *"THE LIDAR PUCK SPRITE STRETCHES INTO THE SPIRAL HORN — a morph
+     * > anchored at the puck's seat."*
+     *
+     * A morph and not a swap, and the difference is one shared anchor: both
+     * shapes are scaled about **the puck's own seat** — the middle of its
+     * contact line, [Art.PUCK_CENTER_X] × [Art.PUCK_FOOT_Y] — so neither of
+     * them ever leaves the llama's head while the other arrives. The puck grows
+     * in y and narrows in x as it goes ([bPuckStretch], [bPuckNarrow]) so that
+     * the shape it is fading out of is already horn-proportioned; the horn
+     * grows on the same line from a sixth of its height.
+     *
+     * The storyboard's `puckgone` is `steps(1)` at 46 % — an instant swap,
+     * which is what CSS can do with two `<svg>`s and no morph target. Its
+     * caption is the part that matters and it says stretch. Deviation 3 of 4.
+     */
+    private val bPuckAlpha = Track(
+        LINEAR,
+        0f to 1f, B_TRANSFORM to 1f, 0.4750f to 0f, 1f to 0f,
     )
 
-    // ── THE COVERED LENS ───────────────────────────────────────────────────
-    //
-    // ROUND 36 item 188 — the gag, and the one part of this film that is not
-    // in master-art units.
-    //
-    // Everything else in both animations lives on the 1024 × 1024 icon canvas,
-    // because everything else is a drawing of a llama. This is a drawing of
-    // **the lens**, and the lens is the phone: it has to reach the corners of
-    // whatever screen it is on, in the way the scan rings in animation A do
-    // (see `WelcomeOverlay.ringReachInMasterUnits` for the same problem solved
-    // the other way round). So the cover is stated in **screen fractions** —
-    // x of the width, y of the height, radius of the width — and the
-    // composable multiplies them out.
-
-    /**
-     * The murk over the whole screen, at full cover.
-     *
-     * **Just over half**, and the first cut of this had it at 0.76 with the
-     * blobs at 0.62 on top. Photographed, that was not a covered lens: eighteen
-     * translucent shapes at 0.62 stack, and where three of them overlapped the
-     * result was 95 % opaque, so the whole screen went to one flat pale green
-     * with a scribble of ink lines on it and the llama disappeared completely.
-     * Item 188 asks for the llama to be **dimly visible through** the mess, and
-     * a translucent thing that overlaps itself six times is not translucent.
-     *
-     * At these two numbers the densest place on the screen is about 79 % opaque
-     * and the thinnest is 55 %, so the animal is a shape behind all of it and
-     * the blobs are still individually legible.
-     */
-    const val B_WASH_ALPHA: Float = 0.55f
-
-    /** …and how thin it goes over the one patch that runs clear. */
-    const val B_PATCH_ALPHA: Float = 0.18f
-
-    /**
-     * The clear patch's radius, as a fraction of the screen's **width**.
-     *
-     * Its centre is not here: the composable puts it on the llama's own mouth,
-     * measured off the art box, because the whole point of the patch is that
-     * the **grin** is what shows through it. At the first cut's 0.24 the patch
-     * was wider than the whole head and what came through it was the entire
-     * animal, lit up, which is a window and not a thin place.
-     */
-    const val B_PATCH_RADIUS: Float = 0.17f
-
-    /** A blob's own opacity on top of the wash — see [B_WASH_ALPHA] for why it is this low. */
-    const val B_LENS_ALPHA: Float = 0.24f
-
-    /** …and the weight of the ink round the larger ones, which does **not** follow the fill. */
-    const val B_LENS_INK: Float = 0.30f
-
-    /**
-     * Blobs smaller than this, as a fraction of the screen's width, are not
-     * outlined — item 188 asks for *"ink-outlined **larger** blobs"* and it is
-     * right to. Outlining all eighteen put a hairline round every shape on the
-     * screen and the cover photographed as a contour map.
-     */
-    const val B_LENS_INK_MIN_RADIUS: Float = 0.37f
-
-    /** A drip is denser than the blob it came off — otherwise it is invisible against it. */
-    const val B_DRIP_DENSITY: Float = 1.45f
-
-    /**
-     * The area of the screen the blobs alone must cover, before the wash —
-     * item 188's *"high coverage ~90%"*, and a number the test measures rather
-     * than trusts.
-     */
-    const val B_LENS_COVERAGE: Float = 0.90f
-
-    // ── the shape of one splat ─────────────────────────────────────────────
-    //
-    // The outline lives HERE and not in the composable that strokes it, for one
-    // reason: item 188's *"~90 % of the screen"* is a claim about the area
-    // these shapes actually enclose, and a test that measures an ellipse
-    // standing in for them measures the wrong thing by a fifth. The composable
-    // and the test now build the same polygon out of the same two tables.
-
-    /** How flat a splat is: taller than it is wide reads as a drip, not a hit. */
-    const val SPLAT_SQUASH: Float = 0.82f
-
-    /**
-     * The splat's outline: eighteen radii, **lumpy rather than toothed**.
-     *
-     * Round 32 alternated two radii every point, which is not a splash — it is
-     * a flower, and the first recording of round 34 showed it as one. These
-     * wander over three or four points at a time, across ±28 %: at ±14 % a
-     * mark photographs as a blue potato. A mark left by something that arrived
-     * at speed has a couple of tongues on it.
-     */
-    val SPLAT_LOBES: FloatArray = floatArrayOf(
-        1.00f, 1.14f, 0.94f, 0.76f, 0.88f, 1.09f, 1.26f, 1.02f, 0.83f,
-        0.72f, 0.91f, 1.18f, 1.28f, 0.97f, 0.79f, 0.90f, 1.11f, 0.85f,
+    private val bPuckStretch = Track(
+        EASE_IN_OUT,
+        0f to 1f, B_TRANSFORM to 1f, 0.4750f to 2.45f, 1f to 2.45f,
     )
 
-    /** …and the lobes welded on off-centre, which stop the outline being a ring of teeth. */
-    val SPLAT_BLOBS: List<Triple<Float, Float, Float>> = listOf(
-        Triple(-0.92f, -0.42f, 0.30f),
-        Triple(0.84f, -0.55f, 0.24f),
-        Triple(0.62f, 0.58f, 0.22f),
+    private val bPuckNarrow = Track(
+        EASE_IN_OUT,
+        0f to 1f, B_TRANSFORM to 1f, 0.4750f to 0.42f, 1f to 0.42f,
+    )
+
+    /** The storyboard's `.hornwrap` easing: `cubic-bezier(.3,1.4,.5,1)`. */
+    private val HORN = cubicBezier(0.3f, 1.4f, 0.5f, 1f)
+
+    private val bHornAlpha = Track(
+        LINEAR,
+        0f to 0f, B_TRANSFORM to 0f, 0.4900f to 1f, 1f to 1f,
     )
 
     /**
-     * Vertex [i] of the outline of the splat with this [seed], as a multiple of
-     * its radius and an angle in radians.
+     * The horn's height, as a fraction of its own.
      *
-     * @param seed which blob this is. It rolls both tables by a different
-     *   amount for each one, so eighteen blobs on one screen are eighteen
-     *   shapes rather than one shape eighteen times.
+     * The storyboard: `0%,45% { scaleY(0.15) } 52% { scaleY(1.12) } 56%,100%
+     * { scale(1) }` — grow, overshoot by an eighth, settle. The overshoot is
+     * the whole character of it and it is the reason this track exists rather
+     * than a ramp: a horn that arrives at its length and stops has been placed
+     * there, and a horn that goes past and comes back has **grown**.
+     *
+     * The owner's note puts the transformation in 1.3 ‥ 1.6 s where the CSS
+     * settles at 56 % (1.68 s), so the settle is pulled to 1.60 s and the
+     * overshoot with it. Deviation 4 of 4.
      */
-    fun splatLobe(seed: Int, i: Int): Float =
-        SPLAT_LOBES[Math.floorMod(i + seed * 5, SPLAT_LOBES.size)]
-
-    fun splatAngle(seed: Int, i: Int): Double =
-        2.0 * Math.PI * i / SPLAT_LOBES.size + 0.35 + seed * 0.41
-
-    /** …and the [b]-th welded lobe of the same splat. */
-    fun splatBlob(seed: Int, b: Int): Triple<Float, Float, Float> =
-        SPLAT_BLOBS[Math.floorMod(b + seed, SPLAT_BLOBS.size)]
-
-    /**
-     * One blob of splatter on the lens.
-     *
-     * Fixed, and laid out rather than scattered: fifteen large blobs on a
-     * jittered three-across grid, plus three long streaks, which between them
-     * cover [B_LENS_COVERAGE] of a handset's screen — high, and deliberately
-     * **not** total: at radii a third larger the same eighteen shapes close up
-     * into one sheet and stop being blobs at all. The ragged holes between them
-     * are where the wash alone shows, and they are what makes the cover read as
-     * something thrown rather than as a colour filter.
-     *
-     * Their **centres** are all clear of the band where the llama's mouth sits,
-     * on every screen this app runs on, so the patch that runs clear has no
-     * blob core sitting on it — see [lensGapClearance].
-     */
-    class LensBlob(
-        /** Its centre, as a fraction of the screen's width. */
-        val x: Float,
-        /** …and of its height. */
-        val y: Float,
-        /** Its radius, as a fraction of the screen's width. */
-        val radius: Float,
-        /** Length ÷ width. Above about 2 it stops being a blob and is a streak. */
-        val stretch: Float,
-        /** Which way that length lies, degrees. */
-        val angleDeg: Float,
-        /** How long after the hit it appears — a frame at most; this is a splat, not a fall. */
-        val delay: Float,
-        /** How far it runs before it dries, as a fraction of the screen's height. */
-        val drip: Float = 0f,
+    private val bHornGrow = Track(
+        HORN,
+        0f to 0.15f, B_TRANSFORM to 0.15f, 0.5000f to 1.12f, B_HORN_DONE to 1f, 1f to 1f,
     )
 
-    /**
-     * The cover, as laid out.
-     *
-     * Read as three columns and five rows with the middle of the fourth row
-     * left out — that gap is the llama's mouth. The three [stretch] > 2
-     * entries at the end are the streaks item 188 asks for alongside the
-     * blobs: the same lumpy outline, pulled out and laid over at an angle, so
-     * they are smears of the same stuff rather than a second material.
-     *
-     * **Two** of them run (the item asks for 1–2), and they are chosen high on
-     * the screen so the run is visible for the whole hold rather than reaching
-     * the bottom edge in a tenth of a second.
-     */
-    val B_LENS: List<LensBlob> = listOf(
-        // row one — the top edge, over-covered because a blob centred on 0.04
-        // puts only its lower half on the screen.
-        LensBlob(0.14f, 0.04f, 0.345f, 1.15f, -18f, 0.000f),
-        LensBlob(0.55f, 0.01f, 0.390f, 1.05f, 10f, 0.004f),
-        LensBlob(0.93f, 0.07f, 0.338f, 1.25f, -30f, 0.002f),
-        // row two
-        LensBlob(0.04f, 0.23f, 0.330f, 1.10f, 25f, 0.006f, drip = 0.26f),
-        LensBlob(0.48f, 0.19f, 0.405f, 1.00f, -8f, 0.000f),
-        LensBlob(0.94f, 0.26f, 0.353f, 1.18f, 14f, 0.008f),
-        // row three
-        LensBlob(0.10f, 0.42f, 0.345f, 1.08f, -22f, 0.002f),
-        LensBlob(0.90f, 0.37f, 0.360f, 1.12f, 8f, 0.004f, drip = 0.22f),
-        // row four — the middle is missing on purpose. This is the mouth.
-        LensBlob(-0.03f, 0.58f, 0.345f, 1.20f, 18f, 0.006f),
-        LensBlob(1.03f, 0.56f, 0.353f, 1.14f, -16f, 0.000f),
-        // row five — pushed to the edges and low, for the same reason as row
-        // four: on a squarer screen the art box sits lower and the mouth comes
-        // down with it, and these are the two that would arrive on top of it.
-        LensBlob(0.03f, 0.79f, 0.368f, 1.06f, 12f, 0.008f),
-        LensBlob(0.97f, 0.79f, 0.368f, 1.10f, -14f, 0.002f),
-        // row six — the bottom edge, over-covered like the top
-        LensBlob(0.10f, 0.97f, 0.375f, 1.16f, -10f, 0.004f),
-        LensBlob(0.52f, 1.00f, 0.413f, 1.02f, 6f, 0.000f),
-        LensBlob(0.93f, 0.99f, 0.360f, 1.22f, 20f, 0.006f),
-        // the streaks
-        LensBlob(0.28f, 0.30f, 0.150f, 3.4f, 62f, 0.010f),
-        LensBlob(0.76f, 0.68f, 0.128f, 3.8f, -52f, 0.008f),
-        LensBlob(0.42f, 0.88f, 0.128f, 3.2f, 78f, 0.010f),
-    )
-
-    /**
-     * The wash arriving: nothing for one frame after the hit — which is the
-     * frame the cone is seen in — then all of it over two more.
-     */
-    private val bLensWash = Track(
+    /** …and its width, which the storyboard runs from 0.6 to 1 over the same span. */
+    private val bHornWidth = Track(
         EASE_OUT,
-        0f to 0f, B_HIT + B_FRAME to 0f, B_COVERED to 1f, 1f to 1f,
+        0f to 0.60f, B_TRANSFORM to 0.60f, 0.5000f to 1f, 1f to 1f,
     )
 
     /**
-     * …and the patch running clear, 0 = the lens is uniformly gone, 1 = there
-     * is a thin place over the mouth.
+     * **The fleece floods rainbow**, 0 = the art's own cream, 1 = flooded to
+     * the last hair.
      *
-     * It opens **after** the cover rather than with it, because the reference's
-     * own hold does exactly that: the first covered frame is opaque and the
-     * shape behind it only swims back into view as the stuff runs.
+     * The storyboard is `steps(1)`: `#fff` until 53 % and `url(#rain)` after
+     * it, which is a fill swap because a CSS fill cannot be half applied. The
+     * owner's word is **floods**, and a flood has a front. It comes **down**
+     * from the crown — the magic is arriving from the horn, so the colour has
+     * to leave from there — and the composable spends this number as the
+     * position of that front rather than as an opacity, so the llama is
+     * two-tone for a fifth of a second on the way.
      */
-    private val bLensPatch = Track(EASE_OUT, 0f to 0f, B_COVERED to 0f, 0.84f to 1f, 1f to 1f)
+    private val bFleeceFlood = Track(
+        EASE_OUT,
+        0f to 0f, 0.4550f to 0f, B_HORN_DONE to 1f, 1f to 1f,
+    )
 
     /**
-     * One blob on the lens, this frame — or `null` if it has not arrived.
+     * **The mane**, along the neck's back edge.
      *
-     * The bloom is deliberately tiny (a fifth of a frame's worth of growth over
-     * one frame): a splat that *grows* is a drop landing in slow motion, and
-     * the whole gag is that this did not happen in slow motion.
+     * The storyboard runs it 54 → 60 % (1.62 ‥ 1.80 s), which is *after* the
+     * window its own caption puts the transformation in. The caption wins: it
+     * arrives with the horn and the flood, and all three are done at 1.60 s
+     * when the animal rears.
      */
-    fun lensAt(index: Int, t: Float): LensSplat? {
-        val blob = B_LENS[index]
-        val start = B_HIT + B_FRAME + blob.delay
-        // Every blob is finished at B_COVERED regardless of its own delay: the
-        // ones that start late arrive faster, which is why the cover reads as
-        // one event with texture rather than as a queue of arrivals.
-        val ramp = ((t - start) / (B_COVERED - start)).coerceIn(0f, 1f)
-        if (ramp <= 0f) return null
-        // It dries: the film's last beat takes the gloss off the cover so the
-        // grin behind the patch is the brightest thing left.
-        val dry = ((t - 0.90f) / 0.10f).coerceIn(0f, 1f)
-        val run = ((t - start - 0.02f) / 0.26f).coerceIn(0f, 1f)
-        return LensSplat(
-            x = blob.x,
-            y = blob.y,
-            radius = blob.radius * (0.84f + 0.16f * ramp),
-            stretch = blob.stretch,
-            angleDeg = blob.angleDeg,
-            alpha = (B_LENS_ALPHA * ramp) - 0.06f * dry,
-            ink = (B_LENS_INK * ramp) - 0.08f * dry,
-            drip = blob.drip * EASE_OUT(run),
-            seed = index,
-        )
-    }
+    private val bManeAlpha = Track(
+        EASE_OUT,
+        0f to 0f, 0.4700f to 0f, B_HORN_DONE to 1f, 1f to 1f,
+    )
 
-    /** One blob on the lens, in screen fractions. */
-    data class LensSplat(
+    /** The storyboard's `.flash`: nothing, then everything, then nothing. */
+    private val bFlash = Track(
+        EASE_OUT,
+        0f to 0f, 0.44f to 0f, 0.49f to 1f, 0.55f to 0f, 1f to 0f,
+    )
+
+    /**
+     * One four-point sparkle: where it sits, master units, and how late it is.
+     *
+     * **Three**, which is what item 189 asks for, at the storyboard's own
+     * offsets — `0`, `0.08s`, `0.16s` — converted to film time. They are placed
+     * around the horn rather than around the animal: a sparkle by the llama's
+     * feet is weather, and a sparkle by the horn is what just happened.
+     */
+    class Sparkle(val x: Float, val y: Float, val size: Float, val delay: Float)
+
+    val B_SPARKLES: List<Sparkle> = listOf(
+        Sparkle(x = 372f, y = 196f, size = 66f, delay = 0f),
+        Sparkle(x = 762f, y = 300f, size = 58f, delay = 0.0267f),
+        Sparkle(x = 596f, y = 40f, size = 74f, delay = 0.0533f),
+    )
+
+    /** A sparkle as drawn: its own scale, opacity and roll. */
+    data class SparkleFrame(
         val x: Float,
         val y: Float,
         val radius: Float,
-        val stretch: Float,
-        val angleDeg: Float,
         val alpha: Float,
-        /** The ink round it. Its own number, so a faint blob still has an edge. */
-        val ink: Float,
-        /** How far it has run, as a fraction of the screen's height. 0 = it does not run. */
-        val drip: Float,
-        /**
-         * Which blob this is — the index into [B_LENS].
-         *
-         * The draw rolls the lumpy outline by it, so eighteen blobs are
-         * eighteen shapes rather than one shape eighteen times.
-         */
-        val seed: Int,
+        val spinDeg: Float,
     )
 
     /**
-     * ROUND 36 item 188 — **how far a blob's centre is from the mouth**, in
-     * screen widths, less its own radius.
+     * Sparkle [index] at [t], or `null` before and after it.
      *
-     * Positive for every blob is the property the layout above exists to have:
-     * the patch that runs clear must not have an opaque core sitting on it, and
-     * "I looked at it and it seemed fine" is not a thing that stays true when
-     * somebody nudges a row.
-     *
-     * @param aspect the screen's width ÷ height. The mouth's own height on
-     *   screen depends on it (`WelcomeOverlay.artBox` fits the art to the
-     *   narrower of 80 % of the width and 46 % of the height), and
-     *   [B_MOUTH_Y_MIN] ‥ [B_MOUTH_Y_MAX] are where it can land.
+     * The storyboard's `.spark`: `46 % { 0.3, opacity 0 } 52 % { 1.2, opacity
+     * 1, rotate 20° } 62 % { 0.4, opacity 0, rotate 45° }` — in, over-large,
+     * out, turning the whole way.
      */
-    fun lensGapClearance(index: Int, aspect: Float, mouthY: Float): Float {
-        val blob = B_LENS[index]
-        val dx = blob.x - 0.5f
-        // y is a fraction of the HEIGHT and x of the WIDTH, so one of them has
-        // to be converted before they can be a distance. Widths, because that
-        // is the unit radii are in.
-        val dy = (blob.y - mouthY) / aspect
-        return kotlin.math.hypot(dx.toDouble(), dy.toDouble()).toFloat() - blob.radius
+    fun sparkleAt(index: Int, t: Float): SparkleFrame? {
+        val s = B_SPARKLES[index]
+        val start = 0.46f + s.delay
+        val peak = 0.52f + s.delay
+        val end = 0.60f + s.delay
+        if (t < start || t > end) return null
+        val scale: Float
+        val alpha: Float
+        if (t <= peak) {
+            val p = EASE_OUT((t - start) / (peak - start))
+            scale = 0.30f + 0.90f * p
+            alpha = p
+        } else {
+            val p = EASE_OUT((t - peak) / (end - peak))
+            scale = 1.20f - 0.80f * p
+            alpha = 1f - p
+        }
+        val spin = 45f * ((t - start) / (end - start))
+        return SparkleFrame(s.x, s.y, s.size * scale, alpha, spin)
+    }
+
+    // ── THE REAR-UP, AND THE GALLOP ────────────────────────────────────────
+
+    /**
+     * How far the front comes up, degrees, **negative because the animal faces
+     * right** and a lift of the right-hand side is a turn anticlockwise.
+     *
+     * Nine, which is the middle of item 189's *"~6-10°"* and a degree and a
+     * half past the storyboard's `rotate(-6deg)` — the storyboard rears a stage
+     * llama drawn upright, and ours is a bust whose pivot is further from its
+     * muzzle, so the same six degrees moved it visibly less.
+     */
+    const val B_REAR_DEG: Float = -9f
+
+    /**
+     * The whole animal's vertical travel, master units, negative = up.
+     *
+     * The crouch first — the storyboard's `60% { translateY(2px) }`, which is
+     * the weight going down before it goes up and is the entire reason the rear
+     * does not look like a hinge opening — then the lift, then down again for
+     * the launch. The gallop's own bounce is [gallopBob] and is added to this.
+     */
+    private val bBodyDy = Track(
+        EASE_IN_OUT,
+        0f to 0f, B_HORN_DONE to 0f,
+        0.5600f to sb(3f), B_REAR_PEAK to sb(-13f), B_LAUNCH to 0f, 1f to 0f,
+    )
+
+    /**
+     * …and the roll it carries, degrees, about the animal's own base.
+     *
+     * About the **base** and not about the head, for the reason round 36's lean
+     * gave and which has not changed: a bust that pivots on itself nods, and a
+     * bust that pivots on its base rears.
+     */
+    private val bBodyRotDeg = Track(
+        EASE_IN_OUT,
+        0f to 0f, B_HORN_DONE to 0f,
+        0.5600f to 1.2f, B_REAR_PEAK to B_REAR_DEG, B_LAUNCH to 0f, 1f to 0f,
+    )
+
+    /**
+     * The storyboard's `.actor` easing is `ease-in-out` across the whole three
+     * seconds; the exit alone wants its acceleration weighted forward, because
+     * a gallop that eases *out* is an animal slowing down as it leaves.
+     *
+     * Measured off the first recording rather than chosen: at
+     * `cubic-bezier(.36,0,.78,1)` the animal's centroid moved 82 px in the first
+     * third of a second of the run and 320 in the last tenth, which photographs
+     * as a hesitation followed by a jump cut. These four numbers put half the
+     * travel inside the first half of the run, so the bounce cycles happen
+     * while the animal is still on the screen — which is the only reason to
+     * have them.
+     */
+    private val GALLOP = cubicBezier(0.25f, 0.05f, 0.55f, 1f)
+
+    /**
+     * **How far along the exit the animal is, 0 = where it stood, 1 = entirely
+     * off the right-hand edge of the screen.**
+     *
+     * A fraction and not a distance, for exactly the reason animation A's rings
+     * are a fraction: the storyboard could write `translateX(430px)` because
+     * its stage was a fixed 340 px box, and a phone is not. How many master
+     * units 1 is worth is [exitTravelMasterUnits], measured off the screen the
+     * film is actually playing on.
+     */
+    private val bGallopX = Track(
+        GALLOP,
+        0f to 0f, B_LAUNCH to 0f, B_EXIT to 1f, 1f to 1f,
+    )
+
+    /**
+     * **How far the animal must travel to be entirely off the right edge**, in
+     * master units.
+     *
+     * Pure, and here rather than in the composable, because *"gallops off the
+     * RIGHT edge"* is a claim about the screen and a test has to be able to
+     * check it on screens nobody has built yet. The art box's own left edge and
+     * scale are what the composable knows; the width is the screen's.
+     *
+     * @param screenWidthPx the whole screen.
+     * @param boxLeftPx the art box's left edge on it.
+     * @param boxScale master units → pixels.
+     */
+    fun exitTravelMasterUnits(screenWidthPx: Float, boxLeftPx: Float, boxScale: Float): Float =
+        // From the art box's left edge to past the screen's right edge, plus a
+        // margin: the llama is drawn from the canvas's own left edge, so the
+        // last thing to leave is the pixel at master x = 0.
+        (screenWidthPx - boxLeftPx) / boxScale + EXIT_MARGIN
+
+    /** …and how far past the edge is far enough to be certain. */
+    private const val EXIT_MARGIN: Float = 40f
+
+    /** How high a gallop bounce goes, master units. */
+    const val B_GALLOP_BOB: Float = 46f
+
+    /** …and how much it rolls with each stride, degrees. */
+    const val B_GALLOP_TILT_DEG: Float = 3.6f
+
+    /**
+     * The bounce, as arithmetic rather than as a table of stops.
+     *
+     * [B_GALLOP_BOUNCES] cycles of a sine across the exit: it starts at nothing
+     * and ends at nothing, which a hand-written table of seven stops would also
+     * do and would do worse — the stops would have to be recomputed by hand
+     * every time [B_LAUNCH] or [B_EXIT] moved, and the film would develop a limp
+     * that nobody could see the cause of. A bounce is periodic; write it as one.
+     */
+    private fun gallopPhase(t: Float): Float {
+        if (t <= B_LAUNCH) return 0f
+        val p = ((t - B_LAUNCH) / (B_EXIT - B_LAUNCH)).coerceIn(0f, 1f)
+        return p
+    }
+
+    fun gallopBob(t: Float): Float {
+        val p = gallopPhase(t)
+        if (p <= 0f || p >= 1f) return 0f
+        return -B_GALLOP_BOB * kotlin.math.sin(2.0 * Math.PI * B_GALLOP_BOUNCES * p).toFloat()
     }
 
     /**
-     * Where the llama's mouth can land, as a fraction of the screen's height.
-     *
-     * `WelcomeOverlay.artBox` fits the master square to the narrower of 80 % of
-     * the width and 46 % of the height and pins its top at 30 %, and
-     * `FrontPose.MOUTH_Y` is 70.1 % of the way down it. So on a 21:9 handset
-     * the mouth is at 0.536 and on anything squarer than about 5:9 it stops at
-     * 0.622 — this pair is that range, rounded out.
+     * …and the roll that goes with it, a quarter-cycle out of phase so the
+     * animal is most nose-up at the top of a stride rather than on the way to
+     * it. In phase, the two cancel and the gallop reads as a lift.
      */
-    const val B_MOUTH_Y_MIN: Float = 0.53f
+    fun gallopTilt(t: Float): Float {
+        val p = gallopPhase(t)
+        if (p <= 0f || p >= 1f) return 0f
+        return B_GALLOP_TILT_DEG *
+            kotlin.math.sin(2.0 * Math.PI * B_GALLOP_BOUNCES * p - Math.PI / 2.0).toFloat() +
+            B_GALLOP_TILT_DEG
+    }
 
-    /** …and the lowest it goes. */
-    const val B_MOUTH_Y_MAX: Float = 0.63f
+    /**
+     * **The rainbow trail**, and how far behind it is still visible.
+     *
+     * The storyboard's `.trail` starts at 70 %, peaks at 0.85 alpha at 80 % and
+     * is gone at 100 %. Ours is out a little earlier at each end, because the
+     * stage has to be empty at [B_EXIT] and a band still fading at 3.0 s is the
+     * thing the owner's *"empty stage"* note is about.
+     */
+    private val bTrailAlpha = Track(
+        EASE_OUT,
+        0f to 0f, 0.69f to 0f, 0.78f to 0.82f, 0.92f to 0f, 1f to 0f,
+    )
 
-    /** One frame of animation B. */
+    /**
+     * **The dust puff**, at the launch point and nowhere else.
+     *
+     * It fires **on** the launch, not a fifth of a second after it as the
+     * storyboard's `.dust` does (74 %). Dust is thrown by the push-off; dust
+     * that arrives later is an animal kicking at nothing.
+     */
+    private val bDustAlpha = Track(
+        EASE_OUT,
+        0f to 0f, B_LAUNCH to 0f, 0.71f to 0.85f, 0.90f to 0f, 1f to 0f,
+    )
+
+    /** How far the dust has spread and risen, 0‥1. */
+    private val bDustSpread = Track(
+        EASE_OUT,
+        0f to 0f, B_LAUNCH to 0f, 0.90f to 1f, 1f to 1f,
+    )
+
+    /** One frame of animation B — the unicorn egg. */
     data class FrameB(
         val overlayAlpha: Float,
-        val sideAlpha: Float,
-        val frontAlpha: Float,
-        /** Both poses pinch in x through the turn. */
-        val turnScaleX: Float,
-        /** ROUND 36 item 188 §1: 0 = standing, 1 = leaning in for the treat. */
-        val lean: Float,
-        /** …and 0 = eye open, 1 = shut. */
-        val blink: Float,
-        /** 0 = ears up, 1 = pinned flat back. */
-        val earPin: Float,
-        /** ROUND 36 item 188 §2: the jaw, −1 = ground left, +1 = ground right. */
-        val jawGrind: Float,
-        /** …and 0 = round-eyed, 1 = lidded onto the stare. */
-        val eyeNarrow: Float,
-        /** The chin's height, master units, negative = up. */
-        val headRise: Float,
-        /** …the roll it carries, degrees. */
-        val headTiltDeg: Float,
-        /** …and the creep at the viewer, as a scale. */
-        val headLunge: Float,
-        /** 0 = shut, 1 = wide. */
-        val mouthOpen: Float,
-        /** The one frame of cone. */
-        val spray: List<SprayDrop>,
-        /** ROUND 36 item 188: how much of the lens is gone, 0‥1. */
-        val lensWash: Float,
-        /** …and how far the one clear patch has run, 0‥1. */
-        val lensPatch: Float,
-        /** …and every blob on it. */
-        val lens: List<LensSplat>,
-        val grinAlpha: Float,
+        /** The samples of each ribbon, in orbit order. Empty once they are gone. */
+        val ribbons: List<List<RibbonSample>>,
+        /** The eye's own offset from its anchor while it watches, master units. */
+        val eyeLookX: Float,
+        val eyeLookY: Float,
+        /** The whole animal's travel and roll: crouch, rear, gallop bounce. */
+        val bodyDy: Float,
+        val bodyRotDeg: Float,
+        /** …and how far along the exit it is, 0‥1 of [exitTravelMasterUnits]. */
+        val gallopX: Float,
+        /** The puck, stretching toward the horn as it goes. */
+        val puckAlpha: Float,
+        val puckStretch: Float,
+        val puckNarrow: Float,
+        /** …and the horn arriving on the same anchor. */
+        val hornAlpha: Float,
+        val hornGrow: Float,
+        val hornWidth: Float,
+        /** How far the rainbow has run down the fleece, 0 = cream, 1 = flooded. */
+        val fleeceFlood: Float,
+        val maneAlpha: Float,
+        val flash: Float,
+        val sparkles: List<SparkleFrame>,
+        val trailAlpha: Float,
+        val dustAlpha: Float,
+        val dustSpread: Float,
     )
 
     /** @param t 0f‥1f — the fraction of [WelcomeAnimation.DURATION_MS] elapsed. */
     fun frameB(t: Float): FrameB {
         val c = t.coerceIn(0f, 1f)
+        val (lookX, lookY) = eyeFollow(c)
         return FrameB(
             overlayAlpha = bOverlay.at(c),
-            sideAlpha = bSideAlpha.at(c),
-            frontAlpha = bFrontAlpha.at(c),
-            turnScaleX = bTurnScaleX.at(c),
-            lean = bLean.at(c),
-            blink = bBlink.at(c),
-            earPin = bEarPin.at(c),
-            jawGrind = bJawGrind.at(c),
-            eyeNarrow = bEyeNarrow.at(c),
-            headRise = bHeadRise.at(c),
-            headTiltDeg = bHeadTilt.at(c),
-            headLunge = bHeadLunge.at(c),
-            mouthOpen = bMouthOpen.at(c),
-            spray = B_SPRAY.indices.mapNotNull { sprayAt(it, c) },
-            lensWash = bLensWash.at(c),
-            lensPatch = bLensPatch.at(c),
-            lens = B_LENS.indices.mapNotNull { lensAt(it, c) },
-            grinAlpha = bGrinAlpha.at(c),
+            ribbons = B_RIBBONS.indices.map { ribbonAt(it, c) },
+            eyeLookX = lookX,
+            eyeLookY = lookY,
+            bodyDy = bBodyDy.at(c) + gallopBob(c),
+            // The watch-tilt rides x, so the animal leans a little after
+            // whichever ribbon is in front of it. It is over by [B_TRANSFORM]
+            // and cannot interfere with the rear.
+            bodyRotDeg = bBodyRotDeg.at(c) + gallopTilt(c) +
+                B_WATCH_TILT_DEG * (lookX / EYE_FOLLOW_X),
+            gallopX = bGallopX.at(c),
+            puckAlpha = bPuckAlpha.at(c),
+            puckStretch = bPuckStretch.at(c),
+            puckNarrow = bPuckNarrow.at(c),
+            hornAlpha = bHornAlpha.at(c),
+            hornGrow = bHornGrow.at(c),
+            hornWidth = bHornWidth.at(c),
+            fleeceFlood = bFleeceFlood.at(c),
+            maneAlpha = bManeAlpha.at(c),
+            flash = bFlash.at(c),
+            sparkles = B_SPARKLES.indices.mapNotNull { sparkleAt(it, c) },
+            trailAlpha = bTrailAlpha.at(c),
+            dustAlpha = bDustAlpha.at(c),
+            dustSpread = bDustSpread.at(c),
         )
     }
 }

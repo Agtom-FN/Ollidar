@@ -2,6 +2,7 @@ package com.lidarscan.core.welcome
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -201,447 +202,443 @@ class WelcomeTimelineTest {
         assertTrue(a.EMIT_X != a.PUCK_CENTER_X || a.EMIT_Y != a.PUCK_CENTER_Y)
     }
 
-    // ══ B — the reference video's two sections ════════════════════════════
+    // ══ B — the unicorn egg ═══════════════════════════════════════════════
+    //
+    // ROUND 37 item 189. Round 36's eleven tests asserted a lean, a jaw grind
+    // and a lens covered in goo; none of that exists any more, so they are
+    // **rewritten and not relaxed**. What is pinned here is the four things the
+    // item names — *ribbon orbit count, horn-growth window, gallop exit
+    // reaching off-screen, total duration* — plus the properties underneath
+    // them that a re-time could break silently.
 
     /**
-     * ROUND 36 item 188 — **the two sections, in the reference's own order.**
+     * **THE WHOLE FILM, in the storyboard's own order.** Ribbons, then the
+     * horn, then the rear, then an empty stage.
      *
-     * Round 35's version of this test asserted a tell, two bursts and six marks
-     * on the glass. None of that is in the video the owner handed over, so the
-     * test is rewritten rather than relaxed: what it pins now is *expectation,
-     * cut, jaw, and then nothing but goo.*
+     * The four beats, each asserted where it is *and* where it is not: a
+     * timeline test that only checks that a thing happens will pass on a film
+     * in which it happens continuously.
      */
     @Test
-    fun `B leans in, cuts, grinds its jaw and then the lens is gone`() {
-        // 1. the expectation: the side pose, leaning, with a blink in it.
-        val early = WelcomeTimeline.frameB(0.10f)
-        assertTrue("the side pose must be up", early.sideAlpha > 0.9f)
-        assertEquals(0f, early.frontAlpha, 1e-4f)
-        assertTrue("it must be leaning in by now: ${early.lean}", early.lean > 0.2f)
-        assertEquals("at full reach", 1f, WelcomeTimeline.frameB(WelcomeTimeline.B_TAKE).lean, 1e-3f)
+    fun `B orbits, transforms, rears and gallops off in that order`() {
+        // 1. the ribbons — up, and the only thing up.
+        val early = WelcomeTimeline.frameB(0.20f)
+        assertTrue("both ribbons must be orbiting", early.ribbons.all { it.isNotEmpty() })
+        assertEquals("the puck is still a puck", 1f, early.puckAlpha, 1e-4f)
+        assertEquals("nothing has grown yet", 0f, early.hornAlpha, 1e-4f)
+        assertEquals("the fleece is its own colour", 0f, early.fleeceFlood, 1e-4f)
+        assertEquals("it has not moved", 0f, early.gallopX, 1e-4f)
 
-        // 2. the cut: side gone, front up, and it is a turn rather than a swap —
-        // the pair pinches flat through it.
-        val after = WelcomeTimeline.frameB(WelcomeTimeline.B_FRONT)
-        assertEquals(0f, after.sideAlpha, 1e-4f)
-        assertTrue(after.frontAlpha > 0.9f)
-        assertTrue(WelcomeTimeline.frameB(WelcomeTimeline.B_TURN).turnScaleX < 0.3f)
-        assertEquals(1f, WelcomeTimeline.frameB(1f).turnScaleX, 1e-3f)
-
-        // 3. the reality: the jaw is working and the eyes are lidded.
-        val staring = WelcomeTimeline.frameB(0.55f)
-        assertTrue("the eyes must narrow", staring.eyeNarrow > 0.95f)
-        assertTrue("the ears must be back", staring.earPin > 0.95f)
-
-        // 4. nothing is in the air, and the lens is clean, until the hit.
-        for (t in everyMillisecond.filter { it < WelcomeTimeline.B_HIT }) {
-            val f = WelcomeTimeline.frameB(t)
-            assertTrue("t=$t fired early", f.spray.isEmpty())
-            assertTrue("t=$t covered the lens early", f.lens.isEmpty())
-            assertEquals("t=$t washed the lens early", 0f, f.lensWash, 1e-4f)
-        }
-
-        // 5. …and after it, the lens stays gone to the last frame.
-        assertEquals(1f, WelcomeTimeline.frameB(1f).lensWash, 1e-4f)
-        assertEquals(WelcomeTimeline.B_LENS.size, WelcomeTimeline.frameB(1f).lens.size)
-
-        // 6. the grin is last of all, and it is behind the patch that ran clear.
-        assertEquals(0f, WelcomeTimeline.frameB(0.78f).grinAlpha, 1e-4f)
-        assertEquals(1f, WelcomeTimeline.frameB(1f).grinAlpha, 1e-4f)
-        assertTrue(WelcomeTimeline.frameB(1f).lensPatch > 0.99f)
-    }
-
-    /**
-     * **SECTION ONE — the expectation.** The animal comes to you, blinks once,
-     * and eases off again; nothing else happens in the first second, which is
-     * the whole point of it. A set-up that is doing three things is not a
-     * set-up.
-     */
-    @Test
-    fun `section one is a lean and one soft blink, and nothing else`() {
-        assertEquals("it starts standing", 0f, WelcomeTimeline.frameB(0f).lean, 1e-4f)
-
-        // Reach, take, ease off — and never back to attention, because an
-        // animal that has just been fed does not stand back up straight.
-        val reach = everyMillisecond.filter { it <= WelcomeTimeline.B_TAKE }
-        var last = -1f
-        for (t in reach) {
-            val lean = WelcomeTimeline.frameB(t).lean
-            assertTrue("t=$t the lean went backwards", lean >= last - 1e-3f)
-            last = lean
-        }
-        val leaving = WelcomeTimeline.frameB(WelcomeTimeline.B_CUT).lean
-        assertTrue("it must ease off: $leaving", leaving in 0.15f..0.75f)
-
-        // Exactly one blink, and it is inside section one.
-        val shut = everyMillisecond.filter { WelcomeTimeline.frameB(it).blink > 0.5f }
-        assertTrue("there must be a blink", shut.isNotEmpty())
-        assertTrue(
-            "the blink must be inside the first section",
-            shut.all { it < WelcomeTimeline.B_CUT },
-        )
-        assertTrue(
-            "the blink must be one closure, not a flutter",
-            shut.last() - shut.first() < 0.05f,
-        )
-        assertEquals("and it must open again", 0f, WelcomeTimeline.frameB(0.30f).blink, 1e-3f)
-
-        // …and the reality has not started: ears up, jaw still, eyes round.
-        for (t in everyMillisecond.filter { it < WelcomeTimeline.B_CUT }) {
-            val f = WelcomeTimeline.frameB(t)
-            assertEquals("t=$t pinned its ears in section one", 0f, f.earPin, 1e-4f)
-            assertEquals("t=$t ground its jaw in section one", 0f, f.jawGrind, 1e-4f)
-            assertEquals("t=$t narrowed its eyes in section one", 0f, f.eyeNarrow, 1e-4f)
-        }
-    }
-
-    /**
-     * **SECTION TWO — the tell.** The reference's second animal chews *at* the
-     * camera for six seconds: the jaw goes side to side, the eyes never leave
-     * you, and the head does almost nothing. All four halves of that are here.
-     */
-    @Test
-    fun `the jaw grinds side to side under a lidded stare`() {
-        // Two to three grinds, counted as the times it changes direction, and
-        // it must go BOTH ways — a jaw that only ever swings right is a head
-        // that is turning.
-        val grind = everyMillisecond
-            .filter { it in WelcomeTimeline.B_FRONT..WelcomeTimeline.B_HIT }
-            .map { WelcomeTimeline.frameB(it).jawGrind }
-        assertTrue("it never went left: ${grind.min()}", grind.min() < -0.9f)
-        assertTrue("it never went right: ${grind.max()}", grind.max() > 0.9f)
-        var reversals = 0
-        var rising = true
-        for (i in 1 until grind.size) {
-            val d = grind[i] - grind[i - 1]
-            if (kotlin.math.abs(d) < 1e-5f) continue
-            if ((d > 0f) != rising) {
-                reversals++
-                rising = d > 0f
-            }
-        }
-        // Five reversals is two and a half round trips, which is the item's
-        // "2-3 grinds". Fewer reads as a flinch; more reads as a wobble.
-        assertTrue("$reversals reversals is not 2-3 grinds", reversals in 4..7)
-
-        // The stare: lidded, and it never opens up again.
-        for (t in everyMillisecond.filter { it >= 0.50f }) {
-            assertTrue("t=$t stopped staring", WelcomeTimeline.frameB(t).eyeNarrow > 0.9f)
-            assertTrue("t=$t put its ears up", WelcomeTimeline.frameB(t).earPin > 0.9f)
-        }
-
-        // The head barely moves while the jaw does all of it — the whole
-        // difference between menace and a tantrum. The stare, up to the tenth
-        // of a second the hit draws back in, stays inside a third of the snap
-        // the hit itself makes.
-        val duringRise = everyMillisecond
-            .filter { it in WelcomeTimeline.B_FRONT..(WelcomeTimeline.B_HIT - 0.04f) }
-            .maxOf { kotlin.math.abs(WelcomeTimeline.frameB(it).headRise) }
-        val snap = everyMillisecond.maxOf { WelcomeTimeline.frameB(it).headRise }
-        assertTrue("the head moved too much during the stare: $duringRise vs $snap", duringRise < snap / 3f)
-
-        // …and the mouth is never shut while it chews: a jaw grinding behind a
-        // closed mouth is a shape sliding about under the fleece.
-        for (t in everyMillisecond.filter { it in 0.42f..(WelcomeTimeline.B_HIT - 0.01f) }) {
-            assertTrue("t=$t chewed with its mouth shut", WelcomeTimeline.frameB(t).mouthOpen > 0.05f)
-        }
-        // It goes wide on the hit.
-        assertTrue(WelcomeTimeline.frameB(WelcomeTimeline.B_HIT).mouthOpen > 0.95f)
-    }
-
-    /**
-     * **THE HIT.** In the reference there is one smeared frame between a llama
-     * and an opaque lens. The cone is therefore a *frame*, not a flight: every
-     * particle leaves and arrives inside two of them, and the whole thing is
-     * over before the cover is finished.
-     */
-    @Test
-    fun `the cone is one frame, and it is a cone`() {
-        val out = WelcomeTimeline.B_SPRAY.map { it.launch }
-        assertTrue("something left before the hit", out.min() >= WelcomeTimeline.B_HIT)
-        assertTrue(
-            "the cone dribbles out instead of leaving at once",
-            out.max() - out.min() < WelcomeTimeline.B_FRAME,
-        )
-        assertTrue(
-            "the cone is still in the air after the lens is covered",
-            WelcomeTimeline.B_SPRAY.maxOf { it.landing } < WelcomeTimeline.B_COVERED,
-        )
-        assertTrue(
-            "the cone is not seen at all",
-            WelcomeTimeline.frameB(WelcomeTimeline.B_HIT + WelcomeTimeline.B_FRAME / 2f)
-                .spray.size >= 10,
-        )
-
-        // A cone, not a column: it opens both ways, and the sizes vary, which
-        // is what stops one frame of it reading as a ring of identical dots.
-        val wide = WelcomeTimeline.frameB(WelcomeTimeline.B_HIT + 0.008f).spray
-        assertTrue("nothing went left", wide.any { it.dx < -80f })
-        assertTrue("nothing went right", wide.any { it.dx > 80f })
-        val radii = wide.filter { !it.mist }.map { it.radius }
-        assertTrue("all one size", radii.max() > radii.min() * 1.8f)
-
-        // 10-16 drops with 2-3 puffs of mist in them, and the mist is soft.
-        val drops = WelcomeTimeline.B_SPRAY.count { !it.mist }
-        val mist = WelcomeTimeline.B_SPRAY.count { it.mist }
-        assertTrue("10-16 particles, not $drops", drops in 10..16)
-        assertTrue("2-3 mist puffs, not $mist", mist in 2..3)
-        assertTrue(
-            "mist must be soft",
-            wide.filter { it.mist }.all { it.alpha <= WelcomeTimeline.B_MIST_ALPHA },
-        )
-    }
-
-    /**
-     * Every particle comes **at the viewer** — down the screen and growing —
-     * and is gone by the time it gets there. Round 35 asserted a handover to a
-     * mark on the glass; item 188 has no marks, because the thing it hands over
-     * to is the whole screen.
-     */
-    @Test
-    fun `every particle comes at the viewer and is spent when it arrives`() {
-        for (i in WelcomeTimeline.B_SPRAY.indices) {
-            val shot = WelcomeTimeline.B_SPRAY[i]
-            assertTrue("shot $i: not airborne at launch", WelcomeTimeline.sprayAt(i, shot.launch) != null)
+        // 2. the transformation — the ribbons are gone by the time it starts.
+        for (t in everyMillisecond.filter { it >= WelcomeTimeline.B_TRANSFORM }) {
             assertTrue(
-                "shot $i: still airborne after landing",
-                WelcomeTimeline.sprayAt(i, shot.landing + 0.001f) == null,
-            )
-            if (shot.mist) continue
-
-            var lastDy = -1f
-            var lastRadius = -1f
-            // A tenth of a millisecond, because the whole flight is a frame.
-            for (step in 0..200) {
-                val t = shot.launch + shot.flight * step / 200f
-                val d = WelcomeTimeline.sprayAt(i, t) ?: continue
-                assertTrue("shot $i at t=$t went back up", d.dy >= lastDy - 1e-3f)
-                assertTrue("shot $i at t=$t shrank", d.radius >= lastRadius - 1e-3f)
-                assertTrue("shot $i at t=$t is not stretched along its flight", d.stretch >= 1f)
-                lastDy = d.dy
-                lastRadius = d.radius
-            }
-            val arrival = WelcomeTimeline.sprayAt(i, shot.landing)!!
-            assertEquals(
-                "shot $i must reach exactly its own travel",
-                shot.reach * WelcomeTimeline.B_SPRAY_TRAVEL, arrival.dy, 1e-2f,
-            )
-            assertEquals("shot $i must be spent at the glass", 0f, arrival.alpha, 1e-3f)
-            assertTrue(
-                "shot $i must grow at least fourfold on the way",
-                arrival.radius > 4f * WelcomeTimeline.sprayAt(i, shot.launch)!!.radius,
+                "t=$t: a ribbon is still up during the transformation",
+                WelcomeTimeline.frameB(t).ribbons.all { it.isEmpty() },
             )
         }
-    }
+        val done = WelcomeTimeline.frameB(WelcomeTimeline.B_HORN_DONE)
+        assertEquals("the puck must be gone", 0f, done.puckAlpha, 1e-4f)
+        assertEquals("the horn must be up", 1f, done.hornAlpha, 1e-4f)
+        assertEquals("…at its own length", 1f, done.hornGrow, 1e-3f)
+        assertEquals("the fleece must be flooded", 1f, done.fleeceFlood, 1e-3f)
+        assertEquals("the mane must be in", 1f, done.maneAlpha, 1e-3f)
 
-    /**
-     * **THE WIPEOUT.** The gag is a cut, so the assertion is about *frames*:
-     * one clean one after the hit, and the lens gone two later — and it never
-     * comes back.
-     */
-    @Test
-    fun `the lens goes between two frames and stays gone`() {
-        val hit = WelcomeTimeline.B_HIT
-        assertEquals("the wash is early", 0f, WelcomeTimeline.frameB(hit).lensWash, 1e-4f)
+        // 3. the rear — and it is over before the gallop starts.
         assertEquals(
-            "the cone's own frame must be clean",
-            0f, WelcomeTimeline.frameB(hit + WelcomeTimeline.B_FRAME).lensWash, 1e-4f,
+            "it must be back down for the launch",
+            0f, WelcomeTimeline.frameB(WelcomeTimeline.B_LAUNCH).bodyRotDeg, 1e-3f,
         )
-        assertEquals(
-            "the lens must be gone by B_COVERED",
-            1f, WelcomeTimeline.frameB(WelcomeTimeline.B_COVERED).lensWash, 1e-3f,
-        )
-        assertTrue(
-            "the cover must not take longer than three frames",
-            WelcomeTimeline.B_COVERED - hit <= 3f * WelcomeTimeline.B_FRAME + 1e-4f,
-        )
-        // Every blob, however late it starts, is complete at the same instant.
-        for (i in WelcomeTimeline.B_LENS.indices) {
-            val at = WelcomeTimeline.lensAt(i, WelcomeTimeline.B_COVERED)
-            assertTrue("blob $i is not there when the lens is gone", at != null)
+
+        // 4. gone, and the stage empty, before the overlay is dismissed.
+        assertEquals(1f, WelcomeTimeline.frameB(WelcomeTimeline.B_EXIT).gallopX, 1e-3f)
+        val last = WelcomeTimeline.frameB(1f)
+        assertTrue("the stage must be empty", last.ribbons.all { it.isEmpty() })
+        assertTrue(last.sparkles.isEmpty())
+        assertEquals("nothing may still be trailing", 0f, last.trailAlpha, 1e-4f)
+        assertEquals("…or still dusty", 0f, last.dustAlpha, 1e-4f)
+    }
+
+    /**
+     * **THE RIBBON ORBIT COUNT** — the first of the four the item names.
+     *
+     * *"two full orbits each, phase-offset"*. Counted in revolutions rather
+     * than in peaks of a coordinate: a peak count measures the ellipse and
+     * would still read two if somebody halved the orbit and doubled the
+     * ellipse's aspect.
+     */
+    @Test
+    fun `each ribbon goes round exactly twice, and they are offset`() {
+        assertEquals("there must be two ribbons", 2, WelcomeTimeline.B_RIBBONS.size)
+        for (i in WelcomeTimeline.B_RIBBONS.indices) {
+            val start = WelcomeTimeline.ribbonTurns(i, 0f)
+            val end = WelcomeTimeline.ribbonTurns(i, WelcomeTimeline.B_RIBBONS_END)
             assertEquals(
-                "blob $i is still arriving",
-                WelcomeTimeline.B_LENS_ALPHA, at!!.alpha, 1e-3f,
+                "ribbon $i must go round exactly ${WelcomeTimeline.B_ORBITS} times",
+                WelcomeTimeline.B_ORBITS.toFloat(), end - start, 1e-3f,
             )
-        }
-        // …and it is still there on the last frame of the film, a little dulled
-        // so the grin behind the patch is the brightest thing left.
-        val end = WelcomeTimeline.frameB(1f).lens
-        assertEquals(WelcomeTimeline.B_LENS.size, end.size)
-        // Dulled, but nowhere near gone — it dries, it does not evaporate.
-        assertTrue(end.all { it.alpha > WelcomeTimeline.B_LENS_ALPHA * 0.6f })
-        assertTrue(end.all { it.alpha < WelcomeTimeline.B_LENS_ALPHA })
-        assertTrue(end.all { it.ink < WelcomeTimeline.B_LENS_INK })
-    }
-
-    /**
-     * **~90 % of the screen**, measured rather than asserted by eye.
-     *
-     * The eighteen shapes are rasterised the way the composable draws them —
-     * the same lumpy polygon out of the same tables, rotated then stretched —
-     * onto a 21:9 handset, and the covered fraction is counted. Both bounds
-     * matter: below the floor the cover has holes in it, and above the ceiling
-     * the blobs have closed into a single sheet and stopped being blobs.
-     */
-    @Test
-    fun `the blobs cover about ninety per cent of the screen`() {
-        for (aspect in floatArrayOf(0.42f, 1080f / 2340f, 0.5625f)) {
-            val covered = lensCoverage(aspect)
-            assertTrue(
-                "aspect $aspect: only ${(covered * 100).toInt()} % covered",
-                covered >= WelcomeTimeline.B_LENS_COVERAGE,
-            )
-            assertTrue(
-                "aspect $aspect: ${(covered * 100).toInt()} % is a sheet, not blobs",
-                covered <= 0.985f,
-            )
-        }
-    }
-
-    /**
-     * …and **nothing sits on the patch that runs clear.**
-     *
-     * The grin is seen through a thin place over the llama's mouth, and the
-     * mouth moves down the screen as the art box grows on a squarer device. No
-     * blob's centre may be within its own radius of it anywhere in that range —
-     * a soft `DstOut` bite can thin the wash but it cannot dig an opaque core
-     * out of the middle of it.
-     */
-    @Test
-    fun `no blob sits on the patch the grin shows through`() {
-        for (aspect in floatArrayOf(0.42f, 1080f / 2340f, 0.5f, 0.5625f)) {
-            val mouth = 0.30f + 0.701f * minOf(0.80f * aspect, 0.46f)
-            assertTrue(
-                "the mouth at aspect $aspect is outside the stated range: $mouth",
-                mouth in WelcomeTimeline.B_MOUTH_Y_MIN..WelcomeTimeline.B_MOUTH_Y_MAX,
-            )
-            for (i in WelcomeTimeline.B_LENS.indices) {
-                val clearance = WelcomeTimeline.lensGapClearance(i, aspect, mouth)
-                assertTrue(
-                    "blob $i is on the mouth at aspect $aspect: clearance $clearance",
-                    clearance > 0f,
-                )
+            // …and forwards the whole way. A ribbon that eases would slow at
+            // the crossings, which is the one place it must not.
+            var previous = -1f
+            for (t in everyMillisecond.filter { it <= WelcomeTimeline.B_RIBBONS_END }) {
+                val turns = WelcomeTimeline.ribbonTurns(i, t)
+                assertTrue("ribbon $i went backwards at t=$t", turns >= previous - 1e-4f)
+                previous = turns
             }
         }
-    }
-
-    /**
-     * **THE HOLD.** One or two drips, running for the whole of it, and the
-     * patch opening after the cover rather than with it — the reference's first
-     * covered frame is opaque and the shape behind it only swims back as the
-     * stuff runs off.
-     */
-    @Test
-    fun `the cover drips through the hold and the patch opens after it`() {
-        val running = WelcomeTimeline.B_LENS.count { it.drip > 0f }
-        assertTrue("1-2 drips, not $running", running in 1..2)
-
-        fun drips(t: Float) = WelcomeTimeline.frameB(t).lens.sumOf { it.drip.toDouble() }
-        assertEquals("nothing runs on the frame it lands", 0.0, drips(WelcomeTimeline.B_COVERED), 1e-6)
-        assertTrue("a drip must actually run", drips(0.86f) > drips(0.78f))
-        assertTrue("…and keep running", drips(1f) > drips(0.86f))
-
-        // The patch is shut when the lens goes and open by the grin.
-        assertEquals(0f, WelcomeTimeline.frameB(WelcomeTimeline.B_COVERED).lensPatch, 1e-4f)
+        assertEquals("exactly two orbits, as the storyboard's iteration count", 2, WelcomeTimeline.B_ORBITS)
+        val offset = WelcomeTimeline.ribbonTurns(1, 0f) - WelcomeTimeline.ribbonTurns(0, 0f)
         assertTrue(
-            "the grin has nothing to show through",
-            WelcomeTimeline.frameB(WelcomeTimeline.B_GRIN).lensPatch > 0.6f,
+            "the two must be phase-offset by a real part of a turn: $offset",
+            offset > 0.15f && offset < 0.85f,
         )
     }
 
     /**
-     * **The whole thing still fits in three seconds**, and the beats land where
-     * item 188 put them (±0.2 s, which is the tuning room it allows).
+     * …and **each one passes in front of the llama and behind it**, twice a
+     * revolution, which is the thing the storyboard could not draw.
+     *
+     * The assertion is on the sign of `depth` and on the crossings *within one
+     * band*: a ribbon that is wholly in front on one frame and wholly behind on
+     * the next has teleported round the animal rather than gone round it.
      */
     @Test
-    fun `B's beats land on the times item 188 names`() {
+    fun `the ribbons cross in front of and behind the llama on every orbit`() {
+        for (i in WelcomeTimeline.B_RIBBONS.indices) {
+            var crossings = 0
+            var inFront: Boolean? = null
+            var everSplit = false
+            for (t in everyMillisecond.filter { it <= WelcomeTimeline.B_RIBBONS_END }) {
+                val band = WelcomeTimeline.ribbonAt(i, t)
+                if (band.isEmpty()) continue
+                val head = band.first().depth > 0f
+                if (inFront != null && head != inFront) crossings++
+                inFront = head
+                // A band that spans a crossing has samples on both sides of the
+                // animal at once, which is the frame the layer swap exists for.
+                if (band.any { it.depth > 0f } && band.any { it.depth < 0f }) everSplit = true
+            }
+            // A crossing is a HALF-turn boundary — the ellipse's two ends are
+            // where near becomes far — so how many fall inside a ribbon's own
+            // window is a function of its phase, and it is computed rather than
+            // assumed: ribbon 0 starts at phase 0, which is itself a crossing,
+            // and therefore shows one fewer than ribbon 1 does. Both are still
+            // two per orbit, which is what the floor below pins.
+            val start = 2f * WelcomeTimeline.ribbonTurns(i, 0f)
+            val end = 2f * WelcomeTimeline.ribbonTurns(i, WelcomeTimeline.B_RIBBONS_END)
+            val expected = kotlin.math.ceil(end).toInt() - kotlin.math.floor(start).toInt() - 1
+            assertTrue(
+                "the arithmetic under this test is wrong, not the film: $expected",
+                expected >= 2 * WelcomeTimeline.B_ORBITS - 1,
+            )
+            assertEquals(
+                "ribbon $i crossed $crossings times, not $expected",
+                expected, crossings,
+            )
+            assertTrue("ribbon $i is never half in front and half behind", everSplit)
+        }
+        // The band is a band: enough samples to be one, tapering to its tail.
+        val band = WelcomeTimeline.ribbonAt(0, 0.20f)
+        assertEquals(WelcomeTimeline.B_RIBBON_SEGMENTS, band.size)
+        assertTrue("the tail must be fainter than the head", band.last().alpha < band.first().alpha)
+        assertTrue("…and thinner", band.last().halfWidth < band.first().halfWidth)
+        // …and it is a rainbow along its length, not one colour.
+        assertTrue("the band must run through the ramp", band.map { it.hue }.distinct().size > 10)
+    }
+
+    /**
+     * **THE HORN-GROWTH WINDOW** — the second of the four.
+     *
+     * *"1.3–1.6s … THE LIDAR PUCK SPRITE STRETCHES INTO THE SPIRAL HORN — a
+     * morph anchored at the puck's seat (scaleY growth from the puck's base)"*.
+     *
+     * Four claims, and the third is the one that makes it a morph: the puck
+     * **stretches** as it goes rather than being swapped out, and it is still
+     * on screen while the horn is arriving.
+     */
+    @Test
+    fun `the horn grows out of the stretching puck between 1_3 and 1_6 seconds`() {
         fun seconds(t: Float) = t * WelcomeAnimation.DURATION_MS / 1000f
-        assertEquals("the cut", 1.0f, seconds(WelcomeTimeline.B_CUT), 0.2f)
-        assertEquals("the front pose", 1.2f, seconds(WelcomeTimeline.B_FRONT), 0.2f)
-        assertEquals("the hit", 2.1f, seconds(WelcomeTimeline.B_HIT), 0.2f)
-        assertEquals("the grin", 2.4f, seconds(WelcomeTimeline.B_GRIN), 0.2f)
-        assertEquals("the whole film", 3.0f, WelcomeAnimation.DURATION_MS / 1000f, 1e-3f)
-        // Section one is a second of it and the tell is nine tenths: any less
-        // and the set-up does not land, any more and the stare is a pause.
-        assertEquals("section one", 1.0f, seconds(WelcomeTimeline.B_CUT), 0.2f)
+        assertEquals("the window opens", 1.3f, seconds(WelcomeTimeline.B_TRANSFORM), 0.05f)
+        assertEquals("…and shuts", 1.6f, seconds(WelcomeTimeline.B_HORN_DONE), 0.05f)
+
+        // Nothing before it: the puck is whole, unstretched, and there is no horn.
+        for (t in everyMillisecond.filter { it <= WelcomeTimeline.B_TRANSFORM }) {
+            val f = WelcomeTimeline.frameB(t)
+            assertEquals("t=$t grew a horn early", 0f, f.hornAlpha, 1e-4f)
+            assertEquals("t=$t stretched the puck early", 1f, f.puckStretch, 1e-3f)
+            assertEquals("t=$t faded the puck early", 1f, f.puckAlpha, 1e-4f)
+        }
+
+        // The morph: the puck stretches up and narrows while it fades, so the
+        // shape it hands over is already horn-shaped.
+        val mid = WelcomeTimeline.frameB(0.455f)
+        assertTrue("the puck must still be there mid-morph", mid.puckAlpha > 0.05f)
+        assertTrue("…and stretched by then: ${mid.puckStretch}", mid.puckStretch > 1.4f)
+        assertTrue("…and narrowed: ${mid.puckNarrow}", mid.puckNarrow < 0.8f)
+        assertTrue("the horn must be arriving under it", mid.hornAlpha > 0.05f)
+
+        // scaleY growth, and it OVERSHOOTS — the storyboard's
+        // cubic-bezier(.3,1.4,.5,1) with its 1.12 stop, which is the difference
+        // between a horn that grew and a horn that was placed.
+        val peak = everyMillisecond.maxOf { WelcomeTimeline.frameB(it).hornGrow }
+        assertTrue("the horn must overshoot its own length: $peak", peak > 1.05f)
+        assertTrue("…but not by a lot: $peak", peak < 1.25f)
         assertEquals(
-            "the tell",
-            0.9f, seconds(WelcomeTimeline.B_HIT) - seconds(WelcomeTimeline.B_FRONT), 0.2f,
+            "…and settle at exactly its length",
+            1f, WelcomeTimeline.frameB(WelcomeTimeline.B_HORN_DONE).hornGrow, 1e-3f,
         )
+        assertEquals("…and stay there", 1f, WelcomeTimeline.frameB(1f).hornGrow, 1e-3f)
+        // It never shrinks below the sixth of itself it starts at, which is
+        // where it is when the ribbons hand over.
+        assertTrue(everyMillisecond.all { WelcomeTimeline.frameB(it).hornGrow >= 0.14f })
+    }
+
+    /** …and the flood, the mane, the flash and the three sparkles land with it. */
+    @Test
+    fun `the flash, the sparkles, the flood and the mane are all one event`() {
+        // The flash: one peak, inside the window, and gone.
+        val lit = everyMillisecond.filter { WelcomeTimeline.frameB(it).flash > 0.5f }
+        assertTrue("there must be a flash", lit.isNotEmpty())
+        assertTrue(
+            "the flash must be inside the transformation: ${lit.first()}‥${lit.last()}",
+            lit.first() >= WelcomeTimeline.B_TRANSFORM && lit.last() <= WelcomeTimeline.B_HORN_DONE + 0.02f,
+        )
+        assertEquals("it must go out", 0f, WelcomeTimeline.frameB(WelcomeTimeline.B_REAR_PEAK).flash, 1e-3f)
+
+        // Three sparkles, item 189's own count, and they are staggered.
+        assertEquals(3, WelcomeTimeline.B_SPARKLES.size)
+        assertEquals(
+            "they must not all arrive together",
+            3, WelcomeTimeline.B_SPARKLES.map { it.delay }.distinct().size,
+        )
+        val most = everyMillisecond.maxOf { WelcomeTimeline.frameB(it).sparkles.size }
+        assertEquals("all three must be up at once at some point", 3, most)
+        for (i in WelcomeTimeline.B_SPARKLES.indices) {
+            assertNull("sparkle $i must not be up at the start", WelcomeTimeline.sparkleAt(i, 0.2f))
+            assertNull("sparkle $i must not be up at the end", WelcomeTimeline.sparkleAt(i, 1f))
+            val peak = everyMillisecond.mapNotNull { WelcomeTimeline.sparkleAt(i, it) }
+            assertTrue("sparkle $i never reached full", peak.maxOf { it.alpha } > 0.95f)
+            // It over-sizes and comes back, which is the storyboard's 1.2 stop.
+            assertTrue("sparkle $i never over-sized", peak.maxOf { it.radius } > WelcomeTimeline.B_SPARKLES[i].size)
+            // …and it turns the whole way through.
+            assertTrue("sparkle $i does not turn", peak.last().spinDeg > peak.first().spinDeg + 20f)
+        }
+
+        // The flood is monotonic — a front that runs down the animal and does
+        // not come back up — and it is finished with the horn.
+        var previous = -1f
+        for (t in everyMillisecond) {
+            val flood = WelcomeTimeline.frameB(t).fleeceFlood
+            assertTrue("the flood receded at t=$t", flood >= previous - 1e-4f)
+            previous = flood
+        }
+        assertEquals(1f, WelcomeTimeline.frameB(WelcomeTimeline.B_HORN_DONE).fleeceFlood, 1e-3f)
+        // …and the mane arrives with it rather than after it, which is the one
+        // place the owner's note overrules the storyboard's own 54–60 % stops.
+        assertEquals(1f, WelcomeTimeline.frameB(WelcomeTimeline.B_HORN_DONE).maneAlpha, 1e-3f)
+        assertEquals(0f, WelcomeTimeline.frameB(WelcomeTimeline.B_TRANSFORM).maneAlpha, 1e-4f)
+    }
+
+    /**
+     * **THE REAR-UP.** Between 1.6 s and 2.0 s, front lifted 6–10°, about the
+     * base — and it is a *rear*, so the weight goes down before it goes up.
+     */
+    @Test
+    fun `it rears up six to ten degrees between 1_6 and 2_0 seconds`() {
+        val window = everyMillisecond.filter {
+            it in WelcomeTimeline.B_HORN_DONE..WelcomeTimeline.B_LAUNCH
+        }
+        val lift = window.minOf { WelcomeTimeline.frameB(it).bodyRotDeg }
+        // Negative because the animal faces right: lifting the front is
+        // anticlockwise on a screen whose y runs down.
+        assertTrue("it must rear 6-10°, not ${-lift}", -lift in 6f..10f)
+        assertEquals("…and item 189's own figure", -9f, WelcomeTimeline.B_REAR_DEG, 1e-4f)
+
+        // The crouch: it dips before it lifts, which is what stops the rear
+        // reading as a hinge opening.
+        val crouch = window.maxOf { WelcomeTimeline.frameB(it).bodyDy }
+        assertTrue("it must load before it lifts: $crouch", crouch > 3f)
+        val rise = window.minOf { WelcomeTimeline.frameB(it).bodyDy }
+        assertTrue("…and then come up: $rise", rise < -20f)
+        // The crouch is BEFORE the lift and not after it.
+        val crouchAt = window.maxByOrNull { WelcomeTimeline.frameB(it).bodyDy }!!
+        val riseAt = window.minByOrNull { WelcomeTimeline.frameB(it).bodyDy }!!
+        assertTrue("it lifted before it crouched", crouchAt < riseAt)
+
+        // Nothing rears during the transformation, and nothing is left over at
+        // the launch.
+        assertEquals(0f, WelcomeTimeline.frameB(WelcomeTimeline.B_HORN_DONE).bodyRotDeg, 1e-3f)
+        assertEquals(0f, WelcomeTimeline.frameB(WelcomeTimeline.B_LAUNCH).bodyDy, 1e-3f)
+    }
+
+    /**
+     * **THE GALLOP EXIT REACHING OFF-SCREEN** — the third of the four, and the
+     * one that is a claim about a *device* rather than about a curve.
+     *
+     * `gallopX` is a fraction, exactly as animation A's ring scale is, because
+     * the storyboard's `translateX(430px)` is true of a 340 px stage and of
+     * nothing else. So there are two halves to check: that the fraction gets to
+     * 1 before the film ends, and that 1 is genuinely off the right-hand edge —
+     * on the widest and the narrowest art box this app can produce.
+     */
+    @Test
+    fun `the gallop leaves the screen to the right, on every screen`() {
+        // The curve: forwards only, arriving before the stage has to be empty.
+        var previous = -1f
+        for (t in everyMillisecond) {
+            val x = WelcomeTimeline.frameB(t).gallopX
+            assertTrue("it went backwards at t=$t", x >= previous - 1e-4f)
+            previous = x
+        }
+        assertEquals("still standing at the launch", 0f, WelcomeTimeline.frameB(WelcomeTimeline.B_LAUNCH).gallopX, 1e-4f)
+        assertEquals("gone by the exit", 1f, WelcomeTimeline.frameB(WelcomeTimeline.B_EXIT).gallopX, 1e-3f)
+
+        // …and 1 is off the edge. The art box is `min(0.80 w, 0.46 h)` centred
+        // horizontally, so this is every phone from a 4:3 tablet to a 21:9
+        // handset, plus a square one that does not exist to catch the case
+        // where the height is what binds.
+        for ((w, h) in listOf(
+            1080f to 2340f, 1440f to 3120f, 1080f to 2520f, 1200f to 1600f, 1000f to 1000f,
+        )) {
+            val side = minOf(w * 0.80f, h * 0.46f)
+            val left = (w - side) / 2f
+            val scale = side / WelcomeTimeline.Art.CANVAS
+            val travel = WelcomeTimeline.exitTravelMasterUnits(w, left, scale)
+            // The last pixel of the animal is the master canvas's own left edge.
+            val trailingEdge = left + travel * scale
+            assertTrue(
+                "at ${w.toInt()}×${h.toInt()} the llama is still on screen: $trailingEdge vs $w",
+                trailingEdge > w,
+            )
+            // …and it has not been sent to the next county, which would spend
+            // the whole second of gallop off-screen.
+            assertTrue("at ${w.toInt()}×${h.toInt()} it overshoots absurdly", trailingEdge < w + side)
+        }
+    }
+
+    /** …with two to three bounces on the way out, and a roll with each one. */
+    @Test
+    fun `the gallop bounces two to three times and rolls with each stride`() {
+        assertTrue("2-3 bounces", WelcomeTimeline.B_GALLOP_BOUNCES in 2..3)
+        val run = everyMillisecond.filter { it in WelcomeTimeline.B_LAUNCH..WelcomeTimeline.B_EXIT }
+        val bob = run.map { WelcomeTimeline.gallopBob(it) }
+        assertTrue("it never left the ground: ${bob.min()}", bob.min() < -30f)
+        assertTrue("it never came back down: ${bob.max()}", bob.max() > 30f)
+        // Peaks, counted as sign changes of the difference. Two per cycle —
+        // and the direction is SEEDED from the first real step rather than
+        // assumed, because a bounce starts by going up and a test that assumes
+        // it starts by going down counts the launch itself as a peak.
+        var reversals = 0
+        var rising: Boolean? = null
+        for (i in 1 until bob.size) {
+            val d = bob[i] - bob[i - 1]
+            if (kotlin.math.abs(d) < 1e-5f) continue
+            if (rising != null && (d > 0f) != rising) reversals++
+            rising = d > 0f
+        }
+        assertEquals(
+            "$reversals reversals is not ${WelcomeTimeline.B_GALLOP_BOUNCES} bounces",
+            2 * WelcomeTimeline.B_GALLOP_BOUNCES, reversals,
+        )
+        // It starts and ends level, so the bounce cannot leave the animal
+        // hanging when the stage is supposed to be empty.
+        assertEquals(0f, WelcomeTimeline.gallopBob(WelcomeTimeline.B_LAUNCH), 1e-3f)
+        assertEquals(0f, WelcomeTimeline.gallopBob(WelcomeTimeline.B_EXIT), 1e-3f)
+        assertEquals("nothing bounces before it goes", 0f, WelcomeTimeline.gallopBob(0.5f), 1e-4f)
+        // The roll goes with it, and it never rolls the wrong way — a gallop
+        // that pitches nose-down is a fall.
+        assertTrue(run.all { WelcomeTimeline.gallopTilt(it) >= -1e-3f })
+        assertTrue(run.maxOf { WelcomeTimeline.gallopTilt(it) } > WelcomeTimeline.B_GALLOP_TILT_DEG)
+    }
+
+    /**
+     * **The trail follows it out and the dust stays where it pushed off.**
+     *
+     * The dust is the one thing in the beat that must *not* move with the
+     * animal: dust that travels is smoke. That is a property of the timeline
+     * only in that it must fire on the launch and be gone before the end; where
+     * it is drawn is the composable's, and it is drawn on the base pivot.
+     */
+    @Test
+    fun `the trail runs out behind it and the dust is spent at the launch point`() {
+        assertEquals("nothing trails before it goes", 0f, WelcomeTimeline.frameB(0.5f).trailAlpha, 1e-4f)
+        assertEquals("no dust before it goes", 0f, WelcomeTimeline.frameB(WelcomeTimeline.B_LAUNCH).dustAlpha, 1e-4f)
+        assertTrue("the dust must fire on the launch", WelcomeTimeline.frameB(0.71f).dustAlpha > 0.5f)
+        assertTrue("the trail must be up mid-run", WelcomeTimeline.frameB(0.78f).trailAlpha > 0.5f)
+        // Both are gone before the stage has to be empty.
+        assertEquals(0f, WelcomeTimeline.frameB(WelcomeTimeline.B_EXIT).trailAlpha, 1e-3f)
+        assertEquals(0f, WelcomeTimeline.frameB(WelcomeTimeline.B_EXIT).dustAlpha, 1e-3f)
+        // The dust spreads once and does not pulse.
+        var previous = -1f
+        for (t in everyMillisecond) {
+            val spread = WelcomeTimeline.frameB(t).dustSpread
+            assertTrue("the dust contracted at t=$t", spread >= previous - 1e-4f)
+            previous = spread
+        }
+    }
+
+    /**
+     * **The llama watches**, and only while there is something to watch.
+     *
+     * Item 189 makes the follow optional, so what is asserted is the shape of
+     * it rather than its existence: if it is there, it tracks the ribbon in
+     * front, it is small, and it stops dead when they do — an eye still
+     * wandering during the gallop is a llama with something in it.
+     */
+    @Test
+    fun `the llama watches the ribbons and stops when they go`() {
+        val looks = everyMillisecond
+            .filter { it < WelcomeTimeline.B_RIBBONS_END }
+            .map { WelcomeTimeline.eyeFollow(it) }
+        assertTrue("the eye must move at all", looks.any { kotlin.math.abs(it.first) > 4f })
+        assertTrue("…both ways", looks.any { it.first < -4f } && looks.any { it.first > 4f })
+        assertTrue(
+            "the follow must stay inside the face",
+            looks.all { kotlin.math.abs(it.first) <= 16f && kotlin.math.abs(it.second) <= 11f },
+        )
+        for (t in everyMillisecond.filter { it >= WelcomeTimeline.B_RIBBONS_END }) {
+            val (x, y) = WelcomeTimeline.eyeFollow(t)
+            assertEquals("t=$t still watching", 0f, x, 1e-4f)
+            assertEquals("t=$t still watching", 0f, y, 1e-4f)
+        }
+        // The watch-tilt is subtle, and it is over before the rear needs the
+        // same track: nothing may be left of it at 1.3 s.
+        assertTrue(
+            "the watch tilt is not subtle",
+            everyMillisecond.filter { it < WelcomeTimeline.B_RIBBONS_END }
+                .all { kotlin.math.abs(WelcomeTimeline.frameB(it).bodyRotDeg) <= WelcomeTimeline.B_WATCH_TILT_DEG + 1e-3f },
+        )
+        assertEquals(0f, WelcomeTimeline.frameB(WelcomeTimeline.B_TRANSFORM).bodyRotDeg, 1e-4f)
+    }
+
+    /**
+     * **THE TOTAL DURATION** — the last of the four the item names, and the
+     * beats inside it, ±0.2 s, which is the tuning room item 189 allows.
+     */
+    @Test
+    fun `B's beats land on the times item 189 names`() {
+        fun seconds(t: Float) = t * WelcomeAnimation.DURATION_MS / 1000f
+        assertEquals("the whole film", 3.0f, WelcomeAnimation.DURATION_MS / 1000f, 1e-3f)
+        assertEquals("the ribbons end", 1.3f, seconds(WelcomeTimeline.B_RIBBONS_END), 0.2f)
+        assertEquals("the transformation starts", 1.3f, seconds(WelcomeTimeline.B_TRANSFORM), 0.2f)
+        assertEquals("…and is done", 1.6f, seconds(WelcomeTimeline.B_HORN_DONE), 0.2f)
+        assertEquals("the rear peaks", 1.8f, seconds(WelcomeTimeline.B_REAR_PEAK), 0.2f)
+        assertEquals("the gallop starts", 2.0f, seconds(WelcomeTimeline.B_LAUNCH), 0.2f)
+        // …and the stage is empty for about a fifth of a second before the
+        // overlay is dismissed, which is a beat the owner asked for by name.
+        val empty = 3.0f - seconds(WelcomeTimeline.B_EXIT)
+        assertEquals("the empty stage", 0.2f, empty, 0.1f)
     }
 
     /** B ends cleanly too — the overlay must not still be on screen at 3.0 s. */
     @Test
     fun `B ends at zero as well`() {
         assertEquals(1f, WelcomeTimeline.frameB(0f).overlayAlpha, 1e-4f)
+        assertEquals(
+            "it must still be opaque while the stage empties",
+            1f, WelcomeTimeline.frameB(WelcomeTimeline.B_EXIT).overlayAlpha, 1e-4f,
+        )
         assertEquals(0f, WelcomeTimeline.frameB(1f).overlayAlpha, 1e-4f)
-    }
-
-    /**
-     * The covered fraction of a screen of this [aspect] (width ÷ height),
-     * rasterised from [WelcomeTimeline.B_LENS] exactly as `WelcomeOverlay`
-     * draws it: each blob's lumpy polygon plus its welded lobes, rotated by its
-     * own angle and then stretched along it.
-     *
-     * Everything is in **width units**, so a y in screen fractions has to be
-     * divided by the aspect before it can be compared with a radius.
-     */
-    private fun lensCoverage(aspect: Float, nx: Int = 100, ny: Int = 220): Float {
-        var hit = 0
-        for (i in 0 until nx) {
-            val u = (i + 0.5f) / nx
-            for (j in 0 until ny) {
-                val y = ((j + 0.5f) / ny) / aspect
-                if (WelcomeTimeline.B_LENS.indices.any { k ->
-                        val blob = WelcomeTimeline.B_LENS[k]
-                        val dx = u - blob.x
-                        val dy = y - blob.y / aspect
-                        val a = blob.angleDeg * Math.PI / 180.0
-                        val rx = dx * kotlin.math.cos(a) + dy * kotlin.math.sin(a)
-                        val ry = -dx * kotlin.math.sin(a) + dy * kotlin.math.cos(a)
-                        insideSplat(
-                            (rx / (blob.radius * blob.stretch)).toFloat(),
-                            (ry / blob.radius).toFloat(),
-                            k,
-                        )
-                    }
-                ) {
-                    hit++
-                }
-            }
-        }
-        return hit.toFloat() / (nx * ny)
-    }
-
-    /** Is (`px`, `py`) inside the unit splat with this [seed]? */
-    private fun insideSplat(px: Float, py: Float, seed: Int): Boolean {
-        val n = WelcomeTimeline.SPLAT_LOBES.size
-        val xs = FloatArray(n)
-        val ys = FloatArray(n)
-        for (i in 0 until n) {
-            val r = WelcomeTimeline.splatLobe(seed, i)
-            val a = WelcomeTimeline.splatAngle(seed, i)
-            xs[i] = (kotlin.math.cos(a) * r).toFloat()
-            ys[i] = (kotlin.math.sin(a) * r * WelcomeTimeline.SPLAT_SQUASH).toFloat()
-        }
-        var inside = false
-        var j = n - 1
-        for (i in 0 until n) {
-            if ((ys[i] > py) != (ys[j] > py) &&
-                px < (xs[j] - xs[i]) * (py - ys[i]) / (ys[j] - ys[i]) + xs[i]
-            ) {
-                inside = !inside
-            }
-            j = i
-        }
-        if (inside) return true
-        for (b in WelcomeTimeline.SPLAT_BLOBS.indices) {
-            val (dx, dy, dr) = WelcomeTimeline.splatBlob(seed, b)
-            val ox = px - dx
-            val oy = py - dy * WelcomeTimeline.SPLAT_SQUASH
-            if (ox * ox + oy * oy <= dr * dr) return true
-        }
-        return false
     }
 
     // ══ the machinery ═════════════════════════════════════════════════════
