@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,14 +13,20 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -83,10 +90,12 @@ import com.lidarscan.app.ui.theme.ScanMeta
 import com.lidarscan.app.ui.theme.ScanMetaCaps
 import com.lidarscan.app.ui.theme.ScanTitle
 import com.lidarscan.core.measure.MeasureUnit
+import com.lidarscan.core.measure.heightM
 import com.lidarscan.core.model.ExportFormat
 import com.lidarscan.core.projects.ProjectActionWording
 import com.lidarscan.core.render.ColorMode
 import com.lidarscan.core.render.Colormap
+import com.lidarscan.core.render.HeightLegend
 import com.lidarscan.core.render.PointCountFormat
 import com.lidarscan.core.render.PointSizeMode
 import com.lidarscan.core.render.ViewerChrome
@@ -288,6 +297,12 @@ fun ReviewScreen(
                 state = state,
                 vm = vm,
                 modifier = Modifier.weight(1f),
+                // ROUND 38 item 190(b): the legend is chrome, so it hides with
+                // the rest of it. Passed down rather than recomputed inside the
+                // viewport — `ViewerChrome` is asked once per composition and
+                // the header, the actions and the legend all obey that one
+                // answer.
+                chromeVisible = controlsVisible,
                 onEmptyTap = { controlsShown = ViewerChrome.onViewportTap(controlsShown, state.measureMode) },
             )
 
@@ -509,6 +524,7 @@ private fun ReviewViewport(
     state: ReviewUiState,
     vm: ReviewViewModel,
     modifier: Modifier = Modifier,
+    chromeVisible: Boolean = true,
     onEmptyTap: () -> Unit,
 ) {
     Box(
@@ -565,10 +581,158 @@ private fun ReviewViewport(
                     ProcessSectionsCard(state = state, onProcess = vm::processScan)
                 }
             }
+
+            // ── ROUND 38 item 190: the height legend ─────────────────────────
+            //
+            // Inside the viewport Box and aligned to its right edge, so it is
+            // over the cloud rather than beside it — the operator reads a
+            // point's colour and the bar in one glance without the cloud
+            // shrinking to make room. It is the last child, so it draws over
+            // the `SurfaceView`.
+            HeightLegendBar(
+                colorMode = state.display.colorMode,
+                colormap = state.display.activeScalar.colormap,
+                range = state.heightRange,
+                unit = state.measureUnit,
+                chromeVisible = chromeVisible,
+                modifier = Modifier.align(Alignment.CenterEnd),
+            )
         } else {
             ReviewLoadState(state, vm)
         }
     }
+}
+
+// ── the height legend ───────────────────────────────────────────────────────
+
+/** The ramp bar's width. 12 dp — item 190(a). */
+private val LEGEND_BAR_WIDTH = 12.dp
+
+/** How much of the viewport's height the bar spans. 0.40 — item 190(a). */
+private const val LEGEND_HEIGHT_FRACTION = 0.40f
+
+/** How many colours the gradient is built from. */
+private const val LEGEND_RAMP_STOPS = 32
+
+/**
+ * ROUND 38 item 190 — **the colour, in metres.**
+ *
+ * > *"for the display colour in height, show the pixel with color indicated by
+ * > height."* — owner, 2026-08-23.
+ *
+ * A vertical bar of the **live colormap** with the **live range** printed on
+ * it, at the viewport's right edge. Every one of those adjectives is load
+ * bearing:
+ *
+ *  * **the live colormap** — the swatch is built from [HeightRamp], which
+ *    samples the same [com.lidarscan.core.render.ColormapLut] the GLSL LUT
+ *    texture is built from, at the colormap the material is currently set to.
+ *    Round 28 item 154's rule ("one ramp, sampled the same way everywhere")
+ *    is what makes a Turbo bar and a Turbo cloud the same Turbo, and switching
+ *    to grayscale in the Display sheet re-draws this bar with the points.
+ *  * **the live range** — `state.heightRange`, which is
+ *    `PointCloudRenderer.appliedValueRange()`: the two floats the shader is
+ *    actually normalising against, polled at the ViewModel's 250 ms cadence.
+ *    An auto-range that grows as pages land moves these labels; a manual range
+ *    pins them. There is no arithmetic here that could disagree with the cloud
+ *    because there is no arithmetic here at all — [HeightLegend] formats a
+ *    range it is given.
+ *  * **printed** — [ScanMeta], the design system's one style for "every number,
+ *    timestamp and unit", on a scrim. The scrim is not decoration: this text
+ *    sits on a point cloud whose local brightness is whatever the scan happens
+ *    to be, and 12 sp mono over a cyan ceiling is unreadable without one. It is
+ *    the page colour at 0.72, so it darkens in the dark theme and lightens in
+ *    the light one without a second palette.
+ *
+ * **Why the labels are to the LEFT of the bar.** The bar is at the edge; the
+ * labels have to go inboard or off screen. Putting them inboard also puts them
+ * between the reader's eye and the bar, which is the direction a reader
+ * travelling from a coloured point to the scale is already moving.
+ *
+ * The gates — HEIGHT only, chrome only, no range means no legend — are
+ * [HeightLegend.visible], in `:core`, with a test. Nothing about visibility is
+ * decided in this function.
+ */
+@Composable
+private fun HeightLegendBar(
+    colorMode: ColorMode,
+    colormap: Colormap,
+    range: com.lidarscan.core.render.HeightRange.Range?,
+    unit: MeasureUnit,
+    chromeVisible: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    if (!HeightLegend.visible(colorMode, chromeVisible, range)) return
+    val model = HeightLegend.model(range!!, unit)
+    val ramp = remember(colormap) { HeightRamp(colormap) }
+    // Bottom of the bar is t = 0 (the range's min), which is how a height axis
+    // reads and the opposite of the order `verticalGradient` paints in.
+    val stops = remember(colormap) { ramp.stops(LEGEND_RAMP_STOPS).reversed() }
+
+    Row(
+        modifier
+            // The safe area, horizontally only: in landscape on a phone with a
+            // cutout this bar is the thing nearest the notch, and the column it
+            // lives in has already paid the vertical insets.
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
+            .padding(ScanDims.ScreenMargin)
+            .fillMaxHeight(LEGEND_HEIGHT_FRACTION)
+            .testTag("heightLegend"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(ScanDims.S1),
+    ) {
+        Column(
+            Modifier.fillMaxHeight(),
+            verticalArrangement = Arrangement.SpaceBetween,
+            horizontalAlignment = Alignment.End,
+        ) {
+            // Top-first on screen; the model is bottom-first, the way the ramp
+            // is indexed.
+            LegendLabel(model.topLabel, "heightLegendMax")
+            LegendLabel(model.middleLabel, "heightLegendMid")
+            LegendLabel(model.bottomLabel, "heightLegendMin")
+        }
+        Box(
+            Modifier
+                .width(LEGEND_BAR_WIDTH)
+                .fillMaxHeight()
+                .background(Brush.verticalGradient(stops), RoundedCornerShape(ScanDims.S1))
+                // GRAYSCALE's floor is black and its ceiling is white, so on a
+                // near-black viewport the bottom of the bar and on a light one
+                // its top would have no edge at all. A hairline in the theme's
+                // own line colour is what makes the bar a bar in every
+                // combination of ramp and theme.
+                .border(1.dp, ScanColors.line, RoundedCornerShape(ScanDims.S1))
+                .testTag("heightLegendRamp"),
+        ) {
+            // The middle tick, on the bar rather than beside it: it is what
+            // ties the middle label to a position, and without it that label
+            // is floating next to a smooth gradient.
+            Box(
+                Modifier
+                    .align(Alignment.Center)
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(ScanColors.line)
+                    .testTag("heightLegendTick"),
+            )
+        }
+    }
+}
+
+/** One tick label: [ScanMeta] on a scrim, so it survives whatever is behind it. */
+@Composable
+private fun LegendLabel(text: String, tag: String) {
+    Text(
+        text,
+        style = ScanMeta,
+        color = ScanColors.ink,
+        maxLines = 1,
+        modifier = Modifier
+            .background(ScanColors.page.copy(alpha = 0.72f), RoundedCornerShape(ScanDims.S1))
+            .padding(horizontal = ScanDims.S1)
+            .testTag(tag),
+    )
 }
 
 /**
@@ -784,9 +948,42 @@ private fun MeasureCard(state: ReviewUiState, vm: ReviewViewModel) {
         if (m != null) {
             Text(vm.formatted(m.distanceM), style = ScanTitle, color = ScanColors.ink)
             Text(
-                "horizontal ${vm.formatted(m.horizontalM)} · Δz ${vm.formatted(m.deltaZM)}",
+                // ── ROUND 38 item 190, and a bug it walked into ─────────────
+                //
+                // This line said `Δz` and printed `to.z - from.z`. In this
+                // app's frame **z is horizontal** — round 28 item 154 settled
+                // that the runtime frame is ARCore's Y-up and fixed the three
+                // sites it found; `Measurement` was a fourth, and `horizontal`
+                // beside it was summing x and y, which is the plan distance
+                // with the rise mixed in. Both now go through `Vec3.heightM`.
+                // "rise" rather than "Δy", because the axis letter is exactly
+                // the thing that was wrong here and the word cannot be.
+                "horizontal ${vm.formatted(m.horizontalM)} · rise ${vm.formatted(m.verticalM)}",
                 style = ScanMeta,
                 color = ScanColors.inkMute,
+                modifier = Modifier.testTag("measureHorizontal"),
+            )
+            Text(
+                // ── ROUND 38 item 190(c): the loop closes ───────────────────
+                //
+                // The legend says what a colour is worth; this says what the
+                // point you just tapped is worth, in the same units and — by
+                // going through the legend's own formatter rather than the
+                // tape-measure one — in the same NOTATION, so the two numbers
+                // can be read against each other without a conversion. Both
+                // ends, not just the second: with `rise` on the line above, a
+                // reader who wants the second point's height should not have to
+                // add.
+                //
+                // Honest about the datum by saying nothing about it: these are
+                // heights in the cloud's own frame, whose origin is wherever
+                // the AR session started. That is the frame the legend's axis
+                // is in too, which is the only claim being made.
+                "h ${HeightLegend.format(m.from.heightM.toFloat(), state.measureUnit)} " +
+                    "→ ${HeightLegend.format(m.to.heightM.toFloat(), state.measureUnit)}",
+                style = ScanMeta,
+                color = ScanColors.inkMute,
+                modifier = Modifier.testTag("measureHeights"),
             )
             Text(
                 // ROUND 22 item 98: was 37 words explaining the sampling

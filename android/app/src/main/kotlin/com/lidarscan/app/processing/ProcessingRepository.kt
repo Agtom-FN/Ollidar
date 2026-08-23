@@ -3,6 +3,7 @@ package com.lidarscan.app.processing
 import com.lidarscan.core.capture.MountVerdict
 import com.lidarscan.core.capture.StitchResult
 import android.util.Log
+import com.lidarscan.app.engine.CloudStoreGate
 import com.lidarscan.app.engine.NativePlanArrays
 import com.lidarscan.app.engine.ProjectProbe
 import com.lidarscan.app.engine.ScanEngineNative
@@ -50,6 +51,38 @@ class ProcessingRepository(private val scope: CoroutineScope) {
     var onDiagnostic: ((String) -> Unit)? = null
 
     private var handle: Long = 0L
+
+    /**
+     * ROUND 39 item 191 — **the gate over this store's clears.**
+     *
+     * The store behind [handle] is process-wide (see the class header) and is
+     * FREED, not recycled, every time a project is opened or re-processed:
+     * `ProcessingEngine::clear_cloud()` calls `PageStore::clear()`, whose own
+     * header states the precondition this class had never satisfied —
+     * *"every PageView taken before this call becomes dangling, so consumers
+     * must stop reading first"*. Review's renderer is a consumer that is
+     * reading right now, on another thread, so "must stop reading first" has to
+     * be something the code does rather than something the comment asks for.
+     *
+     * Everything that clears goes through [mutateStore]; the renderer and the
+     * measure tool take [CloudStoreGate.read]. Appends — a running job
+     * publishing its pages — are deliberately NOT gated: the engine's contract
+     * makes concurrent append/read safe, and holding the render thread off for
+     * the length of a post-process would be a frozen screen for minutes.
+     */
+    val storeGate: CloudStoreGate = com.lidarscan.app.engine.ReadWriteCloudStoreGate()
+
+    /**
+     * Clear the cloud with every reader shut out, and bump the store's epoch so
+     * anything holding page ids from the old generation throws them away.
+     *
+     * The exclusive window is the **free only** — microseconds for a few dozen
+     * pages — and never the load that follows it. Loading is appending, and
+     * appending is safe beside a reader.
+     */
+    private fun mutateStore(h: Long) {
+        storeGate.mutate { ScanEngineNative.nativeProcClearCloud(h) }
+    }
 
     private val _jobs = MutableStateFlow<List<ProcessingJob>>(emptyList())
     val jobs: StateFlow<List<ProcessingJob>> = _jobs.asStateFlow()
@@ -189,7 +222,10 @@ class ProcessingRepository(private val scope: CoroutineScope) {
         // The store is process-wide and shared between projects. Re-processing
         // without clearing would append this project's cloud on top of
         // whichever one was open before and draw two rooms superimposed.
-        ScanEngineNative.nativeProcClearCloud(h)
+        //
+        // ROUND 39 item 191: and the clear itself frees pages a renderer may be
+        // uploading this instant, so it goes through the gate.
+        mutateStore(h)
         ScanEngineNative.nativeProcSubmitPostProcess(h, lscanDir.absolutePath, mountPhoneFromLidar)
     }
 
@@ -210,6 +246,14 @@ class ProcessingRepository(private val scope: CoroutineScope) {
     fun openRecordedCloud(projectId: String, lscanDir: File): Long {
         val h = ensureHandle()
         if (h == 0L) return 0L
+        // ROUND 39 item 191: `open_recorded_cloud` starts with its own
+        // `clear_cloud()`, and that is the free that took the process down when
+        // a second scan was opened. Doing the clear HERE, under the gate,
+        // leaves the native one to find an empty store — a clear that frees
+        // nothing cannot dangle anything — while the load that follows runs
+        // unguarded, because a reader watching pages appear is the same thing a
+        // live capture does every frame.
+        mutateStore(h)
         val n = ScanEngineNative.nativeProcOpenRecordedCloud(h, lscanDir.absolutePath)
         // The cached cloud is the resolved result, so a project opened this way
         // is chainable exactly like a post-processed one — Colorize and Export
@@ -341,7 +385,7 @@ class ProcessingRepository(private val scope: CoroutineScope) {
     /** Clears whatever project's cloud is currently loaded. */
     fun clearCloud() {
         val h = handle
-        if (h != 0L) ScanEngineNative.nativeProcClearCloud(h)
+        if (h != 0L) mutateStore(h)
         openedProjects.clear()
     }
 

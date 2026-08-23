@@ -1,5 +1,6 @@
 package com.lidarscan.app.render
 
+import com.lidarscan.app.engine.CloudStoreGate
 import com.lidarscan.app.engine.NativePointPage
 import com.lidarscan.app.engine.ScanEngineNative
 
@@ -21,6 +22,25 @@ interface PointCloudSource {
     fun pageIdAt(index: Int): Int
     fun getPage(pageId: Int): NativePointPage?
     fun totalPoints(): Long
+
+    /**
+     * ROUND 39 item 191 — **the lifetime contract this interface was missing.**
+     *
+     * Every page pointer handed out above stays valid *until the store is
+     * cleared*, which is the engine's own wording and its own precondition:
+     * `PageStore::clear()`'s header says *"every PageView taken before this
+     * call becomes dangling, so consumers must stop reading first"*. A reader
+     * therefore takes [CloudStoreGate.read] around the whole of a page touch —
+     * `pageCount`/`pageIdAt`/`getPage` **and** whatever it does with
+     * `page.buffer` afterwards — and a store that can be cleared under it takes
+     * `mutate` around the clear.
+     *
+     * [CloudStoreGate.OPEN] by default, which is the honest answer for the live
+     * and replay sources: their store is created and destroyed with the
+     * session that owns it and cannot be cleared out from under a reader
+     * mid-session. Only the process-wide processing store needs a real one.
+     */
+    val storeGate: CloudStoreGate get() = CloudStoreGate.OPEN
 }
 
 /** Reads pages from the live capture engine (B2's `scan_engine*`, via the C ABI). */
@@ -80,7 +100,18 @@ class ReplayEngineCloudSource(private val replayHandleProvider: () -> Long) : Po
  * marshalling as the live and replay paths, so the Review screen's viewer is
  * B4's renderer unchanged.
  */
-class ProcessingCloudSource(private val handleProvider: () -> Long) : PointCloudSource {
+class ProcessingCloudSource(
+    private val handleProvider: () -> Long,
+    /**
+     * ROUND 39 item 191: the processing store is **process-wide** and every
+     * `openRecordedCloud`/`submitPostProcess` clears it, so this is the one
+     * source that genuinely needs a gate. Defaulted to
+     * [CloudStoreGate.OPEN] only so a test that reads pages from a store
+     * nothing else is touching does not have to build one — the app passes
+     * `ProcessingRepository.storeGate`.
+     */
+    override val storeGate: CloudStoreGate = CloudStoreGate.OPEN,
+) : PointCloudSource {
     override val isAvailable: Boolean get() = handleProvider() != 0L
 
     override fun pageCount(): Int {
@@ -110,7 +141,11 @@ class ProcessingCloudSource(private val handleProvider: () -> Long) : PointCloud
  * merged product normally gets its own store"), so it needs its own source
  * rather than appearing mixed into [ProcessingCloudSource]'s pages.
  */
-class MergedCloudSource(private val handleProvider: () -> Long) : PointCloudSource {
+class MergedCloudSource(
+    private val handleProvider: () -> Long,
+    /** Same store, same engine handle, same clear — see [ProcessingCloudSource]. */
+    override val storeGate: CloudStoreGate = CloudStoreGate.OPEN,
+) : PointCloudSource {
     override val isAvailable: Boolean get() = handleProvider() != 0L && totalPoints() > 0
 
     override fun pageCount(): Int {
@@ -157,10 +192,15 @@ fun PointCloudSource.samplePoints(
      * the Projects-tab thumbnail, measured on a real export.
      */
     acceptStream: (Int) -> Boolean = { true },
-): List<com.lidarscan.core.measure.Vec3> {
-    if (!isAvailable) return emptyList()
+): List<com.lidarscan.core.measure.Vec3> = storeGate.read {
+    // ROUND 39 item 191: this runs on a background coroutine and reads
+    // `page.buffer` directly, which is the same use-after-free the renderer
+    // had — a measure pick taken as the operator opens another scan would
+    // read pages the store had already freed. The gate is the reason it
+    // cannot.
+    if (!isAvailable) return@read emptyList()
     val total = totalPoints()
-    if (total <= 0L) return emptyList()
+    if (total <= 0L) return@read emptyList()
     val stride = maxOf(1, (total / maxPoints.coerceAtLeast(1)).toInt())
     val out = ArrayList<com.lidarscan.core.measure.Vec3>(minOf(maxPoints, total.toInt()))
     val pages = pageCount()
@@ -191,7 +231,7 @@ fun PointCloudSource.samplePoints(
             p += stride
         }
     }
-    return out
+    out
 }
 
 /**
@@ -203,8 +243,8 @@ fun PointCloudSource.samplePoints(
  * store rather than inferring it from `liveSlam`/`pushbroomActive` flags is
  * deliberate — those say what was REQUESTED, and the pages say what happened.
  */
-fun PointCloudSource.streamsPresent(): Set<Int> {
-    if (!isAvailable) return emptySet()
+fun PointCloudSource.streamsPresent(): Set<Int> = storeGate.read {
+    if (!isAvailable) return@read emptySet()
     val out = mutableSetOf<Int>()
     for (i in 0 until pageCount()) {
         val id = pageIdAt(i)
@@ -212,7 +252,7 @@ fun PointCloudSource.streamsPresent(): Set<Int> {
         val page = getPage(id) ?: continue
         if (page.count > 0) out.add(page.stream)
     }
-    return out
+    out
 }
 
 /**

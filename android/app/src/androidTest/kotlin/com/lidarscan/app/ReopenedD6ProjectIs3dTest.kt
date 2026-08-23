@@ -269,7 +269,10 @@ class ReopenedD6ProjectIs3dTest {
             repo.hasProcessedCloud("round8-walk"),
         )
 
-        val sample = ProcessingCloudSource { repo.handleOrZero() }.samplePoints(20_000)
+        // ROUND 39 item 191: the source carries the repository's store gate, the
+        // same way the app wires it — a sample taken through the render path
+        // must take the gate the clears take.
+        val sample = ProcessingCloudSource({ repo.handleOrZero() }, repo.storeGate).samplePoints(20_000)
         assertTrue("the reopened cloud must be readable through the render path", sample.size > 200)
 
         // --- and it is THREE-dimensional ---------------------------------------

@@ -7947,3 +7947,386 @@ strip across the whole three seconds, and the four keyframes the item asks for:
 `key1-ribbons.png`, `key2-horn-growth.png`, `key3-rear.png` and
 `key4-gallop-exit.png`. Animation A's round-35 recordings stand; nothing in this
 round touches it.
+
+---
+
+## ROUND 38 (v1.0.0) — a colour becomes a number, and the version stops saying beta
+
+Round 37 is **staged and not shipped**. This round adds one owner item on top of
+it and then stages the **1.0.0 stable candidate**: VERSION **1.0.0**,
+versionCode **10000**, `dist/Ollidar-1.0.0-10000.apk`. Nothing is published —
+the owner reviews the legend before 1.0.0 ships.
+
+### 190 — the height colour, with its scale
+
+> **OWNER (2026-08-23):** *"for the display colour in height, show the pixel
+> with color indicated by height."*
+
+HEIGHT mode has painted every point through a colormap since B4 and has never
+said what the colours are worth. A cyan point is higher than a blue one; how
+much higher is not on the screen, and the range it is measured against is not
+even constant — the auto-range grows as the cloud loads. The item asks for the
+missing half.
+
+ * **(a)** A compact **vertical ramp bar** at the viewer's right edge, inside
+   the safe area, ~12 dp wide and ~40 % of the viewport's height, drawn from
+   the **same `Colormap` LUT the renderer samples** — one ramp — with height
+   labels at top and bottom and a **middle tick**, showing the CURRENT range
+   (auto-range values when auto, manual when manual), formatted per the units
+   setting (m/ft), in the Meta mono style, on a subtle scrim so it survives the
+   cloud behind it.
+ * **(b)** It **updates live** as the range changes and **switches ramp** when
+   the colormap does; it is **hidden entirely** in INTENSITY and every other
+   mode, and it hides with the tap-to-hide — **it counts as chrome**.
+ * **(c)** BONUS, if it drops in naturally: the measure HUD already reads a
+   picked point's position, so let it state that point's **height** (`h 1.32 m`)
+   and the loop closes.
+ * **(d)** Tests: legend values match the render range (**same source of
+   truth**), unit formatting, mode/visibility gating; and screenshot
+   verification on the AVD with a real cloud in HEIGHT+Turbo, HEIGHT+grayscale
+   and INTENSITY, both themes.
+
+### Resolution — 2026-08-23 (1.0.0, round 38)
+
+**190 — the legend does not compute the range. It is shown the one the shader
+was given.**
+
+The item's hardest clause is (d)'s parenthesis, *"same source of truth"*, and
+there are two ways to satisfy it. One is to compute the auto-range a second time
+in the UI from the same bounds and write a test that the two agree; the other is
+to have no second computation at all. The second is what is built.
+
+`PointCloudRenderer` already had the answer in a field. `appliedHeightRange`
+(`:398`) is the memo `refreshAutoHeightRange` compares against, and it is
+assigned **immediately before, and only before, the two `setParameter` calls
+that upload `valueMin`/`valueMax`** — so it is not *a* range, it is *the* range
+the pixels were drawn with. It is now published (`appliedValueRange`,
+`PointCloudRenderer.kt:886`), polled into `ReviewUiState.heightRange`
+(`ReviewViewModel.kt:88`, read at `:464`), and formatted by
+`HeightLegend` (`core/render/HeightLegend.kt`), which **takes a range and cannot
+make one**. There is no code path by which the bar could disagree with the
+cloud, so the test does not have to assert that it agrees; it asserts something
+stronger instead — that a label's own value, pushed forward through
+`HeightRange.normalise` (which is `points.mat`'s line, transcribed), lands back
+on the tick the label was drawn at.
+
+**The poll, not a callback.** The value changes *on its own*: item 154's
+`refreshAutoHeightRange` re-uploads whenever the growing cloud's bounds drift
+2 %, with nothing calling into the ViewModel. A listener would be renderer
+plumbing for one consumer; the Review ViewModel already runs a 250 ms loop for
+the point count, and the range rides on it. 250 ms is also fast enough for the
+manual path the item's "updates live" names, because turning **Auto range** off
+happens inside the Display sheet — a modal that covers the viewport — so the new
+range is on screen before the legend is. (There is no manual min/max *slider* in
+Review; the manual pair is the persisted one. Flagged rather than invented.)
+
+**The bar** (`ReviewScreen.kt:657`, `HeightLegendBar`) is the last child of the
+viewport `Box`, aligned `CenterEnd`, so it draws over the `SurfaceView` rather
+than taking width from the cloud. 12 dp wide, `fillMaxHeight(0.40f)`, horizontal
+safe-area inset only (the column above it has already paid the vertical ones).
+The gradient is `HeightRamp(colormap).stops(32).reversed()` — `HeightRamp` is
+round 28 item 154's "one ramp, sampled the same way everywhere", so the swatch
+and the cloud read the same `ColormapLut`, and the `.reversed()` is because a
+height axis puts `t = 0` at the bottom and `verticalGradient` paints from the
+top. The labels sit **inboard of the bar**, which is the direction a reader
+travelling from a coloured point to the scale is already moving.
+
+**Three details the screenshots argued for:**
+
+ * **the bar needs an outline.** GRAYSCALE's floor is black and its ceiling is
+   white, so on the dark viewport the bottom of the bar and on a light theme its
+   top would simply have no edge. A 1 dp `ScanColors.line` hairline is what
+   makes it a bar in every combination of ramp and theme;
+ * **the labels need a scrim**, because 12 sp mono over a cyan ceiling is not
+   text. `ScanColors.page` at 0.72 alpha — the page colour, so it darkens in the
+   dark theme and lightens in the light one with no second palette;
+ * **the middle tick goes ON the bar**, not beside it. Without it the middle
+   label is a number floating next to a smooth gradient with nothing to attach
+   to.
+
+**Decimal feet on the axis, and that is a deliberate divergence from
+`formatDistance`.** The measure tool renders imperial as `12' 5.28"` because a
+distance is read against a tape (B11, and it stays). A legend tick is read
+against the two ticks above and below it, and three labels of different widths
+in a 12 dp gutter stop lining up. The same reasoning rules out the metric
+formatter's sub-metre millimetres: an axis whose bottom label says `270 mm` and
+whose top says `0.82 m` is an axis the reader must convert before they can
+compare its own two ends. So: **one unit for the whole axis**, precision by
+magnitude (2 dp under ten, 1 dp under a hundred, whole numbers above), and
+`-0.00` printed as `0.00` because a minus sign on a rounded zero reads as a
+measurement.
+
+**Gating is four lines in `:core`** (`HeightLegend.visible`, `:95`), not four
+`if`s in a composable: HEIGHT only; chrome up; a range must exist; the span must
+clear `HeightRange.EPSILON_M`. The last is not theoretical — the auto path can
+never produce a zero span (`resolve` opens a 1 m window on a degenerate cloud)
+but a saved manual pair can, and one number printed three times is not a scale.
+
+**190(c) dropped in, and walked straight into a bug that had been there since
+B11.** The measure card's second line said `horizontal … · Δz …`, and in this
+app's frame **z is horizontal**. Round 28 item 154 settled that the runtime
+frame is ARCore's Y-up and fixed the three render sites it found;
+`core/measure/Measure.kt` was a **fourth**, in a different package, naming its
+components instead of indexing them — so `horizontalM` was `√(x² + y²)`, the
+plan distance **with the whole rise mixed into it**, and `Δz` was a horizontal
+component under a vertical name. Both go through `Vec3.heightM` (`:133`) now;
+`Measurement.verticalM` (`:148`) is the rise and `horizontalM` (`:157`) is the
+other two components. The read-out says **`rise`** rather than `Δy`, because the
+axis letter is precisely the thing that was wrong here and a word cannot be.
+`MeasureTest`'s own case **had been asserting the bug** — it read `Vec3(3,4,12)`
+as "12 up", which is the engine's synthetic +z-up fixture and not a frame any
+device produces — and now pins the up axis against `HeightRange.AXIS` so the two
+cannot drift again. The height line itself reads **both** ends
+(`h -1.83 m → -0.51 m`) through the legend's own formatter, so the number under
+the finger and the number on the bar are in the same notation and can be read
+against each other without a conversion.
+
+**Photographed on the owner's own scan-030 bytes**, not on a harness: the real
+Projects list, the real Review screen, the real `PointCloudRenderer`.
+`Round38LegendShots` stages the container out of the instrumentation APK's
+assets **as the app**, which is the round-28 hotfix's `adb push` +
+`chown -R <uid>:ext_data_rw` recipe with the step that can be forgotten removed.
+Three copies differing only in `project.json`'s `displayParams` put the app in
+the three states through the same `effectiveDisplayParams()` read a real saved
+scan goes through — and the grayscale copy carries `"migration": 1`, because a
+persisted **height** grayscale is exactly what round 27 item 141 migrates to
+Turbo on read, so without the stamp the two height frames would be the same
+picture.
+
+The six frames are in `uishots12/`: `r38-turbo-{dark,light}.png`,
+`r38-grey-{dark,light}.png`, `r38-intensity-{dark,light}.png`. On the Turbo and
+grey frames the bar reads **2.60 m / −1.27 m / −5.15 m** — the *same* three
+numbers on both ramps, which is the item's claim made visible: the legend
+follows the range, not the palette. On the INTENSITY frames there is no bar, and
+the test asserts the node's absence as well, because "I cannot see one in this
+PNG" is a weaker statement than "it does not exist".
+
+### A crash this round found and did not cause
+
+**Open one scan in Review, go back, open another, and the app dies.**
+`SIGSEGV`/`SEGV_MAPERR` in `__memcpy_aarch64_simd`, under
+`glBufferSubData` → `libfilament-jni.so`, on the `FEngine::loop` thread, about a
+third of a second after the second scan's cloud starts uploading. The copy
+length is ~1.25 MB — 78 389 vertices at 16 bytes, which is scan-030's whole
+cloud — and the fault is on the **source** address, so a page buffer is being
+read after the native store behind it went away.
+
+It is **not this round's**. It was reproduced on `b4_test` with every one of
+round 38's source changes stashed, against the round-37 tree. On the emulator
+the freed allocation is `munmap`ped and the read faults; on a phone the same
+read would more likely land in still-mapped heap and paint one scan with
+another's bytes, which is worse than a crash and much harder to notice.
+
+It is **reported, not fixed**: it is a renderer/page-store lifetime bug, it is
+nothing to do with a legend, and guessing at it inside a round that is staging a
+stable release would be the wrong order. It is why `Round38LegendShots` takes
+**one picture per instrumentation run** — six frames, six runs — rather than
+walking six screens in one process, and that constraint is written into the
+test's own header so nobody "simplifies" it back.
+
+### 1.0.0, staged
+
+VERSION **1.0.0**; `versionCode` **10000** (1×10000 + 0×100 + 0) and
+`versionName` **1.0.0** and `application-label:'Ollidar'` all confirmed by
+`aapt2 dump badging` on `dist/Ollidar-1.0.0-10000.apk`. README's current-version
+line, `USER_MANUAL.md`'s version string and its `Ollidar v1.0.0 (build 10000)`
+footer example, and `QUICK_START.md`'s version line all move with it. README's
+*"What's new in the 0.9.x betas"* becomes *"What's new"* with a one-line 1.0.0
+entry over it and the beta list demoted to *"From the 0.9.x betas"*.
+
+**The beta sweep found almost nothing, which is the right answer.** Two hits in
+shipped code are both *comments* explaining why `applicationId` is not renamed
+(`strings.xml:9`, `Wording.kt:36`) — they describe the owner's installed beta as
+a matter of historical fact and are correct as they stand. One hit was genuinely
+user-facing and is gone: README's *"Grab the latest APK … from the Releases page
+**(beta)**"*. The Tech Spec's `M5 Beta` is a milestone name in an internal
+planning document and stays. No shipped string, layout or resource says "beta",
+"pre-release" or "early access" anywhere.
+
+Release notes for the stable are drafted at `scratchpad/release-notes-100.md` —
+what the app is, the headline capabilities with the field record's real numbers
+(0.69 cm best self-check, 1.0–1.4 cm typical, 100.0000 % D6 checksum pass),
+honest per-sensor statuses, requirements, a "from the betas" paragraph, and a
+known-issues section that leads with the Review crash above.
+
+**Numbers.** Engine **untouched**; ABI stays **12**; `ctest` **8/8**. `:core`
+unit **1187 / 0** (was 1170: sixteen new `HeightLegendTest` cases and one new
+`MeasureTest` case, plus one rewritten). `:app` unit **279 / 0**, unchanged.
+Emulator: **82 tests, 0 failures, 4 assumed-skipped** on `b4_test` (was 81/3 —
+the fourth skip is `Round38LegendShots`, off without its `-e legendShot` flag).
+
+**Nothing is committed and nothing is pushed.**
+
+## ROUND 39 (v1.0.0) — the stable blocker: a second scan in one process
+
+Round 38 staged 1.0.0 and, staging it, found a crash it had not caused and did
+not fix. A stable release cannot ship with "open two scans and the app dies" in
+its known issues, so this round is that one bug and nothing else. VERSION stays
+**1.0.0** / **10000**: the same release, with the blocker out of it.
+
+### 191 — open a scan, go back, open another (STABLE BLOCKER)
+
+Raised by round 38's own reproduction, not by the owner — and reproduced again
+at the top of this round, on the round-38 tree, before a line was changed:
+
+```
+I/R39: opening Swap Room A
+I/R39: Swap Room A up: [2.60 m, -1.27 m, -5.15 m]
+I/R39: back on the list
+I/R39: opening Swap Room B
+I/R39: Swap Room B up: [2.60 m, -1.27 m, -5.15 m]   ← B, wearing A's range
+I/R39: back on the list
+I/R39: opening Swap Room A
+F/libc: Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr
+        0xb4000070fc3ff000 in tid 21271 (FEngine::loop)
+    #00 __memcpy_aarch64_simd+224
+    #01 GLSharedGroup::subUpdateBufferData
+    #02 GL2Encoder::s_glBufferSubData
+    #03 libfilament-jni.so
+```
+
+Two failures, one cause. The crash is the loud one. The line above it is the
+quiet one and it is worse: **the second scan opened showing the first scan's
+height range**, which on a phone — where a freed page usually stays mapped — is
+the only symptom there would be.
+
+Fix it, prove it with the crash path itself, and take the entry out of the
+1.0.0 release notes' known issues.
+
+### Resolution — 2026-08-23 (1.0.0, round 39)
+
+**191 — the app was reading pages the engine had already freed, and the engine's
+own header says so.**
+
+`PageStore::clear()` states its precondition in
+`engine/include/scanengine/cloud/page_store.h`:
+
+> *Drop all points. Pages and their buffers are freed; **every PageView taken
+> before this call becomes dangling, so consumers must stop reading first** (the
+> Engine only calls this between sessions).*
+
+And ten lines below it, `recycle_all()` is introduced as *"the safe version of
+`clear()` for a store a renderer is reading right now."* The contract was
+written. Nothing on the Android side implemented its half.
+
+**The lifetime hole, exactly.** `ProcessingRepository` holds **one** processing
+engine handle for the life of the process — its own header says so and gives
+the reason (*"the queue is a device-level resource … it is not per project"*).
+That one engine has one `PageStore`, and every project Review opens goes through
+`ProcessingEngine::open_recorded_cloud`, whose first statement is
+`clear_cloud()` → `engine_->points().clear()`. So opening a second scan does not
+build a second store beside the first: **it frees the first one's pages**, on
+`Dispatchers.IO`, from `ReviewViewModel.openProjectCloud`'s `withContext(IO)` —
+while `PointCloudRenderer` is enumerating those same pages and uploading them on
+the choreographer thread. `clear_cloud()` even documents choosing `clear()` over
+`recycle_all()`, on a memory argument, without noticing that the trade it was
+making was the safety one.
+
+The upload made it lethal rather than merely racy. `VertexBuffer.setBufferAt`
+**does not copy**: Filament's JNI takes the direct buffer's address into a
+`BufferDescriptor`, queues it, and the driver thread runs the actual
+`glBufferSubData` some frames later. Every payload the renderer handed it was a
+view straight into engine page memory — `countAndMaybeTint` returned
+`newBytes.slice()`, `growGpuPage` returned `page.buffer.duplicate().slice()` —
+so the copy that finally ran on `FEngine::loop` was reading an address the app
+had asked the engine to unmap. No lock on the app side could have prevented
+that on its own: the read happens on a thread the app does not own, at a time it
+cannot name.
+
+**Three changes, and each closes a different half of it.**
+
+*(a) The renderer uploads out of its own memory.* `UploadBufferPool` hands out
+pooled direct buffers; the slice is copied into one **while the store gate is
+held**, and Filament gets the copy with a release callback that returns the
+buffer to the pool when the driver reports it consumed the descriptor. That is
+the seven-argument `setBufferAt` rather than the five-argument one, and the
+callback is the whole point: without it the pool would be recycling memory the
+driver had not read yet. It also retires `tintScratch` — one long-lived scratch
+buffer reused across pages was the same bug wearing different clothes, since the
+next page's tint could overwrite the previous page's bytes before they were ever
+copied to the GPU.
+
+*(b) The clear cannot land mid-read.* `CloudStoreGate` is a read/write lock the
+store hands to its readers. `PointCloudRenderer.syncPointCloud`, the measure
+tool's `samplePoints`, `streamsPresent` and the calibration wizard's
+`segmentBoard` take `read`; `ProcessingRepository`'s clears take `mutate`.
+**Only the free is serialised** — appends are not, because the engine's contract
+already makes concurrent append/read safe and holding the render thread off for
+the length of a post-process would be a frozen screen for minutes.
+`openRecordedCloud` therefore does its clear on the Kotlin side, under the gate,
+and leaves the native one to find an empty store: a clear that frees nothing
+cannot dangle anything.
+
+*(c) A cleared store is a new generation.* `CloudStoreGate.epoch` is bumped
+inside the exclusive window, and the renderer latches it. When it changes,
+`forgetStoreContents()` drops the GPU pages, the stream map, the mapped-page
+latch and — the one that showed on screen — the combined bounding box, which
+`updateCombinedBounds` only ever grows. That is the fix for `Swap Room B` opening
+inside `Swap Room A`'s range.
+
+**The engine is untouched. ABI stays 12, `ctest` 8/8.** The bug was never in the
+store; it was in a consumer that did not keep the store's terms.
+
+**What it costs, measured on `b4_test` rather than argued about.** The copy is
+one bulk `put` of one direct buffer into another, which the JDK lowers to
+`Unsafe.copyMemory`. At the largest size the app can ever ask for — scan-030's
+whole 1 254 224-byte cloud, the crash's own `memcpy` length, uploaded in one
+call because `MAX_UPLOAD_BYTES_PER_FRAME` is 4 MiB — it is **0.031 ms**, a fifth
+of one percent of a 16.7 ms frame, once per scan opened. A live capture's
+per-frame slice is kilobytes. The same copy into a freshly `allocateDirect`ed
+buffer is **0.737 ms**, which is why there is a pool and not an allocation:
+pooling is 24× cheaper, and the allocation is the part that would have been paid
+every frame forever. The pool retains at most 8 MiB — twice a frame's upload
+budget — and drops anything released beyond that.
+
+**The proof is the crash path, driven twenty times.** `Round39ReviewSwapTest`
+stages two genuinely different containers out of the instrumentation APK's
+assets as the app (round 38's recipe): `scan-030` (78 389 points) and
+`scan-042` (47 508 points, and now in `androidTest/assets` for this). Staging
+the same scan twice would still exercise the free and could not tell whether the
+cloud on screen afterwards belonged to the scan that was opened — which is the
+half of this bug that does not crash.
+
+Both are staged in HEIGHT + Turbo so both draw round 38's legend, and the
+legend's three numbers are `PointCloudRenderer.appliedValueRange()` — *the range
+the shader was actually given* — so the label triple is a fingerprint of the
+bytes that reached the GPU. Twenty `open → back → open` cycles alternating
+between the two, every one asserting the fingerprint against the scan that was
+opened:
+
+```
+cycle 1/20  Swap Room A up: [2.60 m, -1.27 m, -5.15 m]
+cycle 2/20  Swap Room B up: [1.34 m, -0.23 m, -1.81 m]
+…
+cycle 19/20 Swap Room A up: [2.60 m, -1.27 m, -5.15 m]
+cycle 20/20 Swap Room B up: [1.34 m, -0.23 m, -1.81 m]
+```
+
+Twenty for twenty, each scan its own numbers every time, in one process, on the
+build that died on the third open before the fix. The pictures are in
+`uishots13/`: `r39-cycle1-swap-a.png` and `r39-cycle2-swap-b.png` — two
+different rooms, `78.4 K pts` and `47.8 K pts` in their own title bars, their
+own legends beside them.
+
+The **guard that stays in the suite** is the short version of the same walk —
+`aSecondScanOpensInTheSameProcessAndDrawsItsOwnCloud`, three opens across the
+two scans, which on the pre-fix build could not reach its first assertion
+because the process was gone. The twenty-cycle run and the copy measurement are
+behind `-e swapCycles` / `-e swapMeasure`, off by default, for the reason round
+38 gave: a suite that runs on every push has no business spending forty seconds
+photographing a proof.
+
+**Numbers.** Engine **untouched**; ABI **12**; `ctest` **8/8**. `:core` unit
+**1187 / 0**, unchanged — nothing in this round is `:core`'s. `:app` unit
+**292 / 0** (was 279: eight `UploadBufferPoolTest` cases and five
+`CloudStoreGateTest` ones, the latter asserting the two properties the crash
+needed and had neither of — a clear cannot run while a reader is reading, and a
+reader can tell that a clear has happened). Emulator: **85 tests, 0 failures, 6
+assumed-skipped** on `b4_test` (was 82/4 — the three new ones are the guard,
+which runs, and the two `-e`-gated ones, which skip).
+
+`dist/Ollidar-1.0.0-10000.apk` is rebuilt in place — same VERSION, same
+`versionCode`, `aapt2 dump badging` re-confirmed. The release-notes draft's
+known-issues section loses the Review crash, because it is gone.
+
+**Nothing is committed and nothing is pushed.**

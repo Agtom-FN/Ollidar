@@ -373,6 +373,18 @@ class MountCalibrationViewModel(
 
     private fun segmentBoard(plane: TargetPlaneObservation): BoardSegmentation? {
         val source = pointCloudSourceProvider() ?: return null
+        // ROUND 39 item 191: every read of a page's memory happens inside the
+        // source's store gate, with no exceptions — this one reads the LIVE
+        // capture store, whose gate is `CloudStoreGate.OPEN` because that store
+        // is torn down with its session and never cleared under a reader. The
+        // wrapper costs an uncontended nothing and keeps the rule a rule.
+        return source.storeGate.read { segmentBoardLocked(source, plane) }
+    }
+
+    private fun segmentBoardLocked(
+        source: com.lidarscan.app.render.PointCloudSource,
+        plane: TargetPlaneObservation,
+    ): BoardSegmentation? {
         if (!source.isAvailable) return null
         val profile = _uiState.value.profile
         val predicted = BoardSegmenter.predictInLidarFrame(

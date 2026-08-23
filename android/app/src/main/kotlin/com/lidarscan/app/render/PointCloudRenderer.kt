@@ -346,6 +346,66 @@ class PointCloudRenderer(
 
     private val gpuPages = LinkedHashMap<Int, GpuPage>()
 
+    /**
+     * ROUND 39 item 191 — **the memory Filament is allowed to keep a pointer
+     * to.**
+     *
+     * `setBufferAt` does not copy; it queues a `BufferDescriptor` holding the
+     * buffer's address and the driver thread runs the `glBufferSubData` — the
+     * `__memcpy_aarch64_simd` in round 38's tombstone — some frames later.
+     * Every upload below used to hand it a view straight into the engine's page
+     * memory, so a store cleared in between was a read of freed pages on a
+     * thread this class does not own. Uploads now go out of [uploadPool]'s
+     * buffers, filled from the store while [CloudStoreGate.read] is held, and
+     * returned to the pool by the release callback when the driver is done.
+     */
+    private val uploadPool = UploadBufferPool()
+
+    /**
+     * Where Filament posts the release callbacks. The main looper on purpose:
+     * it is the thread `attach()`, the Choreographer callback and every
+     * [uploadPool] acquire already run on, so a buffer comes back to the pool
+     * on the thread that hands it out.
+     */
+    private val uploadHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /**
+     * The store generation the resident [gpuPages] belong to
+     * ([CloudStoreGate.epoch]).
+     *
+     * `Long.MIN_VALUE` means "not established yet", which is what a source swap
+     * resets it to. Everything derived from a store's pages — the GPU pages,
+     * the combined bounds, the stream map — is keyed to one generation of one
+     * store, and the round-38 reproduction showed what happens without this:
+     * the second scan opened inside the FIRST scan's height range, because its
+     * pages had been uploaded before the clear landed and `updateCombinedBounds`
+     * only ever grows.
+     */
+    private var storeEpoch: Long = Long.MIN_VALUE
+
+    /**
+     * ROUND 39 item 191 — the ONE place a `VertexBuffer` upload leaves this
+     * class, and the reason there is only one.
+     *
+     * [payload] must be a buffer [uploadPool] handed out and nothing else: the
+     * callback returns it to the pool when Filament reports the driver has
+     * consumed the descriptor, which is the only moment at which reusing it is
+     * safe. Passing the seven-argument `setBufferAt` rather than the
+     * five-argument one is what buys that report — without a callback the
+     * buffer's fate is Filament's business and the pool would be recycling
+     * memory the driver had not read yet.
+     *
+     * The `Runnable` closes over `payload`, which also pins the Java object for
+     * as long as the descriptor lives, so the direct allocation behind it
+     * cannot be reclaimed early no matter what the JNI layer does or does not
+     * reference.
+     */
+    private fun handOff(vb: VertexBuffer, payload: ByteBuffer, destOffsetBytes: Int, byteCount: Int) {
+        vb.setBufferAt(engine, 0, payload, destOffsetBytes, byteCount, uploadHandler) {
+            uploadPool.release(payload)
+        }
+    }
+
     /** B3: `pageId -> SCAN_STREAM_*`, so [setStreamFilter] can drop the pages that no longer qualify. */
     private val pageStreams = HashMap<Int, Int>()
 
@@ -460,6 +520,11 @@ class PointCloudRenderer(
 
         gpuPages.values.forEach { destroyGpuPage(it) }
         gpuPages.clear()
+        // ROUND 39 item 191: the Engine is about to go away and with it every
+        // queued descriptor. Nothing will be released back into the pool, and
+        // the pool must not keep megabytes of direct memory alive behind a
+        // detached renderer.
+        uploadPool.clear()
         // ROUND 22 item 91 (iv): retired index buffers are held alive only while
         // a page still references one. Nothing does now, and `detach()` must
         // free EVERYTHING regardless — this is the last chance before the
@@ -515,19 +580,15 @@ class PointCloudRenderer(
     fun setSource(newSource: PointCloudSource?) {
         if (newSource === source) return
         source = newSource
+        // ROUND 39 item 191: re-read on the next frame, under the gate, so the
+        // latch is established from the store rather than from whatever this
+        // renderer last saw.
+        storeEpoch = Long.MIN_VALUE
 
         // The GPU-side bookkeeping belongs to the source that produced it: page
         // ids, per-page streams, the mapped-page latch and the combined bounds
         // are all keyed to ONE page store.
-        gpuPages.values.forEach { destroyGpuPage(it) }
-        gpuPages.clear()
-        pageStreams.clear()
-        mappedPageSeen = false
-        haveBounds = false
-        appliedHeightRange = null
-        // ROUND 22 item 91 (iv): with no pages left, every retired shared index
-        // buffer is now unreferenced and can go.
-        drainRetiredIndexBuffers()
+        forgetStoreContents()
         // ROUND 11 (item 42): the density grid is one session's coverage of
         // one room. Carrying it into the next capture would open the new
         // scan claiming the operator had already covered a room they have
@@ -543,7 +604,32 @@ class PointCloudRenderer(
         followCamera.reset()
         synchronized(rigPoseLock) { rigPoseValid = false }
         haveRealRigPose = false
+    }
+
+    /**
+     * ROUND 39 item 191 — **everything this class believes because of pages,
+     * dropped.**
+     *
+     * Two callers, and they are the same event seen from two sides: a new
+     * source ([setSource]) and a new *generation* of the same source's store
+     * (the [CloudStoreGate.epoch] check in [syncPointCloud]). The processing
+     * store is process-wide, so opening a second scan is the second of those
+     * and never the first — the ViewModel is new, but if its pages were merely
+     * swapped underneath without this, the renderer would carry the previous
+     * project's GPU pages, its stream map and, worst of all, its combined
+     * bounding box into the next room.
+     */
+    private fun forgetStoreContents() {
+        gpuPages.values.forEach { destroyGpuPage(it) }
+        gpuPages.clear()
+        pageStreams.clear()
+        mappedPageSeen = false
+        haveBounds = false
+        appliedHeightRange = null
         recentGeometryValid = false
+        // ROUND 22 item 91 (iv): with no pages left, every retired shared index
+        // buffer is now unreferenced and can go.
+        drainRetiredIndexBuffers()
     }
 
     fun setColorMode(mode: ColorMode) {
@@ -861,6 +947,30 @@ class PointCloudRenderer(
 
     fun stats(): PointCloudRenderStats = lastStats
 
+    /**
+     * The `valueMin`/`valueMax` pair the shader is normalising against right
+     * now, or null before any has been written — ROUND 38 item 190.
+     *
+     * **This is the legend's only source, and that is the point.** The item
+     * asks that the height legend's numbers *"match the render range (same
+     * source of truth)"*, and the way to guarantee that is not to compute the
+     * range twice and test that the two agree — it is to publish the one the
+     * pixels were actually drawn with. This getter returns the exact field
+     * [applyDynamicMaterialParams] and [refreshAutoHeightRange] set immediately
+     * before (and only before) uploading those two floats, so a legend built
+     * from it cannot be showing a range the cloud is not.
+     *
+     * It is whichever scalar block is live, not "the height block": in HEIGHT
+     * that is the resolved auto- or manual height range, in INTENSITY it is
+     * 0..1 reflectance. The caller decides what the numbers *mean*, which is
+     * why `HeightLegend.visible` gates on the colour mode.
+     *
+     * Read on the UI thread, which is where it is written (Filament's Android
+     * idiom — see the class header on ownership/threading), so the poll in
+     * `ReviewViewModel` sees a whole value or the previous whole value.
+     */
+    fun appliedValueRange(): HeightRange.Range? = appliedHeightRange
+
     // ── ROUND 25 item 117: the viewer's gestures ────────────────────────────
     //
     // Owner: *"Add pan and zoom in out function for lidar scan review."* What
@@ -1078,8 +1188,6 @@ class PointCloudRenderer(
     private var coverageRefreshCursor = 0
     private var lastCoverageRefreshMs = 0L
 
-    /** Scratch for one tinted slice. Grown, never shrunk; reused every frame. */
-    private var tintScratch: java.nio.ByteBuffer? = null
 
     /**
      * What the shader is told. [com.lidarscan.core.render.ColorMode.COVERAGE]
@@ -1110,19 +1218,25 @@ class PointCloudRenderer(
     fun coverageAdviceLine(): String? = compass.adviceLine()
 
     /**
-     * Count a freshly-uploaded slice into the density grid, then hand back the
-     * bytes to upload — tinted when coverage mode is on, and the caller's own
-     * slice untouched when it is not (so a capture that never opens coverage
-     * mode pays one branch per slice and nothing else).
+     * Count a freshly-uploaded slice into the density grid, then hand back
+     * **a copy of** the bytes to upload — tinted when coverage mode is on, a
+     * straight copy when it is not.
      *
      * `src` is positioned/limited on the slice, exactly as the upload expects,
      * and this leaves it that way: every read is absolute.
+     *
+     * **ROUND 39 item 191: it used to hand back `src.slice()`** — a view of the
+     * engine's own page memory, which Filament then held a raw pointer to until
+     * the driver thread got round to the copy. That is the use-after-free. The
+     * copy is made here, on the render thread, inside the caller's
+     * [CloudStoreGate.read], which is the one window in which the source is
+     * guaranteed to still exist.
      */
-    private fun countAndMaybeTint(src: java.nio.ByteBuffer): java.nio.ByteBuffer {
+    private fun countAndCopy(src: java.nio.ByteBuffer): java.nio.ByteBuffer? {
         val base = src.position()
         val bytes = src.limit() - base
         val points = bytes / POINT_STRIDE_BYTES
-        if (points <= 0) return src.slice()
+        if (points <= 0) return null
         val le = src.duplicate().order(java.nio.ByteOrder.LITTLE_ENDIAN)
         for (i in 0 until points) {
             val o = base + i * POINT_STRIDE_BYTES
@@ -1132,8 +1246,38 @@ class PointCloudRenderer(
             coverage.add(x, y, z)
             compass.add(x, z)
         }
-        if (colorMode != com.lidarscan.core.render.ColorMode.COVERAGE) return src.slice()
-        return tintInto(le, base, points)
+        if (colorMode == com.lidarscan.core.render.ColorMode.COVERAGE) {
+            return tintInto(le, base, points)
+        }
+        return copyOut(le, base, bytes)
+    }
+
+    /**
+     * ROUND 39 item 191 — one slice of page memory, copied into a pooled
+     * buffer of the renderer's own.
+     *
+     * A single bulk `put` of one direct buffer into another, which the JDK
+     * lowers to `Unsafe.copyMemory` — the same `memcpy` the driver would have
+     * done, moved onto the thread that is allowed to be reading this memory.
+     * Measured on `b4_test` at **0.031 ms** for scan-030's whole 1 254 224-byte
+     * cloud — the crash's own `memcpy` length — against a 16.7 ms frame, so a
+     * fifth of one percent of the frame for the largest upload this class can
+     * ever make, once per scan opened. A live capture's per-frame slice is
+     * kilobytes. The same copy out of a freshly `allocateDirect`ed buffer costs
+     * **0.737 ms**, which is the whole argument for [uploadPool] existing:
+     * pooling is 24× cheaper than allocating, and the allocation is the part
+     * that would have been paid every frame.
+     * (`Round39ReviewSwapTest.theCostOfCopyingBeforeUpload`.)
+     */
+    private fun copyOut(le: java.nio.ByteBuffer, base: Int, bytes: Int): java.nio.ByteBuffer {
+        val out = uploadPool.acquire(bytes)
+        val window = le.duplicate()
+        window.position(base)
+        window.limit(base + bytes)
+        out.put(window)
+        out.position(0)
+        out.limit(bytes)
+        return out
     }
 
     /**
@@ -1144,14 +1288,14 @@ class PointCloudRenderer(
      */
     private fun tintInto(le: java.nio.ByteBuffer, base: Int, points: Int): java.nio.ByteBuffer {
         val needed = points * POINT_STRIDE_BYTES
-        var scratch = tintScratch
-        if (scratch == null || scratch.capacity() < needed) {
-            scratch = java.nio.ByteBuffer.allocateDirect(needed)
-                .order(java.nio.ByteOrder.LITTLE_ENDIAN)
-            tintScratch = scratch
-        }
-        scratch.clear()
-        scratch.limit(needed)
+        // ROUND 39 item 191: a POOLED buffer, not one long-lived scratch.
+        // Reusing a single scratch across pages was the same bug as uploading
+        // from page memory wearing different clothes — Filament holds the
+        // pointer until the driver catches up, so the next page's tint could
+        // overwrite the previous page's bytes before they were ever copied to
+        // the GPU. The pool hands each upload its own buffer and takes it back
+        // only when the release callback says the driver is finished with it.
+        val scratch = uploadPool.acquire(needed)
         for (i in 0 until points) {
             val o = base + i * POINT_STRIDE_BYTES
             val x = le.getFloat(o)
@@ -1205,7 +1349,7 @@ class PointCloudRenderer(
         val buf = page.buffer
         val le = buf.duplicate().order(java.nio.ByteOrder.LITTLE_ENDIAN)
         val tinted = tintInto(le, 0, gpu.uploaded)
-        gpu.vertexBuffer.setBufferAt(engine, 0, tinted, 0, gpu.uploaded * POINT_STRIDE_BYTES)
+        handOff(gpu.vertexBuffer, tinted, 0, gpu.uploaded * POINT_STRIDE_BYTES)
     }
 
     /**
@@ -1571,8 +1715,34 @@ class PointCloudRenderer(
 
     // --- per-frame sync ------------------------------------------------------
 
+    /**
+     * ROUND 39 item 191 — **the store cannot be freed while this runs.**
+     *
+     * Every page touch in the pass below — `pageCount`, `pageIdAt`, `getPage`,
+     * `accumulateRecentGeometry`, the copies into pooled upload buffers,
+     * `refreshCoverageTints` — reads memory the engine owns and is allowed to
+     * free the instant a project is closed. [CloudStoreGate.read] is the
+     * enforceable half of `PageStore::clear()`'s *"consumers must stop reading
+     * first"*: the clear waits for this frame, and this frame never starts in
+     * the middle of a clear.
+     *
+     * The **epoch latch** is the other half. The gate stops the pages being
+     * freed under the reader; it cannot make pages read a moment before a clear
+     * stop being the previous project's. When the generation changes,
+     * everything derived from the old one goes — which is what stops a second
+     * scan opening inside the first scan's bounding box.
+     */
     private fun syncPointCloud() {
         val src = source ?: return
+        src.storeGate.read { syncPointCloudLocked(src) }
+    }
+
+    private fun syncPointCloudLocked(src: PointCloudSource) {
+        val epoch = src.storeGate.epoch
+        if (epoch != storeEpoch) {
+            forgetStoreContents()
+            storeEpoch = epoch
+        }
         if (!src.isAvailable) return
         val mi = materialInstance ?: return
 
@@ -1777,13 +1947,16 @@ class PointCloudRenderer(
                 // below expects them.
                 accumulateRecentGeometry(newBytes, gpu.uploaded, uploadTo)
                 // ROUND 11 (item 42): counts the slice into the coverage grid
-                // and, in coverage mode, hands back a tinted copy. Outside
-                // coverage mode this is `newBytes.slice()` and one loop.
-                val payload = countAndMaybeTint(newBytes)
-                gpu.vertexBuffer.setBufferAt(
-                    engine, 0, payload,
-                    gpu.uploaded * POINT_STRIDE_BYTES, newPoints * POINT_STRIDE_BYTES,
-                )
+                // and hands back a copy to upload — tinted in coverage mode,
+                // byte-for-byte otherwise. ROUND 39 item 191: a COPY either
+                // way, out of the store and into the renderer's own memory.
+                val payload = countAndCopy(newBytes)
+                if (payload != null) {
+                    handOff(
+                        gpu.vertexBuffer, payload,
+                        gpu.uploaded * POINT_STRIDE_BYTES, newPoints * POINT_STRIDE_BYTES,
+                    )
+                }
                 gpu.uploaded = uploadTo
 
                 val rm = engine.renderableManager
@@ -1881,7 +2054,7 @@ class PointCloudRenderer(
      * re-upload per frame, and 8 growth events over a page's entire life
      * because [GpuPageBudget.growthVertices] doubles.
      *
-     * The re-upload goes through [tintInto] rather than `countAndMaybeTint`:
+     * The re-upload goes through [tintInto]/[copyOut] rather than [countAndCopy]:
      * these points have already been counted into the coverage grid and into
      * ROUND 8's recent-geometry accumulator, and counting them twice would
      * inflate both.
@@ -1904,15 +2077,16 @@ class PointCloudRenderer(
 
         if (previous > 0) {
             val le = page.buffer.duplicate().order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            // ROUND 39 item 191: both arms are now copies into pooled buffers.
+            // The `else` arm used to be `page.buffer.duplicate().slice()`,
+            // which is a whole page of engine memory handed to the driver by
+            // pointer — the largest single dangling upload in the class.
             val payload = if (colorMode == com.lidarscan.core.render.ColorMode.COVERAGE) {
                 tintInto(le, 0, previous)
             } else {
-                val copy = page.buffer.duplicate()
-                copy.position(0)
-                copy.limit(previous * POINT_STRIDE_BYTES)
-                copy.slice()
+                copyOut(le, 0, previous * POINT_STRIDE_BYTES)
             }
-            newVb.setBufferAt(engine, 0, payload, 0, previous * POINT_STRIDE_BYTES)
+            handOff(newVb, payload, 0, previous * POINT_STRIDE_BYTES)
         }
 
         val ib = ensureSharedIndexBuffer(vertices)

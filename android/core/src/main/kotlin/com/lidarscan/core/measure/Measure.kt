@@ -107,6 +107,31 @@ fun pickNearestPoint(
     return best
 }
 
+/**
+ * Which component of a [Vec3] points at the sky.
+ *
+ * **`y`, and this file is the FOURTH site that had to be told so.** Round 28
+ * item 154 found `points.mat`, `PointCloudRenderer` and the auto-range each
+ * independently believing the up axis was `z`, fixed all three, and wrote the
+ * derivation down at `com.lidarscan.core.render.HeightRange.AXIS`: the runtime
+ * frame is ARCore's, which is Y-up, because `CaptureArController.publishPose`
+ * pushes `camera.pose` into the engine verbatim. It did not find this one,
+ * because B11's measure geometry is in a different package and names its
+ * components rather than indexing them.
+ *
+ * The consequence was visible on every measurement the Review screen has ever
+ * printed: [Measurement.horizontalM] summed `x` and **`y`** — the plan distance
+ * with the *vertical* mixed into it — and the card's `Δz` line reported a
+ * horizontal component under a vertical name. Found in round 38 while wiring
+ * item 190's height read-out, which is the first thing in the app that had to
+ * ask a picked point how high it was.
+ *
+ * Stated here as a name rather than imported as an index, because `Vec3` has
+ * fields and not a triple; `MeasureTest` pins it against `HeightRange.AXIS` so
+ * the two cannot drift.
+ */
+val Vec3.heightM: Double get() = y.toDouble()
+
 /** A completed two-tap measurement. */
 data class Measurement(val from: Vec3, val to: Vec3) {
     val distanceM: Double get() = from.distanceTo(to)
@@ -114,14 +139,36 @@ data class Measurement(val from: Vec3, val to: Vec3) {
     val deltaYM: Double get() = (to.y - from.y).toDouble()
     val deltaZM: Double get() = (to.z - from.z).toDouble()
 
-    /** Horizontal (plan) distance — the number a floor plan actually wants. */
-    val horizontalM: Double get() = sqrt(deltaXM * deltaXM + deltaYM * deltaYM)
+    /**
+     * The rise from [from] to [to] — the up-axis component, per [heightM].
+     *
+     * Was published as `deltaZM` by the read-out, which is a horizontal axis in
+     * this frame. See [heightM].
+     */
+    val verticalM: Double get() = to.heightM - from.heightM
+
+    /**
+     * Horizontal (plan) distance — the number a floor plan actually wants.
+     *
+     * The two components that are **not** [heightM]: `x` and `z`. It read
+     * `x` and `y` until round 38, which put the whole rise of a staircase into
+     * the "horizontal" number.
+     */
+    val horizontalM: Double get() = sqrt(deltaXM * deltaXM + deltaZM * deltaZM)
 }
 
 /** Distance unit for the measure readout. Mirrors `:app`'s `Units`, kept here so `:core` needs no `:app` dependency. */
 enum class MeasureUnit(val abbreviation: String) { METERS("m"), FEET("ft") }
 
-private const val METRES_PER_FOOT = 0.3048
+/**
+ * The international foot, exactly (the US survey foot differs by 2 ppm — see
+ * [formatDistance]).
+ *
+ * Public since round 38: `HeightLegend` writes the same unit toggle onto the
+ * viewer's height axis and there is no version of "two constants that are both
+ * 0.3048" worth having.
+ */
+const val METRES_PER_FOOT = 0.3048
 
 /**
  * Formats a distance for the measure HUD.

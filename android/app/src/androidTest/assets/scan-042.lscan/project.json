@@ -1,0 +1,94 @@
+{
+    "name": "Scan-042-2026-08-19-0033",
+    "sensor": "COIN_D6",
+    "profile": "QUICK_SCAN",
+    "createdAtEpochMillis": 1787070833970,
+    "appVersion": "0.9.1",
+    "pointCountEstimate": 47508,
+    "crsEpsg": 32650,
+    "captureDefaults": {
+        "liveSlam": true,
+        "exportFormat": "PLY_BINARY",
+        "displayProfile": "QUICK_SCAN",
+        "captureCameraKeyframes": false,
+        "colorizeAfterProcessing": false,
+        "requireRtkFixForCapture": false,
+        "minFixForCapture": "NONE",
+        "planSliceMinM": 1.0,
+        "planSliceMaxM": 1.5
+    },
+    "displayParams": {
+        "pointSize": {
+            "mode": "FIXED_PIXELS",
+            "fixedPx": 1.0
+        },
+        "colorMode": "INTENSITY",
+        "height": {
+            "manualMax": 3.0,
+            "colormap": "GRAYSCALE"
+        },
+        "intensity": {
+            "colormap": "GRAYSCALE"
+        },
+        "background": {
+            "r": 11,
+            "g": 14,
+            "b": 18
+        }
+    },
+    "georef": {
+        "converged": false,
+        "epsg": 32650,
+        "yawDeg": 0.0,
+        "globalFromLocal": [
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0
+        ],
+        "enuOriginLatDeg": 0.0,
+        "enuOriginLonDeg": 0.0,
+        "enuOriginHeightM": 0.0,
+        "horizontalSigmaM": 0.0,
+        "verticalSigmaM": 0.0,
+        "cep95M": 0.0,
+        "samples": 0,
+        "inliers": 0,
+        "residualRmsM": 0.0,
+        "spanM": 0.0,
+        "dominantFix": "NONE",
+        "blocker": ""
+    },
+    "mountTrim": {
+        "qx": -0.06010633389396024,
+        "qy": 0.205810535077027,
+        "qz": 0.7075005182186327,
+        "qw": 0.6734034964250645,
+        "capturedAtEpochMillis": 1787070645356,
+        "sampleCount": 245,
+        "spreadDeg": 2.979240765868208,
+        "spreadP90Deg": 0.976859947287182,
+        "stabilityDeg": 0.8277229788821737
+    },
+    "sectionBreaks": [
+        {
+            "tMonoNs": 130049921679140,
+            "positionJumpM": 0.033872730591401064,
+            "rotationJumpDeg": 2.057583274747469,
+            "gapMillis": 1526,
+            "reason": "TRACKING_REGAINED"
+        }
+    ]
+}

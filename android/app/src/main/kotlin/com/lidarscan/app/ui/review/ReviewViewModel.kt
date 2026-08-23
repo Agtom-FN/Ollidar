@@ -72,6 +72,20 @@ data class ReviewUiState(
     val measureUnit: MeasureUnit = MeasureUnit.METERS,
     val pickMessage: String? = null,
     val colorModeReasons: Map<com.lidarscan.core.render.ColorMode, String?> = emptyMap(),
+    /**
+     * ROUND 38 item 190 — the range the shader is colouring against, straight
+     * from [PointCloudRenderer.appliedValueRange].
+     *
+     * Not computed here and not derivable from [display]: in auto-range the
+     * numbers come from the cloud's own bounds, which only the renderer
+     * accumulates. Carrying the renderer's own applied value is what makes the
+     * legend and the pixels one thing rather than two that agree (see
+     * [com.lidarscan.core.render.HeightLegend]'s header).
+     *
+     * Null until the first page has landed and the material has been written,
+     * which is the state the legend refuses to draw in.
+     */
+    val heightRange: com.lidarscan.core.render.HeightRange.Range? = null,
     val hasCloud: Boolean = false,
     val load: ReviewLoad = ReviewLoad.PROBING,
     /**
@@ -219,7 +233,14 @@ class ReviewViewModel(
     val uiState: StateFlow<ReviewUiState> = _uiState.asStateFlow()
 
     /** The processed cloud — the Review screen shows what processing produced, not a live capture. */
-    val cloudSource: PointCloudSource = ProcessingCloudSource { processing.handleOrZero() }
+    /**
+     * ROUND 39 item 191: the store gate travels WITH the source. The renderer
+     * reads pages through it and `ProcessingRepository` clears the store
+     * through it, and the two are the same object because they are the two
+     * sides of `PageStore::clear()`'s *"consumers must stop reading first"*.
+     */
+    val cloudSource: PointCloudSource =
+        ProcessingCloudSource({ processing.handleOrZero() }, processing.storeGate)
 
     private var renderer: PointCloudRenderer? = null
     private var saveJob: Job? = null
@@ -431,6 +452,23 @@ class ReviewViewModel(
                     load = load,
                     loadMessage = if (load == ReviewLoad.READY) null else s.loadMessage,
                     colorModeReasons = colorModeAvailability(gnssActive = false),
+                    // ── ROUND 38 item 190: the legend's range ───────────────
+                    //
+                    // On this poll rather than on a callback because the value
+                    // it reports CHANGES ON ITS OWN: `refreshAutoHeightRange`
+                    // re-uploads whenever the growing cloud's bounds drift 2 %
+                    // (item 154), with nothing calling into the ViewModel. A
+                    // push would mean adding a listener to the renderer for one
+                    // consumer; this loop already runs at the cadence the
+                    // point count needs, and 250 ms is invisible against a
+                    // range that moves when a new page lands.
+                    //
+                    // It is also fast enough for the *manual* path, which is
+                    // the one the item's "updates live" clause names: turning
+                    // Auto range off happens inside the Display sheet, a modal
+                    // that covers the viewport, so the new range is on screen
+                    // before the legend is.
+                    heightRange = renderer?.appliedValueRange(),
                 )
                 delay(250)
             }

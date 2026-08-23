@@ -109,12 +109,49 @@ class MeasureTest {
         assertEquals(points[0], hit!!.point)
     }
 
+    /**
+     * ROUND 38 — **this test used to assert the bug.**
+     *
+     * It read `Vec3(3, 4, 12)` as "3 and 4 across, 12 up", which is the +z-up
+     * convention the engine's synthetic fixture uses and **no device
+     * produces**: round 28 item 154 established that every `PointVertex` is in
+     * ARCore's Y-up world frame and fixed the three render sites that had it
+     * wrong. `Measurement` was the fourth, and this test is why nobody noticed
+     * — it agreed with the code.
+     *
+     * The numbers below are the same 3-4-12 triple with the axes read
+     * correctly: **y is up**, so the rise is 4, the plan legs are 3 and 12, and
+     * the horizontal distance is √153. The 13 m slant is unchanged, which is
+     * the point — the total was never wrong, only its decomposition.
+     */
     @Test
-    fun `measurement decomposes into horizontal and vertical`() {
+    fun `measurement decomposes into horizontal and vertical about the up axis`() {
         val m = Measurement(Vec3(0f, 0f, 0f), Vec3(3f, 4f, 12f))
         assertEquals(13.0, m.distanceM, 1e-6)
-        assertEquals(5.0, m.horizontalM, 1e-6)
+        assertEquals(4.0, m.verticalM, 1e-6)
+        assertEquals(kotlin.math.sqrt(153.0), m.horizontalM, 1e-6)
+        // The raw component accessors are unchanged — they are named after the
+        // axis they read, not after the role it plays.
         assertEquals(12.0, m.deltaZM, 1e-6)
+    }
+
+    /**
+     * The rise is the SAME axis the renderer colours by, pinned rather than
+     * remembered.
+     *
+     * `Vec3` has names where `HeightRange` has an index, so there is no
+     * compiler check that `heightM` reads component 1. This is that check:
+     * build the basis vector the render side calls "up" and assert the measure
+     * side agrees it is the only one with any height in it.
+     */
+    @Test
+    fun `the measure tool's up axis is the renderer's`() {
+        val basis = FloatArray(3)
+        basis[com.lidarscan.core.render.HeightRange.AXIS] = 1f
+        val up = Vec3(basis[0], basis[1], basis[2])
+        assertEquals(1.0, up.heightM, 0.0)
+        assertEquals(0.0, Measurement(Vec3(0f, 0f, 0f), up).horizontalM, 1e-6)
+        assertEquals(1.0, Measurement(Vec3(0f, 0f, 0f), up).verticalM, 1e-6)
     }
 
     @Test

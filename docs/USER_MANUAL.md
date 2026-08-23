@@ -1,6 +1,6 @@
 # Ollidar — User Manual
 
-App version 0.9.20 (Android). Written for the owner and for field testers.
+App version 1.0.0 (Android). Written for the owner and for field testers.
 If you only want a first scan, read [QUICK_START.md](QUICK_START.md) instead.
 
 The app is called **Ollidar** as of 0.9.11. The repository, the Android
@@ -590,6 +590,35 @@ a scan whose height colour was grey becomes Turbo the first time 0.9.12 opens
 it, a scan whose height colour was anything else is left exactly as it is,
 and grey chosen *after* that is respected and never overridden again.
 
+### The height legend — new in 1.0.0
+
+With Colour set to **Height**, a narrow ramp bar appears at the right edge of
+the viewer with three numbers on it: the bottom of the range, the middle, and
+the top. That is what the colours are worth. The numbers are in metres or feet
+according to **Settings → Units**, and they are the range the cloud is actually
+being coloured against — so with **Auto range** on they move as the scan loads
+and settle where the real floor and ceiling are, and with it off they are the
+range you set.
+
+The bar changes with the ramp: switch to Grey and the bar goes grey while the
+three numbers stay the same, which is the point — the scale did not change, only
+the palette. It is hidden in **Intensity** and the other colour modes, where the
+colours are not heights, and it hides along with the rest of the controls when
+you tap the cloud.
+
+The measure read-out gained a line to match: after two taps it shows the
+distance, then `horizontal … · rise …`, then the height of each of the two
+points you picked (`h -1.83 m → -0.51 m`), in the same units as the bar. Heights
+are in the scan's own frame, whose zero is roughly where you were standing when
+you pressed Scan — so they are for comparing points with each other and with the
+bar, not for reading an altitude.
+
+**A correction that came with it.** Before 1.0.0 the measure card's second line
+said `Δz` and reported a *horizontal* axis under a vertical name, and the
+`horizontal` figure beside it had the vertical mixed in. Both are fixed. If you
+recorded measurements from an older build, the total distance was always right;
+the horizontal/vertical split was not.
+
 ---
 
 ## 7. Profile, Send logs, Feedback
@@ -772,7 +801,7 @@ developer-only items moved behind the seven-tap unlock.
 
 **The version footer**
 
-At the very bottom: `Ollidar v0.9.20 (build 920)`. **Tap it seven times**
+At the very bottom: `Ollidar v1.0.0 (build 10000)`. **Tap it seven times**
 to unlock a **Developer** section, and seven more to lock it away again. The
 counter resets when you re-lock, so a single stray tap afterwards does not
 re-open it.

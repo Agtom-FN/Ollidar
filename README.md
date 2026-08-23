@@ -11,7 +11,7 @@ corrected 3D point cloud out the other end.
 
 <br clear="left">
 
-Current version: **0.9.20** (Android).
+Current version: **1.0.0** (Android).
 
 The app and this repository are both called **Ollidar**. The Android package
 (`com.lidarscan.app`), the `.lscan` files and the `Downloads/LidarScan/`
@@ -168,7 +168,19 @@ every tab, the viewer, Mid-360 and STL-27L setup, and troubleshooting.
 
 ---
 
-## What's new in the 0.9.x betas
+## What's new
+
+- **1.0.0 is the first stable release.** It is the 0.9.x beta line with
+  nothing new bolted on — the same app the field testers have been running,
+  with the version number finally saying so. Height colours now carry a
+  legend in the viewer, so a colour reads as a number in metres or feet.
+- **Reviewing several scans in one session is fixed.** Opening one scan, going
+  back and opening another could take the app down, or draw the new scan inside
+  the old one's colour range. The viewer now uploads from its own copy of the
+  cloud instead of from the engine's memory, and the load that frees the
+  previous scan waits for the viewer to finish reading.
+
+### From the 0.9.x betas
 
 - **Scanning reliability** — automatic mount re-zero defended against bad
   readings, a gap-rescue pass for tracking-loss breaks, an auto-level pass
@@ -291,7 +303,7 @@ welcome — this project is better with more eyes on it.
 - Want to fix something yourself? Pull requests are welcome; CONTRIBUTING.md
   covers the workflow and the test suites to keep green.
 - Just want to try the app? Grab the latest APK or desktop build from the
-  [Releases page](../../releases) (beta).
+  [Releases page](../../releases).
 
 If you're filing a bug report, attaching the app's Send-logs bundle
 (Profile → Send logs) helps a lot — it's the fastest way to see what

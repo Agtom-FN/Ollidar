@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "formatVersion": 1,
+  "engineVersion": "0.1.0",
+  "createdAtUtcNs": 1787070833996084000,
+  "sealed": true,
+  "sealedAtUtcNs": 1787070858895010000,
+  "profile": "quickscan",
+  "sensors": [{"id": "1", "kind": "coin-d6", "model": "d6"}],
+  "mountCalibration": {"phoneFromLidar": [-0.085829919256652065, -0.9776076788624134, 0.19213654308756867, 0, 0.92812561190147569, -0.0083395093076121807, 0.37217375124667174, -0.059999999999999998, -0.36223759260036481, 0.21027048964073103, 0.90805850455427117, -0.035000000000000003, 0, 0, 0, 1]},
+  "imuCalibration": {"cameraFromImu": [0, 0, 0.70710678118654746, 0.70710678118654757]},
+  "crs": null,
+  "clockOffsets": {},
+  "streams": {"streams/lidar.bin": {"stream": 1}, "streams/poses_ar.bin": {"stream": 4}, "streams/gnss.bin": {"stream": 5}, "streams/map.bin": {"stream": 8}, "streams/imu_phone.bin": {"stream": 10}}
+}
