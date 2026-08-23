@@ -57,6 +57,10 @@ app rather than rename the one already on the phone.
 
 ---
 
+## Download
+
+**[⬇ Get the latest release (Android APK)](https://github.com/Agtom-FN/Ollidar/releases/latest)** — currently **v1.0.0**, the first stable. All releases: [Releases page](https://github.com/Agtom-FN/Ollidar/releases).
+
 ## Requirements
 
 ### Phone app (Android)
