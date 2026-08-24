@@ -312,4 +312,10 @@ welcome — this project is better with more eyes on it.
 If you're filing a bug report, attaching the app's Send-logs bundle
 (Profile → Send logs) helps a lot — it's the fastest way to see what
 actually happened.
-</body>
+
+---
+
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE). The Ollidar name and logo are
+not covered by the code license.

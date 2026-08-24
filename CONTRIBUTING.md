@@ -3,6 +3,13 @@
 Thanks for the interest — bug reports, suggestions, feature requests, and
 pull requests are all welcome.
 
+## License
+
+This project is licensed under the Apache License 2.0 (see
+[LICENSE](LICENSE)). Any contribution you intentionally submit for
+inclusion is accepted under the terms of that license, per its Section 5
+("Submission of Contributions"), unless you explicitly state otherwise.
+
 ## Reporting a bug
 
 - Use the [bug report issue template](.github/ISSUE_TEMPLATE/bug_report.md).
