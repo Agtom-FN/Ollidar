@@ -19,6 +19,19 @@ export folder keep the old **lidarscan** name on purpose: on Android the
 package name *is* the app's identity, and changing it would install a second
 app rather than rename the one already on the phone.
 
+<table>
+<tr>
+<td width="33%"><img src="docs/img/rig-coin-d6.jpg" alt="A Pixel 8 Pro on a handheld grip with a COIN-D6 spinning lidar clamped behind it, held up in front of a vertical farm's grow racks"></td>
+<td width="33%"><img src="docs/img/scanning-a-workshop.jpg" alt="The same rig mid-scan in a dark workshop; the phone shows the corridor's point cloud building up while the real corridor is visible behind it"></td>
+<td width="33%"><img src="docs/img/recording-screen.jpg" alt="Close-up of the recording screen: REC 01:21, 136.7K points, 15.9 m walked, with the live point cloud and a STOP button"></td>
+</tr>
+<tr>
+<td align="center"><sub>The whole rig: phone, printed bracket, COIN-D6.</sub></td>
+<td align="center"><sub>Mid-scan — the room, and the room being drawn.</sub></td>
+<td align="center"><sub>136.7K points, 15.9 m walked, still recording.</sub></td>
+</tr>
+</table>
+
 ---
 
 ## What it does
