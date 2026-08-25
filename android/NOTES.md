@@ -9305,3 +9305,95 @@ start hold, with and without an incumbent; `DeadPoseSource` returns an empty
 window forever, the state every existing start-hold test lacked). `:core` and
 `:app` suites green, `:app:assembleDebug` green. ABI unchanged. VERSION
 **1.0.1**.
+
+---
+
+## ROUND 41 (v1.0.2) — THE REBUILD IS WHAT KILLS THE OPPO'S CAMERA
+
+Second field log from the same OPPO CPH2499, now on **1.0.1**:
+`lidarscan-logs-2026-08-25-1444/`. Owner's words: *"the app still not working
+with oppo, it said other app using camera while nothing using camera."*
+
+### Round 40 worked, and it uncovered the real fault
+
+`world frame reset … framesYielded=16 / 8 / 17` — non-zero for the first time
+since 2026-08-22. The pump is driving `Session.update()` before Start again.
+What that exposed is the fault that was underneath it the whole time, and it
+now has a shape:
+
+```
+14:39:54 [ar] gate refused NO_SESSION … created=false          ← once, while creating
+   …19 s of the pump driving update() with NO refusal at all…  ← a HEALTHY session
+14:40:13 [ar] world frame reset … tries=1 framesYielded=16
+14:40:13 [ar] gate refused FAILED … the tracking camera stopped (FatalException)
+   …and forever after, until the tab is left…
+```
+
+Twice, in two separate app runs. **The session that phone starts with works.
+The session `resetWorldFrame` builds to replace it never delivers a frame.**
+
+`resetWorldFrame`'s own round-16 header predicted this exactly — *"`close()`
+releases a camera device, `Session(context)` acquires one, and on some OEM
+builds the release is not complete by the time the acquire runs — which
+surfaces as a `CameraNotAvailableException` out of `resume()`, **or as a session
+that resumes and then never produces a frame**"* — and then only handled the
+first half. The retry fires on a failed `resume()`. On ColorOS `resume()`
+succeeds and `update()` throws for the rest of the process, so the retry never
+ran and nothing noticed until the start gate, four seconds and one irreversible
+session-destruction later.
+
+### What changed
+
+**(a) A world frame with nothing in it is not thrown away.** A reset means
+"discard the previous scan's origin, feature map and anchors". On the first
+Start after entering the Scan tab there is no previous scan, so the entire
+operation is a no-op — one that costs this phone every scan it has ever tried
+to take. `worldFrameUsed` is false from session creation until the capture
+actually calls the engine (`noteCaptureRecorded`, on the recording call and not
+on the Start press, so a Start held at the checklist or the no-poses gate
+dirties nothing). While it is false the reset returns `rebuilt = false` and the
+running session is kept. This converts the OPPO's failing path into the path
+that demonstrably works on that phone for nineteen seconds at a time.
+
+**(b) When a rebuild IS needed, the camera gets time and then has to prove
+itself.** `RESET_SETTLE_MS` (120 ms × attempt) between `close()` and
+`Session(context)`; then `awaitFirstFrame(RESET_VERIFY_MS)` — 300 ms, with the
+drive lock DOWN, because the pump cannot produce a frame while the reset holds
+it — and a rebuild that resumes and delivers nothing is retried rather than
+handed on. If the last attempt is still silent the result carries `silent =
+true` and the capture log says so at Start instead of at the gate. Both numbers
+are main-thread budgets: `resetWorldFrame` runs on the main thread at Start as
+it always has, and two attempts' worth comes in under a second against the ~25 s
+of dead gate waiting a silently dead session costs.
+
+**(c) The app stops naming an app that is not there.** `TrackingFailureReason
+.CAMERA_UNAVAILABLE` rendered as *"Camera unavailable — another app may be
+using it"*, and the owner spent his session looking for the app. It now carries
+round 27's own copy for this device class: *"Allow camera in background.
+Disable battery optimisation."*
+
+**(d) `(FatalException)` is a class name, not a diagnosis.** Hundreds of those
+lines across two field sessions and not one said why, because ARCore's
+`FatalException` arrives with a null message and `reportArFailure` had nowhere
+else to look. It now walks the cause chain, so the next log carries the
+`CameraAccessException` and its error code if there is one.
+
+### Honest limits
+
+None of this is verified on the device. The one phone that reproduces the fault
+is not on this desk, and (a) is an argument from the log's own asymmetry — a
+session that ran 19 s before the reset and 0 frames after it, twice — not from a
+repro. (b) and its two constants are judgement. What (a) has going for it is
+that it does not need the race to be understood to help: it removes an
+operation that had no work to do.
+
+Still not fixed, still not app code: the COIN-D6 does not enumerate on this
+phone (`verdict=usb-present-no-ethernet`, `eth=absent`), so even a perfect
+tracker yields an empty scan until that cable or hub changes.
+
+### TESTS AND VERSION
+
+`:app` +2 cases in `CaptureRound40DeadTrackerTest` (the recording call is what
+dirties the world frame; a Start that never records leaves it clean).
+`DeadPoseSource` now counts what the sequence asked it to do. `:core` and `:app`
+suites green, `:app:assembleDebug` green. ABI unchanged. VERSION **1.0.2**.

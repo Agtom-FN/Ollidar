@@ -11,7 +11,7 @@ corrected 3D point cloud out the other end.
 
 <br clear="left">
 
-Current version: **1.0.1** (Android).
+Current version: **1.0.2** (Android).
 
 The app and this repository are both called **Ollidar**. The Android package
 (`com.lidarscan.app`), the `.lscan` files and the `Downloads/LidarScan/`
@@ -59,7 +59,7 @@ app rather than rename the one already on the phone.
 
 ## Download
 
-**[⬇ Get the latest release (Android APK)](https://github.com/Agtom-FN/Ollidar/releases/latest)** — currently **v1.0.1**.
+**[⬇ Get the latest release (Android APK)](https://github.com/Agtom-FN/Ollidar/releases/latest)** — currently **v1.0.2**.
 **[⬇ Desktop app for macOS (beta)](https://github.com/Agtom-FN/Ollidar/releases/tag/v0.9.x-betas)** — viewer, floor plans and merge on Apple silicon.
 All releases: [Releases page](https://github.com/Agtom-FN/Ollidar/releases).
 
@@ -176,6 +176,19 @@ every tab, the viewer, Mid-360 and STL-27L setup, and troubleshooting.
 
 ## What's new
 
+- **1.0.2 — Start no longer rebuilds a tracking session that has nothing to
+  rebuild.** Every Start threw the tracking session away and made a new one, to
+  discard the previous scan's origin — but on the first scan after opening the
+  Scan tab there is no previous scan, and on some phones closing and reopening
+  the camera in the same breath leaves the new session alive but blind. It is
+  now rebuilt only when there is genuinely something to discard, and when it is,
+  the camera is given a moment and the new session has to prove it is delivering
+  before the scan goes ahead.
+- **1.0.2 — "another app may be using the camera" is gone.** The app said that
+  whenever tracking reported the camera unavailable, which sent people hunting
+  for an app that was not running. It now points at the two settings that
+  usually are the cause on these phones: allow camera in background, and turn
+  off battery optimisation for Ollidar.
 - **1.0.1 — position tracking is running again before you press Start.** The
   2 dp view that drives ARCore was living inside the live preview, and when the
   redesign took the preview off the idle Scan page (0.9.13) the tracker went

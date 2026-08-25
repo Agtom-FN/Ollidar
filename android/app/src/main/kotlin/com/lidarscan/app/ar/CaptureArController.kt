@@ -299,10 +299,30 @@ class CaptureArController(
      * flood the log or the UI.
      */
     fun reportArFailure(context: String, error: Throwable?) {
+        // ── ROUND 41: follow the CAUSE when the exception says nothing ──────
+        //
+        // Two OPPO CPH2499 field sessions produced hundreds of
+        // `failure=the tracking camera stopped (FatalException)` lines and not
+        // one of them said why — because ARCore's `FatalException` arrives with
+        // a null message and this `when` had nowhere else to look. The reason,
+        // when there is one, is in the cause chain (a `CameraAccessException`
+        // and its error code is the interesting case, and is exactly the
+        // evidence that would have settled "another app has the camera" against
+        // "the vendor took it back" without a second field trip).
         val detail = when {
             error == null -> context
-            error.message.isNullOrBlank() -> "$context (${error.javaClass.simpleName})"
-            else -> "$context (${error.javaClass.simpleName}: ${error.message})"
+            !error.message.isNullOrBlank() ->
+                "$context (${error.javaClass.simpleName}: ${error.message})"
+            else -> {
+                val cause = generateSequence(error.cause) { it.cause }
+                    .firstOrNull { !it.message.isNullOrBlank() }
+                if (cause != null) {
+                    "$context (${error.javaClass.simpleName} <- " +
+                        "${cause.javaClass.simpleName}: ${cause.message})"
+                } else {
+                    "$context (${error.javaClass.simpleName}, no message and no cause)"
+                }
+            }
         }
         if (gate.fail(detail)) {
             Log.w(TAG, "AR path degraded: $detail", error)
@@ -340,7 +360,18 @@ class CaptureArController(
                 failureReason == TrackingFailureReason.INSUFFICIENT_LIGHT -> "Too dark to track — add light"
                 failureReason == TrackingFailureReason.EXCESSIVE_MOTION -> "Moving too fast — slow down"
                 failureReason == TrackingFailureReason.INSUFFICIENT_FEATURES -> "Not enough texture in view — point at something with detail"
-                failureReason == TrackingFailureReason.CAMERA_UNAVAILABLE -> "Camera unavailable — another app may be using it"
+                // ── ROUND 41: STOP NAMING AN APP THAT IS NOT THERE ─────
+                //
+                // The OPPO CPH2499 owner, on 1.0.1: *"it said other app using
+                // camera while nothing using camera."* He was right, and he
+                // spent his session looking for the app. ARCore's
+                // CAMERA_UNAVAILABLE means "I could not have the camera", and
+                // on ColorOS the usual reason is not another app at all — it is
+                // the vendor power manager taking it back, which is what round
+                // 27 already wrote the copy for. Say what is known, and point
+                // at the two settings that might actually fix it.
+                failureReason == TrackingFailureReason.CAMERA_UNAVAILABLE ->
+                    "Camera unavailable — " + com.lidarscan.core.capture.ArTrouble.CAMERA_STOPPED_DETAIL
                 failureReason == TrackingFailureReason.BAD_STATE -> "Tracking is recovering…"
                 else -> "Tracking is initialising…"
             }
@@ -599,6 +630,8 @@ class CaptureArController(
             // the window is not even opened.
             val probe = runCatching { ArCameraCharacteristicsProbe.probe(context, s) }.getOrNull()
             session = s
+            // ROUND 41: a brand-new session's world frame holds nothing yet.
+            worldFrameUsed = false
             gate.onSessionCreated()
             _status.value = _status.value.copy(
                 availability = ArAvailability.READY,
@@ -740,6 +773,64 @@ class CaptureArController(
      * frame for it. Returns false when there is nothing to reset or the rebuild
      * failed — the caller must never let this block a capture.
      */
+    /**
+     * ROUND 41 — **has anything been recorded into this session's world frame?**
+     *
+     * False from the moment a session is created until a capture actually
+     * starts recording. While it is false a world-frame reset has nothing to
+     * discard, and on an OEM whose camera does not survive a close/open in the
+     * same breath (see [resetWorldFrame]) not doing it is the difference
+     * between a scan and a `FatalException` streak.
+     *
+     * `@Volatile` because it is written from the capture coroutine and read
+     * inside the reset, which may run on any thread.
+     */
+    @Volatile
+    private var worldFrameUsed = false
+
+    /**
+     * Called by the capture when a recording actually begins. From here the
+     * session's world frame carries a scan's origin and anchors, and the next
+     * Start must genuinely rebuild it.
+     */
+    override fun noteCaptureRecorded() {
+        worldFrameUsed = true
+    }
+
+    /** Blocks for [ms], and does not pretend an interrupt did not happen. */
+    private fun sleepQuietly(ms: Long) {
+        if (ms <= 0L) return
+        try {
+            Thread.sleep(ms)
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
+    }
+
+    /**
+     * ROUND 41 — did the session just built actually deliver anything?
+     *
+     * `posesAccepted` is the counter round 16 put at the one place every frame
+     * passes exactly once, which makes it the honest answer to "is the tracker
+     * alive RIGHT NOW" — the same definition the start gate and the pose
+     * watchdog use, rather than a second one invented here.
+     *
+     * Returns true immediately when nothing is driving the session at all: a
+     * reset taken with no renderer claimed (the error card's Retry, before the
+     * page has composed a pump) would otherwise be reported as a dead camera
+     * when it is simply an unpumped one.
+     */
+    private fun awaitFirstFrame(timeoutMs: Long): Boolean {
+        if (gate.currentClaim == null) return true
+        val before = posesAccepted.get()
+        val deadline = android.os.SystemClock.elapsedRealtime() + timeoutMs
+        while (android.os.SystemClock.elapsedRealtime() < deadline) {
+            if (posesAccepted.get() > before) return true
+            sleepQuietly(FRAME_POLL_MS)
+        }
+        return posesAccepted.get() > before
+    }
+
     fun resetWorldFrame(): Boolean = resetWorldFrame(attempts = RESET_ATTEMPTS).ok
 
     /**
@@ -751,7 +842,26 @@ class CaptureArController(
      * for, and this type exists so the two can be reported separately instead
      * of both hiding behind one Boolean.
      */
-    data class ResetResult(val ok: Boolean, val attempts: Int, val yieldedFrames: Long)
+    data class ResetResult(
+        val ok: Boolean,
+        val attempts: Int,
+        val yieldedFrames: Long,
+        /**
+         * ROUND 41: false when the reset was a NO-OP because the session had
+         * nothing to discard. The caller logs a different sentence for it —
+         * "rebuilt the session" and "did not need to" are different events and
+         * on an OPPO CPH2499 they are the difference between a scan and no scan.
+         */
+        val rebuilt: Boolean = true,
+        /**
+         * ROUND 41: true when a rebuilt session resumed and then delivered no
+         * frame inside [RESET_VERIFY_MS]. `ok` stays true — the session exists
+         * and the capture is allowed to proceed, per ROUND 12's rule — but the
+         * caller can say so instead of discovering it four seconds later at the
+         * start gate.
+         */
+        val silent: Boolean = false,
+    )
 
     /**
      * ROUND 16 item 58: [resetWorldFrame], holding [driveLock] across the whole
@@ -790,6 +900,35 @@ class CaptureArController(
         if (session == null) {
             Log.w(TAG, "world-frame reset: no session to reset — building one instead")
         }
+        // ── ROUND 41: A SESSION WITH NOTHING TO DISCARD IS NOT REBUILT ──────
+        //
+        // The OPPO CPH2499's 1.0.1 log, twice, in two separate app runs:
+        //
+        //   14:39:54 [ar] gate refused NO_SESSION … created=false     (once)
+        //   …19 seconds of the pump driving update() with no refusal at all…
+        //   14:40:13 [ar] world frame reset … tries=1 framesYielded=16
+        //   14:40:13 [ar] gate refused FAILED … the tracking camera stopped
+        //                 (FatalException)                            (forever)
+        //
+        // The session that phone starts with WORKS. The session this function
+        // builds to replace it never delivers a frame. That is the OEM camera
+        // release race the retry below was written for — `close()` releases a
+        // camera device, `Session(context)` acquires one, and ColorOS has not
+        // finished the release — except that it does not present as a failed
+        // `resume()`, so the retry never fires.
+        //
+        // The cheapest fix is not to be cleverer about the rebuild. It is to
+        // notice that a reset means *"discard the previous scan's origin,
+        // feature map and anchors"*, and that on the first Start after entering
+        // the Scan tab there is no previous scan — so the whole operation is a
+        // no-op that costs this phone every scan it has ever tried to take.
+        //
+        // `gate.isSessionRunning` rather than `session != null`: a session that
+        // exists but is not resumed is not one to keep.
+        if (!worldFrameUsed && session != null && gate.isSessionRunning) {
+            Log.i(TAG, "world-frame reset skipped: this session has recorded nothing to discard")
+            return ResetResult(ok = true, attempts = 0, yieldedFrames = 0L, rebuilt = false)
+        }
         val before = framesYielded.get()
         driveLock.lock()
         try {
@@ -825,6 +964,19 @@ class CaptureArController(
             while (tries < attempts.coerceAtLeast(1)) {
                 ++tries
                 close()
+                // ── ROUND 41: let the camera actually go ────────────────────
+                //
+                // On a Pixel `close()` has released the camera device by the
+                // time the next statement runs. On ColorOS it has not, and the
+                // session built on top of the half-released device resumes
+                // cleanly and then throws `FatalException` out of every
+                // `update()` for the rest of the process. This is the only
+                // place in the app that closes and reopens a camera in the same
+                // breath, and it is the one that broke on the first non-Pixel.
+                //
+                // Growing with the attempt number: if 120 ms was not enough,
+                // 120 ms again is unlikely to be either.
+                sleepQuietly(RESET_SETTLE_MS * tries)
                 val created = createSession()
                 if (created.isFailure) {
                     Log.w(TAG, "world-frame reset could not rebuild the ARCore session (try $tries)")
@@ -839,7 +991,42 @@ class CaptureArController(
                 }
                 geometryDirty = true
                 if (resume().isSuccess) {
-                    return ResetResult(true, tries, framesYielded.get() - before)
+                    // The pump cannot produce a frame while this lock is held —
+                    // `onFrame` tryLocks and yields — so the verification below
+                    // happens with the lock DOWN, and re-takes it immediately so
+                    // `finally` still balances and the next attempt is exclusive.
+                    driveLock.unlock()
+                    // ── ROUND 41: "resumed" is not "delivering" ─────────────
+                    //
+                    // This function's own header has said since round 16 that
+                    // ok "does NOT mean the camera is delivering — that is what
+                    // the start gate is for". The start gate is four seconds
+                    // away and on the far side of a world-frame reset it cannot
+                    // undo. Verifying here, for one second, turns a dead rebuild
+                    // into a RETRY (the one thing that might actually clear it)
+                    // instead of a flat scan.
+                    val delivered = try {
+                        awaitFirstFrame(RESET_VERIFY_MS)
+                    } finally {
+                        driveLock.lock()
+                    }
+                    val yielded = framesYielded.get() - before
+                    if (delivered || tries >= attempts.coerceAtLeast(1)) {
+                        if (!delivered) {
+                            Log.w(
+                                TAG,
+                                "world-frame reset: the rebuilt session resumed but delivered no " +
+                                    "frame in ${RESET_VERIFY_MS} ms after $tries attempts",
+                            )
+                        }
+                        return ResetResult(true, tries, yielded, rebuilt = true, silent = !delivered)
+                    }
+                    Log.w(
+                        TAG,
+                        "world-frame reset: the rebuilt session resumed but delivered no frame in " +
+                            "${RESET_VERIFY_MS} ms (try $tries) — rebuilding again",
+                    )
+                    continue
                 }
                 Log.w(TAG, "world-frame reset rebuilt the session but could not resume it (try $tries)")
             }
@@ -1113,6 +1300,30 @@ class CaptureArController(
          * they end up disagreeing.
          */
         const val RESET_ATTEMPTS = 2
+
+        /**
+         * ROUND 41: how long to let a camera device finish being released
+         * before asking for it back, multiplied by the attempt number.
+         *
+         * The number is a judgement, not a measurement — the one device that
+         * reproduces the race is not on this desk — but its cost is bounded and
+         * paid only on a reset that is genuinely needed, which after the skip
+         * above means the second and later scans of a session.
+         */
+        const val RESET_SETTLE_MS = 120L
+
+        /**
+         * ROUND 41: how long a rebuilt session gets to prove it is delivering.
+         *
+         * Deliberately short. `resetWorldFrame` runs on the main thread at
+         * Start, so this is a main-thread budget: 300 ms is ~18 frames at
+         * 60 Hz, which is far more than a healthy session needs to produce its
+         * first, and two attempts' worth of settle plus verify still comes in
+         * under a second.
+         */
+        const val RESET_VERIFY_MS = 300L
+
+        private const val FRAME_POLL_MS = 25L
 
         /**
          * ARCore reports no per-pose covariance, so these are **stated

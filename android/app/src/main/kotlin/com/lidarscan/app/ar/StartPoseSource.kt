@@ -29,4 +29,12 @@ interface StartPoseSource {
 
     /** ROUND 14/16: throw the world frame away and rebuild the tracking session. */
     fun resetWorldFrame(attempts: Int): CaptureArController.ResetResult
+
+    /**
+     * ROUND 41: tell the source that a recording has begun, so the NEXT reset
+     * knows the world frame now holds a scan's origin and anchors and must
+     * genuinely be rebuilt. Defaulted to a no-op: a fake pose source in a JVM
+     * test has no world frame to dirty.
+     */
+    fun noteCaptureRecorded() {}
 }

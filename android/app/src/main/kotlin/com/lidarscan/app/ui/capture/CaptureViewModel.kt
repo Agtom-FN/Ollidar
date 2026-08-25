@@ -3869,15 +3869,37 @@ class CaptureViewModel(
         if (resume == StartResume.PRESS) {
             startPoseSource?.resetPoseCounters()
             startPoseSource?.let { controller ->
+                // ROUND 41 note on the main thread: this runs on it, as it
+                // always has (`close()` / `Session(context)` / `resume()` are
+                // already tens to hundreds of ms here). The settle and verify
+                // added this round are budgeted against that, not against zero
+                // — worst case both attempts is under a second, it is paid only
+                // when a rebuild is genuinely needed, and it replaces the ~25 s
+                // of dead start-gate waiting that a silently dead session costs.
                 val reset = controller.resetWorldFrame(
                     attempts = com.lidarscan.app.ar.CaptureArController.RESET_ATTEMPTS,
                 )
-                if (reset.ok) {
+                if (reset.ok && !reset.rebuilt) {
+                    // ROUND 41: the OPPO's whole problem, in the line that says
+                    // the app did nothing. See `CaptureArController.worldFrameUsed`.
+                    logEvent(
+                        LOG_TAG_AR,
+                        "world frame reset not needed: this tracking session has recorded " +
+                            "nothing, so its world frame is already this capture's — keeping " +
+                            "the session that is running rather than rebuilding it",
+                    )
+                } else if (reset.ok) {
                     logEvent(
                         LOG_TAG_AR,
                         "world frame reset: new ARCore session for this capture " +
                             "(origin, feature map and anchors from the previous scan discarded) " +
-                            "tries=${reset.attempts} framesYielded=${reset.yieldedFrames}",
+                            "tries=${reset.attempts} framesYielded=${reset.yieldedFrames}" +
+                            if (reset.silent) {
+                                " — WARNING: it resumed and then delivered no frame in " +
+                                    "${com.lidarscan.app.ar.CaptureArController.RESET_VERIFY_MS}ms"
+                            } else {
+                                ""
+                            },
                     )
                 } else if (reset.attempts > 0) {
                     logEvent(
@@ -4072,6 +4094,12 @@ class CaptureViewModel(
                     "dnd=${com.lidarscan.core.capture.CaptureFocus.logToken(dnd)} " +
                     "dir=${project.directory.absolutePath}",
             )
+            // ROUND 41: from here the session's world frame carries THIS scan's
+            // origin and anchors, so the next Start has something to discard and
+            // must genuinely rebuild. Marked at the recording call rather than
+            // at the Start press: a Start that never reaches the engine (a
+            // refused checklist, a failed project create) has dirtied nothing.
+            startPoseSource?.noteCaptureRecorded()
             val started = engineBridge.startCapture(
                 project.directory.absolutePath,
                 _liveSlam.value,

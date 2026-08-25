@@ -22,6 +22,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withTimeout
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -85,12 +86,25 @@ class CaptureRound40DeadTrackerTest {
      * The OPPO's tracker: a session that was created and resumed and then
      * yielded nothing. `yieldedFrames = 0` is the same number its
      * `world frame reset` line carried.
+     *
+     * ROUND 41: it also counts what the start sequence asked it to do, so the
+     * "does Start rebuild a session that has recorded nothing" question can be
+     * asked of the REAL sequence rather than of the controller in isolation.
      */
     private class DeadPoseSource : StartPoseSource {
+        val resets = java.util.concurrent.atomic.AtomicInteger(0)
+        val recordedNotices = java.util.concurrent.atomic.AtomicInteger(0)
+
         override fun resetPoseCounters() {}
 
-        override fun resetWorldFrame(attempts: Int): CaptureArController.ResetResult =
-            CaptureArController.ResetResult(ok = true, attempts = 1, yieldedFrames = 0L)
+        override fun resetWorldFrame(attempts: Int): CaptureArController.ResetResult {
+            resets.incrementAndGet()
+            return CaptureArController.ResetResult(ok = true, attempts = 1, yieldedFrames = 0L)
+        }
+
+        override fun noteCaptureRecorded() {
+            recordedNotices.incrementAndGet()
+        }
 
         override fun poseWindow(): List<PoseSample> = emptyList()
     }
@@ -102,6 +116,7 @@ class CaptureRound40DeadTrackerTest {
     private fun newVm(
         logs: MutableList<String> = java.util.concurrent.CopyOnWriteArrayList(),
         storedTrim: StoredMountTrim? = null,
+        source: DeadPoseSource = DeadPoseSource(),
     ): Pair<CaptureViewModel, MutableList<String>> {
         val series = AtomicInteger(0)
         val vm = CaptureViewModel(
@@ -112,7 +127,7 @@ class CaptureRound40DeadTrackerTest {
             peekSeriesNumber = { series.get() + 1 },
             runAutoProcess = { _, _ -> null },
             loadStoredMountTrim = { storedTrim },
-            startPoseSource = DeadPoseSource(),
+            startPoseSource = source,
             logEvent = { tag, line -> logs.add("[$tag] $line") },
         )
         return vm to logs
@@ -199,5 +214,81 @@ class CaptureRound40DeadTrackerTest {
 
         vm.stopCapture()
         withTimeout(20_000) { vm.captureState.first { it == CaptureState.IDLE } }
+    }
+
+    // ══ ROUND 41: the world frame is only thrown away when it holds something ══
+
+    /**
+     * **The OPPO CPH2499's 1.0.1 session, as a property of the start sequence.**
+     *
+     * His log, twice, in two separate app runs: one `NO_SESSION` refusal while
+     * the session is being created, then nineteen seconds of the pump driving
+     * `update()` with no refusal at all — a healthy session — then
+     *
+     * ```
+     * 14:40:13 [ar] world frame reset … tries=1 framesYielded=16
+     * 14:40:13 [ar] gate refused FAILED … the tracking camera stopped
+     *               (FatalException)                                (forever)
+     * ```
+     *
+     * The session that phone starts with works; the session Start builds to
+     * replace it never delivers a frame. `resetWorldFrame`'s own header has
+     * described that OEM camera-release race since round 16 — it just assumed
+     * it would surface as a failed `resume()`, and here it does not.
+     *
+     * The fix is not a cleverer rebuild. It is that a reset means *discard the
+     * previous scan's origin, feature map and anchors*, and on the first Start
+     * after entering the Scan tab there is no previous scan. This pins that the
+     * sequence asks for the reset exactly when there is something to discard —
+     * the controller decides the rest, and `noteCaptureRecorded` is the fact it
+     * decides on.
+     */
+    @Test
+    fun `the first Start of a session tells the source a recording began`(): Unit = runBlocking {
+        val source = DeadPoseSource()
+        val (vm, _) = newVm(storedTrim = incumbent(), source = source)
+        withTimeout(8_000) { vm.autoConnectState!!.first { it.isPreviewing } }
+
+        assertEquals(
+            "nothing has recorded yet, so nothing has been marked",
+            0,
+            source.recordedNotices.get(),
+        )
+
+        vm.startCapture(skipChecklist = true)
+        acceptTheFlatScan(vm)
+        withTimeout(60_000) { vm.captureState.first { it == CaptureState.RECORDING } }
+
+        assertEquals(
+            "the recording call is what dirties the world frame — not the Start press",
+            1,
+            source.recordedNotices.get(),
+        )
+
+        vm.stopCapture()
+        withTimeout(20_000) { vm.captureState.first { it == CaptureState.IDLE } }
+    }
+
+    /**
+     * A Start that never reaches the engine must not claim a recording happened
+     * — otherwise the very next Start rebuilds a world frame holding nothing,
+     * which is the state that kills the OPPO's camera.
+     */
+    @Test
+    fun `a Start that never records leaves the world frame clean`(): Unit = runBlocking {
+        val source = DeadPoseSource()
+        val (vm, _) = newVm(storedTrim = incumbent(), source = source)
+        withTimeout(8_000) { vm.autoConnectState!!.first { it.isPreviewing } }
+
+        // Held at the no-poses gate and never consented to: the sequence stops
+        // before the engine call.
+        vm.startCapture(skipChecklist = true)
+        withTimeout(60_000) { vm.startBlock.first { it != null } }
+
+        assertEquals(
+            "a scan the operator has not agreed to has recorded nothing",
+            0,
+            source.recordedNotices.get(),
+        )
     }
 }
