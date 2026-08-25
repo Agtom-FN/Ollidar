@@ -320,8 +320,13 @@ object Wording {
      * was: "Hold the rig still in the pose you will walk with, then tap — the
      * D6's angle on the phone is measured from the phone's own attitude and
      * applied to this scan." (30 words.)
+     *
+     * ROUND 40 item B: and then there was no tap. `runStartHoldStage` takes the
+     * hold at Start, in the scan's own frame; the three buttons that asked for
+     * one beforehand are gone, so a hint telling the operator to tap would be
+     * pointing at a control that is not on the screen.
      */
-    const val MOUNT_REF_HINT = "Hold still, then tap."
+    const val MOUNT_REF_HINT = "Set automatically at Start."
     const val MOUNT_REF_DETAIL = "It measures the D6's angle on your phone."
 
     /** was: "No mount reference — the pushbroom is running on the bracket's CAD nominal." */

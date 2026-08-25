@@ -11,7 +11,7 @@ corrected 3D point cloud out the other end.
 
 <br clear="left">
 
-Current version: **1.0.0** (Android).
+Current version: **1.0.1** (Android).
 
 The app and this repository are both called **Ollidar**. The Android package
 (`com.lidarscan.app`), the `.lscan` files and the `Downloads/LidarScan/`
@@ -59,7 +59,7 @@ app rather than rename the one already on the phone.
 
 ## Download
 
-**[⬇ Get the latest release (Android APK)](https://github.com/Agtom-FN/Ollidar/releases/latest)** — currently **v1.0.0**, the first stable.
+**[⬇ Get the latest release (Android APK)](https://github.com/Agtom-FN/Ollidar/releases/latest)** — currently **v1.0.1**.
 **[⬇ Desktop app for macOS (beta)](https://github.com/Agtom-FN/Ollidar/releases/tag/v0.9.x-betas)** — viewer, floor plans and merge on Apple silicon.
 All releases: [Releases page](https://github.com/Agtom-FN/Ollidar/releases).
 
@@ -176,6 +176,19 @@ every tab, the viewer, Mid-360 and STL-27L setup, and troubleshooting.
 
 ## What's new
 
+- **1.0.1 — position tracking is running again before you press Start.** The
+  2 dp view that drives ARCore was living inside the live preview, and when the
+  redesign took the preview off the idle Scan page (0.9.13) the tracker went
+  with it. Since then every scan spent about twenty-five seconds waiting on a
+  camera nothing was driving, then offered to record a flat scan, and the mount
+  re-zero — which reads the same tracking data — could never measure anything.
+  It is back on the page it belongs to.
+- **1.0.1 — the mount re-zero buttons are gone, because Start already does it.**
+  Every Start takes the same hold, in the scan's own frame, and keeps whichever
+  reading is better. The Mount row still tells you which reference the next scan
+  will use, and Advanced still has **Clear** for a reference you want thrown
+  away. And when the camera really has sent nothing, the app now says that
+  instead of asking you to hold the phone stiller.
 - **1.0.0 is the first stable release.** It is the 0.9.x beta line with
   nothing new bolted on — the same app the field testers have been running,
   with the version number finally saying so. Height colours now carry a

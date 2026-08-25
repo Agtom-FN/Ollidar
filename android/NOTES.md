@@ -9210,3 +9210,98 @@ change; consciously left). scan-046's ruler refusal is structural — a fold
 hides from a metric its two halves never share cells with — and a
 fold-aware referee (occupancy-style, like loop-end's gate 6) is the honest
 next step if the owner wants 046's rescue landed.
+
+---
+
+## ROUND 40 (v1.0.1) — THE POSE PUMP WENT WITH THE VIEWPORT
+
+Owner report, 2026-08-25, from the first user outside the owner (OPPO CPH2499,
+Android 15, app 1.0.0/10000): *"the app not working in oppo phone. the re zero
+button no respond while clicked it; if the re-zero function already built in
+during start scan, then remove the button."* Logs:
+`lidarscan-logs-2026-08-25-1216/` and `lidarscan-capture-log-2026-08-25-1215.txt`.
+
+### The finding, and the date it happened
+
+The re-zero was not the bug. It was the first place the bug became visible.
+
+`ArPosePumpView` — the 2 dp `GLSurfaceView` whose GL thread is the *only*
+caller of `Session.update()` — was composed inside `CaptureViewport`. Round 28
+item 158 took the live viewport off the portrait idle page, for a good reason
+("there is nothing in it"), and the pump left with it. From then on ARCore was
+created and resumed before Start (`needsArSession` is true as soon as a
+phone-tracked D6 previews) and then never driven.
+
+The owner's own logs date it to the day, in one field:
+
+| date | `world frame reset … framesYielded=` |
+| --- | --- |
+| 2026-08-17 … 08-21 | 11, 13, 15, 16, 17, 18, 19, 20, 21, 22, 23, 26, 28, 34 |
+| 2026-08-22 (29 resets) | **0** |
+| 2026-08-23 (2 resets) | **0** |
+
+`git log --date=short -- CaptureScreen.kt` puts rounds 28 and 29 on 2026-08-22.
+Every scan since has paid for it, on every phone:
+
+* the start gate blocks on `NO_POSES`, times out at 4 s, rebuilds the session,
+  times out again, and asks the operator to accept a flat scan — ~25 s of dead
+  waiting before every recording;
+* the start hold then times out after 10 s more onto the persisted trim;
+* the mount re-zero, which averages the same pose window, can never see one
+  sample — the OPPO user's "no respond", and the owner's own
+  `mount hold released early: holdMs=0 samples=1`;
+* poses only begin once the *recording* page composes the viewport, so ARCore
+  starts cold at Start — which is what `tracking lost while recording` at
+  T+0.06 s and `parallax_starved` at T+4 s are.
+
+Round 27's `ArTrouble` card did not fire because it keys on a persistent
+`FatalException` gate refusal, and this failure has no exception in it at all:
+the session is healthy and simply unpumped. A screen that reports only the
+failures it has seen before is how the second one stays invisible.
+
+### What changed
+
+**(a) The pump outlives the viewport.** `movablePosePump` sits beside
+`movableViewport` in `CaptureScreenContent` and is `movableContentOf` for the
+same reason item 136 gave the viewport it: the idle → recording flip *moves* one
+GLSurfaceView between subtrees instead of tearing down a GL thread and
+re-claiming the session gate at the exact moment the recording needs poses.
+`ScanReadyPage` takes it as `posePump` and draws it under the FAB band; every
+other layout keeps carrying it inside `CaptureViewport`. The two placements are
+mutually exclusive by construction, which is what `movableContentOf` requires.
+
+**(b) The three re-zero buttons are gone** — the readiness Mount row's pill,
+`MountStateRow`'s, and `PreCaptureStrip`'s. The owner's condition is met:
+`runStartHoldStage` has run the identical `MountTrimRefiner` hold at every Start
+since round 22, in the scan's own frame, and judges it against the incumbent
+through `StartHoldTrimGate`. A pre-Start tap is not a shortcut to that — it is a
+worse version of it, taken in a worse frame. The Mount **row** stays, because
+which trim a scan will use is worth reading; `Clear` stays, because
+`StartHoldTrimGate` deliberately keeps a better-ranked incumbent and a good-
+looking wrong trim is the one state Start cannot dig itself out of.
+`Wording.MOUNT_REF_HINT` was "Hold still, then tap." and is now
+"Set automatically at Start."
+
+**(c) A dead camera is no longer reported as a shaky hand.** Both give-up paths
+had one message each and both named the operator. The OPPO's two
+`mount hold abandoned after 30000 ms of movement` lines describe a window that
+never held a sample; the sentence he read was *"Brace the phone against your
+body and try again."* He braced the phone. Both paths now branch on whether any
+sample ever arrived, in the log line and on screen.
+
+### What is NOT fixed, and is not this round's to fix
+
+The OPPO's COIN-D6 never enumerated: `net-debug sweep
+verdict=usb-present-no-ethernet … eth=absent`, and the scan sealed
+`NO-DATA=true` with 0 bytes in 13 s. The USB-Ethernet chipset in his cable/hub
+has no ColorOS driver, or the bus will not power it. `StaticIpGuidance`'s
+`ONEPLUS_OPPO` arm and round 26 item 128's powered-hub advice are what the app
+has to say about it, and both were already on screen.
+
+### TESTS AND VERSION
+
+`:app` +1 file, +2 cases (`CaptureRound40DeadTrackerTest` — the dead-tracker
+start hold, with and without an incumbent; `DeadPoseSource` returns an empty
+window forever, the state every existing start-hold test lacked). `:core` and
+`:app` suites green, `:app:assembleDebug` green. ABI unchanged. VERSION
+**1.0.1**.

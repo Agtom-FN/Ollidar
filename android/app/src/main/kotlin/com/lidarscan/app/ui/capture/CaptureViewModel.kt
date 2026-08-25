@@ -2566,17 +2566,45 @@ class CaptureViewModel(
             // pass, so a rig in motion never completes on its own; this gives
             // up after 30 s and says so.
             val giveUpAt = clock() + MOUNT_HOLD_GIVE_UP_MS
+            // ── ROUND 40 item C: A DEAD CAMERA IS NOT A SHAKY HAND ──────────
+            //
+            // The give-up path had one message — "Could not get a still enough
+            // hold" — and it named the operator's hands as the cause of every
+            // failure, including the one where the pose window was empty for
+            // thirty seconds because nothing was pumping ARCore (item A) or
+            // because the camera really had stopped (the OPPO's
+            // `FatalException` streak). The OPPO log's 12:14:06 and 12:14:45
+            // lines are both `abandoned … of movement` against a window that
+            // never held a single sample.
+            //
+            // Advice you cannot act on is worse than none: bracing the phone
+            // harder does nothing about a tracker that is not running.
+            var sawAnySample = false
             while (true) {
                 if (clock() > giveUpAt) {
-                    logEvent(LOG_TAG_AR, "mount hold abandoned after ${MOUNT_HOLD_GIVE_UP_MS} ms of movement")
+                    logEvent(
+                        LOG_TAG_AR,
+                        "mount hold abandoned after ${MOUNT_HOLD_GIVE_UP_MS} ms " +
+                            if (sawAnySample) {
+                                "of movement"
+                            } else {
+                                "with NO POSES — the tracking camera sent nothing at all"
+                            },
+                    )
                     _mountHold.value = null
                     mountHoldJob = null
-                    _mountTrimNote.value =
+                    _mountTrimNote.value = if (sawAnySample) {
                         "Could not get a still enough hold. Brace the phone against your body and try again."
+                    } else {
+                        "No position tracking — the camera sent no frames in " +
+                            "${MOUNT_HOLD_GIVE_UP_MS / 1000} s, so nothing was measured. " +
+                            "Close the app and reopen it, then try again."
+                    }
                     _mountTrimNoteIsWarning.value = true
                     return@launch
                 }
                 val window = controller.poseWindow()
+                if (window.isNotEmpty()) sawAnySample = true
                 val newest = window.lastOrNull()?.tMonoNs
                 if (newest != null && anchorNs == 0L) anchorNs = newest
                 val progress = refiner.evaluate(window, anchorNs)
@@ -4350,10 +4378,15 @@ class CaptureViewModel(
         // refusal so the timeout path can name it and the panel can show it.
         var lastRefusal: com.lidarscan.core.calib.StartHoldVerdict? = null
         var lastRefusedTrim: com.lidarscan.core.calib.MountTrim? = null
+        // ROUND 40 item C: the same distinction the manual hold now makes —
+        // "you moved" and "there was nothing to measure" are different findings
+        // and only one of them is about the operator.
+        var sawAnySample = false
         _startHold.value = StartHoldState(progress = null)
         logEvent(LOG_TAG_AR, "start hold: waiting for a steady hold in this scan's own frame")
         while (clock() < deadline) {
             val window = controller.poseWindow()
+            if (window.isNotEmpty()) sawAnySample = true
             val newest = window.lastOrNull()?.tMonoNs
             if (newest != null && anchorNs == 0L) anchorNs = newest
             val progress = refiner.evaluate(window, anchorNs)
@@ -4462,6 +4495,13 @@ class CaptureViewModel(
             // "couldn't get a steady hold" for the second case would be the app
             // blaming the operator for its own correct decision.
             fallbackNote = when {
+                // ROUND 40 item C: first, because it explains the other three.
+                !sawAnySample && provenance.trim != null ->
+                    "No position tracking during the hold — the camera sent no frames. " +
+                        "Scanning on the mount reference from ${provenance.ageLabel}."
+                !sawAnySample ->
+                    "No position tracking during the hold — the camera sent no frames, and no " +
+                        "mount reference is saved. Scanning on the bracket defaults."
                 lastRefusal == com.lidarscan.core.calib.StartHoldVerdict.REFUSE_DRIFT ->
                     "Tracking drifted during the hold. Kept the saved mount reference."
                 lastRefusal == com.lidarscan.core.calib.StartHoldVerdict.REFUSE_WORSE ->
@@ -4478,7 +4518,11 @@ class CaptureViewModel(
             _mountTrimNoteIsWarning.value = true
             logEvent(
                 LOG_TAG_AR,
-                if (lastRefusal != null) {
+                if (!sawAnySample) {
+                    "start hold: TIMED OUT after ${START_HOLD_TIMEOUT_MS} ms with NO POSES — the " +
+                        "tracking camera sent nothing at all; keeping the persisted trim " +
+                        "(${provenance.logSuffix})"
+                } else if (lastRefusal != null) {
                     "start hold: TIMED OUT after ${START_HOLD_TIMEOUT_MS} ms having REFUSED " +
                         "${lastRefusedTrim?.let { "%.2fdeg".format(it.accuracyDeg ?: it.spreadP90Deg) }} " +
                         "($lastRefusal) — keeping the persisted trim (${provenance.logSuffix})"

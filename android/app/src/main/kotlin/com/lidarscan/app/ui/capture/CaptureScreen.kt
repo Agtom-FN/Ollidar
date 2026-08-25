@@ -1603,8 +1603,25 @@ fun CaptureScreen(
                     } else {
                         "Not set"
                     },
-                    detail = if (hasTrim) null else "Re-zero before scanning.",
-                    actionLabel = if (hasTrim) "Re-zero" else "Set",
+                    // ── ROUND 40 item B: THE ROW REPORTS, IT NO LONGER ASKS ──
+                    //
+                    // The owner, on 1.0.0: *"the re-zero button no respond while
+                    // clicked it; if the re-zero function already built in
+                    // during start scan, then remove the button."* It is built
+                    // in — `runStartHoldStage` runs the SAME `MountTrimRefiner`
+                    // hold in the scan's own frame at every Start, judges the
+                    // result against the incumbent through `StartHoldTrimGate`
+                    // and persists the winner. A control that repeats an
+                    // automatic behaviour teaches the operator that controls are
+                    // decorative, which is round 34's own argument for deleting
+                    // `New capture`.
+                    //
+                    // The row stays, because WHICH trim a scan is about to use
+                    // is worth reading. `Clear` survives in Advanced as the one
+                    // escape hatch a Start-side gate cannot give: a good-looking
+                    // incumbent that the gate will keep preferring.
+                    detail = if (hasTrim) null else "Set automatically at Start.",
+                    actionLabel = null,
                 ),
             )
         }
@@ -1915,6 +1932,41 @@ fun CaptureScreen(
                         )
                     }
 
+                    // ── ROUND 40 item A: THE PUMP MUST OUTLIVE THE VIEWPORT ──
+                    //
+                    // Round 28 item 158 removed the live viewport from the
+                    // portrait idle page ("there is nothing in it", and that is
+                    // true) — and the pose pump was riding inside it, so it left
+                    // too. The pump is the only thing that calls
+                    // `Session.update()`, so from 0.9.13 onwards ARCore was
+                    // created and resumed before Start and then never driven.
+                    //
+                    // The owner's own logs date the regression to the hour:
+                    // every `world frame reset` up to 2026-08-21 carries
+                    // `framesYielded=11..34`, and every one from 2026-08-22
+                    // carries `framesYielded=0`. Downstream, on every scan since:
+                    // the start gate blocks on `NO_POSES`, times out at 4 s,
+                    // rebuilds the session, times out again and asks the operator
+                    // to accept a flat scan; the start hold then times out after
+                    // another 10 s onto the persisted trim; and the mount re-zero
+                    // — which averages the same pose window — can never see a
+                    // sample, which is the OPPO CPH2499 user's "the re-zero
+                    // button does not respond".
+                    //
+                    // `movableContentOf` for the same reason the viewport has it
+                    // (item 136): the idle → recording flip moves ONE
+                    // GLSurfaceView between two subtrees instead of tearing down
+                    // a GL thread and re-claiming the session gate at the exact
+                    // moment the recording needs poses. The two placements are
+                    // mutually exclusive by construction — `ScanReadyPage` is the
+                    // `!minimal` portrait branch, `CaptureViewport` carries it in
+                    // every other — which is what `movableContentOf` requires.
+                    val posePumpWanted = poseTrackingRequired && arAvailable &&
+                        arSessionWanted && cameraMode != CameraMode.AR
+                    val currentPosePump by androidx.compose.runtime.rememberUpdatedState(arPosePump)
+                    val movablePosePump = remember {
+                        androidx.compose.runtime.movableContentOf<Modifier> { m -> currentPosePump(m) }
+                    }
                     val viewport: @Composable (Modifier) -> Unit = { modifier ->
                         CaptureViewport(
                             fullBleed = true,
@@ -1981,7 +2033,9 @@ fun CaptureScreen(
                             arSessionWanted = arSessionWanted,
                             arTrackingHint = arTrackingHint,
                             arOverlay = arOverlay,
-                            arPosePump = arPosePump,
+                            // ROUND 40 item A: the ONE instance, moved rather
+                            // than rebuilt — see `movablePosePump`.
+                            arPosePump = movablePosePump,
                             poseTrackingRequired = poseTrackingRequired,
                             poseState = poseState,
                             health = health,
@@ -2313,9 +2367,6 @@ fun CaptureScreen(
                                 provenance = mountTrimProvenance,
                                 hasTrim = mountTrim != null,
                                 hold = mountHold,
-                                onSetMountReference = onSetMountReference,
-                                onBeginMountHold = onBeginMountHold,
-                                onCancelMountHold = onCancelMountHold,
                             )
                         }
                         CaptureChipRow(
@@ -2467,6 +2518,7 @@ fun CaptureScreen(
                     val movableViewport = remember {
                         androidx.compose.runtime.movableContentOf<Modifier> { m -> currentViewport(m) }
                     }
+
                     if (minimal && !isLandscape) {
                         // ── ROUND 28 item 159: THE RECORDING PAGE ───────────
                         //
@@ -2583,9 +2635,19 @@ fun CaptureScreen(
                             onReadinessAction = { title ->
                                 when (title) {
                                     "Sensor" -> onRetryAutoDetect()
-                                    "Mount" -> onBeginMountHold()
+                                    // ROUND 40 item B: no "Mount" arm. The row
+                                    // has no action any more — Start takes the
+                                    // trim. See `buildReadiness`.
                                     "Tracking" -> onRetryAr()
                                 }
+                            },
+                            // ROUND 40 item A: the pump lives HERE while idle.
+                            // This page replaced the viewport that used to carry
+                            // it, and nothing replaced the pump.
+                            posePump = if (posePumpWanted) {
+                                { movablePosePump(Modifier) }
+                            } else {
+                                null
                             },
                             // ROUND 29 item 170: only when there is nothing on
                             // the cable. The mount block is suppressed inside it
@@ -3048,9 +3110,6 @@ private fun MountStateRow(
     provenance: com.lidarscan.core.calib.MountTrimProvenance?,
     hasTrim: Boolean,
     hold: com.lidarscan.core.calib.MountTrimRefiner.Progress? = null,
-    onSetMountReference: () -> Unit,
-    onBeginMountHold: () -> Unit = onSetMountReference,
-    onCancelMountHold: () -> Unit = {},
 ) {
     val shape = RoundedCornerShape(50)
     val holding = hold != null
@@ -3115,28 +3174,18 @@ private fun MountStateRow(
                 )
             }
         }
-        // The Set button stays on the screen next to the state rather than
-        // inside the Capture sheet: a re-zero is taken while holding the rig in
-        // the pose you are about to walk with, and reaching it through a sheet
-        // is one more hand movement during the exact second that has to be
-        // still. The explanation and Clear live in the sheet; the tap does not.
+        // ── ROUND 40 item B: the pill is gone; the READ-OUT is the point ────
         //
-        // ROUND 11 (owner item 45a): the tap now STARTS a hold instead of
-        // judging one that has already finished. Tap, hold the rig still,
-        // watch it fill, and it sets itself; tap again to abandon. The
-        // one-second gate underneath is unchanged — the difference is that the
-        // operator can see it passing instead of being told afterwards that it
-        // did not.
-        SecondaryPill(
-            text = when {
-                holding -> "Cancel"
-                hasTrim -> "Re-zero"
-                else -> "Set mount ref"
-            },
-            height = 38.dp,
-            onClick = if (holding) onCancelMountHold else onBeginMountHold,
-            modifier = Modifier.testTag("setMountReferenceButton"),
-        )
+        // Rounds 8 and 11 argued this button onto the screen (reachable without
+        // opening a sheet, a hold rather than a verdict) and both arguments were
+        // right about the control they were about. What changed underneath is
+        // round 22's `runStartHoldStage`: the identical hold now runs at every
+        // Start, in the scan's own frame, which is a strictly better frame than
+        // any pre-Start tap can be taken in. So the tap is not a shortcut to the
+        // automatic behaviour — it is a worse version of it.
+        //
+        // The `hold` progress above stays wired: `beginMountHold(auto = true)`
+        // still exists, and when it runs this row is where it shows.
     }
 }
 
@@ -3923,28 +3972,30 @@ private fun PreCaptureStrip(
                 color = ScanColors.inkFaint,
                 modifier = Modifier.testTag("d6MountHint"),
             )
-            // ── ROUND 6 (owner item 23): the one-tap mount re-zero ──────
+            // ── ROUND 6 (owner item 23) / ROUND 40 item B ───────────────
             //
             // The D6 is clamped onto the phone by hand and comes off between
             // scans, so the real `phone_from_lidar` differs from the CAD
             // nominal by an unknown rotation every session — and that
-            // rotation lands in every resolved point. Hold the rig the way
-            // it will be carried, tap, and the current gravity-aligned
-            // attitude becomes this session's trim.
+            // rotation lands in every resolved point. Round 6 answered that
+            // with a tap taken before Start; round 22 answered it better, by
+            // taking the same hold AT Start in the scan's own frame. This is
+            // the third and last copy of the button the owner asked to have
+            // removed in 1.0.0, and the argument is the same as the other
+            // two: the tap now competes with an automatic behaviour it cannot
+            // beat.
+            //
+            // `Clear` stays, and is the only survivor of this row, because
+            // `StartHoldTrimGate` deliberately KEEPS a better-ranked
+            // incumbent — so a trim that looks good and is wrong is the one
+            // state Start cannot dig itself out of.
             Spacer(Modifier.height(6.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                SecondaryPill(
-                    text = if (mountTrim == null) "Set mount reference" else "Re-zero mount",
-                    height = 46.dp,
-                    onClick = onSetMountReference,
-                    modifier = Modifier.weight(1f).testTag("setMountReferenceButton"),
-                )
-                if (mountTrim != null) {
-                    Spacer(Modifier.width(8.dp))
+            if (mountTrim != null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     TextButton(
                         onClick = onClearMountReference,
                         modifier = Modifier.testTag("clearMountReferenceButton"),
-                    ) { Text("Clear") }
+                    ) { Text("Clear mount reference") }
                 }
             }
             Hint(
@@ -6050,6 +6101,17 @@ internal fun ScanReadyPage(
      * a status at the top of the screen and a form 900 px below it.
      */
     connectFlow: (@Composable () -> Unit)? = null,
+    /**
+     * ROUND 40 item A — **the 2 dp view that makes this page's Tracking row
+     * true.**
+     *
+     * Round 28 took the live viewport off this page for a good reason and took
+     * `ArPosePumpView` with it by accident. Non-null exactly when a pose-tracked
+     * capture wants a session and the AR overlay is not the renderer; see
+     * `movablePosePump` for why it is the same instance the recording page uses
+     * rather than a second one.
+     */
+    posePump: (@Composable () -> Unit)? = null,
     banners: @Composable () -> Unit,
     tutorialBanner: @Composable () -> Unit,
     fab: @Composable () -> Unit,
@@ -6135,6 +6197,11 @@ internal fun ScanReadyPage(
                 .padding(vertical = ScanDims.S6),
             contentAlignment = Alignment.Center,
         ) { fab() }
+        // ROUND 40 item A: last, smallest, and the reason the rest of the page
+        // can tell the truth. 2 dp under the FAB band, invisible, and it is what
+        // gives the start gate and the mount trim a pose window to read BEFORE
+        // Start rather than four seconds after it.
+        posePump?.invoke()
     }
 }
 
