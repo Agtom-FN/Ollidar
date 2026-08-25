@@ -9472,13 +9472,33 @@ cheap insurance for the rebuild that a second scan genuinely needs. The
 `another app may be using it` wording fix and the cause-chain logging are
 unaffected either way.
 
-### Honest limits
+### Confirmed in the field, 2026-08-26
 
-Verified by build and unit suite, not on a phone; the Pixel is the device that
-can falsify this in one Start. If 1.0.3 still throws FatalException on the Pixel
-immediately after a reset, the placement is exonerated and the next suspect is
-`setCameraTextureName`'s hand-back itself, which round 14 introduced and which
-no test covers.
+This section was written as "verified by build and unit suite, not on a phone;
+the Pixel is the device that can falsify this in one Start." The owner ran it
+the next day and reported that scanning works. The placement theory stands: a
+`GLSurfaceView` relocated between two parents at Start was what killed the
+tracking camera, and one fixed home fixes it.
+
+Three things follow, and the third is the one worth keeping.
+
+1. Round 40's diagnosis (the pump must exist before Start) was right.
+2. Round 41's `setCameraTextureName` hand-back — round 14 code that no test
+   covers — is NOT exonerated. It is simply no longer being asked to do the
+   impossible, and on the first Start of a session round 41 skips the rebuild
+   that would exercise it at all. It remains untested.
+3. **The bug that shipped twice in one day is a class this project cannot
+   test.** Rounds 40 and 42 were both Compose-tree / GL-lifecycle faults, and
+   both passed the whole JVM suite. The emulator suite is real (`D6Synthetic
+   Packets`, `ReplayCaptureSmokeTest`, twenty-five files) but ARCore does not
+   exist on an emulator, so the pose-tracked path — the one both regressions
+   lived on — is untested by construction. The seam already exists:
+   `StartPoseSource` is the interface round 21 built so a fake could drive the
+   real start sequence. It is used from `:app`'s JVM tests and never from
+   `androidTest`. Wiring a fake pose source into an INSTRUMENTED test, so that
+   `ScanReadyPage -> Start -> ScanRecordingPage` actually composes on a device
+   with the pump present, would have caught both rounds before they left the
+   desk. That is the next round's item.
 
 ### TESTS AND VERSION
 
