@@ -1,6 +1,6 @@
 # Ollidar — User Manual
 
-App version 1.0.2 (Android). Written for the owner and for field testers.
+App version 1.0.3 (Android). Written for the owner and for field testers.
 If you only want a first scan, read [QUICK_START.md](QUICK_START.md) instead.
 
 The app is called **Ollidar** as of 0.9.11. The repository, the Android
@@ -801,7 +801,7 @@ developer-only items moved behind the seven-tap unlock.
 
 **The version footer**
 
-At the very bottom: `Ollidar v1.0.2 (build 10002)`. **Tap it seven times**
+At the very bottom: `Ollidar v1.0.3 (build 10003)`. **Tap it seven times**
 to unlock a **Developer** section, and seven more to lock it away again. The
 counter resets when you re-lock, so a single stray tap afterwards does not
 re-open it.

@@ -11,7 +11,7 @@ corrected 3D point cloud out the other end.
 
 <br clear="left">
 
-Current version: **1.0.2** (Android).
+Current version: **1.0.3** (Android).
 
 The app and this repository are both called **Ollidar**. The Android package
 (`com.lidarscan.app`), the `.lscan` files and the `Downloads/LidarScan/`
@@ -59,7 +59,7 @@ app rather than rename the one already on the phone.
 
 ## Download
 
-**[⬇ Get the latest release (Android APK)](https://github.com/Agtom-FN/Ollidar/releases/latest)** — currently **v1.0.2**.
+**[⬇ Get the latest release (Android APK)](https://github.com/Agtom-FN/Ollidar/releases/latest)** — currently **v1.0.3**.
 **[⬇ Desktop app for macOS (beta)](https://github.com/Agtom-FN/Ollidar/releases/tag/v0.9.x-betas)** — viewer, floor plans and merge on Apple silicon.
 All releases: [Releases page](https://github.com/Agtom-FN/Ollidar/releases).
 
@@ -176,6 +176,11 @@ every tab, the viewer, Mid-360 and STL-27L setup, and troubleshooting.
 
 ## What's new
 
+- **1.0.3 — fixes a tracking failure 1.0.1 introduced.** In 1.0.1 the small
+  view that drives position tracking was moved between two places on screen when
+  you pressed Start, which could kill the tracking camera at that exact moment —
+  on any phone. It now lives in one fixed place and is never relocated. If you
+  are on 1.0.1, update.
 - **1.0.2 — Start no longer rebuilds a tracking session that has nothing to
   rebuild.** Every Start threw the tracking session away and made a new one, to
   discard the previous scan's origin — but on the first scan after opening the

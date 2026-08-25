@@ -1932,41 +1932,6 @@ fun CaptureScreen(
                         )
                     }
 
-                    // ── ROUND 40 item A: THE PUMP MUST OUTLIVE THE VIEWPORT ──
-                    //
-                    // Round 28 item 158 removed the live viewport from the
-                    // portrait idle page ("there is nothing in it", and that is
-                    // true) — and the pose pump was riding inside it, so it left
-                    // too. The pump is the only thing that calls
-                    // `Session.update()`, so from 0.9.13 onwards ARCore was
-                    // created and resumed before Start and then never driven.
-                    //
-                    // The owner's own logs date the regression to the hour:
-                    // every `world frame reset` up to 2026-08-21 carries
-                    // `framesYielded=11..34`, and every one from 2026-08-22
-                    // carries `framesYielded=0`. Downstream, on every scan since:
-                    // the start gate blocks on `NO_POSES`, times out at 4 s,
-                    // rebuilds the session, times out again and asks the operator
-                    // to accept a flat scan; the start hold then times out after
-                    // another 10 s onto the persisted trim; and the mount re-zero
-                    // — which averages the same pose window — can never see a
-                    // sample, which is the OPPO CPH2499 user's "the re-zero
-                    // button does not respond".
-                    //
-                    // `movableContentOf` for the same reason the viewport has it
-                    // (item 136): the idle → recording flip moves ONE
-                    // GLSurfaceView between two subtrees instead of tearing down
-                    // a GL thread and re-claiming the session gate at the exact
-                    // moment the recording needs poses. The two placements are
-                    // mutually exclusive by construction — `ScanReadyPage` is the
-                    // `!minimal` portrait branch, `CaptureViewport` carries it in
-                    // every other — which is what `movableContentOf` requires.
-                    val posePumpWanted = poseTrackingRequired && arAvailable &&
-                        arSessionWanted && cameraMode != CameraMode.AR
-                    val currentPosePump by androidx.compose.runtime.rememberUpdatedState(arPosePump)
-                    val movablePosePump = remember {
-                        androidx.compose.runtime.movableContentOf<Modifier> { m -> currentPosePump(m) }
-                    }
                     val viewport: @Composable (Modifier) -> Unit = { modifier ->
                         CaptureViewport(
                             fullBleed = true,
@@ -2033,9 +1998,6 @@ fun CaptureScreen(
                             arSessionWanted = arSessionWanted,
                             arTrackingHint = arTrackingHint,
                             arOverlay = arOverlay,
-                            // ROUND 40 item A: the ONE instance, moved rather
-                            // than rebuilt — see `movablePosePump`.
-                            arPosePump = movablePosePump,
                             poseTrackingRequired = poseTrackingRequired,
                             poseState = poseState,
                             health = health,
@@ -2641,14 +2603,6 @@ fun CaptureScreen(
                                     "Tracking" -> onRetryAr()
                                 }
                             },
-                            // ROUND 40 item A: the pump lives HERE while idle.
-                            // This page replaced the viewport that used to carry
-                            // it, and nothing replaced the pump.
-                            posePump = if (posePumpWanted) {
-                                { movablePosePump(Modifier) }
-                            } else {
-                                null
-                            },
                             // ROUND 29 item 170: only when there is nothing on
                             // the cable. The mount block is suppressed inside it
                             // because the Mount ROW above owns that fact now —
@@ -2731,6 +2685,41 @@ fun CaptureScreen(
     // Last child of the Box, so it is drawn over the viewport, the chrome and
     // the transport row — including the STOP button, which is deliberately
     // still reachable THROUGH it. See `TrackingLossPopup`.
+        // ── ROUND 42: THE PUMP HAS ONE HOME, AND IT IS THIS ONE ─────────────
+        //
+        // Round 40 was right that the pump must exist before Start and wrong
+        // about where to put it. Composed inside the idle page and inside the
+        // viewport, it had to MOVE between them when Start flips the layout —
+        // and an `AndroidView` that moves is a `GLSurfaceView` detached from the
+        // window and reattached under a new parent, which destroys its EGL
+        // surface and creates a new one with a new camera texture, while
+        // `resetWorldFrame` on the main thread is handing the OLD texture id to
+        // a freshly built session. Both phones reported the same thing on
+        // 1.0.1, and the Pixel had never done it before:
+        //
+        //   15:36:06 [ar] world frame reset … tries=1 framesYielded=17
+        //   15:36:06 [ar] gate refused FAILED … the tracking camera stopped
+        //                 (FatalException)                          (19 of them)
+        //
+        // `framesYielded=17` is round 40 working — the pump IS driving the
+        // session — and the FatalException 285 ms later is round 40's placement
+        // failing. The OPPO's 1.0.0 logs showed the same shape, which is why it
+        // read as an OEM quirk; the Pixel proves it is ours.
+        //
+        // So: one placement, in the screen's root Box, outside every layout
+        // branch and outside the viewport. It is composed while a pose-tracked
+        // capture wants a session and disposed when it stops wanting one, and
+        // in between nothing relocates it — not Start, not Stop, not rotation
+        // between the portrait and landscape pages. 2 dp in the corner, last
+        // child so it is never occluded, exactly as it was inside the viewport.
+        if (poseTrackingRequired && arAvailable && arSessionWanted && cameraMode != CameraMode.AR) {
+            arPosePump(
+                Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 2.dp, bottom = 2.dp),
+            )
+        }
+
         TrackingLossPopup(trackingBanner)
 
         // ── ROUND 28 items 155 + 160: the start flow's modal ─────────────────
@@ -4395,7 +4384,6 @@ private fun CaptureViewport(
     arSessionWanted: Boolean,
     arTrackingHint: String?,
     arOverlay: @Composable (Modifier) -> Unit,
-    arPosePump: @Composable (Modifier) -> Unit,
     poseTrackingRequired: Boolean,
     poseState: PoseTrackingState,
     health: DeviceHealth?,
@@ -4615,9 +4603,15 @@ private fun CaptureViewport(
         // construction. The rate limiter stays — a few refusals still happen in
         // the window between this view's `factory` and `createSession()`
         // returning, and that window is exactly what it was written for.
-        if (poseTrackingRequired && arAvailable && arSessionWanted && cameraMode != CameraMode.AR) {
-            arPosePump(Modifier.align(Alignment.BottomStart).padding(start = 2.dp, bottom = 2.dp))
-        }
+        // ── ROUND 42: NOT HERE ANY MORE. See `CaptureScreenContent`'s root Box.
+        //
+        // Round 40 moved the pump out of this composable so the idle page could
+        // have one too, and made it `movableContentOf` so the idle → recording
+        // flip would relocate one instance rather than rebuild it. That put a
+        // `GLSurfaceView` inside a subtree that MOVES, nested inside a viewport
+        // that is itself moving, and it cost both field phones their tracker at
+        // the exact moment of Start. A view that never moves cannot be moved
+        // wrongly.
 
         // ── top-left: the keyframe counter ──────────────────────────────
         //
@@ -6101,17 +6095,6 @@ internal fun ScanReadyPage(
      * a status at the top of the screen and a form 900 px below it.
      */
     connectFlow: (@Composable () -> Unit)? = null,
-    /**
-     * ROUND 40 item A — **the 2 dp view that makes this page's Tracking row
-     * true.**
-     *
-     * Round 28 took the live viewport off this page for a good reason and took
-     * `ArPosePumpView` with it by accident. Non-null exactly when a pose-tracked
-     * capture wants a session and the AR overlay is not the renderer; see
-     * `movablePosePump` for why it is the same instance the recording page uses
-     * rather than a second one.
-     */
-    posePump: (@Composable () -> Unit)? = null,
     banners: @Composable () -> Unit,
     tutorialBanner: @Composable () -> Unit,
     fab: @Composable () -> Unit,
@@ -6197,11 +6180,6 @@ internal fun ScanReadyPage(
                 .padding(vertical = ScanDims.S6),
             contentAlignment = Alignment.Center,
         ) { fab() }
-        // ROUND 40 item A: last, smallest, and the reason the rest of the page
-        // can tell the truth. 2 dp under the FAB band, invisible, and it is what
-        // gives the start gate and the mount trim a pose window to read BEFORE
-        // Start rather than four seconds after it.
-        posePump?.invoke()
     }
 }
 

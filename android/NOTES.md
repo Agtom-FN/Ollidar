@@ -9397,3 +9397,91 @@ tracker yields an empty scan until that cable or hub changes.
 dirties the world frame; a Start that never records leaves it clean).
 `DeadPoseSource` now counts what the sequence asked it to do. `:core` and `:app`
 suites green, `:app:assembleDebug` green. ABI unchanged. VERSION **1.0.2**.
+
+---
+
+## ROUND 42 (v1.0.3) — A GLSurfaceView THAT MOVES IS A GLSurfaceView THAT BREAKS
+
+Owner, 2026-08-25: *"the oppo and pixel both can't start the scan now."* Logs
+`lidarscan-capture-log-2026-08-25-1536.txt` (Pixel, ram=11573MB cores=9) and
+`…-1552.txt` (OPPO, ram=15133MB cores=8 — a re-export of the 14:39–14:45
+session already read in round 41). **Both are 1.0.1.** Neither carries a 1.0.2
+marker; round 41 has never run on a phone.
+
+### The Pixel is the evidence round 41 did not have
+
+| Pixel, this log | |
+| --- | --- |
+| `world frame reset` at 12:xx (1.0.0) | `framesYielded=0` |
+| `world frame reset` at 15:xx (1.0.1) | `framesYielded=17`, `framesYielded=16` |
+| `the tracking camera stopped (FatalException)` | **19, all at 15:xx, none before** |
+
+Round 40 did what it claimed — the pump is driving `Session.update()` again,
+which is what a non-zero `framesYielded` means. And 285 ms after the first reset
+the Pixel throws the FatalException it had never once thrown in eight days of
+logs. Round 41 read that exception on the OPPO as an OEM camera-release race.
+It is not. **It is ours, and round 40 introduced it.**
+
+```
+15:36:06.435 [ar] world frame reset … tries=1 framesYielded=17
+15:36:06.720 [ar] gate refused FAILED … the tracking camera stopped (FatalException)
+```
+
+### What round 40 got wrong
+
+Not that the pump must exist before Start — that part stands. **Where it put
+it.** Round 40 composed `ArPosePumpView` in two places (the idle page and, as
+before, inside `CaptureViewport`) and used `movableContentOf` so the
+idle → recording flip would relocate one instance instead of rebuilding it. That
+is the right tool for a Compose subtree and the wrong one for this:
+
+* an `AndroidView` that moves is a **`GLSurfaceView` detached from the window
+  and reattached under a new parent**, which destroys its EGL surface and
+  creates a new one — with a new camera texture — and never runs `onRelease`,
+  so the gate is never told;
+* it happens at Start, in the same breath as `resetWorldFrame` handing the
+  **old** texture id to a **freshly built** session from the main thread;
+* and the moving pump was moving *into* `movableViewport`, which is itself
+  moving in the same composition.
+
+Pre-0.9.13 the pump was inside the viewport and moved as part of it — one
+subtree, one relocation. Round 40 made it a second, nested one.
+
+### The fix
+
+One placement, in `CaptureScreenContent`'s root `Box`, outside every layout
+branch and outside the viewport. Composed while a pose-tracked capture wants a
+session, disposed when it stops wanting one, and in between **nothing relocates
+it** — not Start, not Stop, not the portrait/landscape page swap. 2 dp in the
+bottom-start corner, last child so it is never occluded, exactly the geometry it
+had inside the viewport. `movablePosePump` and `ScanReadyPage`'s `posePump`
+parameter are both gone; `CaptureViewport` no longer takes an `arPosePump` at
+all.
+
+A view that never moves cannot be moved wrongly. That is the whole of it.
+
+### What this means for round 41
+
+Round 41 is kept, unshipped and now differently motivated. Its central change —
+**do not rebuild a world frame that holds nothing** — was argued from the OPPO's
+asymmetry under a wrong theory of the cause, and it is still correct under the
+right one, for a better reason: the first Start of a session now performs no
+session teardown at all, so the texture hand-back that round 40 made unsafe does
+not happen on the path the operator hits first. Its settle and verify remain
+cheap insurance for the rebuild that a second scan genuinely needs. The
+`another app may be using it` wording fix and the cause-chain logging are
+unaffected either way.
+
+### Honest limits
+
+Verified by build and unit suite, not on a phone; the Pixel is the device that
+can falsify this in one Start. If 1.0.3 still throws FatalException on the Pixel
+immediately after a reset, the placement is exonerated and the next suspect is
+`setCameraTextureName`'s hand-back itself, which round 14 introduced and which
+no test covers.
+
+### TESTS AND VERSION
+
+No new cases — this is a Compose-tree placement and the suites cannot see it,
+which is exactly why it shipped. `:core` and `:app` suites green,
+`:app:assembleDebug` green. ABI unchanged. VERSION **1.0.3**.
