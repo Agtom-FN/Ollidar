@@ -59,8 +59,9 @@ app rather than rename the one already on the phone.
 
 ## Download
 
-**[⬇ Get the latest release (Android APK)](https://github.com/Agtom-FN/Ollidar/releases/latest)** — currently **v1.0.3**.
-**[⬇ Desktop app for macOS (beta)](https://github.com/Agtom-FN/Ollidar/releases/tag/v0.9.x-betas)** — viewer, floor plans and merge on Apple silicon.
+**[Android app APK](https://github.com/Agtom-FN/Ollidar/releases/latest)** — currently **v1.0.3**.
+<br>
+**[Desktop app for macOS (beta)](https://github.com/Agtom-FN/Ollidar/releases/tag/v0.9.x-betas)** — viewer, floor plans and merge on Apple silicon.
 All releases: [Releases page](https://github.com/Agtom-FN/Ollidar/releases).
 
 ## Requirements
