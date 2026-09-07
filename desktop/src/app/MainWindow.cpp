@@ -5,6 +5,7 @@
 #include <QCloseEvent>
 #include <QDateTime>
 #include <QDir>
+#include <QDesktopServices>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QDragEnterEvent>
@@ -37,6 +38,7 @@
 #include "app/DisplayParamsDock.h"
 #include "app/EngineHost.h"
 #include "app/ExportDialog.h"
+#include "app/FieldLog.h"
 #include "app/MeasureDock.h"
 #include "app/MergeDock.h"
 #include "app/PlanDock.h"
@@ -118,7 +120,7 @@ MainWindow::MainWindow(EngineHost* host, QWidget* parent) : QMainWindow(parent),
   });
   connect(replay_, &ReplayController::finished, this, [this](const QString& s) {
     log_->appendPlainText("replay finished: " + s);
-    replay_button_->setEnabled(project_.has_d6_raw);
+    replay_button_->setEnabled(project_.has_replayable_lidar);
     replay_stop_->setEnabled(false);
   });
 }
@@ -178,8 +180,15 @@ void MainWindow::buildUi() {
                                 // both. Full "x.y.z (build N)" in the tooltip.
                                 .arg(QCoreApplication::applicationVersion()
                                          .section(' ', 0, 0)));
-    status_render_->setToolTip(QString("LidarScan %1\n%2")
-                                   .arg(QCoreApplication::applicationVersion(), s));
+    // The field-test log path rides in this tooltip as well as in the Help
+    // menu: on the field Mac the status bar is the one piece of chrome that is
+    // always visible, and "where is the log" must never need a menu hunt.
+    status_render_->setToolTip(
+        QString("LidarScan %1\n%2%3")
+            .arg(QCoreApplication::applicationVersion(), s,
+                 FieldLog::path().isEmpty()
+                     ? QString()
+                     : QString("\n\nField test log: %1").arg(FieldLog::path())));
     updateViewportChips();
   });
   connect(viewport_, &ViewportWindow::initFailed, this, [this](const QString& why) {
@@ -901,6 +910,51 @@ void MainWindow::buildMenus() {
                    &MainWindow::loadSyntheticBuildingFixture);
 
   auto* help = menuBar()->addMenu("&Help");
+  // The field-test log, named out loud. An operator on another Mac with no
+  // terminal has no other way to find out where the evidence is being written,
+  // and "somewhere in Library" is not an answer they can act on.
+  help->addAction("Show field test log path", this, [this] {
+    const QString p = FieldLog::path();
+    if (p.isEmpty()) {
+      QMessageBox::information(this, "Field test log",
+                               "No field test log is open for this run.");
+      return;
+    }
+    log_->appendPlainText("field test log: " + p);
+    QMessageBox box(this);
+    box.setWindowTitle("Field test log");
+    box.setText("Field test log: " + p);
+    box.setInformativeText(
+        "Every device event, discovery result and 2-second health snapshot of this "
+        "run is in that file. Use 'Save diagnostics bundle…' to collect it, the raw "
+        "Mid-70/IMU captures and the last scan into one folder on your Desktop.");
+    box.addButton("Reveal in Finder", QMessageBox::ActionRole);
+    box.addButton(QMessageBox::Close);
+    box.exec();
+    if (box.clickedButton() != nullptr &&
+        box.buttonRole(box.clickedButton()) == QMessageBox::ActionRole) {
+      QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(p).absolutePath()));
+    }
+  });
+  help->addAction("Save diagnostics bundle…", this, [this] {
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    QString err;
+    // system_profiler alone can take ten seconds; the wait cursor is the whole
+    // of the progress UI this needs, and blocking is correct — the operator
+    // asked for a snapshot of NOW.
+    const QString dir = FieldLog::saveDiagnosticsBundle(/*reveal=*/true, &err);
+    QApplication::restoreOverrideCursor();
+    if (dir.isEmpty()) {
+      QMessageBox::warning(this, "Save diagnostics bundle", err);
+      return;
+    }
+    log_->appendPlainText("diagnostics bundle: " + dir);
+    QMessageBox::information(
+        this, "Save diagnostics bundle",
+        QString("Saved to:\n%1\n\nRight-click the folder, choose Compress, and send "
+                "the .zip. README.txt inside lists exactly what it contains.")
+            .arg(dir));
+  });
   help->addAction("About", this, [this] {
     QMessageBox box(this);
     box.setWindowTitle("Ollidar Desktop");
@@ -1092,12 +1146,18 @@ bool MainWindow::startReplay(double speed, QString* err) {
     if (err) *err = "no project open";
     return false;
   }
-  if (!project_.has_d6_raw) {
+  if (!project_.has_replayable_lidar) {
     if (err) {
+      // A17 widened this from "D6 only" to "D6 or Mid-70": both are pushed back
+      // in through Engine::push_serial_bytes(), the D6 as raw UART bytes and
+      // the Mid-70 as whole SDK v1 datagrams into an inject-backend driver. The
+      // Mid-360 is still out — its SDK2 datagrams have no Engine push entry
+      // point (A3), which is a fact about the engine, not about this project.
       *err =
-          "this project has no D6 raw chunks. record/replay.h only forwards "
-          "ChunkType::kD6Raw today — Mid-360 and GNSS raw streams need an "
-          "analogous Engine push entry point first (A3/A10).";
+          "this project has no replayable lidar stream. ReplayController pushes "
+          "ChunkType::kD6Raw (COIN-D6) and kMid70Points (Livox Mid-70) back through "
+          "Engine::push_serial_bytes(); a Mid-360 project's SDK2 datagrams still need "
+          "an analogous Engine push entry point first (A3), and so does GNSS (A10).";
     }
     return false;
   }
@@ -1176,7 +1236,7 @@ void MainWindow::refreshProjectPanel() {
       QString("font-family:'%1';font-size:10.5px;color:%2;")
           .arg(theme::monoFamily(), theme::css(warn.isEmpty() ? theme::good() : theme::warn())));
 
-  replay_button_->setEnabled(project_.has_d6_raw && !replay_->running());
+  replay_button_->setEnabled(project_.has_replayable_lidar && !replay_->running());
   updateViewportChips();
   refreshInspectorGeoref();
 }

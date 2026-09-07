@@ -320,11 +320,13 @@ set(LIDARSCAN_SOURCES
     src/ui/InspectorCard.cpp
     src/ui/RecordCluster.cpp
     src/app/EngineHost.cpp
+    src/app/FieldLog.cpp
     src/app/Project.cpp
     src/app/ReplayController.cpp
     src/app/DisplayParamsDock.cpp
     src/app/CaptureWindow.cpp
     src/app/DeviceDiscovery.cpp
+    src/app/SerialReader.cpp
     src/app/DisplayAwake.cpp
     src/app/WalkSpeedEstimator.cpp
     src/app/MeasureDock.cpp

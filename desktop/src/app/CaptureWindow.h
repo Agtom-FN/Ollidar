@@ -54,6 +54,26 @@
 //    support that is NOT capture (project replay, post-processing, merge,
 //    ReplayController, Project::importRawD6) is untouched.
 //
+// 7. TWO LIDAR MODELS (A17/A18, the Mid-70 + serial-IMU plan, Phase 6). A
+//    "Lidar model" combo picks Livox Mid-360 or Livox Mid-70, and it is the
+//    only thing that decides which config armPreview() builds. The Mid-70 is a
+//    different protocol end to end — SDK v1, broadcast on UDP 55000, a
+//    15-character broadcast code instead of an SN, and NO BUILT-IN IMU — so
+//    selecting it reveals a read-only "Broadcast code" field, hides the three
+//    SDK2 UDP ports (v1 does not use them), and reveals an "IMU" row: a serial
+//    port picker for the JuxiTech module, whose device is added ALONGSIDE the
+//    lidar. Two devices, one session; disarm removes both and closes the port.
+//
+//    The Mid-360 path is unchanged, and that is a constraint rather than an
+//    aspiration: the combo defaults to Mid-360, is NOT persisted (a saved
+//    "Mid-70" would change what --mid360-selftest arms), and every Mid-70
+//    branch is beside the Mid-360 code rather than inside it. With no Mid-70
+//    on the network, `DiscoveryResult::mid70.found` is false and every new
+//    branch is dead — which is what makes "byte-for-byte unchanged" checkable
+//    rather than merely claimed. runMid360SelfTestForCli() forces the combo
+//    back to Mid-360 before it arms, so the CLI hook cannot inherit a model
+//    the GUI was left on.
+//
 // WHAT DID NOT CHANGE
 //
 // RECORD-ALWAYS (Tech Spec §3 key rule 2): every phase other than live preview
@@ -101,6 +121,7 @@
 #include "scanengine/record/lscan.h"
 
 class QComboBox;
+class QFormLayout;
 class QGroupBox;
 class QLabel;
 class QLineEdit;
@@ -121,12 +142,18 @@ namespace scanengine {
 // that way. Round-5 field bug C needs the config kept so a re-arm can re-add the
 // device it already had.
 struct Mid360Config;
+// A17/A18, same rule and the same reason. `last_mid70_cfg_` exists for field
+// bug C's re-arm path exactly as `last_mid360_cfg_` does; the IMU config is kept
+// beside it because a Mid-70 session's re-arm has TWO devices to rebuild.
+struct Mid70Config;
+struct ImuSerialConfig;
 }  // namespace scanengine
 
 namespace lidarscan {
 
 class EngineHost;
 class RecordCluster;
+class SerialReader;   // app/SerialReader.h — the QSerialPort this panel owns
 class SliderRow;
 struct DiscoveryResult;  // app/DeviceDiscovery.h — kept out of this header on
                           // purpose so CaptureWindow.h never names an engine
@@ -256,6 +283,13 @@ class CaptureWindow : public QDockWidget {
   void triggerStopForCli();
   // Drives the SAME "Auto-detect devices" button a click would.
   void triggerAutoDetectForCli();
+  // A17 (--lidar-model): moves the SAME combo an operator would, through the
+  // same signal, so a headless evidence run can photograph and exercise the
+  // Mid-70 half of this panel — the broadcast-code field, the hidden SDK2
+  // ports, the IMU row — on a machine with no Mid-70 attached. It sets the
+  // model and nothing else; it does not arm. Returns false for a name it does
+  // not know. Interactive runs never call it.
+  bool setLidarModelForCli(const QString& name);
   // Drives the real live-refresh-rate and point-size controls through their own
   // signal paths (the same code a drag runs), so an evidence run proves the
   // inline controls are bound to the live model rather than decorating it.
@@ -311,6 +345,20 @@ class CaptureWindow : public QDockWidget {
   void setManualSetupOpen(bool open, bool focus = false);
 
   void updateHealth();
+  // The two halves of a Mid-70 session's health row, built from the generic
+  // DeviceHealth plus the driver's OWN counters — Engine::mid70_stats() and
+  // Engine::imu_serial_stats(), the A17/A18 siblings of mid360_stats(). Those
+  // are where the numbers a Mid-70 session is actually judged on live (PPS and
+  // time-sync status, timestamp type, timestamp-gap loss; the IMU's rate and
+  // its blackout count), none of which DeviceHealth can carry.
+  QString mid70HealthText(const scanengine::DeviceHealth& d) const;
+  QString imuHealthText() const;
+  // Every setting an arm/record/replay event in the field log is judged
+  // against, as one `key=value` run: model, host IP, lidar IP, broadcast code,
+  // IMU port + baud, the LIO near gate and the project directory. Built in one
+  // place so an arm line and the disarm line that follows it cannot disagree
+  // about what was configured.
+  QString fieldConfigKv() const;
   // Round-5 item 18 (walkthrough-first): poll the live-SLAM trajectory and hand
   // the path to the viewport, plus derive the walking speed for the "slow down"
   // hint. Runs on its own 10 Hz timer while a device is armed.
@@ -373,6 +421,43 @@ class CaptureWindow : public QDockWidget {
   void loadMid360Settings();
   void saveMid360Settings();
 
+  // --- A17/A18: the Mid-70 + serial-IMU half ------------------------------
+  //
+  // The lidar-model selector is the ONLY thing that decides which config
+  // armPreview() builds. It is deliberately NOT persisted: a saved "Mid-70"
+  // would silently change what --mid360-selftest arms on the next launch, and
+  // the Mid-360 flow has to be byte-for-byte what it was. It moves only when
+  // the operator moves it or when discovery hears a Mid-70 and NO Mid-360.
+  enum class LidarModel { kMid360 = 0, kMid70 = 1 };
+  LidarModel lidarModel() const;
+  void setLidarModel(LidarModel m);
+  void onLidarModelChanged();
+
+  // The Mid-70's own link fields, persisted in their own group ("mid70/last")
+  // beside "mid360/last" so neither can overwrite the other.
+  // 0.2 m for a Mid-70, 0 (= leave A6's default) for a Mid-360. See the
+  // definition for the measurement behind the number.
+  float lioNearGateForModel() const;
+
+  void loadMid70Settings();
+  void saveMid70Settings();
+
+  // Re-reads QSerialPortInfo into imu_port_ (keeping the current selection if
+  // it is still there) and always keeps the "(none)" entry first: an IMU is
+  // optional, and a Mid-70 with no IMU is a legitimate configuration that LIO
+  // will simply refuse to initialise on {M} which is a better failure than a
+  // fabricated one.
+  void refreshImuPortList();
+  QString selectedImuPort() const;
+
+  // Opens the chosen port and adds the kImuSerial device. Called from
+  // armPreview() AFTER the Mid-70 is added, so the log reads in device order.
+  // A failure here does NOT fail the arm: a Mid-70 with no IMU still records
+  // every point, and record-always outranks the odometry (the same rule
+  // startPreviewSession() applies to live SLAM).
+  bool armImuSerial(QString* err);
+  void disarmImuSerial(const QString& why);
+
   // --- inline live display controls (round 5 item 10) ---------------------
   void pushDisplayParams();
 
@@ -393,7 +478,9 @@ class CaptureWindow : public QDockWidget {
   void setAutoDetectStatus(const QString& text, const char* tone);
   void setDiscoveryRunning(bool running, const QString& phase_label);
   void applyMid360Result(const DiscoveryResult& r, bool silent);
+  void applyMid70Result(const DiscoveryResult& r, bool silent);
   void applyD6Result(const DiscoveryResult& r);
+  void applyJuxiImuResult(const DiscoveryResult& r, bool silent);
   void applyUm982Result(const DiscoveryResult& r, bool silent);
   void showEvent(QShowEvent* event) override;
 
@@ -412,17 +499,34 @@ class CaptureWindow : public QDockWidget {
   // enter this flow (--mid360-record-into). Consumed by the next onStart().
   QString last_cli_project_dir_;
   scanengine::DeviceId device_ = scanengine::kInvalidDeviceId;
+  // A18: a Mid-70 session is TWO devices. This is the second one, and it is
+  // kInvalidDeviceId for every Mid-360 session and for a Mid-70 armed with the
+  // IMU combo on "(none)". `imu_reader_` owns the QSerialPort behind it; the
+  // engine holds a write_fn pointing INTO it, so it must outlive the device and
+  // is therefore torn down only after removeDevice() has returned.
+  scanengine::DeviceId imu_device_ = scanengine::kInvalidDeviceId;
+  SerialReader* imu_reader_ = nullptr;
 
   Phase phase_ = Phase::kIdle;
 
   // arm bookkeeping (what used to be the self-test)
   QElapsedTimer arm_clock_;
-  double arm_window_s_ = 8.0;   // Mid-360: first packet before the A3 connect timeout
+  // How long "no first packet yet" is allowed to last before it is called a
+  // failure. 8 s is the Mid-360's (A3's connect timeout). armPreview() sets it
+  // explicitly on BOTH branches rather than relying on this initialiser,
+  // because the Mid-70's answer is 180 s: a COLD Mid-70 self-heats in the SDK's
+  // kLidarStateInit for up to ~3 minutes and streams nothing at all while it
+  // does, and an 8 s deadline would fail a working sensor for being cold. The
+  // window is only the deadline — arming ends the instant a packet arrives,
+  // whenever that is.
+  double arm_window_s_ = 8.0;
   std::uint64_t arm_baseline_points_ = 0;
 
   // Post-restart data watch (field bug C). `last_mid360_cfg_` is what a re-arm
   // re-adds: exactly the config the current device was opened with.
   std::unique_ptr<scanengine::Mid360Config> last_mid360_cfg_;
+  // A17: the Mid-70 equivalent, for the same field-bug-C re-arm path.
+  std::unique_ptr<scanengine::Mid70Config> last_mid70_cfg_;
   QElapsedTimer data_watch_clock_;
   std::uint64_t data_watch_baseline_points_ = 0;
   bool data_watch_active_ = false;
@@ -469,9 +573,22 @@ class CaptureWindow : public QDockWidget {
   QLineEdit* host_ip_ = nullptr;
   QLineEdit* lidar_ip_ = nullptr;
   QSpinBox* point_port_ = nullptr;
-  QSpinBox* imu_port_ = nullptr;
+  QSpinBox* imu_port_ = nullptr;   // Mid-360 IMU **UDP port**, not the A18 module
   QSpinBox* cmd_port_ = nullptr;
   QLabel* mid_hint_ = nullptr;
+
+  // --- A17/A18 link widgets ----------------------------------------------
+  QComboBox* lidar_model_ = nullptr;      // "Livox Mid-360" / "Livox Mid-70"
+  QFormLayout* link_form_ = nullptr;      // the host/lidar/ports/code form
+  QWidget* mid360_ports_row_ = nullptr;   // the three UDP ports: SDK2 only
+  QWidget* mid70_code_row_ = nullptr;     // "Broadcast code", read-only
+  QLineEdit* mid70_code_ = nullptr;
+  QWidget* imu_row_ = nullptr;            // the A18 serial-IMU picker
+  QComboBox* imu_serial_port_ = nullptr;  // "(none)" first, then QSerialPortInfo
+  QLabel* imu_hint_ = nullptr;
+  // Discovery result lines, beside the Mid-360 and UM982 ones.
+  QLabel* auto_detect_mid70_line_ = nullptr;
+  QLabel* auto_detect_juxi_line_ = nullptr;
 
   // RTK (UM982) — auto-detect prefill only in this build; there is no
   // engine-side GNSS serial wiring on the desktop capture path yet (unlike the

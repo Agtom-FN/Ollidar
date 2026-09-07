@@ -65,6 +65,7 @@ app rather than rename the one already on the phone.
 | --- | --- |
 | **COIN-D6** | Field-proven on the phone (USB-C serial). Works on the desktop app on macOS 26; older macOS unverified. |
 | **Livox Mid-360** | Bench-proven on the desktop app over Ethernet. On the phone it needs a USB-C Ethernet adapter Android can drive — a guided setup wizard and diagnostics are built in. |
+| **Livox Mid-70 + serial IMU** | Code-complete on the desktop app (macOS): Livox SDK v1 driver, a JuxiTech ICM-42670-P IMU module over USB serial, auto-detect for both, live SLAM, `.lscan` record + replay. Unit-tested against protocol-derived datagrams and frames; **first real-hardware run still pending**. Not on Android. |
 | **LDROBOT STL-27L** | In validation — code-complete and bench-tested against synthetic fixtures on the phone; first real-hardware run still pending. Not yet supported on desktop. |
 | **Unicore UM982 RTK** | Optional, phone-only (Bluetooth), for outdoor georeferencing. Bench-verified link. |
 

@@ -19,6 +19,8 @@
 
 #include "scanengine/core/instance_guard.h"
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -127,6 +129,180 @@ std::int64_t millis_now() {
   return std::chrono::duration_cast<std::chrono::milliseconds>(
              std::chrono::steady_clock::now().time_since_epoch())
       .count();
+}
+
+// --- Mid-70: an INDEPENDENT SDK v1 encoder ---------------------------------
+//
+// Nothing below calls the production CRC helpers. Both CRCs are recomputed
+// here in the TABLE-DRIVEN form FastCRC actually uses
+// (spikes/s8-mid70-sdk1/Livox-SDK/sdk_core/src/third_party/FastCRC/
+// FastCRCsw.cpp), while mid70_beacon.cpp implements the same two algorithms
+// bit-serially. Two implementations that disagree cannot both pass, which is
+// the whole point: this file ENCODES and the engine PARSES.
+//
+// The parameters, read out of the SDK rather than assumed:
+//   comm_port.cpp:37  new SdkProtocol(0x4c49, 0x564f580a)
+//   preamble  CRC-16/MCRF4XX (reflected 0x8408, refin/refout, xorout 0) with
+//             init 0x4C49 instead of the standard 0xFFFF
+//   frame     CRC-32/ISO-HDLC over the 0xEDB88320 table, register started at
+//             seed ^ 0xFFFFFFFF (== 0xA9B0A7F5) and finished ^ 0xFFFFFFFF
+//
+// STILL OWED: a real broadcast. tests/integration/data/mid70_broadcast.bin is
+// the plan's Phase 0 fixture and the hardware is unplugged, so every number
+// here traces to the SDK source and its second copy inside livox_ros_driver,
+// not to a wire. When the capture lands, point a test at it and this
+// encoder becomes the cross-check rather than the ground truth.
+
+std::uint16_t livox_crc16(const std::uint8_t* p, std::size_t n) {
+  static const std::array<std::uint16_t, 256> table = [] {
+    std::array<std::uint16_t, 256> t{};
+    for (int i = 0; i < 256; ++i) {
+      std::uint16_t c = static_cast<std::uint16_t>(i);
+      for (int b = 0; b < 8; ++b) {
+        c = (c & 1u) ? static_cast<std::uint16_t>((c >> 1) ^ 0x8408u)
+                     : static_cast<std::uint16_t>(c >> 1);
+      }
+      t[static_cast<std::size_t>(i)] = c;
+    }
+    return t;
+  }();
+  std::uint16_t crc = 0x4C49;
+  for (std::size_t i = 0; i < n; ++i) {
+    crc = static_cast<std::uint16_t>((crc >> 8) ^ table[(crc & 0xFFu) ^ p[i]]);
+  }
+  return crc;
+}
+
+std::uint32_t livox_crc32(const std::uint8_t* p, std::size_t n) {
+  static const std::array<std::uint32_t, 256> table = [] {
+    std::array<std::uint32_t, 256> t{};
+    for (int i = 0; i < 256; ++i) {
+      std::uint32_t c = static_cast<std::uint32_t>(i);
+      for (int b = 0; b < 8; ++b) c = (c & 1u) ? ((c >> 1) ^ 0xEDB88320u) : (c >> 1);
+      t[static_cast<std::size_t>(i)] = c;
+    }
+    return t;
+  }();
+  std::uint32_t crc = 0x564F580Au ^ 0xFFFFFFFFu;
+  for (std::size_t i = 0; i < n; ++i) crc = (crc >> 8) ^ table[(crc & 0xFFu) ^ p[i]];
+  return crc ^ 0xFFFFFFFFu;
+}
+
+// BroadcastDeviceInfo, byte for byte: code[16], dev_type, reserved u16,
+// ip[16] — both strings NUL-padded, the way strncpy into a fixed array
+// leaves them.
+std::vector<std::uint8_t> broadcast_info(const char* code, std::uint8_t dev_type,
+                                         const char* ip) {
+  std::vector<std::uint8_t> v(35, 0);
+  for (std::size_t i = 0; i < 16 && code[i] != '\0'; ++i) v[i] = static_cast<std::uint8_t>(code[i]);
+  v[16] = dev_type;
+  for (std::size_t i = 0; i < 16 && ip[i] != '\0'; ++i) {
+    v[19 + i] = static_cast<std::uint8_t>(ip[i]);
+  }
+  return v;
+}
+
+// SdkProtocol::Pack(), reimplemented. cmd_set/cmd_id/packet_type are
+// parameters so a test can build a WELL-FORMED frame that is nonetheless not
+// a broadcast — otherwise the CRCs would fail first and the parser's
+// cmd_set/cmd_id check would never be reached.
+std::vector<std::uint8_t> sdk1_frame(std::uint8_t packet_type, std::uint16_t seq,
+                                     std::uint8_t cmd_set, std::uint8_t cmd_id,
+                                     const std::vector<std::uint8_t>& payload) {
+  const std::size_t len = 11 + payload.size() + 4;
+  std::vector<std::uint8_t> f(len, 0);
+  f[0] = 0xAA;
+  f[1] = 1;  // kSdkVer0 — the enum starts at kSdkVerNone = 0
+  f[2] = static_cast<std::uint8_t>(len & 0xFF);
+  f[3] = static_cast<std::uint8_t>((len >> 8) & 0xFF);
+  f[4] = packet_type;
+  f[5] = static_cast<std::uint8_t>(seq & 0xFF);
+  f[6] = static_cast<std::uint8_t>((seq >> 8) & 0xFF);
+  const std::uint16_t pre = livox_crc16(f.data(), 7);
+  f[7] = static_cast<std::uint8_t>(pre & 0xFF);
+  f[8] = static_cast<std::uint8_t>((pre >> 8) & 0xFF);
+  f[9] = cmd_set;
+  f[10] = cmd_id;
+  for (std::size_t i = 0; i < payload.size(); ++i) f[11 + i] = payload[i];
+  const std::uint32_t crc = livox_crc32(f.data(), len - 4);
+  f[len - 4] = static_cast<std::uint8_t>(crc & 0xFF);
+  f[len - 3] = static_cast<std::uint8_t>((crc >> 8) & 0xFF);
+  f[len - 2] = static_cast<std::uint8_t>((crc >> 16) & 0xFF);
+  f[len - 1] = static_cast<std::uint8_t>((crc >> 24) & 0xFF);
+  return f;
+}
+
+// The frame the plan's verification step names: broadcast code
+// 3GGDJ5N00100101, dev_type 6 (Mid-70), 192.168.20.101.
+std::vector<std::uint8_t> mid70_broadcast(std::uint16_t seq = 7) {
+  return sdk1_frame(2 /* kMsgPack */, seq, 0x00, 0x00,
+                    broadcast_info("3GGDJ5N00100101", 6, "192.168.20.101"));
+}
+
+// Re-stamp both CRCs after a test has edited a frame in place, so a rejection
+// can be attributed to the field that was changed rather than to the
+// checksum that changed with it.
+void reseal(std::vector<std::uint8_t>& f) {
+  const std::uint16_t pre = livox_crc16(f.data(), 7);
+  f[7] = static_cast<std::uint8_t>(pre & 0xFF);
+  f[8] = static_cast<std::uint8_t>((pre >> 8) & 0xFF);
+  const std::uint32_t crc = livox_crc32(f.data(), f.size() - 4);
+  f[f.size() - 4] = static_cast<std::uint8_t>(crc & 0xFF);
+  f[f.size() - 3] = static_cast<std::uint8_t>((crc >> 8) & 0xFF);
+  f[f.size() - 2] = static_cast<std::uint8_t>((crc >> 16) & 0xFF);
+  f[f.size() - 1] = static_cast<std::uint8_t>((crc >> 24) & 0xFF);
+}
+
+// --- JuxiTech IMU: an independent frame encoder ----------------------------
+//
+// From the vendor's IMU_UART_SendCommand(): 7E 23 <len> <func> <payload>
+// <sum8>, len counting the WHOLE frame, sum8 the low byte of the sum of
+// every preceding byte. The engine's sniffer accumulates that sum from its
+// own constants and its own collected bytes; this one sums the finished
+// buffer. Same rule, different code.
+std::vector<std::uint8_t> juxi_frame(std::uint8_t func,
+                                     const std::vector<std::uint8_t>& payload) {
+  std::vector<std::uint8_t> f;
+  f.push_back(0x7E);
+  f.push_back(0x23);
+  f.push_back(static_cast<std::uint8_t>(payload.size() + 5));
+  f.push_back(func);
+  f.insert(f.end(), payload.begin(), payload.end());
+  std::uint32_t sum = 0;
+  for (const std::uint8_t b : f) sum += b;
+  f.push_back(static_cast<std::uint8_t>(sum & 0xFFu));
+  return f;
+}
+
+// One 25 Hz cycle of what the module actually emits, unprompted and in this
+// order: raw IMU, quaternion, Euler, barometer. Payload bytes are filler with
+// a per-cycle stamp so no two cycles are byte-identical.
+std::vector<std::uint8_t> juxi_cycle(std::uint8_t stamp) {
+  std::vector<std::uint8_t> out;
+  auto fill = [stamp](std::size_t n) {
+    std::vector<std::uint8_t> v(n);
+    for (std::size_t i = 0; i < n; ++i) {
+      v[i] = static_cast<std::uint8_t>((i * 37u + stamp * 11u) & 0xFFu);
+    }
+    return v;
+  };
+  const std::vector<std::uint8_t> frames[4] = {
+      juxi_frame(0x04, fill(18)),  // raw accel/gyro/mag, 9 x int16 LE
+      juxi_frame(0x16, fill(16)),  // quaternion
+      juxi_frame(0x26, fill(12)),  // Euler
+      juxi_frame(0x32, fill(16)),  // barometer
+  };
+  for (const auto& f : frames) out.insert(out.end(), f.begin(), f.end());
+  return out;
+}
+
+std::vector<std::uint8_t> juxi_stream(int cycles) {
+  std::vector<std::uint8_t> out;
+  for (int i = 0; i < cycles; ++i) {
+    const std::vector<std::uint8_t> c = juxi_cycle(static_cast<std::uint8_t>(i));
+    out.insert(out.end(), c.begin(), c.end());
+  }
+  return out;
 }
 
 }  // namespace
@@ -759,6 +935,381 @@ TEST_CASE("discovery/mid360_stop_after_first_device") {
 }
 
 // ===========================================================================
+// Mid-70: the SDK v1 broadcast parser
+// ===========================================================================
+
+TEST_CASE("discovery/mid70_beacon_parses_a_broadcast") {
+  const std::vector<std::uint8_t> f = mid70_broadcast();
+  // 11-byte header + 35-byte BroadcastDeviceInfo + 4-byte CRC32.
+  REQUIRE(f.size() == 50);
+  CHECK(f[0] == 0xAA);
+  CHECK(f[1] == 1);   // kSdkVer0
+  CHECK(f[4] == 2);   // kMsgPack — a broadcast is a Msg, not a Cmd
+
+  Result<Mid70Beacon> r = ParseMid70Beacon(f.data(), f.size());
+  REQUIRE(r.ok());
+  const Mid70Beacon& b = r.value();
+  CHECK(b.broadcast_code == "3GGDJ5N00100101");
+  CHECK(b.dev_type == 6);
+  CHECK(b.dev_type_name == "Mid-70");
+  CHECK(b.lidar_ip == "192.168.20.101");
+  CHECK(b.describe().find("Mid-70 3GGDJ5N00100101 at 192.168.20.101") != std::string::npos);
+}
+
+TEST_CASE("discovery/mid70_beacon_crcs_are_the_livox_variants") {
+  const std::vector<std::uint8_t> f = mid70_broadcast();
+  CHECK(Mid70PreambleCrcOk(f.data(), f.size()));
+  CHECK(Mid70FrameCrcOk(f.data(), f.size()));
+
+  // The SDK's own CheckPreamble() form: a reflected CRC with xorout 0 run
+  // over message+CRC leaves zero. A third way of saying the same thing, and
+  // the one that would break first if the init were wrong.
+  CHECK(livox_crc16(f.data(), 9) == 0);
+
+  // The polynomial, pinned. crc_table_mcrf4xx[1] is 0x1189 in the vendored
+  // FastCRC_tables.hpp, which is the signature of reflected 0x8408 — if a
+  // later edit "fixes" this to CCITT-FALSE, this line says so.
+  std::uint16_t t1 = 1;
+  for (int i = 0; i < 8; ++i) {
+    t1 = (t1 & 1u) ? static_cast<std::uint16_t>((t1 >> 1) ^ 0x8408u)
+                   : static_cast<std::uint16_t>(t1 >> 1);
+  }
+  CHECK(t1 == 0x1189);
+
+  // Neither CRC is its stock variant: a stock CCITT-FALSE (init 0xFFFF) and
+  // a stock zlib CRC32 (init 0) must both DISAGREE with the frame, or the
+  // Livox seeds would be doing nothing.
+  CHECK(Mid360HeaderCrcOk(f.data(), f.size()) == false);
+
+  // A payload byte: the frame CRC notices, the preamble CRC does not care.
+  std::vector<std::uint8_t> payload_bad = f;
+  payload_bad[20] = static_cast<std::uint8_t>(payload_bad[20] ^ 0xFF);
+  CHECK(Mid70PreambleCrcOk(payload_bad.data(), payload_bad.size()));
+  CHECK_FALSE(Mid70FrameCrcOk(payload_bad.data(), payload_bad.size()));
+  CHECK(ParseMid70Beacon(payload_bad.data(), payload_bad.size()).error() ==
+        ScanError::kChecksumFailed);
+
+  // The sequence number: the PREAMBLE crc notices first.
+  std::vector<std::uint8_t> pre_bad = f;
+  pre_bad[5] = static_cast<std::uint8_t>(pre_bad[5] ^ 0xFF);
+  CHECK_FALSE(Mid70PreambleCrcOk(pre_bad.data(), pre_bad.size()));
+  CHECK(ParseMid70Beacon(pre_bad.data(), pre_bad.size()).error() ==
+        ScanError::kChecksumFailed);
+
+  // The stored preamble CRC itself.
+  std::vector<std::uint8_t> stored_bad = f;
+  stored_bad[7] = static_cast<std::uint8_t>(stored_bad[7] ^ 0x01);
+  CHECK_FALSE(Mid70PreambleCrcOk(stored_bad.data(), stored_bad.size()));
+
+  // Unlike the Mid-360's advisory heartbeat, a bad CRC here is FATAL — there
+  // is no 50-byte record worth showing an operator once it is mangled.
+  CHECK_FALSE(ParseMid70Beacon(payload_bad.data(), payload_bad.size()).ok());
+}
+
+TEST_CASE("discovery/mid70_beacon_rejects_what_is_not_a_broadcast") {
+  const std::vector<std::uint8_t> good = mid70_broadcast();
+
+  CHECK(ParseMid70Beacon(nullptr, 50).error() == ScanError::kInvalidArgument);
+
+  const std::uint8_t stub[8] = {0xAA, 1, 8, 0, 2, 0, 0, 0};
+  CHECK(ParseMid70Beacon(stub, sizeof(stub)).error() == ScanError::kProtocolError);
+
+  // Wrong preamble byte.
+  std::vector<std::uint8_t> sof_bad = good;
+  sof_bad[0] = 0x55;
+  reseal(sof_bad);  // so it is ONLY the sof that is wrong
+  CHECK(ParseMid70Beacon(sof_bad.data(), sof_bad.size()).error() ==
+        ScanError::kProtocolError);
+
+  // Declared length disagreeing with the datagram. This is the check that
+  // stops a truncated frame being checksummed against four arbitrary bytes.
+  std::vector<std::uint8_t> len_bad = good;
+  len_bad[2] = 60;
+  reseal(len_bad);
+  CHECK(ParseMid70Beacon(len_bad.data(), len_bad.size()).error() ==
+        ScanError::kProtocolError);
+
+  // A well-formed SDK v1 frame that is NOT a broadcast: correct protocol,
+  // correct CRCs, wrong message. Built with the right cmd_set/cmd_id so the
+  // CRCs pass and the parser actually reaches the check.
+  const std::vector<std::uint8_t> not_broadcast =
+      sdk1_frame(1 /* kAckPack */, 3, 0x01 /* kCommandSetLidar */, 0x00,
+                 broadcast_info("3GGDJ5N00100101", 6, "192.168.20.101"));
+  CHECK(ParseMid70Beacon(not_broadcast.data(), not_broadcast.size()).error() ==
+        ScanError::kProtocolError);
+
+  // Right cmd_set/cmd_id, wrong payload size.
+  const std::vector<std::uint8_t> short_payload =
+      sdk1_frame(2, 4, 0x00, 0x00, std::vector<std::uint8_t>(20, 0));
+  CHECK(ParseMid70Beacon(short_payload.data(), short_payload.size()).error() ==
+        ScanError::kProtocolError);
+
+  // The cross-protocol case, and the reason the length check is exact: a
+  // Mid-360 SDK2 heartbeat also starts 0xAA. It must not parse as a Mid-70
+  // broadcast, and a Mid-70 broadcast must not parse as a Mid-360 heartbeat.
+  const auto sdk2 = beacon_frames();
+  REQUIRE(!sdk2.empty());
+  CHECK_FALSE(ParseMid70Beacon(sdk2[0].data(), sdk2[0].size()).ok());
+  // The other direction, with the SDK2 parser's fallback OFF. With it on it
+  // reports a "serial number" of 3GGDJ5N00100101, because that fallback is
+  // deliberately generous — any long alphanumeric run will do — and a Mid-70
+  // broadcast is nothing but one. That is not a bug to fix in the heuristic;
+  // it is the reason the two protocols get two ports and two parsers instead
+  // of one dispatcher on 0xAA.
+  CHECK_FALSE(ParseMid360Beacon(good.data(), good.size(), false).ok());
+}
+
+TEST_CASE("discovery/mid70_beacon_names_the_other_livox_models") {
+  // A Horizon on the bench is a DIAGNOSIS, not garbage. The parser must
+  // accept every dev_type and let the caller decide.
+  struct { std::uint8_t t; const char* name; } cases[] = {
+      {0, "Hub"}, {1, "Mid-40"}, {2, "Tele"}, {3, "Horizon"}, {6, "Mid-70"}, {7, "Avia"},
+  };
+  for (const auto& c : cases) {
+    const std::vector<std::uint8_t> f =
+        sdk1_frame(2, 1, 0x00, 0x00, broadcast_info("1HDDH00", c.t, "192.168.1.12"));
+    Result<Mid70Beacon> r = ParseMid70Beacon(f.data(), f.size());
+    REQUIRE(r.ok());
+    CHECK(r.value().dev_type == c.t);
+    CHECK(r.value().dev_type_name == c.name);
+    CHECK(r.value().lidar_ip == "192.168.1.12");
+    // Everything that is not a Mid-70 says so in the picker row.
+    CHECK((r.value().describe().find("not a Mid-70") != std::string::npos) == (c.t != 6));
+  }
+
+  // A dev_type Livox has not shipped yet is named, not rejected.
+  const std::vector<std::uint8_t> f =
+      sdk1_frame(2, 1, 0x00, 0x00, broadcast_info("9ZZZZ99", 9, "10.0.0.9"));
+  Result<Mid70Beacon> r = ParseMid70Beacon(f.data(), f.size());
+  REQUIRE(r.ok());
+  CHECK(r.value().dev_type_name == "unknown (9)");
+}
+
+// ===========================================================================
+// Mid-70: the UDP path
+// ===========================================================================
+
+TEST_CASE("discovery/mid70_timeout_and_arguments") {
+  CHECK(DiscoverMid70(-1).error() == ScanError::kInvalidArgument);
+  // The documented default port, so a typo that moved it shows up here.
+  CHECK(kMid70BroadcastPort == 55000);
+
+  DiscoverOptions opt;
+  opt.timeout_ms = 250;
+  opt.ports = {static_cast<std::uint16_t>(48000 + (CurrentProcessId() % 900))};
+  const std::int64_t t0 = millis_now();
+  Result<std::vector<Mid70Beacon>> r = DiscoverMid70(opt);
+  const std::int64_t dt = millis_now() - t0;
+  REQUIRE(r.ok());
+  CHECK(r.value().empty());
+  CHECK(dt >= 200);
+  CHECK(dt < 3000);
+}
+
+TEST_CASE("discovery/mid70_receives_and_dedups_a_broadcast") {
+  // Two broadcasts, one second apart on the wire, differing only in their
+  // sequence number — exactly what an unconnected Mid-70 emits. They must
+  // merge into ONE record.
+  const std::vector<std::vector<std::uint8_t>> frames = {mid70_broadcast(11),
+                                                         mid70_broadcast(12)};
+  REQUIRE(frames[0] != frames[1]);
+
+  const std::uint16_t port = static_cast<std::uint16_t>(49000 + (CurrentProcessId() % 900));
+
+#if defined(_WIN32)
+  WSADATA wsa;
+  (void)::WSAStartup(MAKEWORD(2, 2), &wsa);
+#endif
+
+  std::atomic<bool> sent{false};
+  std::thread sender([&] {
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+#if defined(_WIN32)
+    SOCKET fd = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (fd == INVALID_SOCKET) return;
+#else
+    int fd = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (fd < 0) return;
+#endif
+    sockaddr_in to;
+    std::memset(&to, 0, sizeof(to));
+    to.sin_family = AF_INET;
+    to.sin_port = htons(port);
+    to.sin_addr.s_addr = htonl(0x7F000001u);  // 127.0.0.1
+    for (const auto& f : frames) {
+      (void)::sendto(fd, reinterpret_cast<const char*>(f.data()), static_cast<int>(f.size()),
+                     0, reinterpret_cast<sockaddr*>(&to), sizeof(to));
+      std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    }
+    sent = true;
+#if defined(_WIN32)
+    ::closesocket(fd);
+#else
+    ::close(fd);
+#endif
+  });
+
+  DiscoverOptions opt;
+  opt.timeout_ms = 1500;
+  opt.ports = {port};
+  Result<std::vector<Mid70Beacon>> r = DiscoverMid70(opt);
+  sender.join();
+
+  REQUIRE(r.ok());
+  REQUIRE(r.value().size() == 1);  // two broadcasts, ONE lidar
+  const Mid70Beacon& b = r.value()[0];
+  CHECK(b.broadcast_code == "3GGDJ5N00100101");
+  CHECK(b.dev_type == 6);
+  CHECK(b.dev_type_name == "Mid-70");
+  CHECK(b.lidar_ip == "192.168.20.101");
+  CHECK(b.source_ip == "127.0.0.1");
+  CHECK(b.push_port_seen == port);
+  CHECK(b.beacons_seen == 2);
+  CHECK(b.t_last_seen_ns > 0);
+  CHECK(sent.load());
+}
+
+// ===========================================================================
+// JuxiTech IMU: the sniffer state machine
+// ===========================================================================
+
+TEST_CASE("discovery/juxi_probe_identifies_the_wire_signature") {
+  const std::vector<std::uint8_t> stream = juxi_stream(5);
+
+  SUBCASE("a clean stream identifies and is counted by func") {
+    JuxiImuSniffer s;
+    CHECK_FALSE(s.Identified());
+    s.Feed(stream.data(), stream.size());
+    CHECK(s.Identified());
+    CHECK(s.frames_ok() == 20);   // 5 cycles x 4 frame types
+    CHECK(s.raw_frames() == 5);
+    CHECK(s.quat_frames() == 5);
+    CHECK(s.euler_frames() == 5);
+    CHECK(s.baro_frames() == 5);
+    CHECK(s.frames_bad_checksum() == 0);
+    CHECK_FALSE(s.LooksLikeText());
+    CHECK_FALSE(s.version_known());
+  }
+
+  SUBCASE("torn across arbitrary chunk boundaries") {
+    // The reason this is a state machine and not a memchr: a 115200 read()
+    // splits wherever the OS feels like it.
+    for (std::size_t step = 1; step <= 7; ++step) {
+      JuxiImuSniffer s;
+      for (std::size_t i = 0; i < stream.size(); i += step) {
+        s.Feed(stream.data() + i, std::min<std::size_t>(step, stream.size() - i));
+      }
+      CHECK(s.Identified());
+      CHECK(s.frames_ok() == 20);
+      CHECK(s.raw_frames() == 5);
+    }
+  }
+
+  SUBCASE("two frames are not enough") {
+    const std::vector<std::uint8_t> a = juxi_frame(0x04, std::vector<std::uint8_t>(18, 1));
+    const std::vector<std::uint8_t> b = juxi_frame(0x16, std::vector<std::uint8_t>(16, 2));
+    JuxiImuSniffer s;
+    s.Feed(a.data(), a.size());
+    s.Feed(b.data(), b.size());
+    CHECK(s.frames_ok() == 2);
+    CHECK_FALSE(s.Identified());
+    const std::vector<std::uint8_t> c = juxi_frame(0x26, std::vector<std::uint8_t>(12, 3));
+    s.Feed(c.data(), c.size());
+    CHECK(s.Identified());
+  }
+
+  SUBCASE("a bad sum8 is counted and never accepted") {
+    std::vector<std::uint8_t> bad = juxi_frame(0x04, std::vector<std::uint8_t>(18, 5));
+    bad.back() = static_cast<std::uint8_t>(bad.back() ^ 0xFF);
+    JuxiImuSniffer s;
+    for (int i = 0; i < 10; ++i) s.Feed(bad.data(), bad.size());
+    CHECK(s.frames_ok() == 0);
+    CHECK(s.frames_bad_checksum() == 10);
+    CHECK_FALSE(s.Identified());
+  }
+
+  SUBCASE("a payload byte flip is caught by the checksum") {
+    std::vector<std::uint8_t> bad = juxi_frame(0x32, std::vector<std::uint8_t>(16, 9));
+    bad[6] = static_cast<std::uint8_t>(bad[6] ^ 0x40);
+    JuxiImuSniffer s;
+    for (int i = 0; i < 4; ++i) s.Feed(bad.data(), bad.size());
+    CHECK(s.frames_ok() == 0);
+    CHECK(s.frames_bad_checksum() == 4);
+  }
+
+  SUBCASE("a version frame is read if one goes past, never requested") {
+    const std::vector<std::uint8_t> v = juxi_frame(0x01, {1, 2, 3});
+    JuxiImuSniffer s;
+    s.Feed(stream.data(), stream.size());
+    CHECK_FALSE(s.version_known());  // nothing asked for one
+    s.Feed(v.data(), v.size());
+    REQUIRE(s.version_known());
+    CHECK(s.version()[0] == 1);
+    CHECK(s.version()[1] == 2);
+    CHECK(s.version()[2] == 3);
+  }
+
+  SUBCASE("resync: leading garbage, a stray 7E, and a nonsense length") {
+    std::vector<std::uint8_t> noisy = {0x00, 0xFF, 0x7E, 0x7E, 0x23, 0x02, 0x99,
+                                       0x7E, 0x11, 0x7E, 0x23, 0xF0};
+    noisy.insert(noisy.end(), stream.begin(), stream.end());
+    JuxiImuSniffer s;
+    s.Feed(noisy.data(), noisy.size());
+    CHECK(s.Identified());
+    CHECK(s.raw_frames() == 5);
+  }
+
+  SUBCASE("a UM982 must not be claimed by this probe") {
+    // The ordering contract's whole safety argument: this probe runs at
+    // 115200, which is the UM982's DOCUMENTED default, and it runs BEFORE
+    // the UM982's own probe. The text latch is what stops it stealing the
+    // port. A receiver read at its own rate looks like this:
+    const char* nmea =
+        "$GNGGA,120000.00,2222.2222222,N,11411.1111111,E,1,12,0.7,10.0,M,0.0,M,,*7A\r\n"
+        "$GPTHS,123.456,A*2B\r\n#UNIHEADINGA,COM1,0,60.0,FINE,2280,1;SOL_COMPUTED*a1b2c3d4\r\n";
+    JuxiImuSniffer s;
+    s.Feed(reinterpret_cast<const std::uint8_t*>(nmea), std::strlen(nmea));
+    CHECK(s.LooksLikeText());
+    CHECK_FALSE(s.Identified());
+    // ...and it STAYS latched even if IMU-shaped bytes turn up afterwards.
+    s.Feed(stream.data(), stream.size());
+    CHECK(s.frames_ok() >= JuxiImuSniffer::kFramesToIdentify);
+    CHECK_FALSE(s.Identified());
+  }
+
+  SUBCASE("Reset clears every counter") {
+    JuxiImuSniffer s;
+    s.Feed(stream.data(), stream.size());
+    REQUIRE(s.Identified());
+    s.Reset();
+    CHECK_FALSE(s.Identified());
+    CHECK(s.frames_ok() == 0);
+    CHECK(s.raw_frames() == 0);
+    CHECK(s.quat_frames() == 0);
+    CHECK(s.euler_frames() == 0);
+    CHECK(s.baro_frames() == 0);
+    CHECK(s.frames_bad_checksum() == 0);
+    CHECK_FALSE(s.version_known());
+    CHECK_FALSE(s.LooksLikeText());
+  }
+}
+
+TEST_CASE("discovery/juxi_probe_walks_ports_without_writing") {
+  // No ports offered: "not found", immediately, and not an error.
+  CHECK_FALSE(ProbeSerialJuxiImu({}, 50).has_value());
+
+  // A path that cannot exist is skipped, not fatal, and must not hang. The
+  // dwell floor is 400 ms per port, so two impossible paths must still come
+  // back fast because neither ever opens.
+  const std::int64_t t0 = millis_now();
+  CHECK_FALSE(ProbeSerialJuxiImu({"/dev/lidarscan-does-not-exist",
+                                  "/dev/lidarscan-does-not-exist-either"},
+                                 200)
+                  .has_value());
+  CHECK(millis_now() - t0 < 4000);
+}
+
+// ===========================================================================
 // The single-instance guard
 // ===========================================================================
 
@@ -891,4 +1442,45 @@ TEST_CASE("instance_guard/default_path_and_lifecycle") {
   idle.Release();
   CHECK_FALSE(idle.held());
   CHECK(CurrentProcessId() > 0);
+}
+
+// ---------------------------------------------------------------------------
+// Fable review, 2026-09-07: the REAL broadcast is 34 bytes, not 50.
+// sdk_core/src/device_discovery.cpp:148 copies `sizeof(BroadcastDeviceInfo) -
+// sizeof(ip)` = 19 bytes off the wire and fills ip[] from the UDP source
+// address; the 35-byte struct never crosses the network. The parser must
+// accept the wire form (and report no lidar_ip for it), or discovery rejects
+// every frame a real Mid-70 sends.
+// ---------------------------------------------------------------------------
+TEST_CASE("discovery/mid70/wire_form_34_bytes_without_ip_text") {
+  using namespace scanengine;
+  using namespace scanengine::discovery;
+  std::vector<std::uint8_t> info(19, 0);
+  const char* code = "3GGDJ5N00100101";
+  for (std::size_t i = 0; i < 16 && code[i] != '\0'; ++i) info[i] = static_cast<std::uint8_t>(code[i]);
+  info[16] = 6;  // kDeviceTypeLidarMid70
+  const auto f = sdk1_frame(2 /* kMsgPack */, 9, 0x00, 0x00, info);
+  REQUIRE(f.size() == 34);
+  CHECK(f.size() == kMid70BroadcastBytes);
+  CHECK(Mid70PreambleCrcOk(f.data(), f.size()));
+  CHECK(Mid70FrameCrcOk(f.data(), f.size()));
+
+  auto r = ParseMid70Beacon(f.data(), f.size());
+  REQUIRE(r.ok());
+  CHECK(r.value().broadcast_code == "3GGDJ5N00100101");
+  CHECK(r.value().dev_type == 6);
+  CHECK(r.value().dev_type_name == "Mid-70");
+  CHECK(r.value().lidar_ip.empty());  // the wire carries none; source_ip is the address
+
+  // The 35-byte form is still accepted and still carries the text.
+  const auto g = mid70_broadcast();
+  REQUIRE(g.size() == kMid70BroadcastBytesWithIp);
+  auto r2 = ParseMid70Beacon(g.data(), g.size());
+  REQUIRE(r2.ok());
+  CHECK(r2.value().lidar_ip == "192.168.20.101");
+
+  // Anything else (a 20-byte payload, say) is still a protocol error.
+  std::vector<std::uint8_t> odd(20, 0);
+  const auto h = sdk1_frame(2, 9, 0x00, 0x00, odd);
+  CHECK(ParseMid70Beacon(h.data(), h.size()).error() == ScanError::kProtocolError);
 }

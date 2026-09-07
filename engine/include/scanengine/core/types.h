@@ -31,6 +31,13 @@ enum class DeviceKind : std::uint8_t {
   // A second serial pushbroom sensor alongside the D6, not a replacement — the
   // two are selected independently and may coexist on one rig.
   kStl27l = 4,
+  // Livox Mid-70 over UDP (drivers/mid70) — A17. SDK v1 protocol, NOT SDK2:
+  // different discovery port (55000), different datagram layout, and no
+  // built-in IMU, so a Mid-70 session pairs it with a kImuSerial device.
+  kMid70 = 5,
+  // External IMU module over UART (drivers/imu_serial) — A18. Push-mode like
+  // the D6: the app owns the port and hands bytes in.
+  kImuSerial = 6,
 };
 
 const char* to_string(DeviceKind k) noexcept;
@@ -61,6 +68,15 @@ enum class StreamId : std::uint8_t {
   // project" and would hand the D6 parser 47-byte LD frames. Same argument
   // that put kImuPhone beside kImu rather than inside it.
   kLidarStl27l = 11,
+  // A17 (additive): Mid-70 point datagrams. Deliberately NOT kLidarMid360 —
+  // the two wire formats share nothing, and the offline pipeline reads a
+  // non-empty kLidarMid360 summary as "an SDK2 Mid-360 project".
+  kLidarMid70 = 12,
+  // A18 (additive): the external serial IMU. Deliberately NOT kImu, for the
+  // same reason kImuPhone is not: kImu means "the Mid-360's own IMU" to
+  // d6_resolve.cpp and post_pipeline.cpp. No device clock — stamps are
+  // arrival time de-bursted by the driver, i.e. already engine time.
+  kImuSerial = 13,
 };
 
 const char* to_string(StreamId s) noexcept;

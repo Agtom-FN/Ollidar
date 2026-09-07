@@ -81,6 +81,11 @@ inline constexpr const char* kMapStreamFile = "streams/map.bin";
 // to the Mid-360 pipeline, which cannot resolve it. Nothing wrote kPhoneImu
 // chunks before ROUND 9, so a new filename breaks no existing recording.
 inline constexpr const char* kPhoneImuStreamFile = "streams/imu_phone.bin";
+// A18 (additive): the SERIAL IMU module, i.e. StreamId::kImuSerial. Its own
+// file for the kImuPhone reason — imu.bin means "Mid-360 project" to the
+// offline pipelines — and because its chunks are raw UART bytes, which no
+// reader of imu.bin's SDK2 datagrams could parse.
+inline constexpr const char* kImuSerialStreamFile = "streams/imu_serial.bin";
 
 // Chunk payload kinds. STABLE, APPEND-ONLY: a shipped .lscan may contain any
 // of these forever.
@@ -102,6 +107,12 @@ enum class ChunkType : std::uint16_t {
                          // as received — the kD6Raw contract for a second
                          // serial lidar, on its own type so an offline reader
                          // never hands 47-byte LD frames to the D6 parser.
+  kMid70Points = 14,     // one Livox SDK v1 point datagram (LivoxEthPacket +
+                         // data), unmodified (A17). Replayable through
+                         // Mid70Backend::kInject, one datagram per chunk.
+  kImuSerialRaw = 15,    // raw serial-IMU UART bytes (A18), exactly as
+                         // received — the kD6Raw contract; frames are
+                         // reassembled by the parser on replay.
 };
 
 // Chunk flags.

@@ -1,0 +1,28 @@
+Subject: [PATCH sdk1-0003] Give sdk_core's static library a fixed target name
+
+sdk_core/CMakeLists.txt names its library `${PROJECT_NAME}_static`, and
+sdk_core itself never calls project(). Standalone that yields the accidental
+`Project_static` (CMake invents `project(Project)` and warns — see
+spikes/s8-mid70-sdk1/build-fix/cmake.log and its libProject_static.a). Added
+as a subdirectory of the engine, PROJECT_NAME is *scanengine*, so the SDK
+would define a target called `scanengine_static` — a name that reads as ours,
+that collides with anything the engine ever adds under that name, and that
+would silently change if the engine project were renamed.
+
+Pinning it to `livox_sdk_static` mirrors SDK2, whose sdk_core sets
+`livox_lidar_sdk_static` literally, and gives engine/CMakeLists.txt a stable
+name to link. One line, and it is the smallest change that makes the
+subdirectory build well-defined; the alternative (wrapping the add_subdirectory
+in a project() call of our own) would put the SDK in its own project scope and
+drag CMAKE_* settings out of sync with the engine's.
+---
+--- a/sdk_core/CMakeLists.txt
++++ b/sdk_core/CMakeLists.txt
+@@ -1,6 +1,6 @@
+ cmake_minimum_required(VERSION 3.10)
+ 
+-set(SDK_LIBRARY ${PROJECT_NAME}_static)
++set(SDK_LIBRARY livox_sdk_static)
+ add_library(${SDK_LIBRARY} STATIC "")
+ 
+ set(LIVOX_SDK_MAJOR_VERSION "2")

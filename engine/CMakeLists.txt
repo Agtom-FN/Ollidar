@@ -125,6 +125,60 @@ else()
                    "(Mid-360 live capture disabled; run third_party/fetch_sdk2.sh to enable)")
 endif()
 
+# --- Livox-SDK v1 (A17) ----------------------------------------------------
+# The Mid-70 speaks the OLDER Livox protocol, which only SDK v1 implements —
+# it is a separate upstream repository (Livox-SDK/Livox-SDK), not an older
+# tag of SDK2, and the two vendored trees coexist. Same recipe as above and
+# for the same reasons: third_party/fetch_sdk1.sh fetches a pinned tarball
+# and applies patches/sdk1-*.patch (CMake 4 floor, -Werror inside the SDK's
+# own vendored spdlog, and sdk_core's `${PROJECT_NAME}_static` target name —
+# all three measured in spikes/s8-mid70-sdk1/), and the tree is gitignored.
+#
+# AUTO by default, so the five CI legs stay green with no network fetch: the
+# Mid-70 driver's decode / filter / loss / watchdog logic is SDK-free and is
+# tested through the raw-UDP and inject backends either way. Only bringing an
+# out-of-the-box device up needs the SDK.
+set(LIVOX_SDK1_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/Livox-SDK")
+set(ENGINE_WITH_LIVOX_SDK1 "AUTO" CACHE STRING
+    "Build the Mid-70 SDK v1 backend: AUTO (if third_party/Livox-SDK exists), ON, or OFF")
+set_property(CACHE ENGINE_WITH_LIVOX_SDK1 PROPERTY STRINGS AUTO ON OFF)
+
+set(_engine_use_sdk1 OFF)
+if(ENGINE_WITH_LIVOX_SDK1 STREQUAL "AUTO")
+    if(EXISTS "${LIVOX_SDK1_DIR}/CMakeLists.txt")
+        set(_engine_use_sdk1 ON)
+    endif()
+elseif(ENGINE_WITH_LIVOX_SDK1)
+    if(NOT EXISTS "${LIVOX_SDK1_DIR}/CMakeLists.txt")
+        message(FATAL_ERROR
+            "scanengine: ENGINE_WITH_LIVOX_SDK1=ON but ${LIVOX_SDK1_DIR} is missing. "
+            "Run engine/third_party/fetch_sdk1.sh first.")
+    endif()
+    set(_engine_use_sdk1 ON)
+endif()
+
+if(_engine_use_sdk1)
+    # sdk_core ONLY, not the SDK root: the root CMakeLists adds eight sample
+    # executables (sample/, sample_cc/) that we never link, and sets
+    # CMAKE_CXX_FLAGS globally. sdk_core/CMakeLists.txt is self-contained
+    # apart from two things the root used to supply, both restored below:
+    # -pthread (via Threads::Threads) and a C++ standard the 2019 sources
+    # compile under.
+    add_subdirectory(${LIVOX_SDK1_DIR}/sdk_core livox_sdk1 EXCLUDE_FROM_ALL)
+    # The engine builds at C++20; livox_sdk_static is pinned to the C++11 the
+    # SDK's root CMakeLists asks for, because it is not our code and a newer
+    # standard only changes how its vendored spdlog/fmt misbehaves.
+    set_target_properties(livox_sdk_static PROPERTIES
+        CXX_STANDARD 11
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF)
+    target_link_libraries(livox_sdk_static PUBLIC Threads::Threads)
+    message(STATUS "scanengine: Livox-SDK v1 (patched) from ${LIVOX_SDK1_DIR}")
+else()
+    message(STATUS "scanengine: building WITHOUT Livox-SDK v1 "
+                   "(Mid-70 live capture disabled; run third_party/fetch_sdk1.sh to enable)")
+endif()
+
 # GTSAM / Ceres / Filament are NOT dependencies yet — see vcpkg.json for the
 # ordering and TOOLCHAIN_NOTES.md for the per-port caveats (autotools ports
 # break under the macOS universal overlay triplet; verify each one before
@@ -160,6 +214,15 @@ if(_engine_use_sdk2)
     # every other consumer free of Livox headers.
     target_link_libraries(scanengine PUBLIC livox_lidar_sdk_static)
     target_compile_definitions(scanengine PRIVATE SCANENGINE_HAVE_LIVOX_SDK2=1)
+endif()
+
+if(_engine_use_sdk1)
+    # PUBLIC link / PRIVATE define, for the same reason as SDK2:
+    # src/drivers/mid70/mid70_sdk1.cpp is the only translation unit that
+    # includes livox_sdk.h, so no public header, the C ABI, or the JNI .so
+    # ever sees a Livox v1 type.
+    target_link_libraries(scanengine PUBLIC livox_sdk_static)
+    target_compile_definitions(scanengine PRIVATE SCANENGINE_HAVE_LIVOX_SDK1=1)
 endif()
 
 if(MSVC)

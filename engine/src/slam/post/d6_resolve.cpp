@@ -145,6 +145,9 @@ Status lscan_is_d6_project(const std::string& lscan_dir, bool* is_d6) {
     if (s.chunk_count == 0) continue;
     if (s.stream == StreamId::kLidarD6) has_d6 = true;
     if (s.stream == StreamId::kLidarMid360 || s.stream == StreamId::kImu) has_mid360 = true;
+    // A17: a Mid-70 container is not a D6 project either; routing it to A7
+    // gets the explicit "not supported yet" error instead of a D6 misroute.
+    if (s.stream == StreamId::kLidarMid70 || s.stream == StreamId::kImuSerial) has_mid360 = true;
   }
   (void)reader.close();
   // A container holding both is a rig this product does not ship, and A7's

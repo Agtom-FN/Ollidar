@@ -41,6 +41,8 @@ D6_EXPECTED_RATE_MIN_BPS = 8_000
 D6_EXPECTED_RATE_MAX_BPS = 16_000
 
 MID360_MAGIC = b"LX360CAP"
+MID70_MAGIC = b"LX70_CAP"    # capture_mid70.py (SDK v1 datagrams)
+IMUSER_MAGIC = b"IMUSRCAP"   # capture_serial_imu.py (raw UART bytes)
 
 
 class Result:
@@ -60,7 +62,12 @@ def detect_type(path):
     if ext == ".bin":
         return "d6"
     if ext == ".livoxdump":
-        return "mid360"
+        # Same container, two lidars: the magic decides.
+        with open(path, "rb") as f:
+            head = f.read(8)
+        return "mid70" if head == MID70_MAGIC else "mid360"
+    if ext == ".imudump":
+        return "imuserial"
     if ext in (".nmea", ".txt", ".log"):
         return "nmea"
     # Content sniff fallback.
@@ -68,6 +75,10 @@ def detect_type(path):
         head = f.read(16)
     if head[:8] == MID360_MAGIC:
         return "mid360"
+    if head[:8] == MID70_MAGIC:
+        return "mid70"
+    if head[:8] == IMUSER_MAGIC:
+        return "imuserial"
     if head[:1] in (b"$", b"!"):
         return "nmea"
     return "d6"
@@ -349,6 +360,230 @@ FIX_NAMES = {
 UNICORE_BIN_SYNCS = (b"\xAA\x44\xB5", b"\xAA\x44\x12")
 
 
+# ---------------------------------------------------------------------------
+# Shared reader for the timestamped containers (capture_mid360 / mid70 / serial_imu)
+# ---------------------------------------------------------------------------
+
+def _read_container(path, magic, results):
+    """Return (port_table, records, truncated) or None after appending FAIL results."""
+    with open(path, "rb") as f:
+        fixed = f.read(struct.calcsize("<8sHH"))
+        if len(fixed) < struct.calcsize("<8sHH"):
+            results.append(Result("FAIL", "truncated before container header"))
+            return None
+        got, version, num_ports = struct.unpack("<8sHH", fixed)
+        if got != magic:
+            results.append(Result("FAIL", f"bad magic: {got!r} (expected {magic!r})"))
+            return None
+        results.append(Result("PASS", f"container header OK: version={version}, num_ports={num_ports}"))
+        ports = []
+        for _ in range(num_ports):
+            raw = f.read(4)
+            if len(raw) < 4:
+                results.append(Result("FAIL", "truncated port table"))
+                return None
+            ports.append(struct.unpack("<I", raw)[0])
+        rec = struct.Struct("<QHI")
+        records = []  # (t_ns, port_idx, payload)
+        truncated = False
+        while True:
+            hdr = f.read(rec.size)
+            if not hdr:
+                break
+            if len(hdr) < rec.size:
+                truncated = True
+                break
+            t_ns, port_idx, length = rec.unpack(hdr)
+            payload = f.read(length)
+            if len(payload) < length:
+                truncated = True
+                break
+            records.append((t_ns, port_idx, payload))
+    return ports, records, truncated
+
+
+def _gap_census(times_ns, threshold_s):
+    gaps = []
+    for a, b in zip(times_ns, times_ns[1:]):
+        g = (b - a) / 1e9
+        if g > threshold_s:
+            gaps.append(((a - times_ns[0]) / 1e9, g))
+    return gaps
+
+
+# ---------------------------------------------------------------------------
+# Mid-70 (SDK v1) -- capture_mid70.py
+# ---------------------------------------------------------------------------
+
+# LivoxEthPacket sizes by data_type (18-byte header + points):
+#   0 Cartesian 100x13 = 1318   1 Spherical 100x9 = 918
+#   2 ExtendCartesian 96x14 = 1362   3 ExtendSpherical 96x10 = 978
+#   4 DualExtendCartesian 48x28 = 1362   5 DualExtendSpherical 48x16 = 786
+MID70_DATAGRAM_SIZES = {1318, 918, 1362, 978, 786}
+
+
+def verify_mid70(path):
+    results = []
+    size = os.path.getsize(path)
+    results.append(Result("PASS" if size > 0 else "FAIL", f"file size: {size:,} bytes"))
+    if size == 0:
+        return results
+    rd = _read_container(path, MID70_MAGIC, results)
+    if rd is None:
+        return results
+    ports, records, truncated = rd
+    results.append(Result("PASS", f"port table: {ports}"))
+    if truncated:
+        results.append(Result("WARN", "container ends in a partial record (capture interrupted); "
+                                      "readers stop there"))
+    if not records:
+        results.append(Result("FAIL", "no records"))
+        return results
+
+    bcast_idx = ports.index(55000) if 55000 in ports else None
+    bcast = [r for r in records if r[1] == bcast_idx] if bcast_idx is not None else []
+    data = [r for r in records if r[1] != bcast_idx]
+
+    if bcast_idx is not None:
+        codes = set()
+        bad = 0
+        for _, _, p in bcast:
+            if len(p) >= 27 and p[0] == 0xAA:
+                codes.add(p[11:27].split(b"\x00", 1)[0].decode("ascii", "replace"))
+            else:
+                bad += 1
+        st = "PASS" if bcast and not bad else ("WARN" if bcast else "FAIL")
+        results.append(Result(st, f"broadcast frames on 55000: {len(bcast)} ({bad} not 0xAA-framed); "
+                                  f"codes: {sorted(codes) or 'none'}"))
+        if len(bcast) >= 2:
+            t = [r[0] for r in bcast]
+            per = (t[-1] - t[0]) / 1e9 / (len(t) - 1)
+            results.append(Result("PASS" if 0.5 < per < 2.0 else "WARN",
+                                  f"broadcast period: {per:.2f} s (SDK v1: ~1 s)"))
+        if len(bcast) < 2:
+            results.append(Result("WARN", "fewer than 2 broadcast frames -- the discovery fixture wants >= 2"))
+
+    if data:
+        t = [r[0] for r in data]
+        dur = (t[-1] - t[0]) / 1e9
+        sizes = {}
+        for _, _, p in data:
+            sizes[len(p)] = sizes.get(len(p), 0) + 1
+        odd = {k: v for k, v in sizes.items() if k not in MID70_DATAGRAM_SIZES}
+        results.append(Result("PASS" if not odd else "WARN",
+                              f"data datagrams: {len(data)} over {dur:.2f} s; sizes {sizes}"
+                              + (f"; UNEXPECTED sizes {odd}" if odd else "")))
+        if dur > 0:
+            rate = len(data) / dur
+            results.append(Result("PASS" if 900 < rate < 2200 else "WARN",
+                                  f"datagram rate: {rate:.0f}/s (single return ~1000/s at 100 pts each; "
+                                  f"~1042/s at 96; dual ~2083/s)"))
+        # Every datagram reports the device's own clock status in err_code
+        # (bytes 4..7 LE) and timestamp_type (byte 8). Summarise both.
+        ts_types = {}
+        sync_ok = 0
+        for _, _, p in data:
+            if len(p) >= 18:
+                ts_types[p[8]] = ts_types.get(p[8], 0) + 1
+                err = int.from_bytes(p[4:8], "little")
+                if (err >> 14) & 0x7:  # time_sync_status, bits 14..16 of LidarErrorCode
+                    sync_ok += 1
+        results.append(Result("PASS", f"timestamp_type histogram: {ts_types} "
+                                      f"(0 NoSync, 1 PTP, 3 PPS+GPS, 4 PPS); "
+                                      f"time_sync_status set in {sync_ok}/{len(data)}"))
+        gaps = _gap_census(t, 0.1)
+        results.append(Result("PASS" if not gaps else "WARN",
+                              f"arrival gaps > 100 ms: {len(gaps)}"
+                              + (f"; worst {max(g for _, g in gaps):.3f} s" if gaps else "")))
+    else:
+        results.append(Result("WARN", "no data-port datagrams (broadcast-only capture, or the driver "
+                                      "on the capture host never completed the handshake)"))
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Serial IMU (JuxiTech) -- capture_serial_imu.py
+# ---------------------------------------------------------------------------
+
+def verify_imuserial(path, seconds=None):
+    results = []
+    size = os.path.getsize(path)
+    results.append(Result("PASS" if size > 0 else "FAIL", f"file size: {size:,} bytes"))
+    if size == 0:
+        return results
+    rd = _read_container(path, IMUSER_MAGIC, results)
+    if rd is None:
+        return results
+    ports, records, truncated = rd
+    results.append(Result("PASS", f"baud (port table): {ports}"))
+    if truncated:
+        results.append(Result("WARN", "container ends in a partial record (capture interrupted)"))
+    if not records:
+        results.append(Result("FAIL", "no records"))
+        return results
+
+    t = [r[0] for r in records]
+    dur = (t[-1] - t[0]) / 1e9
+    stream = b"".join(r[2] for r in records)
+    n_bytes = len(stream)
+    results.append(Result("PASS", f"records: {len(records)} over {dur:.2f} s; {n_bytes:,} bytes "
+                                  f"({n_bytes / dur if dur else 0:.0f} B/s)"))
+
+    # Frame census across record boundaries: 7E 23 <len> <func> ... <sum8>.
+    # func 0x04 raw is the one the engine consumes; the other three are counted.
+    funcs = {}
+    good = bad = 0
+    i = 0
+    while i + 4 <= n_bytes:
+        if stream[i] == 0x7E and stream[i + 1] == 0x23:
+            ln = stream[i + 2]
+            end = i + ln  # len counts the WHOLE frame (7E 23 len ... sum8)
+            if end <= n_bytes and ln >= 2:
+                body = stream[i + 3:end - 1]
+                if (sum(stream[i:end - 1]) & 0xFF) == stream[end - 1] or \
+                   (sum(body) & 0xFF) == stream[end - 1]:
+                    good += 1
+                    funcs[body[0]] = funcs.get(body[0], 0) + 1
+                    i = end
+                    continue
+                bad += 1
+        i += 1
+    total = good + bad
+    rate = good / total if total else 0.0
+    results.append(Result("PASS" if total and rate >= 0.99 else ("WARN" if total else "FAIL"),
+                          f"frames: {good} good, {bad} bad checksum ({rate:.4f}); "
+                          f"func histogram {{{', '.join(f'0x{k:02X}: {v}' for k, v in sorted(funcs.items()))}}}"))
+    raw = funcs.get(0x04, 0)
+    if dur > 0:
+        hz = raw / dur
+        results.append(Result("PASS" if 85 <= hz <= 105 else "WARN",
+                              f"raw (0x04) frame rate: {hz:.1f} Hz over the whole capture "
+                              f"(100 Hz asked; the module's ~2.9 s stalls pull the average down)"))
+
+    gaps = _gap_census(t, 0.1)
+    big = [g for g in gaps if g[1] > 0.5]
+    detail = "; ".join(f"at {a:.1f}s gap {g:.2f}s" for a, g in big[:6])
+    if dur >= 40:
+        results.append(Result("PASS" if big else "WARN",
+                              f"blackouts > 0.5 s: {len(big)} ({detail or 'none'}) -- "
+                              f"expected >= 1 on a {dur:.0f} s capture (module firmware, ~35 s period)"))
+    else:
+        results.append(Result("WARN", f"blackouts > 0.5 s: {len(big)}; capture is {dur:.0f} s, shorter than "
+                                      f"the module's ~35 s stall period -- capture 60 s for the fixture"))
+    if len(big) >= 2:
+        periods = [big[k + 1][0] - big[k][0] for k in range(len(big) - 1)]
+        results.append(Result("PASS", f"stall-to-stall periods: {' '.join(f'{p:.1f}' for p in periods)} s"))
+    small = len(gaps) - len(big)
+    results.append(Result("PASS", f"gaps 0.1..0.5 s: {small}"))
+    if seconds is None:
+        seconds = guess_seconds_from_name(path)
+    if seconds:
+        results.append(Result("PASS" if abs(dur - seconds) < max(2.0, 0.1 * seconds) else "WARN",
+                              f"duration {dur:.1f} s vs expected {seconds:.0f} s"))
+    return results
+
+
+
 def verify_nmea(path, seconds=None):
     results = []
     size = os.path.getsize(path)
@@ -518,7 +753,7 @@ def overall_status(results):
 def main():
     ap = argparse.ArgumentParser(description="Verify a capture file returned from the remote-capture kit.")
     ap.add_argument("file", help="Path to the returned capture file")
-    ap.add_argument("--type", choices=["d6", "mid360", "nmea", "um982"],
+    ap.add_argument("--type", choices=["d6", "mid360", "mid70", "imuserial", "nmea", "um982"],
                     help="Override auto-detected file type ('um982' is an alias for 'nmea')")
     ap.add_argument("--seconds", type=float, help="Known capture duration (D6 byte-rate and NMEA "
                                                      "sentence-rate checks); inferred from a filename like "
@@ -539,6 +774,10 @@ def main():
         results = verify_d6(args.file, args.seconds, args.d6cli)
     elif ftype == "mid360":
         results = verify_mid360(args.file)
+    elif ftype == "mid70":
+        results = verify_mid70(args.file)
+    elif ftype == "imuserial":
+        results = verify_imuserial(args.file, args.seconds)
     elif ftype in ("nmea", "um982"):
         results = verify_nmea(args.file, args.seconds)
     else:

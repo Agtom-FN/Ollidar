@@ -66,6 +66,11 @@ SCAN_CHECK_ENUM(SCAN_DEVICE_D6, DeviceKind::kD6);
 SCAN_CHECK_ENUM(SCAN_DEVICE_MID360, DeviceKind::kMid360);
 SCAN_CHECK_ENUM(SCAN_DEVICE_RTK_ROVER, DeviceKind::kRtkRover);
 SCAN_CHECK_ENUM(SCAN_DEVICE_STL27L, DeviceKind::kStl27l);
+SCAN_CHECK_ENUM(SCAN_DEVICE_MID70, DeviceKind::kMid70);
+SCAN_CHECK_ENUM(SCAN_DEVICE_IMU_SERIAL, DeviceKind::kImuSerial);
+SCAN_CHECK_ENUM(SCAN_MID70_BACKEND_SDK1, Mid70Backend::kSdk1);
+SCAN_CHECK_ENUM(SCAN_MID70_BACKEND_RAW_UDP, Mid70Backend::kRawUdp);
+SCAN_CHECK_ENUM(SCAN_MID70_BACKEND_INJECT, Mid70Backend::kInject);
 
 SCAN_CHECK_ENUM(SCAN_DEV_DISCONNECTED, DeviceState::kDisconnected);
 SCAN_CHECK_ENUM(SCAN_DEV_STREAMING, DeviceState::kStreaming);
@@ -86,6 +91,8 @@ SCAN_CHECK_ENUM(SCAN_STREAM_SLAM_MAP, StreamId::kSlamMap);
 SCAN_CHECK_ENUM(SCAN_STREAM_POSE_LIO, StreamId::kPoseLio);
 SCAN_CHECK_ENUM(SCAN_STREAM_IMU_PHONE, StreamId::kImuPhone);
 SCAN_CHECK_ENUM(SCAN_STREAM_LIDAR_STL27L, StreamId::kLidarStl27l);
+SCAN_CHECK_ENUM(SCAN_STREAM_LIDAR_MID70, StreamId::kLidarMid70);
+SCAN_CHECK_ENUM(SCAN_STREAM_IMU_SERIAL, StreamId::kImuSerial);
 
 // A8's three new enums. The drift guard matters more here than usual: the
 // gates are what Tech Spec §3.3's "flagged and excluded by default" and
@@ -796,6 +803,57 @@ scan_error_t scan_engine_add_device(scan_engine* engine, const scan_device_confi
                     "scan_device_config: a pre-bound descriptor only reaches the raw-UDP backend "
                     "(SCAN_MID360_BACKEND_RAW_UDP); SDK2 creates its own sockets inside the "
                     "vendored SDK, so binding one to a Network here would have no effect");
+      }
+      break;
+    }
+    case DeviceKind::kMid70: {
+      // ABI 13 (A17). The Mid-360 block's conventions: 0 / NULL keeps the C++
+      // default, _set flags where 0 is a value a caller may mean.
+      if (cfg->mid70_backend < 0 || cfg->mid70_backend > 2) {
+        return to_c(set_last_error(
+            ScanError::kInvalidArgument,
+            "scan_device_config::mid70_backend %d is not a SCAN_MID70_BACKEND_* value",
+            static_cast<int>(cfg->mid70_backend)));
+      }
+      dc.mid70.backend = static_cast<Mid70Backend>(cfg->mid70_backend);
+      if (cfg->lidar_ip != nullptr) dc.mid70.udp.lidar_ip = cfg->lidar_ip;
+      if (cfg->host_ip != nullptr) dc.mid70.udp.host_ip = cfg->host_ip;
+      if (cfg->mid70_broadcast_code != nullptr) dc.mid70.broadcast_code = cfg->mid70_broadcast_code;
+      if (cfg->mid70_host_point_port != 0) dc.mid70.udp.host_point_port = cfg->mid70_host_point_port;
+      if (cfg->mid70_recv_buffer_bytes != 0) dc.mid70.udp.recv_buffer_bytes = cfg->mid70_recv_buffer_bytes;
+      if (cfg->mid70_live_points_per_sec_set != 0) {
+        dc.mid70.live_points_per_sec = cfg->mid70_live_points_per_sec;
+      }
+      dc.mid70.dual_return = cfg->mid70_dual_return != 0;
+      if (cfg->mid70_filter_set != 0) {
+        mid70::PointFilterConfig& f = dc.mid70.filter;
+        f.drop_no_return = cfg->mid70_drop_no_return != 0;
+        f.tag_reject_mask = cfg->mid70_tag_reject_mask;
+        f.min_reflectivity = cfg->mid70_min_reflectivity;
+        f.min_range_m = cfg->mid70_min_range_m;
+        f.max_range_m = cfg->mid70_max_range_m;
+      }
+      break;
+    }
+    case DeviceKind::kImuSerial: {
+      // ABI 13 (A18). The D6's serial fields, verbatim: the app owns the port
+      // and pushes bytes through scan_engine_push_serial_bytes(); serial_write
+      // is how the one command this driver sends (the report rate) gets out,
+      // and send_start_stop_commands is whether it is sent at all.
+      dc.imu_serial.serial.port_name =
+          cfg->serial_port_name != nullptr ? cfg->serial_port_name : "";
+      if (cfg->serial_baud != 0) dc.imu_serial.serial.baud = cfg->serial_baud;
+      if (cfg->serial_write != nullptr) {
+        auto shim = std::make_unique<SerialShim>();
+        shim->cb = cfg->serial_write;
+        shim->user = cfg->serial_write_user_data;
+        dc.imu_serial.serial.write_fn = &SerialShim::write;
+        dc.imu_serial.serial.write_user_data = shim.get();
+        handle_of(engine)->serial_shims.push_back(std::move(shim));
+      }
+      dc.imu_serial.send_rate_command = cfg->send_start_stop_commands != 0;
+      if (cfg->imu_serial_report_rate_hz != 0) {
+        dc.imu_serial.report_rate_hz = cfg->imu_serial_report_rate_hz;
       }
       break;
     }

@@ -4056,3 +4056,321 @@ all (the seeding above).
   session; pose quality/divergence from live SLAM; a device-level "data is
   flowing" callback). None of them is D or E, and each is still worked around in
   the app exactly as §17.11 describes.
+
+## 20. Livox Mid-70 + serial IMU (A17/A18) — desktop only
+
+Owner decision (2026-09-06): the Mid-70 ships on the **desktop app only**, with
+the JuxiTech ICM-42670-P module over USB serial as its IMU (a Mid-70 has none
+of its own). No Android work. Engine side: `engine/docs/A17-mid70-driver.md`,
+`A18-imu-serial.md`. Status at the time of writing: **built and self-tested
+without hardware; the first live run is Phase 7 on the kc_m4 Mac mini.**
+
+### 20.1 What the app does differently for a Mid-70
+
+* **Lidar model combo** ("Livox Mid-360" / "Livox Mid-70") above the manual
+  fields. Auto-detect sets it: a Mid-70 broadcast on UDP 55000 selects Mid-70
+  and fills the lidar IP from the datagram's *source address* (the SDK v1
+  broadcast carries no ip text — Fable review, engine `discovery.h`) plus a
+  read-only **Broadcast code** row (the 15-character label code, the only name
+  SDK v1 connects by). The SDK2 port row is hidden for a Mid-70; an **IMU**
+  row (serial-port combo from `QSerialPortInfo`, "(none)" default, auto-set by
+  the JuxiTech probe) is shown.
+* **Two devices per arm.** `EngineHost::addMid70()` then, if a port is
+  chosen, `SerialReader` (a `QSerialPort` on the GUI thread; the app owns the
+  port per `byte_source.h`) + `EngineHost::addImuSerial()`, which installs the
+  write-fn trampoline so the driver's one command (the 100 Hz report rate)
+  reaches the port. Disarm removes both and closes the port. Settings group
+  `mid70/last` beside `mid360/last`.
+* **Near gate 0.2 m** (`EngineHost::startSession(..., lio_min_range_m)`,
+  `CaptureWindow::lioNearGateForModel()`): the Mid-70's blind zone is 0.05 m
+  and A6's 0.5 m default discards most returns in a tight room. Mid-360 keeps
+  the default.
+* **180 s arm window** for the Mid-70 (Mid-360 stays 8 s): a cold unit
+  self-heats in `kLidarStateInit` for up to ~3 minutes and streams nothing
+  until then; after 12 s the status reads "Mid-70 warming up…" instead of
+  counting down to a failure.
+* **Discovery ↔ device serialization (§16.7) now covers UDP 55000 too.** The
+  vendored SDK v1 binds `0.0.0.0:55000` with `SO_REUSEADDR` only, so a
+  discovery listen still open when the driver starts makes `Start()` fail
+  exactly the way 56201 did for the Mid-360. The Mid-70 listen runs in slices
+  under the same `DiscoveryGate`; `stopDiscoveryForDeviceUse()` names the
+  port for the model being armed.
+* **Health panel** reads `Engine::mid70_stats()` (link, points/s, loss,
+  `pps_status` / `time_sync_status` as the device reports them, timestamp
+  type, code + firmware) and `Engine::imu_serial_stats()` (rate, blackouts —
+  the module's ~2.9 s stall every ~35 s is firmware and is shown, never
+  hidden — worst blackout). Values are printed only when the accessor
+  answers; nothing is shown as "0" that would read as "PPS unlocked".
+* **Replay** picks its device from the container's stream summaries:
+  `kMid70Points` → a `kMid70` device on the inject backend, one datagram per
+  push; `kImuSerialRaw` (`streams/imu_serial.bin`) → a `kImuSerial` device
+  through `push_serial_bytes()`. Two legs; the D6 path is unchanged.
+
+### 20.2 Verified (this Mac, no hardware)
+
+Clean build, zero warnings under `desktop/src`; `--mid360-selftest` PASSED with
+a byte-identical arm log line; `--auto-detect-selftest` still finds the
+Mid-360 (the added Mid-70 listen runs and finds nothing); the cancel self-test
+still releases the port and arms; `--mid360-record-into` seals; D6 replay
+gives the same 112 555 points / 1 page as the pre-change binary; the new
+`--lidar-model mid360|mid70` evidence hook shows the row visibility for each
+model.
+
+### 20.3 Not verified — Phase 7 on kc_m4
+
+The Mid-70 arm and SDK v1 handshake, the serial port open / push / rate-command
+round trip, the blackout counter climbing, `.lscan` Mid-70 + IMU replay, and
+the 0.2 m gate's effect. No fixtures exist in the tree yet
+(`mid70_broadcast.bin`, `juxi_imu_60s.bin`, `mid70_real_30s.livoxdump`); the
+capture tools that make them are `tools/remote-capture/capture_mid70.py` and
+`capture_serial_imu.py`. Mount the IMU module axis-aligned with the Mid-70:
+the LIO extrinsic is identity and nothing in the UI sets it yet.
+
+---
+
+## 21. FieldLog — the always-on field-test log, the raw fixtures and the diagnostics bundle
+
+§20.3 says the Mid-70 + serial-IMU rig has never met hardware and that three
+fixtures are owed. This is the half of that which does not need the owner to run
+a Python script on the rig: the app now writes its own evidence, always, with no
+switch to forget, and one Help-menu click collects it.
+
+The premise is that the first live run happens on **another Mac**, from a DMG,
+with no terminal and no debugger, and that the app will be force-quit mid-test
+rather than closed politely. Everything below follows from that.
+
+New files: `src/app/FieldLog.{h,cpp}`. Modified: `main.cpp` (open/close, the
+2 s stats pump, `--save-diagnostics`), `MainWindow.cpp` (two Help entries + the
+status-bar tooltip), `CaptureWindow.{h,cpp}` (`fieldConfigKv()`, the `log()`
+tee, arm/connect/record/seal events), `EngineHost.cpp` (the `logLine` tap and
+the session events), `DeviceDiscovery.cpp` (verbatim results + the Mid-70
+`raw_sink`), `SerialReader.cpp` (the IMU byte tee), `ReplayController.cpp`
+(replay events), `CMakeLists.txt` (one source file).
+
+### 21.1 The log
+
+`~/Library/Logs/LidarScan/lidarscan-<yyyyMMdd-HHmmss>.log`, opened in `main()`
+**before** the single-instance guard and before `EngineHost` — the two failures
+the file most needs to record are "a second instance was already running" and
+"the engine would not create", and a log opened after either would be an empty
+file explaining nothing. `QStandardPaths` is the fallback chain; a log that
+cannot be opened degrades to "no log", never to a refused launch. The path is
+printed to stderr at startup, shown in the status-bar tooltip, and named by
+**Help → Show field test log path** (which also offers Reveal in Finder).
+
+Line format, one line per event, embedded newlines escaped so every grep and
+every awk-over-the-stats-lines works:
+
+```
+2026-09-08T00:31:26.161 [info][stats] event=device dev=1 kind=livox-mid360 …
+```
+
+`write(2)` per line — the bytes are in the page cache when the call returns, so
+a killed process loses nothing. `fsync` additionally on **error** lines only.
+
+**Six sources, and the one filter decision.** Qt's message handler (chained, so
+stderr still gets what it always did); `CaptureWindow::log()`; every
+`EngineHost::logLine` emission (tapped by connecting to our own signal, so a
+line added later cannot forget to be logged); discovery; the arm/record/replay
+events; the stats pump. Plus the **engine's own sink** — `set_log_sink()` with
+`set_log_min_level(kDebug)`. The sink reproduces `log.cpp`'s default stderr
+output only for messages at or above the level that was in force *before* we
+raised it, so **the file gains debug lines and stderr — and therefore the app's
+on-screen log pane — gains nothing.** The previous level is restored and the
+default sink reinstalled in `close()`, before the fd shuts, because the engine
+still logs during its own teardown after `main()` returns.
+
+### 21.2 The stats snapshot — the key names, because they are the contract
+
+`FieldLogStats` runs a 2 s `QTimer` owned by `main()` (not by `CaptureWindow`,
+so it also covers replay, merge previews and every CLI hook that adds a device).
+Writes nothing while no device is registered. Three line kinds:
+
+* `event=device` — one per registered device. Always: `dev kind state
+  last_error points_out packets_ok packets_bad checksum_rate drops bytes_in
+  points_per_sec rotation_hz t_last_data_ns`.
+  * a `kMid70` adds every field of `Engine::mid70_stats()` under `m70_`:
+    `link state points_per_sec points_appended_per_sec loss_pct_window
+    loss_pct_total packets_lost packets_duplicated counter_resets point_packets
+    points_received points_kept points_appended points_dropped_store bad_packets
+    unexpected_imu_packets filter_{seen,kept,dropped_no_return,dropped_tag,
+    dropped_range,dropped_reflectivity} watchdog_trips clean_resumes
+    forced_reinits reinit_failures t_last_point_ns t_silent_since_ns
+    t_device_last_ns device_stamp_decodable data_type timestamp_type
+    timestamp_type_name err_code_raw err_pps_ok err_ptp_ok err_time_sync_status
+    err_time_sync_name err_self_heating err_temp_status err_volt_status
+    err_motor_status err_dirty_warn err_firmware_err err_fan_warn
+    err_device_lifetime_warn err_system_status broadcast_code device_ip
+    firmware`.
+  * a `kImuSerial` adds every field of `Engine::imu_serial_stats()` under
+    `imu_`: `state rate_hz samples samples_dropped blackouts
+    blackout_in_progress worst_blackout_ns worst_blackout_s t_last_sample_ns
+    t_last_bytes_ns
+    frames_{bytes_in,raw,quaternion,euler,barometer,version,state,unknown,
+    checksum_failures,resyncs,ok,seen} checksum_pass_rate
+    stamper_{samples,gap_snaps,worst_gap_ns,clock_step_backs,
+    worst_step_back_ns,deep_bursts,clamps,learned_period_ns,resyncing}`.
+* `event=store` — `pages max_pages resident_points total_points dropped_points
+  evicted_pages evicted_points evicting`. Field bug D (§19.1) was a store that
+  filled and silently refused everything after; `evicting` and `dropped_points`
+  are the two numbers that tell that apart from a healthy live window.
+* `event=live_slam` — every `LioStats` field plus the latest pose, read through
+  the same `Engine::live_slam()` accessor `CaptureWindow`'s LIO status line
+  uses, so the log and the screen cannot disagree.
+
+**The `err.*` fields are printed even when normal, and this is the one place
+that differs from the on-screen row on purpose.** `mid70HealthText()` hides
+"normal" so an operator keeps reading the row; a log must print it, because
+"`m70_err_temp_status` was 0 for the whole run" is an answer and a missing key
+is not.
+
+Config events carry `fieldConfigKv()` — `model host_ip lidar_ip broadcast_code
+[point_port mid360_imu_port cmd_port | imu_serial_port imu_serial_baud]
+near_gate_m profile project_dir lidar_device imu_device` — built in one place so
+an `event=arm` line and the `event=disarm` that follows it cannot disagree about
+what was configured. Events: `arm`, `arm_failed`, `connected`, `disarm`,
+`record_start`, `record_stop`, `sealed` + one `sealed_stream` per stream (read
+back through the same `readProject()` the library uses), `start_session`,
+`stop_session`, `replay_start`, `replay_done`.
+
+`worst_blackout_s` is the one key written in two units: the ns figure is what
+the driver measured, and `worst_blackout_s=` is the key
+`FIELD_TEST_MID70.md`'s reference table tells the owner to grep for. Every other
+key in that table resolves against the list above (`data_type=`,
+`timestamp_type=`, `points_per_sec=`, `loss_pct_window=`, `packets_lost=`,
+`rate_hz=`, `blackouts=`, `pps_ok=`, `time_sync_status=`, `self_heating=` and
+the temperature/voltage/motor flags) under its `m70_`/`imu_` prefix.
+
+### 21.3 The crash hook, and the bug it caught on its first day
+
+`signal()` handlers for SIGSEGV/SIGBUS/SIGABRT/SIGFPE. The handler does exactly
+three async-signal-safe things: patch two digits into a prebuilt static buffer,
+`write(2)` it to the already-open fd, re-raise with `SIG_DFL`. No malloc, no Qt,
+no locking — a handler that took the log mutex would deadlock against whichever
+thread was mid-write when the fault hit, and a handler that formatted a nice
+message would allocate. `State` is a deliberately leaked `new` for the same
+family of reason §16.3's instance-guard note gives: the handler holds a raw fd
+out of it and the engine's sink points into it, and both can fire during static
+destruction.
+
+It earned its keep immediately. The first `--save-diagnostics` run segfaulted
+and the file said so:
+
+```
+2026-09-08T00:32:05.543 [info][diagnostics] event=bundle_start dir=/Users/admin/Desktop/LidarScan-diagnostics-20260908-003205
+
+!! FATAL SIGNAL 11 — LidarScan died here; nothing after this line !!
+```
+
+Cause: `QSet<QString> mine(filesThisRun().begin(), filesThisRun().end())` —
+`filesThisRun()` returns by value, so the two iterators pointed into two
+*different* temporaries. Fixed by binding one named local. Recorded here because
+the hook's whole purpose is to turn "it just quit" into a line, and this is the
+proof it does.
+
+### 21.4 The two raw fixtures — the exact containers, not near-misses
+
+**Mid-70 broadcast.** `DiscoverOptions::raw_sink` (A17, `discovery.h`) is
+installed on the Mid-70 slice of every discovery pass. Every datagram — before
+parsing, and whether or not it parses — is appended to
+`~/Library/Logs/LidarScan/mid70_broadcast-<ts>.livoxdump` in
+`tools/remote-capture/capture_mid70.py`'s **LX70_CAP** container: header
+`<8sHH>` magic `b"LX70_CAP"` / version 1 / num_ports 1, port table `[55000]`,
+then `<QHI>` records (epoch ns, port_idx 0, len, bytes). One file per app run,
+opened lazily on the first datagram so a run that hears nothing leaves no
+header-only file that looks like a capture of silence, closed at exit with the
+count logged.
+
+**Serial IMU.** `SerialReader::onReadyRead()` tees every `read()` slice — before
+the push, so the fixture is written even when the engine rejects the bytes,
+which is the case a fixture is most wanted for — into
+`imu_serial-<ts>.imudump` in `capture_serial_imu.py`'s **IMUSRCAP** container
+(same record framing; the "port table" is the BAUD RATE, as that script's
+docstring says outright). Opened with the port, closed with it. One log line for
+the first slice and none after: at 100 Hz a per-slice line would bury the file
+inside a minute, so the counts ride the 2 s snapshots and the close line instead.
+The engine's `.lscan` still records the same bytes as `kImuSerialRaw`; this file
+is the standalone fixture, and unlike a `.lscan` it exists without a session or
+a lidar.
+
+### 21.5 The diagnostics bundle
+
+**Help → Save diagnostics bundle…**, and `--save-diagnostics` for a headless
+run. Builds `~/Desktop/LidarScan-diagnostics-<yyyyMMdd-HHmmss>/` containing this
+run's log + fixtures; `previous-runs/` with anything else in the log directory
+touched in the last 24 h (**a crash is the case this exists for, and after a
+crash "this run" is the relaunch** — the file that matters was written by the
+run that died); the last `.lscan` from `QSettings("recentProjects")`, copied
+whole under 1 GB and otherwise as `manifest.json` + a `SIZES.txt` listing the
+streams; `system.txt` (`sw_vers`, `uname -a`, `ifconfig`, `ls -l /dev/cu.*`,
+`system_profiler SPUSBDataType SPNetworkDataType`, each with a 20 s `QProcess`
+timeout); and a `README.txt` that says what to send, what each file is, and —
+because `system.txt` carries this Mac's interfaces and USB tree — what the
+privacy trade is and that deleting it still leaves a useful bundle.
+
+`--save-diagnostics` is intercepted at the top of `main()` **before the
+single-instance guard**, because the whole point of it is to work while the real
+app is open.
+
+### 21.6 Verified (2026-09-08, Apple M4, macOS 26.5.1, this tree)
+
+Zero warnings from `desktop/src` in both the arm64 dev build and the universal
+package build.
+
+* `--version` → `LidarScan Desktop 1.1.0 (build 10100)`; log header written with
+  app + build code, engine version + ABI 13, macOS/kernel, machine, both CPU
+  architectures, binary path, pid, Qt version and the log path itself.
+* `--lidar-model mid70 --quit-after 3` → header, the model line, `event=exit
+  code=0`, the `0 datagram(s) — no file written` fixture line and
+  `=== clean exit after 3.45 s uptime ===`.
+* `--auto-detect-selftest` against `scripts/replay_mid360_heartbeat.py` →
+  `event=mid360_beacon` verbatim (SN ARMCP7K0034759, fw 35010108,
+  192.168.1.159, persisted host 192.168.1.5), `event=serial_ports`, the three
+  `event=probe_*` lines and `event=pass_done … mid70_datagrams_dumped=0`.
+* **The Mid-70 dump path was exercised for real, not just compiled.** A
+  throwaway sender built a genuine 34-byte SDK v1 broadcast (the wire form, both
+  Livox-seeded CRCs, encoder derived from `mid70_beacon.cpp`'s own documented
+  layout) and sent it to `127.0.0.1:55000`. The shipped parser accepted it
+  (`event=mid70_beacon broadcast_code=3GGDJ5N00100101 dev_type=6
+  dev_type_name=Mid-70 source_ip=127.0.0.1`), the sink wrote the file, and the
+  project's own reader validates it:
+
+  ```
+  $ python3 tools/remote-capture/verify_capture.py mid70_broadcast-20260908-003042.livoxdump
+  [PASS] container header OK: version=1, num_ports=1
+  [PASS] port table: [55000]
+  [PASS] broadcast frames on 55000: 2 (0 not 0xAA-framed); codes: ['3GGDJ5N00100101']
+  [PASS] broadcast period: 0.93 s (SDK v1: ~1 s)
+  ```
+* `--mid360-selftest 127.000.000.001:127.0.0.1` against
+  `spikes/s2-mid360-sim`'s `mid360_sim` → PASSED (first packet after 1.56 s) and
+  **7 `event=device` snapshots over ~14 s of armed time**, with `event=store`
+  and `event=live_slam` beside each.
+* `--save-diagnostics` → a 4.3 MB bundle with the log, `previous-runs/` (3
+  files), `scan-050.lscan` copied whole, `README.txt` and a 12 KB `system.txt`
+  carrying all five sections.
+* Same-second relaunches get distinct files (`…-003518.log`,
+  `…-003518-11621.log`): the stamp is second-resolution and two launches inside
+  one second is an ordinary field event, so the pid disambiguates rather than
+  letting `O_APPEND` interleave two runs into one file with two headers.
+
+### 21.7 Not verified
+
+* **The serial-IMU dump has no runtime evidence.** This Mac has no JuxiTech
+  module, `/dev/cu.*` holds only the Bluetooth and debug-console nodes, and
+  there is no CLI hook that arms a Mid-70 (`--mid360-selftest` is still the only
+  device-arming hook, and it pins the model back to Mid-360). The container
+  framing it uses — `dumpFileHeader`, `dumpRecordHeader`, `writeAll` — is the
+  same code the LX70_CAP path above validated against
+  `verify_capture.py`; what is untested is the open/tee/close wiring in
+  `SerialReader` and the `IMUSRCAP` magic and baud port-table entry. Code review
+  only.
+* **Every Mid-70 stats key is untested against a device.** The `m70_*` and
+  `imu_*` key sets are transcribed from `mid70_driver.h` / `imu_serial_driver.h`
+  and compile against them; no Mid-70 or IMU has ever produced one.
+* **The Help menu's two entries were not screenshotted** — same reason as §16.6:
+  no accessibility permission for GUI automation in this sandbox. Both call the
+  same functions `--save-diagnostics` exercised headlessly.
+* **Gatekeeper.** Unchanged from §13.7: ad-hoc signed, `spctl … rejected`. On
+  the owner's other Mac the DMG is quarantined until it is right-click-Opened or
+  notarized.

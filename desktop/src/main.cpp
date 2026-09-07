@@ -55,6 +55,7 @@
 #include "app/CaptureWindow.h"
 #include "app/DisplayParamsDock.h"  // paramsPathFor — --capture-flow-demo's saved-view check
 #include "app/EngineHost.h"
+#include "app/FieldLog.h"
 #include "app/MainWindow.h"
 #include "app/MergeDock.h"
 #include "app/MergeFixture.h"
@@ -353,6 +354,36 @@ int main(int argc, char** argv) {
   // first. (ui/Theme.h; this call is the whole of the theme's public API.)
   lidarscan::theme::install(app);
 
+  // --- The field-test log, before anything else can have something to say ----
+  //
+  // BEFORE the instance guard and before EngineHost, deliberately: the two
+  // failures this file most needs to record are "a second instance was already
+  // running" and "the engine would not create", and a log opened after either
+  // of those would be an empty file explaining nothing. FieldLog::open() is
+  // idempotent, never fails the launch, and prints its own path to stderr.
+  lidarscan::FieldLog::open();
+
+  // --- --save-diagnostics ---------------------------------------------------
+  //
+  // Intercepted HERE, before the single-instance guard, because the whole point
+  // of it is to be usable while the real app is open — which is exactly when an
+  // operator wants a bundle. It needs QApplication (QStandardPaths, QProcess)
+  // and nothing else: no engine, no window, no UDP port.
+  for (int i = 1; i < argc; ++i) {
+    if (std::strcmp(argv[i], "--save-diagnostics") != 0) continue;
+    QString derr;
+    const QString bundle = lidarscan::FieldLog::saveDiagnosticsBundle(/*reveal=*/false, &derr);
+    if (bundle.isEmpty()) {
+      std::fprintf(stderr, "[lidarscan] save-diagnostics FAILED: %s\n",
+                   derr.toUtf8().constData());
+      lidarscan::FieldLog::close();
+      return 3;
+    }
+    std::fprintf(stderr, "[lidarscan] save-diagnostics: %s\n", bundle.toUtf8().constData());
+    lidarscan::FieldLog::close();
+    return 0;
+  }
+
   // --- Single-instance guard --------------------------------------------
   //
   // docs/design/REVIEW_FEEDBACK.md, 2026-08-17 round 4 item 6 (owner, field
@@ -387,8 +418,10 @@ int main(int argc, char** argv) {
     // as a fallback in case a future guard failure mode does not set it.
     QString detail = QString::fromUtf8(scanengine::last_error_message());
     if (detail.isEmpty()) detail = QString::fromUtf8(guard_status.message());
+    lidarscan::FieldLog::error("main", "single-instance guard refused this launch: " + detail);
     QMessageBox::critical(nullptr, "LidarScan",
                           QString("LidarScan is already running.\n\n%1").arg(detail));
+    lidarscan::FieldLog::close();
     return 1;
   }
 
@@ -448,6 +481,18 @@ int main(int argc, char** argv) {
       "collision the GUI has to survive (discovery must cancel, release UDP 56201 and "
       "let the device arm). Requires --mid360-selftest for the addresses; overrides the "
       "normal discovery-then-selftest chaining, which exists precisely to avoid this.");
+  // A17 evidence hook. The Mid-70 half of the capture panel is otherwise only
+  // reachable by clicking, which a headless run cannot do; this moves the real
+  // combo through its real signal so a screenshot and a --workspace capture run
+  // exercise the shipped widgets rather than a test-only path. It does NOT arm
+  // anything (--mid360-selftest is still the only device-arming hook), and
+  // --mid360-selftest pins the model back to Mid-360 before it arms, so the two
+  // cannot contradict each other.
+  QCommandLineOption optLidarModel(
+      "lidar-model",
+      "Set the capture panel's lidar model to mid360 or mid70 (evidence hook; does not "
+      "arm anything). Default mid360.",
+      "model");
   QCommandLineOption optAutoDetectShot(
       "auto-detect-shot",
       "With --auto-detect-selftest: QWidget::grab() the capture window (button + summary "
@@ -647,6 +692,7 @@ int main(int argc, char** argv) {
   parser.addOption(optMid360Selftest);
   parser.addOption(optAutoDetectSelftest);
   parser.addOption(optAutoDetectCancelSelftest);
+  parser.addOption(optLidarModel);
   parser.addOption(optAutoDetectShot);
   parser.addOption(optMid360RecordInto);
   parser.addOption(optRecordCycles);
@@ -742,6 +788,13 @@ int main(int argc, char** argv) {
       "projects|capture|review|plan|merge|jobs. Redesign evidence hook.",
       "name");
   parser.addOption(optWorkspace);
+  // Registered for --help only: intercepted at the top of main(), before the
+  // single-instance guard, so it works while the real app is running.
+  parser.addOption(QCommandLineOption(
+      "save-diagnostics",
+      "Collect this run's field log, the raw Mid-70/IMU fixtures, the last .lscan "
+      "and a machine profile into ~/Desktop/LidarScan-diagnostics-<timestamp>/ and "
+      "exit 0. The same thing Help -> 'Save diagnostics bundle…' does."));
   parser.process(app);
 
   if (parser.isSet(optFontReport)) {
@@ -821,10 +874,21 @@ int main(int argc, char** argv) {
       parser.isSet(optLiveStorePagePoints) ? parser.value(optLiveStorePagePoints).toUInt() : 0;
   lidarscan::EngineHost host(nullptr, liveStorePages, liveStorePagePoints);
   if (!host.ok()) {
+    lidarscan::FieldLog::error("main", "EngineHost failed: " + host.createError());
     QMessageBox::critical(nullptr, "LidarScan", host.createError());
+    lidarscan::FieldLog::close();
     return 2;
   }
   std::fprintf(stderr, "[lidarscan] %s\n", host.versionString().toUtf8().constData());
+  lidarscan::FieldLog::info("main", QString("command line: %1")
+                                        .arg(QCoreApplication::arguments().join(' ')));
+
+  // Spec item (f): one stats line per registered device every 2 s, for as long
+  // as anything is armed. Owned by main() rather than by CaptureWindow so it
+  // also covers a replay, a merge preview and the CLI evidence hooks — every
+  // path that can add a device to this Engine.
+  lidarscan::FieldLogStats field_stats(&host);
+  field_stats.start(2000);
 
   lidarscan::MainWindow win(&host);
   win.viewport()->setVsync(parser.value(optVsync) != "off");
@@ -840,6 +904,15 @@ int main(int argc, char** argv) {
                    "[lidarscan] --workspace: unknown workspace '%s' "
                    "(projects|capture|review|plan|merge|jobs)\n",
                    ws.toUtf8().constData());
+    }
+  }
+  // Before show(), so the panel is already in the right shape the first time it
+  // is painted (and before showEvent()'s on-open discovery pass runs).
+  if (parser.isSet(optLidarModel)) {
+    const QString model = parser.value(optLidarModel);
+    if (!win.captureWindow() || !win.captureWindow()->setLidarModelForCli(model)) {
+      std::fprintf(stderr, "[lidarscan] --lidar-model: unknown model '%s' (mid360|mid70)\n",
+                   model.toUtf8().constData());
     }
   }
   win.show();
@@ -2307,5 +2380,12 @@ int main(int argc, char** argv) {
     QTimer::singleShot(int(quitAfter * 1000.0), &app, &QApplication::quit);
   }
 
-  return app.exec();
+  const int rc = app.exec();
+  // The footer, the fixture byte counts and the fsync happen HERE, on the way
+  // out of main() — not in a static destructor, which would run after the
+  // objects whose teardown lines we still want in the file.
+  field_stats.stop();
+  lidarscan::FieldLog::info("main", QString("event=exit code=%1").arg(rc));
+  lidarscan::FieldLog::close();
+  return rc;
 }

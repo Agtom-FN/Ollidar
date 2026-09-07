@@ -252,10 +252,27 @@ Status PostSlamPipeline::Impl::decode_pass(const std::string& dir, PostStage sta
   SCAN_TRY(reader.open(dir));
 
   std::uint64_t total_chunks = 0;
+  bool has_mid70 = false;
   for (const lscan::StreamSummary& s : reader.stream_summaries()) {
     if (s.stream == StreamId::kLidarMid360 || s.stream == StreamId::kImu) {
       total_chunks += s.chunk_count;
     }
+    if ((s.stream == StreamId::kLidarMid70 || s.stream == StreamId::kImuSerial) &&
+        s.chunk_count != 0) {
+      has_mid70 = true;
+    }
+  }
+  // A17/A18: the offline pipeline has not been taught the Mid-70's SDK v1
+  // datagrams or the serial IMU's UART bytes (it decodes SDK2 packets on
+  // kLidarMid360's estimator). Say so, rather than fall through to "no
+  // Mid-360 chunks" or, worse, a D6 classification. Live LIO, .lscan record
+  // and inject replay are the supported paths for a Mid-70 project today.
+  if (has_mid70) {
+    return set_last_error(ScanError::kNotSupported,
+                          "post: '%s' is a Mid-70 project (kMid70Points / kImuSerialRaw "
+                          "streams); offline processing is not supported for it yet — use "
+                          "the live SLAM map recorded in the session",
+                          dir.c_str());
   }
   if (count_stats) {
     stats.truncated_tail_chunks = reader.warnings().truncated_tail_chunks;

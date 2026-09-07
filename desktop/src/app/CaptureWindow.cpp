@@ -19,6 +19,7 @@
 #include <QSettings>
 #include <QStandardPaths>
 #include <QShowEvent>
+#include <QSerialPortInfo>
 #include <QSpinBox>
 #include <QStyle>
 #include <QThread>
@@ -33,6 +34,9 @@
 
 #include "app/DeviceDiscovery.h"
 #include "app/EngineHost.h"
+#include "app/FieldLog.h"
+#include "app/Project.h"
+#include "app/SerialReader.h"
 #include "ui/RecordCluster.h"
 #include "ui/Theme.h"
 #include "ui/Widgets.h"
@@ -76,6 +80,17 @@ QLabel* sectionLabel(const QString& text) {
   l->setFont(f);
   l->setStyleSheet(QString("color:%1;").arg(theme::css(theme::faint())));
   return l;
+}
+
+// Hide a whole QFormLayout row, LABEL INCLUDED. QFormLayout::setRowVisible()
+// would do it in one call but only from Qt 6.4, and this app still configures
+// against whatever Qt the Windows/Linux CI legs have; labelForField() has been
+// there since Qt 4. Hiding only the field leaves a caption pointing at nothing,
+// which is how a panel ends up saying "Broadcast code" beside a Mid-360.
+void setFormRowVisible(QFormLayout* form, QWidget* field, bool visible) {
+  if (!form || !field) return;
+  field->setVisible(visible);
+  if (QWidget* label = form->labelForField(field)) label->setVisible(visible);
 }
 
 QLabel* hintLabel(const QString& text) {
@@ -375,7 +390,42 @@ QWidget* CaptureWindow::buildLinkColumn() {
   auto* outer = new QVBoxLayout(w);
   outer->setContentsMargins(0, 0, 0, 0);
   outer->setSpacing(4);
-  outer->addWidget(sectionLabel("Mid-360 link"));
+  outer->addWidget(sectionLabel("Lidar link"));
+
+  // A17: the model selector lives OUTSIDE the collapsible manual box, because
+  // it is not a manual fallback — it decides which driver the whole panel is
+  // talking about, including which discovery hit is allowed to auto-arm. It is
+  // the first thing in the column for the same reason.
+  {
+    auto* mf = new QFormLayout();
+    mf->setContentsMargins(0, 0, 0, 0);
+    mf->setSpacing(4);
+    lidar_model_ = new QComboBox();
+    lidar_model_->addItem("Livox Mid-360", int(LidarModel::kMid360));
+    lidar_model_->addItem("Livox Mid-70", int(LidarModel::kMid70));
+    lidar_model_->setToolTip(
+        "Two different protocols, not two settings of one. The Mid-360 speaks Livox "
+        "SDK2 (heartbeat on UDP 56201, three data ports, a built-in IMU); the Mid-70 "
+        "speaks SDK v1 (broadcast on UDP 55000, a 15-character broadcast code, and NO "
+        "IMU of its own \u2014 pair it with the serial IMU module below). Auto-detect sets "
+        "this for you when it hears one.");
+    connect(lidar_model_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this](int) {
+              onLidarModelChanged();
+              // The two models keep their addresses in SEPARATE QSettings
+              // groups, so switching the combo also swaps which set the fields
+              // show. Deliberately not done on the initial build (the combo is
+              // populated before this is connected, and buildUi() calls
+              // loadMid360Settings() itself) — only a real change reloads.
+              if (lidarModel() == LidarModel::kMid70) {
+                loadMid70Settings();
+              } else {
+                loadMid360Settings();
+              }
+            });
+    mf->addRow("Lidar model", lidar_model_);
+    outer->addLayout(mf);
+  }
 
   // Round-5 follow-up item 1. Auto-detect is the normal path, so the manual
   // fields start COLLAPSED — but they are one inline click away at any time
@@ -388,6 +438,7 @@ QWidget* CaptureWindow::buildLinkColumn() {
   outer->addWidget(manual_box_);
 
   auto* f = new QFormLayout();
+  link_form_ = f;  // onLidarModelChanged() hides whole rows through it
   f->setContentsMargins(0, 0, 0, 0);
   f->setSpacing(4);
   host_ip_ = new QLineEdit("192.168.1.5");
@@ -413,7 +464,25 @@ QWidget* CaptureWindow::buildLinkColumn() {
   point_port_ = mkPort(56300, "Point-cloud UDP port");
   imu_port_ = mkPort(56400, "IMU UDP port");
   cmd_port_ = mkPort(56100, "Command UDP port");
+  mid360_ports_row_ = ports;  // hidden for a Mid-70: SDK v1 does not use these
   f->addRow("Ports (point/imu/cmd)", ports);
+
+  // A17: the broadcast code. READ-ONLY on purpose. It is a 15-character serial
+  // printed on the device, the only name SDK v1's AddLidarToConnect() accepts,
+  // and a typo in it does not fail loudly \u2014 it silently connects to nothing,
+  // or to the wrong lidar on a shared switch. Auto-detect is the way it gets
+  // filled; empty means "the first Mid-70 that broadcasts", which is exactly
+  // right on a bench with one lidar and exactly wrong on a site with two, so
+  // the hint says so.
+  mid70_code_ = new QLineEdit();
+  mid70_code_->setReadOnly(true);
+  mid70_code_->setPlaceholderText("(any Mid-70 that broadcasts)");
+  mid70_code_->setToolTip(
+      "Filled by auto-detect from the SDK v1 broadcast. Empty = connect to the first "
+      "Mid-70 heard, which is right for one lidar on a bench and wrong for two on a "
+      "switch. Read-only: it is the device's own serial, not a setting.");
+  mid70_code_row_ = mid70_code_;
+  f->addRow("Broadcast code", mid70_code_);
   v->addLayout(f);
 
   connect_btn_ = new QPushButton("Connect");
@@ -432,6 +501,40 @@ QWidget* CaptureWindow::buildLinkColumn() {
   v->addWidget(mid_hint_);
 
   manual_box_->setVisible(false);
+
+  // --- A18: the serial IMU row (Mid-70 sessions only) ---------------------
+  //
+  // OUTSIDE manual_box_, because it is not a fallback for a failed detection:
+  // a Mid-70 has no IMU at all, so choosing one is part of setting the session
+  // up, not part of repairing it. Hidden wholesale for a Mid-360, which has its
+  // own IMU inside the SDK2 stream and would be actively harmed by a second,
+  // unaligned one.
+  imu_row_ = new QWidget();
+  {
+    auto* iv = new QVBoxLayout(imu_row_);
+    iv->setContentsMargins(0, 6, 0, 0);
+    iv->setSpacing(4);
+    iv->addWidget(sectionLabel("IMU (Mid-70 has none of its own)"));
+    auto* jf = new QFormLayout();
+    jf->setContentsMargins(0, 0, 0, 0);
+    jf->setSpacing(4);
+    imu_serial_port_ = new QComboBox();
+    imu_serial_port_->setToolTip(
+        "The JuxiTech ICM-42670-P module, 115200 8N1. The app owns this port and pushes "
+        "its bytes into the engine (transport/byte_source.h: the engine never opens a "
+        "serial device). Auto-detect selects it when its probe identifies one.");
+    jf->addRow("Serial port", imu_serial_port_);
+    iv->addLayout(jf);
+    imu_hint_ = hintLabel(
+        "Optional, and honestly so: without it a Mid-70 session records every point but "
+        "live LIO has no gyro to initialise on. The module also STOPS TRANSMITTING for "
+        "~2.9 s roughly every 35 s \u2014 measured vendor-firmware behaviour that nothing in "
+        "its protocol turns off. The driver counts those blackouts and shows them in the "
+        "health line rather than smoothing them into invented motion.");
+    iv->addWidget(imu_hint_);
+  }
+  outer->addWidget(imu_row_);
+  refreshImuPortList();
 
   outer->addSpacing(6);
   outer->addWidget(sectionLabel("RTK (UM982)"));
@@ -458,6 +561,9 @@ QWidget* CaptureWindow::buildLinkColumn() {
       "NOTES.md §16.2/§17.");
   v->addWidget(um982_hint_);
   v->addStretch(1);
+  // Everything the model decides is applied from ONE place, so the initial
+  // state and every later change go through the same code.
+  onLidarModelChanged();
   return w;
 }
 
@@ -938,6 +1044,191 @@ double CaptureWindow::setPointSizeForCli(double px) {
 }
 
 // ---------------------------------------------------------------------------
+// A17/A18 — lidar model, and the serial IMU that a Mid-70 session needs
+// ---------------------------------------------------------------------------
+
+CaptureWindow::LidarModel CaptureWindow::lidarModel() const {
+  if (!lidar_model_) return LidarModel::kMid360;
+  return LidarModel(lidar_model_->currentData().toInt());
+}
+
+void CaptureWindow::setLidarModel(LidarModel m) {
+  if (!lidar_model_) return;
+  const int idx = lidar_model_->findData(int(m));
+  if (idx >= 0 && idx != lidar_model_->currentIndex()) lidar_model_->setCurrentIndex(idx);
+}
+
+// Everything that differs between the two models, in one function, so the panel
+// cannot end up half-configured for each.
+void CaptureWindow::onLidarModelChanged() {
+  const bool mid70 = lidarModel() == LidarModel::kMid70;
+
+  // The three UDP ports are SDK2's data/IMU/command channels. SDK v1 does not
+  // have them — it handshakes on the lidar's port 65000 after a broadcast on
+  // 55000 — so showing them for a Mid-70 would be three settings that do
+  // nothing, which is worse than three settings that are missing.
+  setFormRowVisible(link_form_, mid360_ports_row_, !mid70);
+  setFormRowVisible(link_form_, mid70_code_row_, mid70);
+  if (imu_row_) imu_row_->setVisible(mid70);
+
+  if (mid_hint_) {
+    mid_hint_->setText(
+        mid70 ? QString("Auto-detect normally fills these in. For a Mid-70 the LIDAR IP is "
+                        "informational (SDK v1 finds the device by its broadcast); the HOST "
+                        "IP must be an address this Mac actually holds on the lidar's "
+                        "network, because that is where the lidar is told to stream.")
+              : QString("Auto-detect normally fills these in. The lidar IP is REQUIRED on "
+                        "macOS (stock SDK2 broadcast discovery fails with EADDRNOTAVAIL "
+                        "there — S2-sim finding)."));
+  }
+  if (imu_serial_port_) refreshImuPortList();
+}
+
+// A17. LioConfig's near gate defaults to 0.5 m, which is sized for a Mid-360.
+// The Mid-70's blind zone is 0.05 m, and the ROS work that preceded this port
+// measured a 0.5 m gate discarding most returns in a tight room — so a Mid-70
+// session asks for 0.2 m. 0 means "leave the engine's own default alone", which
+// is what every Mid-360 session gets and why that path is unchanged.
+float CaptureWindow::lioNearGateForModel() const {
+  return lidarModel() == LidarModel::kMid70 ? 0.2f : 0.0f;
+}
+
+void CaptureWindow::loadMid70Settings() {
+  if (!mid70_code_) return;
+  QSettings s;
+  s.beginGroup("mid70/last");
+  // Its OWN group beside "mid360/last": the two models have different addresses
+  // on the same bench, and one overwriting the other is how an operator ends up
+  // arming a Mid-70 at the Mid-360's IP.
+  if (s.contains("hostIp")) host_ip_->setText(s.value("hostIp").toString());
+  if (s.contains("lidarIp")) lidar_ip_->setText(s.value("lidarIp").toString());
+  mid70_code_->setText(s.value("broadcastCode", mid70_code_->text()).toString());
+  const QString port = s.value("imuPort").toString();
+  if (!port.isEmpty() && imu_serial_port_) {
+    const int idx = imu_serial_port_->findData(port);
+    if (idx >= 0) {
+      imu_serial_port_->setCurrentIndex(idx);
+    } else {
+      // The adapter is not plugged in right now. Keep the name visible rather
+      // than silently forgetting it: "the port I used last time is gone" is
+      // information, and the combo's own list says which ports DO exist.
+      imu_serial_port_->addItem(port + " (not present)", port);
+      imu_serial_port_->setCurrentIndex(imu_serial_port_->count() - 1);
+    }
+  }
+  s.endGroup();
+}
+
+void CaptureWindow::saveMid70Settings() {
+  if (!mid70_code_) return;
+  QSettings s;
+  s.beginGroup("mid70/last");
+  s.setValue("hostIp", host_ip_->text());
+  s.setValue("lidarIp", lidar_ip_->text());
+  s.setValue("broadcastCode", mid70_code_->text());
+  s.setValue("imuPort", selectedImuPort());
+  s.endGroup();
+}
+
+void CaptureWindow::refreshImuPortList() {
+  if (!imu_serial_port_) return;
+  const QString keep = selectedImuPort();
+  const QSignalBlocker block(imu_serial_port_);
+  imu_serial_port_->clear();
+  // "(none)" FIRST and selected by default. A Mid-70 with no IMU is a real
+  // configuration — it records every point — so the default must not be to
+  // grab whatever serial device happens to be plugged in.
+  imu_serial_port_->addItem("(none)", QString());
+  for (const QSerialPortInfo& info : QSerialPortInfo::availablePorts()) {
+    // systemLocation() is what QSerialPort::setPortName() and the engine's own
+    // probe both name a port by (/dev/cu.usbserial-… on macOS, COM3 on
+    // Windows); portName() drops the /dev/ prefix and would not match the
+    // probe's hit.
+    const QString path = info.systemLocation();
+    QString label = path;
+    if (!info.description().isEmpty()) label += "  " + info.description();
+    imu_serial_port_->addItem(label, path);
+  }
+  if (!keep.isEmpty()) {
+    const int idx = imu_serial_port_->findData(keep);
+    if (idx >= 0) {
+      imu_serial_port_->setCurrentIndex(idx);
+    } else {
+      imu_serial_port_->addItem(keep + " (not present)", keep);
+      imu_serial_port_->setCurrentIndex(imu_serial_port_->count() - 1);
+    }
+  }
+}
+
+QString CaptureWindow::selectedImuPort() const {
+  if (!imu_serial_port_) return QString();
+  return imu_serial_port_->currentData().toString();
+}
+
+bool CaptureWindow::armImuSerial(QString* err) {
+  const QString port = selectedImuPort();
+  if (port.isEmpty()) return true;  // "(none)" is a choice, not a failure
+  if (!host_ || !host_->ok()) {
+    if (err) *err = "engine unavailable";
+    return false;
+  }
+
+  imu_reader_ = new SerialReader(this);
+  connect(imu_reader_, &SerialReader::logLine, this, &CaptureWindow::log);
+  connect(imu_reader_, &SerialReader::disconnected, this, [this](const QString& why) {
+    // The module was unplugged mid-session. Say it once, plainly, and leave the
+    // lidar alone: the recording continues and every point still lands. The
+    // health line goes on reporting the IMU device's own state, which the
+    // engine will move to degraded/fault on its blackout watchdog.
+    log(QString("serial IMU disconnected (%1) — the lidar is unaffected and the recording "
+                "continues, but live odometry now has no gyro").arg(why));
+  });
+
+  QString oerr;
+  // 115200 8N1 and only that: A18's module has no other rate (discovery.h,
+  // ProbeSerialJuxiImu — "there is no sweep, because the module has no other
+  // rate").
+  if (!imu_reader_->open(port, 115200, &oerr)) {
+    if (err) *err = oerr;
+    imu_reader_->deleteLater();
+    imu_reader_ = nullptr;
+    return false;
+  }
+
+  scanengine::ImuSerialConfig cfg;
+  cfg.serial.port_name = "";  // EngineHost owns the string; see addImuSerial()
+  cfg.serial.baud = 115200;
+  // report_rate_hz / send_rate_command are left at their header defaults (100 Hz,
+  // on). That single frame is the only thing anything here ever writes to the
+  // port, and it goes out through the write_fn bridge EngineHost installs.
+  imu_device_ = host_->addImuSerial(cfg, imu_reader_, err);
+  if (imu_device_ == scanengine::kInvalidDeviceId) {
+    imu_reader_->close();
+    imu_reader_->deleteLater();
+    imu_reader_ = nullptr;
+    return false;
+  }
+  return true;
+}
+
+void CaptureWindow::disarmImuSerial(const QString& why) {
+  if (imu_device_ != scanengine::kInvalidDeviceId && host_) {
+    QString err;
+    // remove_device() first: until it returns, the driver may still call the
+    // write_fn that points at this reader.
+    (void)host_->removeDevice(imu_device_, &err);
+    imu_device_ = scanengine::kInvalidDeviceId;
+  }
+  if (imu_reader_) {
+    imu_reader_->clearTarget();
+    imu_reader_->close();
+    imu_reader_->deleteLater();
+    imu_reader_ = nullptr;
+    log("serial IMU port closed — " + why);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Arming / live preview
 // ---------------------------------------------------------------------------
 
@@ -960,8 +1251,9 @@ bool CaptureWindow::startPreviewSession(QString* err) {
   // odometry's frame; carrying it across is field bug A's largest single source
   // (a whole trajectory's worth of displacement inside one 100 ms poll).
   resetWalkTracking("preview session started");
+  const float near_gate = lioNearGateForModel();
   if (host_->startSession(QString(), profile_->currentText(), false, err,
-                          /*live_slam=*/true)) {
+                          /*live_slam=*/true, near_gate)) {
     live_slam_running_ = true;
     return true;
   }
@@ -970,7 +1262,7 @@ bool CaptureWindow::startPreviewSession(QString* err) {
               "trajectory trail this session")
           .arg(err ? *err : QString("unknown")));
   return host_->startSession(QString(), profile_->currentText(), false, err,
-                             /*live_slam=*/false);
+                             /*live_slam=*/false, near_gate);
 }
 
 bool CaptureWindow::startRecordingSession(QString* err) {
@@ -983,8 +1275,9 @@ bool CaptureWindow::startRecordingSession(QString* err) {
   // recording never fails because the odometry could not start. And the same
   // pose-frame reset — a new session is a new odometry, numbered from 0.
   resetWalkTracking("recording session started");
+  const float near_gate = lioNearGateForModel();
   if (host_->startSession(last_project_dir_, profile_->currentText(), true, err,
-                          /*live_slam=*/true)) {
+                          /*live_slam=*/true, near_gate)) {
     live_slam_running_ = true;
     return true;
   }
@@ -993,7 +1286,7 @@ bool CaptureWindow::startRecordingSession(QString* err) {
               "byte is still recorded")
           .arg(err ? *err : QString("unknown")));
   return host_->startSession(last_project_dir_, profile_->currentText(), true, err,
-                             /*live_slam=*/false);
+                             /*live_slam=*/false, near_gate);
 }
 
 bool CaptureWindow::armPreview(QString* err) {
@@ -1002,15 +1295,27 @@ bool CaptureWindow::armPreview(QString* err) {
     if (err) *err = "engine unavailable";
     return false;
   }
-  if (lidar_ip_->text().trimmed().isEmpty()) {
+  const bool mid70 = lidarModel() == LidarModel::kMid70;
+  if (!mid70 && lidar_ip_->text().trimmed().isEmpty()) {
     if (err) *err = "no lidar IP yet (macOS cannot discover by broadcast — S2 finding)";
+    return false;
+  }
+  // A Mid-70 is found by its BROADCAST, not by an address we type, so an empty
+  // lidar IP is legitimate here where it is fatal for a Mid-360. What is not
+  // legitimate is having neither: with no host IP the lidar has nowhere to
+  // stream to, and SDK v1 names the host in the handshake every time.
+  if (mid70 && host_ip_->text().trimmed().isEmpty()) {
+    if (err) *err = "no host IP yet — SDK v1 tells the Mid-70 where to stream on every connect";
     return false;
   }
   // Discovery and the Livox SDK both want UDP 56201; the device must own it
   // alone. This BLOCKS (bounded by one DiscoveryGate slice, ~1 s) until the
   // discovery worker's socket is really closed — NOTES.md §16.7.
   if (!stopDiscoveryForDeviceUse("live preview")) {
-    if (err) *err = "auto-detect is still holding UDP 56201 — try again in a moment";
+    if (err) {
+      *err = mid70 ? QString("auto-detect is still holding UDP 55000 — try again in a moment")
+                   : QString("auto-detect is still holding UDP 56201 — try again in a moment");
+    }
     return false;
   }
 
@@ -1024,23 +1329,71 @@ bool CaptureWindow::armPreview(QString* err) {
 
   if (!startPreviewSession(err)) return false;
 
-  scanengine::Mid360Config cfg;
-  cfg.udp.host_ip = host_ip_->text().trimmed().toStdString();
-  cfg.udp.lidar_ip = lidar_ip_->text().trimmed().toStdString();
-  cfg.udp.point_port = std::uint16_t(point_port_->value());
-  cfg.udp.imu_port = std::uint16_t(imu_port_->value());
-  cfg.udp.cmd_port = std::uint16_t(cmd_port_->value());
-  last_mid360_cfg_ = std::make_unique<scanengine::Mid360Config>(cfg);
-  device_ = host_->addMid360(cfg, err);
-  if (device_ == scanengine::kInvalidDeviceId) {
-    QString stop_err;
-    (void)host_->stopSession(&stop_err);
-    return false;
+  if (mid70) {
+    // A17. Beside the Mid-360 path, never inside it: with the combo on Mid-360
+    // this whole branch is dead code, which is what makes "the Mid-360 flow is
+    // unchanged" a checkable statement rather than a hope.
+    scanengine::Mid70Config cfg;
+    cfg.backend = scanengine::Mid70Backend::kSdk1;  // the only backend that brings a device up
+    cfg.udp.host_ip = host_ip_->text().trimmed().toStdString();
+    cfg.udp.lidar_ip = lidar_ip_->text().trimmed().toStdString();
+    // Empty = "the first Mid-70 heard" (mid70_driver.h). The read-only field is
+    // filled by auto-detect; a bench with one lidar leaves it empty and is fine.
+    cfg.broadcast_code = mid70_code_->text().trimmed().toStdString();
+    // Everything else — filter, decimation budget, reconnect policy, dual
+    // return — stays at the driver header's defaults. The panel has never
+    // exposed the Mid-360's equivalents either, and inventing UI for knobs that
+    // have not been exercised on hardware would be inventing confidence.
+    last_mid70_cfg_ = std::make_unique<scanengine::Mid70Config>(cfg);
+    device_ = host_->addMid70(cfg, err);
+    if (device_ == scanengine::kInvalidDeviceId) {
+      QString stop_err;
+      (void)host_->stopSession(&stop_err);
+      return false;
+    }
+    saveMid70Settings();
+
+    // A18. The IMU is added AFTER the lidar so the device numbers read in the
+    // order an operator would name them, and its failure never fails the arm:
+    // record-always outranks the odometry, exactly as it does for live SLAM in
+    // startPreviewSession().
+    QString imu_err;
+    const QString imu_port = selectedImuPort();
+    if (!armImuSerial(&imu_err)) {
+      log(QString("serial IMU on %1 would not start (%2) — continuing with the Mid-70 "
+                  "alone: every point is still recorded, but live odometry has no gyro")
+              .arg(imu_port, imu_err));
+    }
+
+    log(QString("Mid-70 %1 at %2 -> host %3, device #%4%5 — live preview (not recording)")
+            .arg(mid70_code_->text().isEmpty() ? QStringLiteral("(any broadcast code)")
+                                               : mid70_code_->text())
+            .arg(lidar_ip_->text().isEmpty() ? QStringLiteral("(address from broadcast)")
+                                             : lidar_ip_->text())
+            .arg(host_ip_->text())
+            .arg(device_)
+            .arg(imu_device_ != scanengine::kInvalidDeviceId
+                     ? QString("; IMU on %1, device #%2").arg(imu_port).arg(imu_device_)
+                     : QString("; no IMU")));
+  } else {
+    scanengine::Mid360Config cfg;
+    cfg.udp.host_ip = host_ip_->text().trimmed().toStdString();
+    cfg.udp.lidar_ip = lidar_ip_->text().trimmed().toStdString();
+    cfg.udp.point_port = std::uint16_t(point_port_->value());
+    cfg.udp.imu_port = std::uint16_t(imu_port_->value());
+    cfg.udp.cmd_port = std::uint16_t(cmd_port_->value());
+    last_mid360_cfg_ = std::make_unique<scanengine::Mid360Config>(cfg);
+    device_ = host_->addMid360(cfg, err);
+    if (device_ == scanengine::kInvalidDeviceId) {
+      QString stop_err;
+      (void)host_->stopSession(&stop_err);
+      return false;
+    }
+    saveMid360Settings();
+    log(QString("Mid-360 %1 -> host %2, device #%3 — live preview (not recording)")
+            .arg(lidar_ip_->text(), host_ip_->text())
+            .arg(device_));
   }
-  saveMid360Settings();
-  log(QString("Mid-360 %1 -> host %2, device #%3 — live preview (not recording)")
-          .arg(lidar_ip_->text(), host_ip_->text())
-          .arg(device_));
 
   // Item 18: hold the display awake for as long as the device is armed — the
   // operator is walking, not typing. Honest about platforms that cannot.
@@ -1054,24 +1407,52 @@ bool CaptureWindow::armPreview(QString* err) {
   resetWalkTracking("device armed");
 
   arm_clock_.start();
+  // Set explicitly on BOTH branches, never inherited.
+  //
+  // 8 s is the Mid-360's: first packet before the A3 connect timeout.
+  //
+  // 180 s is the MID-70's, and it is not padding. A cold Mid-70 sits in the
+  // SDK's kLidarStateInit while it SELF-HEATS, streaming nothing, for up to
+  // about three minutes ([M] §4 / the A17 driver header's note on why
+  // connect_timeout_ms is a reason to keep trying rather than to fault). The
+  // SDK backend keeps re-handshaking throughout. An 8 s — or even 12 s —
+  // window would therefore declare "no data" on a device that is working
+  // perfectly and simply cold, disarm it, and hand the operator a failure to
+  // debug. So the window is longer than the warm-up, and the label below says
+  // what the wait is FOR rather than counting down at somebody in silence.
+  arm_window_s_ = mid70 ? 180.0 : 8.0;
+  FieldLog::info("capture", QString("event=arm arm_window_s=%1 %2")
+                                .arg(arm_window_s_, 0, 'f', 0)
+                                .arg(fieldConfigKv()));
   endDataWatch();  // kArming has its own first-packet measurement (evaluateArming)
   auto h = host_->engine()->device_health(device_);
   arm_baseline_points_ = h.ok() ? h.value().points_out : 0;
   last_arm_failed_ = false;
   setPhase(Phase::kArming);
   arm_label_->setStyleSheet(QString());
-  arm_label_->setText("Arming — waiting for the first Mid-360 packet…");
+  arm_label_->setText(mid70
+                          ? QString("Arming — waiting for the first Mid-70 datagram. A COLD "
+                                    "Mid-70 self-heats for up to ~3 minutes before it streams "
+                                    "anything; that is normal, not a fault.")
+                          : QString("Arming — waiting for the first Mid-360 packet…"));
   Q_EMIT previewStarted();
   return true;
 }
 
 bool CaptureWindow::disarmPreview(const QString& why) {
+  FieldLog::info("capture",
+                 QString("event=disarm why=\"%1\" %2").arg(why, fieldConfigKv()));
   if (phase_ == Phase::kRecording || phase_ == Phase::kPaused) {
     log("refusing to disarm: a recording is open — Stop it first");
     return false;
   }
   if (phase_ == Phase::kIdle) return true;
   QString err;
+  // The IMU first: it is the dependent half of a Mid-70 session, and tearing it
+  // down while the lidar is still up leaves the shorter-lived object gone
+  // first, which is the order this panel can reason about. A no-op for a
+  // Mid-360 session, which never had one.
+  disarmImuSerial(why);
   if (device_ != scanengine::kInvalidDeviceId && host_) {
     (void)host_->removeDevice(device_, &err);
     device_ = scanengine::kInvalidDeviceId;
@@ -1106,6 +1487,9 @@ void CaptureWindow::evaluateArming() {
     arm_label_->setStyleSheet(QString("color:%1;font-weight:600;").arg(theme::css(theme::good())));
     arm_label_->setText("Live — " + detail + ". Start records into a new project.");
     setPhase(Phase::kPreview);
+    FieldLog::info("capture", QString("event=connected elapsed_s=%1 %2")
+                                  .arg(elapsed, 0, 'f', 2)
+                                  .arg(fieldConfigKv()));
     log("live preview up: " + detail);
     // The same signal the self-test gate used to emit, with the same meaning for
     // main.cpp's --mid360-selftest: PASS = the device produced data.
@@ -1123,6 +1507,7 @@ void CaptureWindow::evaluateArming() {
     // Give the port back: a faulted device holding 56201 blocks the auto-detect
     // pass the operator is about to need.
     QString err;
+    disarmImuSerial("arm failed");  // no-op unless this was a Mid-70 session
     if (device_ != scanengine::kInvalidDeviceId) {
       (void)host_->removeDevice(device_, &err);
       device_ = scanengine::kInvalidDeviceId;
@@ -1132,8 +1517,40 @@ void CaptureWindow::evaluateArming() {
     setPhase(Phase::kIdle);
     awake_.release();
     if (walk_label_) walk_label_->setVisible(false);
+    FieldLog::error("capture", QString("event=arm_failed detail=\"%1\" %2")
+                                   .arg(detail, fieldConfigKv()));
     log("arm failed: " + detail);
     Q_EMIT selfTestFinished(false, detail);
+    return;
+  }
+  // A17: past the SDK v1 handshake's own connect timeout, a Mid-70 that is
+  // still silent is usually WARMING UP rather than missing. Which of the two it
+  // is comes from the DEVICE, not from a stopwatch: Mid70Stats::err.self_heating
+  // is a bit the lidar sets in its own err_code, so when it is set this says so
+  // outright, and when it is not, this says only what it actually knows — the
+  // link state and the elapsed time. Getting that distinction from the sensor
+  // rather than from a guess is the difference between reassuring an operator
+  // correctly and reassuring them about a cable that is unplugged.
+  if (lidarModel() == LidarModel::kMid70 && elapsed > 12.0) {
+    bool self_heating = false;
+    QString link;
+    if (auto ms = host_->engine()->mid70_stats(device_); ms.ok()) {
+      self_heating = ms.value().err.self_heating;
+      link = QString::fromUtf8(scanengine::to_string(ms.value().link));
+    }
+    arm_label_->setText(
+        self_heating
+            ? QString("Mid-70 warming up — the device reports SELF-HEATING and streams "
+                      "nothing until it is warm (%1 / %2 s). A cold unit takes up to ~3 "
+                      "minutes; leave it running.")
+                  .arg(elapsed, 0, 'f', 0)
+                  .arg(arm_window_s_, 0, 'f', 0)
+            : QString("Mid-70: no datagram yet (%1 / %2 s, link %3). The SDK keeps "
+                      "re-handshaking; a cold unit self-heats for up to ~3 minutes before "
+                      "it streams anything.")
+                  .arg(elapsed, 0, 'f', 0)
+                  .arg(arm_window_s_, 0, 'f', 0)
+                  .arg(link.isEmpty() ? QStringLiteral("unknown") : link));
     return;
   }
   arm_label_->setText(QString("Arming — waiting for the first packet (%1 / %2 s)…")
@@ -1261,6 +1678,9 @@ void CaptureWindow::onStart() {
   // up. If the sensor does not come back, this is what notices and re-arms it —
   // without ever closing the .lscan that is now open.
   beginDataWatch("Start restarted the sensor");
+  FieldLog::info("capture", QString("event=record_start auto_named=%1 %2")
+                                .arg(auto_named ? 1 : 0)
+                                .arg(fieldConfigKv()));
   log(QString("recording started -> %1%2").arg(dir, auto_named ? "  (auto-named)" : ""));
   updateNameHint();
   Q_EMIT captureStarted(dir);
@@ -1367,6 +1787,42 @@ void CaptureWindow::onStop() {
   repolish(summary_);
   log(empty_seal ? ("NOTHING WAS RECORDED — " + sum) : sum);
 
+  // Spec item (g): what the seal actually produced, read back through the SAME
+  // Project reader the library uses — per stream, so "it recorded" and "it
+  // recorded points but no IMU" are different sentences in the log rather than
+  // one number an operator has to interpret.
+  FieldLog::info("capture", QString("event=record_stop empty_seal=%1 recorded_s=%2 "
+                                    "chunks_written=%3 bytes_written=%4 %5")
+                                .arg(empty_seal ? 1 : 0)
+                                .arg(recorded_seconds_accum_, 0, 'f', 2)
+                                .arg(cum_chunks_written_)
+                                .arg(cum_bytes_written_)
+                                .arg(fieldConfigKv()));
+  if (!sealed_dir.isEmpty()) {
+    const ProjectInfo pi = readProject(sealed_dir);
+    FieldLog::info("capture",
+                   QString("event=sealed dir=%1 valid=%2 manifest_ok=%3 sealed=%4 "
+                           "total_chunks=%5 total_bytes=%6 duration_s=%7 "
+                           "truncated_tail_chunks=%8 crc_mismatch_chunks=%9")
+                       .arg(sealed_dir)
+                       .arg(pi.valid ? 1 : 0)
+                       .arg(pi.manifest_ok ? 1 : 0)
+                       .arg(pi.sealed ? 1 : 0)
+                       .arg(pi.total_chunks)
+                       .arg(pi.total_bytes)
+                       .arg(pi.duration_s, 0, 'f', 2)
+                       .arg(pi.truncated_tail_chunks)
+                       .arg(pi.crc_mismatch_chunks));
+    for (const StreamInfo& st : pi.streams) {
+      FieldLog::info("capture", QString("event=sealed_stream dir=%1 stream=%2 chunks=%3 "
+                                        "bytes=%4 duration_s=%5")
+                                    .arg(QFileInfo(sealed_dir).fileName(), st.name)
+                                    .arg(st.chunks)
+                                    .arg(st.bytes)
+                                    .arg(st.duration_s(), 0, 'f', 2));
+    }
+  }
+
   recorded_seconds_accum_ = 0.0;
   if (record_cluster_) record_cluster_->setElapsedSeconds(0.0);
   name_edit_->clear();
@@ -1409,6 +1865,19 @@ bool CaptureWindow::rearmDeviceInPlace(QString* err) {
     QString rerr;
     (void)host_->removeDevice(device_, &rerr);
     device_ = scanengine::kInvalidDeviceId;
+  }
+  // A17: re-arm whichever lidar this session actually opened. The IMU device is
+  // deliberately NOT rebuilt here — field bug C is about a lidar that goes
+  // quiet across a session restart, the serial port is still open and still
+  // pushing, and removing a working IMU to fix a silent lidar would break the
+  // half that was fine.
+  if (lidarModel() == LidarModel::kMid70) {
+    if (!last_mid70_cfg_) {
+      if (err) *err = "no Mid-70 config to re-arm with";
+      return false;
+    }
+    device_ = host_->addMid70(*last_mid70_cfg_, err);
+    return device_ != scanengine::kInvalidDeviceId;
   }
   if (!last_mid360_cfg_) {
     if (err) *err = "no Mid-360 config to re-arm with";
@@ -1499,6 +1968,137 @@ double CaptureWindow::recordedSecondsNow() const {
   return s;
 }
 
+// A17 — the Mid-70's health row, read from Engine::mid70_stats().
+//
+// EVERY NUMBER HERE IS THE DEVICE'S OWN ACCOUNT OF ITSELF, not an inference.
+// The Mid-70 puts an err_code bitfield and a timestamp_type in the header of
+// EVERY datagram (mid70_packets.h), so "is the clock disciplined" and "is PPS
+// present" are facts the sensor states rather than things this panel guesses
+// from timing. That is exactly why they are worth the width: on a rig being
+// prepared for PPS+GPS they are the only way to see the sync come up, and a
+// wrong guess about them would be worse than no row at all.
+//
+// `loss_pct_window` is THIS health window's, `packets_lost` the session total.
+// Both are inferred by the driver from device-timestamp gaps, because SDK v1
+// datagrams carry no sequence counter — the driver's header says so, and the
+// word "est" here says it to the operator too.
+QString CaptureWindow::mid70HealthText(const scanengine::DeviceHealth& d) const {
+  QString line = QString("%1 · %2 pts/s · %3 pts / %4 in · %5 drops")
+                     .arg(scanengine::to_string(d.state))
+                     .arg(d.points_per_sec, 0, 'f', 0)
+                     .arg(d.points_out)
+                     .arg(humanBytesLocal(d.bytes_in))
+                     .arg(d.drops);
+  if (!host_ || !host_->ok() || device_ == scanengine::kInvalidDeviceId) return line;
+
+  auto r = host_->engine()->mid70_stats(device_);
+  if (!r.ok()) {
+    // kInvalidArgument here means the armed device is not a Mid-70 at all,
+    // which would be a bug in this panel's own model bookkeeping. Say which,
+    // rather than quietly dropping half the row.
+    return line + QString(" · no Mid-70 stats (%1)").arg(scanengine::error_str(r.error()));
+  }
+  const scanengine::Mid70Stats& m = r.value();
+
+  line += QString(" · link %1").arg(scanengine::to_string(m.link));
+  line += QString(" · loss %1% window, %2 pkts est lost")
+              .arg(m.loss_pct_window, 0, 'f', 2)
+              .arg(m.packets_lost);
+
+  // PPS and time sync. `pps_ok` is a bool the device sets; `time_sync_status`
+  // is an enum whose own to_string lives beside the decoder, so the words come
+  // from the engine rather than from a second table here that could drift.
+  // Both are only meaningful once a datagram has actually been decoded.
+  if (m.device_stamp_decodable || m.point_packets > 0) {
+    line += QString(" · PPS: %1").arg(m.err.pps_ok ? "locked" : "none");
+    line += QString(" · sync: %1")
+                .arg(QString::fromUtf8(scanengine::mid70::to_string_time_sync_status(
+                    m.err.time_sync_status)));
+    line += QString(" · stamps: %1")
+                .arg(QString::fromUtf8(
+                    scanengine::mid70::to_string_timestamp_type(m.timestamp_type)));
+  } else {
+    line += " · PPS/sync: no datagram decoded yet";
+  }
+
+  // The device's own "I am cold" bit. This is the ONE thing that distinguishes
+  // "warming up, leave it alone" from "not talking to me", and it is why the
+  // arm window is three minutes rather than eight seconds.
+  if (m.err.self_heating) line += " · SELF-HEATING (cold start, streaming will follow)";
+  // The remaining err_code fields, surfaced only when they are NOT normal: a
+  // health row that lists four "normal"s teaches an operator to stop reading it.
+  if (m.err.temp_status) line += QString(" · TEMP %1").arg(m.err.temp_status);
+  if (m.err.volt_status) line += QString(" · VOLT %1").arg(m.err.volt_status);
+  if (m.err.motor_status) line += QString(" · MOTOR %1").arg(m.err.motor_status);
+  if (m.err.dirty_warn) line += " · WINDOW DIRTY/BLOCKED";
+  if (m.err.fan_warn) line += " · FAN";
+  if (m.err.firmware_err) line += " · FIRMWARE ERROR";
+
+  // Identity, once the SDK has reported it. Empty before the handshake
+  // completes, and left out rather than shown blank.
+  if (!m.broadcast_code.empty()) {
+    line += QString(" · %1").arg(QString::fromStdString(m.broadcast_code));
+  }
+  if (!m.firmware.empty()) {
+    line += QString(" fw %1").arg(QString::fromStdString(m.firmware));
+  }
+  if (m.forced_reinits > 0) line += QString(" · %1 SDK re-init(s)").arg(m.forced_reinits);
+  return line;
+}
+
+// A18 — the IMU's tail of the same row, read from Engine::imu_serial_stats().
+// Empty when no IMU device is armed, so a Mid-70 running without one does not
+// grow a row of blanks.
+//
+// THE BLACKOUT COUNTER IS THE POINT OF THIS ROW. The module stops transmitting
+// for ~2.9 s roughly every 35 s — measured vendor-firmware behaviour that
+// nothing in its protocol turns off (imu_serial_driver.h). The driver counts
+// those and refuses to smooth them, because a driver that hid them would hand
+// LIO three seconds of invented motion. So the count is shown always, not only
+// when it is non-zero: an operator who sees it climbing is seeing the sensor
+// behave as documented, and an operator who sees it stuck at 0 after a minute
+// is looking at something that is not this module.
+QString CaptureWindow::imuHealthText() const {
+  if (imu_device_ == scanengine::kInvalidDeviceId || !host_ || !host_->ok()) return QString();
+  auto h = host_->engine()->device_health(imu_device_);
+  if (!h.ok()) return QString("  |  IMU: no health");
+  const auto& d = h.value();
+
+  QString line = QString("  |  IMU %1").arg(scanengine::to_string(d.state));
+
+  auto r = host_->engine()->imu_serial_stats(imu_device_);
+  if (!r.ok()) {
+    return line + QString(" · no IMU stats (%1)").arg(scanengine::error_str(r.error()));
+  }
+  const scanengine::ImuSerialStats& s = r.value();
+
+  line += QString(" · %1 Hz").arg(s.rate_hz, 0, 'f', 1);
+  // frames.checksum_pass_rate() counts EVERY func, not just the 0x04 raw ones
+  // LIO consumes: the module emits four frame types unprompted and cannot be
+  // told not to, so a rate computed over raw frames alone would report a
+  // healthy link as 25% good.
+  line += QString(" · %1 raw / %2 frames, %3% ok")
+              .arg(s.frames.raw_frames)
+              .arg(s.frames.frames_seen())
+              .arg(s.frames.checksum_pass_rate() * 100.0, 0, 'f', 1);
+
+  if (s.blackout_in_progress) {
+    line += QString(" · BLACKOUT NOW (%1 so far)").arg(s.blackouts);
+  } else {
+    line += QString(" · %1 blackout(s)").arg(s.blackouts);
+  }
+  if (s.worst_blackout_ns > 0) {
+    line += QString(", worst %1 s").arg(double(s.worst_blackout_ns) / 1e9, 0, 'f', 2);
+  }
+  // The stamper's own backstop. `clamps` must be zero: a non-zero value means
+  // the de-burst model produced a non-monotonic stamp and the backstop had to
+  // rescue it, which is a fact about the model, not about the module.
+  if (s.stamper.clamps > 0) line += QString(" · %1 STAMP CLAMPS").arg(s.stamper.clamps);
+  if (s.samples_dropped > 0) line += QString(" · %1 dropped").arg(s.samples_dropped);
+  if (imu_reader_ && !imu_reader_->isOpen()) line += " · PORT CLOSED";
+  return line;
+}
+
 void CaptureWindow::updateHealth() {
   if (!host_) return;
   if (phase_ == Phase::kArming) evaluateArming();
@@ -1514,6 +2114,10 @@ void CaptureWindow::updateHealth() {
         flag = QString(" · DEGRADED (%1)").arg(scanengine::error_str(d.last_error));
       } else if (d.state == scanengine::DeviceState::kFault) {
         flag = QString(" · FAULT (%1)").arg(scanengine::error_str(d.last_error));
+      }
+      if (lidarModel() == LidarModel::kMid70) {
+        health_->setText(mid70HealthText(d) + flag + imuHealthText());
+        return;
       }
       health_->setText(QString("%1 · %2 pts/s · %3 Hz IMU · %4% ok · %5 pts / %6 in · "
                                "%7 drops%8")
@@ -1590,7 +2194,12 @@ void CaptureWindow::setPhase(Phase p) {
   // is open they describe it, so they are read-only rather than misleading.
   for (QWidget* w : {static_cast<QWidget*>(host_ip_), static_cast<QWidget*>(lidar_ip_),
                      static_cast<QWidget*>(point_port_), static_cast<QWidget*>(imu_port_),
-                     static_cast<QWidget*>(cmd_port_)}) {
+                     static_cast<QWidget*>(cmd_port_),
+                     // A17/A18: same rule, same reason. Changing the lidar
+                     // MODEL or the IMU port under a live device would leave
+                     // the panel describing a session it is not running.
+                     static_cast<QWidget*>(lidar_model_),
+                     static_cast<QWidget*>(imu_serial_port_)}) {
     if (w) w->setEnabled(idle);
   }
   if (profile_) profile_->setEnabled(!recording && !paused);
@@ -1646,6 +2255,10 @@ void CaptureWindow::saveMid360Settings() {
 // ---------------------------------------------------------------------------
 
 void CaptureWindow::runMid360SelfTestForCli(const QString& hostIp, const QString& lidarIp) {
+  // A17: pin the model before touching the fields. This hook is what CI and
+  // every field evidence run drive, and it must arm a Mid-360 whatever the GUI
+  // combo (or a discovery hit earlier in the same run) last left it on.
+  setLidarModel(LidarModel::kMid360);
   host_ip_->setText(hostIp);
   lidar_ip_->setText(lidarIp);
   QString err;
@@ -1673,6 +2286,35 @@ void CaptureWindow::triggerPauseResumeForCli() { onPauseResume(); }
 void CaptureWindow::triggerStopForCli() { onStop(); }
 
 void CaptureWindow::triggerAutoDetectForCli() { onAutoDetectClicked(); }
+
+bool CaptureWindow::setLidarModelForCli(const QString& name) {
+  const QString n = name.trimmed().toLower();
+  if (n == "mid360" || n == "mid-360") {
+    setLidarModel(LidarModel::kMid360);
+  } else if (n == "mid70" || n == "mid-70") {
+    setLidarModel(LidarModel::kMid70);
+  } else {
+    return false;
+  }
+  // Report what the panel now LOOKS like, not just what was asked for. The
+  // capture dock is short and scrolls, so an evidence screenshot cannot show
+  // the IMU row at the bottom of the link column; this line is the record that
+  // it is there (or correctly gone) and how many ports it offers.
+  log(QString("lidar model set to %1 (CLI) -> SDK2 port row %2, broadcast code row %3, "
+              "IMU row %4 (%5 serial port(s) offered, selected \"%6\")")
+          .arg(lidar_model_->currentText())
+          // isHidden(), not isVisible()/isVisibleTo(): the first two are false
+          // for anything inside the COLLAPSED "Manual setup" box regardless of
+          // the model, which would report every row as hidden and prove
+          // nothing. isHidden() asks the only question this line is about —
+          // did the model choice hide this row.
+          .arg(mid360_ports_row_ && !mid360_ports_row_->isHidden() ? "shown" : "hidden")
+          .arg(mid70_code_row_ && !mid70_code_row_->isHidden() ? "shown" : "hidden")
+          .arg(imu_row_ && !imu_row_->isHidden() ? "shown" : "hidden")
+          .arg(imu_serial_port_ ? imu_serial_port_->count() - 1 : 0)
+          .arg(selectedImuPort().isEmpty() ? QStringLiteral("(none)") : selectedImuPort()));
+  return true;
+}
 
 void CaptureWindow::suppressSilentAutoDetectForCli() {
   suppress_silent_auto_detect_ = true;
@@ -1707,10 +2349,10 @@ void CaptureWindow::buildAutoDetectSection(QVBoxLayout* v) {
   auto_detect_btn_->setCursor(Qt::PointingHandCursor);
   auto_detect_btn_->setMinimumHeight(34);
   auto_detect_btn_->setToolTip(
-      "Runs by itself when this panel opens. Listens for a Mid-360 heartbeat and "
-      "sweeps serial ports for a UM982 (and a COIN-D6, which desktop capture does not "
-      "use — see the D6 line below). A Mid-360 hit arms the live preview "
-      "automatically.");
+      "Runs by itself when this panel opens. Listens for a Mid-360 heartbeat (UDP 56201) "
+      "and then for a Mid-70 broadcast (UDP 55000), then sweeps serial ports for the "
+      "JuxiTech IMU module and a UM982 (and a COIN-D6, which desktop capture does not "
+      "use — see the D6 line below). A lidar hit arms the live preview automatically.");
   connect(auto_detect_btn_, &QPushButton::clicked, this, &CaptureWindow::onAutoDetectClicked);
   rl->addWidget(auto_detect_btn_, 1);
 
@@ -1761,6 +2403,12 @@ void CaptureWindow::buildAutoDetectSection(QVBoxLayout* v) {
   auto_detect_mid360_line_->setWordWrap(true);
   pv->addWidget(auto_detect_mid360_line_);
 
+  // A17: directly under the Mid-360 line, because the two are alternatives and
+  // an operator reading top to bottom is choosing between them.
+  auto_detect_mid70_line_ = new QLabel();
+  auto_detect_mid70_line_->setWordWrap(true);
+  pv->addWidget(auto_detect_mid70_line_);
+
   auto_detect_fix_line_ = new QLabel();
   auto_detect_fix_line_->setWordWrap(true);
   auto_detect_fix_line_->setTextFormat(Qt::PlainText);
@@ -1780,6 +2428,12 @@ void CaptureWindow::buildAutoDetectSection(QVBoxLayout* v) {
   auto_detect_d6_line_ = new QLabel();
   auto_detect_d6_line_->setWordWrap(true);
   pv->addWidget(auto_detect_d6_line_);
+
+  // A18: after the D6 and before the UM982, mirroring the probe order the
+  // engine's own ordering contract puts them in.
+  auto_detect_juxi_line_ = new QLabel();
+  auto_detect_juxi_line_->setWordWrap(true);
+  pv->addWidget(auto_detect_juxi_line_);
 
   auto_detect_um982_line_ = new QLabel();
   auto_detect_um982_line_->setWordWrap(true);
@@ -1820,9 +2474,17 @@ bool CaptureWindow::stopDiscoveryForDeviceUse(const QString& what) {
   setDiscoveryRunning(false, QString());
   if (already) return released;
 
+  // WHICH PORT, honestly. A pass holds 56201 (the Mid-360 heartbeat) and 55000
+  // (the Mid-70 broadcast) in turn, and the vendored SDK binds whichever one
+  // the model about to be armed needs — SDK v1's Start() now names 55000 in
+  // its own bind error. One gate covers both listens; this line just says which
+  // one the operator is about to care about.
+  const QString port =
+      lidarModel() == LidarModel::kMid70 ? QStringLiteral("55000") : QStringLiteral("56201");
   const QString msg =
       released
-          ? QString("auto-detect canceled so %1 can have UDP 56201 — port released").arg(what)
+          ? QString("auto-detect canceled so %1 can have UDP %2 — port released")
+                .arg(what, port)
           : QString("auto-detect canceled for %1 but its UDP socket did not come free in "
                     "time — not starting the device")
                 .arg(what);
@@ -1886,7 +2548,13 @@ void CaptureWindow::startDiscovery(bool silent) {
   // context, which Qt auto-disconnects on destruction.
   auto* thread = new QThread();
   discovery_thread_ = thread;
-  auto* worker = new DiscoveryWorker(3000, 700);
+  // 3 s of Mid-360 heartbeat (~1 Hz), then 2 s of Mid-70 broadcast (also ~1 Hz,
+  // so two windows), then 700 ms per enumerated serial port. Each UDP listen
+  // returns EARLY on its first hit (stop_after_devices = 1), so the common
+  // "the lidar is right there" case costs a fraction of that; the numbers are
+  // the WORST case, which is what an operator staring at the bar experiences
+  // when nothing is plugged in.
+  auto* worker = new DiscoveryWorker(3000, 2000, 700);
   // Grabbed BEFORE the thread starts: this is what a device start cancels
   // against, and it must exist from the instant discovery_in_flight_ is true.
   discovery_gate_ = worker->gate();
@@ -1925,33 +2593,47 @@ void CaptureWindow::handleDiscoveryFinished(const DiscoveryResult& r, bool silen
   }
 
   applyMid360Result(r, silent);
+  applyMid70Result(r, silent);
   applyD6Result(r);
+  applyJuxiImuResult(r, silent);
   applyUm982Result(r, silent);
   if (auto_detect_panel_) auto_detect_panel_->setVisible(true);
 
-  log(QString("auto-detect%1: Mid-360 %2, D6 %3 (phone-only), UM982 %4")
+  log(QString("auto-detect%1: Mid-360 %2, Mid-70 %3, D6 %4 (phone-only), IMU %5, UM982 %6")
           .arg(silent ? " (on open)" : "")
           .arg(r.mid360.found ? "found" : "not seen")
+          .arg(r.mid70.found ? "found" : "not seen")
           .arg(r.d6.found ? "detected" : "not seen")
+          .arg(r.juxi_imu.found ? "found" : "not seen")
           .arg(r.um982.found ? "found" : "not seen"));
+  // The SIGNATURE of this signal is deliberately unchanged: main.cpp's
+  // --auto-detect-selftest chain binds to it, and the Mid-70/IMU results are
+  // reported in the log line above and in the panel rather than by widening a
+  // contract three CLI hooks depend on.
   Q_EMIT autoDetectFinished(r.mid360.found, r.d6.found, r.um982.found);
 
   // Round-5 follow-up item 1: nothing found -> the inline manual row opens by
   // itself, with a sentence saying why, so the operator has somewhere to type
   // instead of a dead end. (It stays reachable from "Manual setup" when
   // detection DID succeed — that toggle is never hidden.)
-  if (!r.mid360.found) {
+  if (!r.mid360.found && !r.mid70.found) {
     setManualSetupOpen(true);
     setAutoDetectStatus(
-        "No Mid-360 answered. Type the lidar IP (and the host IP this Mac holds) in "
-        "Manual setup, then Connect — or fix the link and run Auto-detect again.",
+        "No lidar answered — neither a Mid-360 heartbeat on UDP 56201 nor a Mid-70 "
+        "broadcast on UDP 55000. Pick the model, type the lidar IP (and the host IP this "
+        "Mac holds) in Manual setup, then Connect — or fix the link and run Auto-detect "
+        "again.",
         "warn");
   }
 
   // Round 5 item 10: a device that answered goes straight to live preview. No
   // button, no gate — the points on screen are the proof it works. A CLI hook
   // that arms the device itself opts out (suppressAutoArmForCli).
-  const bool want_arm = rearm_after_discovery_ || r.mid360.found;
+  // A17: a Mid-70 hit auto-arms exactly as a Mid-360 hit does. When BOTH answer,
+  // the Mid-360 wins and applyMid70Result() says so rather than silently
+  // switching the model out from under an operator — which also means that on
+  // a bench with no Mid-70, every line of this is bit-for-bit the old decision.
+  const bool want_arm = rearm_after_discovery_ || r.mid360.found || r.mid70.found;
   rearm_after_discovery_ = false;
   if (!want_arm || suppress_auto_arm_ || phase_ != Phase::kIdle) return;
   QString err;
@@ -2039,6 +2721,158 @@ void CaptureWindow::applyMid360Result(const DiscoveryResult& r, bool silent) {
   }
 }
 
+// A17. The Mid-70 half of a detect pass. Two things make this NOT a copy of
+// applyMid360Result():
+//
+//  * A MID-360 HIT WINS. If both answered, the model stays on Mid-360 and this
+//    reports the Mid-70 as present-but-not-selected. Auto-switching would mean
+//    a detect pass could change which driver Connect opens without anybody
+//    asking, and on a bench where both are powered that is a coin toss. It also
+//    keeps the Mid-360 flow provably untouched: with no Mid-70 broadcasting,
+//    `m.found` is false and nothing below runs at all.
+//
+//  * THERE IS NO PERSISTED HOST TO RECONCILE. SDK v1 does not store a host
+//    address on the lidar; the host is named in the handshake every time. So
+//    the only host question is the one that actually bites in the field — does
+//    this Mac hold an address on the lidar's network — and the answer comes
+//    from the same CheckHostReachability() the Mid-360 path uses (see
+//    DeviceDiscovery.cpp for why that is honest for an SDK v1 beacon).
+void CaptureWindow::applyMid70Result(const DiscoveryResult& r, bool silent) {
+  const auto& m = r.mid70;
+  if (!auto_detect_mid70_line_) return;
+
+  if (!m.found) {
+    const QString why =
+        r.mid70_error.isEmpty() ? QStringLiteral("no broadcast heard") : r.mid70_error;
+    auto_detect_mid70_line_->setText(
+        QString("Mid-70: not seen (%1). A Mid-70 broadcasts on UDP 55000 about once a "
+                "second until something connects to it — so this also looks exactly like "
+                "\"a viewer is already streaming from it\".")
+            .arg(why));
+    auto_detect_mid70_line_->setProperty("tone", "warn");
+    repolish(auto_detect_mid70_line_);
+    return;
+  }
+
+  // dev_type 6 is a Mid-70; the parser deliberately does not reject the others,
+  // so a Horizon on the same switch shows up here as itself rather than as a
+  // dropped datagram. Arming a non-Mid-70 through this driver is not something
+  // this build has any evidence for, so it says so instead of pretending.
+  const bool is_mid70 = m.dev_type == 6;
+  auto_detect_mid70_line_->setText(
+      QString("Found %1 %2 at %3%4.")
+          .arg(m.dev_type_name.isEmpty() ? QStringLiteral("Livox SDK-v1 device")
+                                         : m.dev_type_name)
+          .arg(m.broadcast_code)
+          .arg(m.lidar_ip)
+          .arg(is_mid70 ? QString()
+                        : QString(" — NOT a Mid-70 (dev_type %1); this build has only been "
+                                  "written against the Mid-70")
+                              .arg(m.dev_type)));
+  auto_detect_mid70_line_->setProperty("tone", is_mid70 ? "good" : "warn");
+  repolish(auto_detect_mid70_line_);
+
+  if (r.mid360.found) {
+    log(QString("auto-detect: a Mid-70 (%1 at %2) is also broadcasting, but a Mid-360 "
+                "answered too and stays selected — switch the lidar model by hand to use "
+                "the Mid-70")
+            .arg(m.broadcast_code, m.lidar_ip));
+    return;
+  }
+  if (!is_mid70) return;  // do not switch the panel onto a device we cannot vouch for
+
+  // Selecting the model reloads the "mid70/last" fields (the combo's own
+  // handler), so the discovered values are written AFTER it, not before.
+  setLidarModel(LidarModel::kMid70);
+  mid70_code_->setText(m.broadcast_code);
+
+  // Same prefill guard as the Mid-360 path: a silent (on-open) pass leaves a
+  // field the operator has already typed into alone; a clicked pass always
+  // fills in what it found, because that is the point of clicking it.
+  const bool lidar_ip_is_default = lidar_ip_->text().trimmed() == "192.168.1.100";
+  const bool host_ip_is_default = host_ip_->text().trimmed() == "192.168.1.5";
+  if (!silent || lidar_ip_is_default) lidar_ip_->setText(m.lidar_ip);
+
+  auto_detect_fix_line_->setVisible(false);
+  auto_detect_copy_btn_->setVisible(false);
+  auto_detect_copy_payload_.clear();
+  if (m.on_lidar_subnet && !m.suggested_host_ip.isEmpty()) {
+    // This Mac already holds an address the lidar can reach. Nothing to fix.
+    if (!silent || host_ip_is_default) host_ip_->setText(m.suggested_host_ip);
+  } else {
+    // The field failure, exactly: the lidar is reachable enough to broadcast at
+    // us but we hold no address on its network, so anything we tell it to
+    // stream to is unroutable. Offer the same copyable one-liner the Mid-360
+    // path does.
+    const QString iface =
+        m.suggested_interface.isEmpty() ? QStringLiteral("<if>") : m.suggested_interface;
+    const QString example = m.suggested_host_ip.isEmpty()
+                                ? QStringLiteral("<host ip on the lidar's subnet>")
+                                : m.suggested_host_ip;
+    auto_detect_copy_payload_ =
+        QString("sudo ifconfig %1 alias %2 255.255.255.0").arg(iface, example);
+    auto_detect_fix_line_->setText(
+        m.host_check_note.isEmpty()
+            ? QString("this Mac has no address on the Mid-70's network — e.g. `%1`")
+                  .arg(auto_detect_copy_payload_)
+            : m.host_check_note);
+    auto_detect_fix_line_->setToolTip(m.host_check_note);
+    auto_detect_fix_line_->setProperty("tone", "bad");
+    repolish(auto_detect_fix_line_);
+    auto_detect_fix_line_->setVisible(true);
+    auto_detect_copy_btn_->setVisible(!m.suggested_interface.isEmpty());
+  }
+}
+
+// A18. The serial IMU probe's hit. Unlike the D6 line (information only) and
+// the UM982 line (nowhere to connect it), this one DOES drive a control: the
+// IMU port combo a Mid-70 arm reads. It is still only a prefill — "(none)"
+// stays a legitimate answer and the operator can pick it.
+void CaptureWindow::applyJuxiImuResult(const DiscoveryResult& r, bool silent) {
+  const auto& j = r.juxi_imu;
+  if (!auto_detect_juxi_line_) return;
+
+  if (!j.found) {
+    auto_detect_juxi_line_->setText(
+        "Serial IMU: not seen. Only a Mid-70 session needs one (a Mid-360 has its own), "
+        "so this is not a problem unless you are using a Mid-70.");
+    auto_detect_juxi_line_->setProperty("tone", "");
+    repolish(auto_detect_juxi_line_);
+    return;
+  }
+
+  // frame_rate_hz counts func-0x04 RAW frames only, i.e. the IMU SAMPLE rate.
+  // The module ships at 25 Hz and this app's driver asks for 100 Hz once at
+  // start(); the probe never writes, so a 25 Hz reading here means "not yet
+  // configured", not "broken".
+  auto_detect_juxi_line_->setText(
+      QString("Serial IMU: found on %1 @ 115200 (%2 frames, %3 raw%4).")
+          .arg(j.port)
+          .arg(j.frames_seen)
+          .arg(j.raw_frames)
+          .arg(j.frame_rate_hz > 0.0
+                   ? QString(", %1 Hz now — the driver asks for 100 Hz on connect")
+                         .arg(j.frame_rate_hz, 0, 'f', 1)
+                   : QString(", rate not measurable in this window")));
+  auto_detect_juxi_line_->setProperty("tone", "good");
+  repolish(auto_detect_juxi_line_);
+
+  if (!imu_serial_port_) return;
+  const bool unselected = selectedImuPort().isEmpty();
+  if (!silent || unselected) {
+    refreshImuPortList();  // the adapter may have appeared since the panel opened
+    const int idx = imu_serial_port_->findData(j.port);
+    if (idx >= 0) {
+      imu_serial_port_->setCurrentIndex(idx);
+    } else {
+      // The engine's probe enumerated a port QSerialPortInfo did not. Trust the
+      // probe: it just read valid checksummed frames off it.
+      imu_serial_port_->addItem(j.port, j.port);
+      imu_serial_port_->setCurrentIndex(imu_serial_port_->count() - 1);
+    }
+  }
+}
+
 // Round 5 item 11: the D6 is PHONE-ONLY. The serial probe still runs (it is the
 // same sweep that finds the UM982, and knowing the sensor is plugged in here is
 // still useful information), but there is nothing to configure and nothing to
@@ -2103,7 +2937,38 @@ void CaptureWindow::applyUm982Result(const DiscoveryResult& r, bool silent) {
   }
 }
 
+QString CaptureWindow::fieldConfigKv() const {
+  const bool mid70 = lidarModel() == LidarModel::kMid70;
+  QStringList f;
+  auto add = [&f](const char* k, const QString& v) {
+    f << QString("%1=%2").arg(QString::fromUtf8(k), v.isEmpty() ? QStringLiteral("-") : v);
+  };
+  add("model", mid70 ? "mid70" : "mid360");
+  add("host_ip", host_ip_ ? host_ip_->text().trimmed() : QString());
+  add("lidar_ip", lidar_ip_ ? lidar_ip_->text().trimmed() : QString());
+  add("broadcast_code", mid70 && mid70_code_ ? mid70_code_->text().trimmed() : QString());
+  if (!mid70) {
+    // The Mid-360's three UDP ports are its equivalent of the Mid-70's
+    // broadcast code: the thing that decides whether the link comes up.
+    f << QString("point_port=%1").arg(point_port_ ? point_port_->value() : 0);
+    f << QString("mid360_imu_port=%1").arg(imu_port_ ? imu_port_->value() : 0);
+    f << QString("cmd_port=%1").arg(cmd_port_ ? cmd_port_->value() : 0);
+  }
+  add("imu_serial_port", mid70 ? selectedImuPort() : QString());
+  f << QString("imu_serial_baud=%1").arg(mid70 && !selectedImuPort().isEmpty() ? 115200 : 0);
+  f << QString("near_gate_m=%1").arg(double(lioNearGateForModel()), 0, 'f', 2);
+  add("profile", profile_ ? profile_->currentText() : QString());
+  add("project_dir", last_project_dir_);
+  f << QString("lidar_device=%1").arg(device_);
+  f << QString("imu_device=%1").arg(imu_device_);
+  return f.join(' ');
+}
+
 void CaptureWindow::log(const QString& s) {
+  // The FIELD LOG gets every one of these, verbatim and unfiltered — the log
+  // pane below scrolls away and the stderr stream does not exist on a
+  // double-clicked .app, so this file is the only copy that survives the run.
+  FieldLog::info("capture", s);
   // Also to stderr, next to the engine's own [scanengine][...] lines: a headless
   // CLI evidence run (every field-Mac session is one) must be able to see the
   // app's side of a capture, including the discovery/device serialization

@@ -72,7 +72,9 @@ tar xzf "$tmp/sdk2.tar.gz" -C "$tmp"
 mv "$tmp"/Livox-SDK2-* "$DEST"
 
 echo "Applying patches (S2 spike, REPORT.md section 3):"
-for p in "$HERE"/patches/*.patch; do
+# Numeric-prefixed patches only: patches/ is shared with fetch_sdk1.sh (A17),
+# whose sdk1-*.patch diffs apply to a different tree.
+for p in "$HERE"/patches/[0-9]*.patch; do
   echo "  $(basename "$p")"
   patch -p1 -d "$DEST" -s < "$p"
 done

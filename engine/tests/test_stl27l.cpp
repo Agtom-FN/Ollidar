@@ -1032,7 +1032,7 @@ TEST_CASE("stl27l/capi_selects_the_driver_with_SCAN_DEVICE_STL27L") {
   // through the entry points that already exist.
   CHECK_EQ(SCAN_DEVICE_STL27L, 4);
   CHECK_EQ(SCAN_STREAM_LIDAR_STL27L, 11);
-  CHECK_EQ(scan_engine_abi_version(), 12u);  // deliberately NOT bumped
+  CHECK_EQ(scan_engine_abi_version(), 13u);  // ITEM 119 did not bump it; A17/A18 (Mid-70) later did
 
   scan_engine_config cfg;
   std::memset(&cfg, 0, sizeof(cfg));

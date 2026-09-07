@@ -53,9 +53,22 @@ struct ProjectInfo {
   quint64 total_bytes = 0;
   double duration_s = 0.0;
 
-  // Replay (record/replay.h) only forwards ChunkType::kD6Raw today, so this is
-  // exactly the "can this project be replayed" test.
+  // Non-empty StreamId::kLidarD6. This is NARROWER than "can this be replayed"
+  // — MergeSessionLoader needs a D6 specifically, because a merge session is
+  // resolved through the A8 pushbroom — so it kept its exact meaning when A17
+  // added a second replayable lidar. Use `has_replayable_lidar` for the replay
+  // question.
   bool has_d6_raw = false;
+  // A17. Non-empty StreamId::kLidarMid70: one recorded Livox SDK v1 datagram
+  // per chunk, replayable through Mid70Backend::kInject.
+  bool has_mid70_points = false;
+  // A18. Non-empty StreamId::kImuSerial (streams/imu_serial.bin). Not a replay
+  // gate by itself: an IMU track without a lidar has no geometry to carry.
+  bool has_imu_serial = false;
+  // The actual "can this project be replayed" test: any lidar stream
+  // ReplayController knows how to push back in. False for a Mid-360 project,
+  // which still has no Engine push entry point for SDK2 datagrams.
+  bool has_replayable_lidar = false;
 };
 
 // Opens `dir` with lscan::FileRecordReader and summarises it. A missing or

@@ -20,6 +20,12 @@ QString streamName(scanengine::StreamId s) {
     case scanengine::StreamId::kGnss: return "gnss";
     case scanengine::StreamId::kCameraFrames: return "camera keyframes";
     case scanengine::StreamId::kPoseFused: return "poses (fused)";
+    // A17/A18. The other post-C1 stream ids (kSlamMap, kPoseLio, kImuPhone,
+    // kLidarStl27l) still fall through to "unknown" here; naming them is not
+    // this change's business, and inventing labels for streams it has not
+    // exercised would be worse than the honest fallback.
+    case scanengine::StreamId::kLidarMid70: return "lidar (Mid-70 datagrams)";
+    case scanengine::StreamId::kImuSerial: return "imu (serial module)";
     case scanengine::StreamId::kUnknown:
     default: return "unknown";
   }
@@ -107,7 +113,14 @@ ProjectInfo readProject(const QString& dir) {
       }
     }
     if (s.stream == scanengine::StreamId::kLidarD6 && s.chunk_count > 0) info.has_d6_raw = true;
+    if (s.stream == scanengine::StreamId::kLidarMid70 && s.chunk_count > 0) {
+      info.has_mid70_points = true;
+    }
+    if (s.stream == scanengine::StreamId::kImuSerial && s.chunk_count > 0) {
+      info.has_imu_serial = true;
+    }
   }
+  info.has_replayable_lidar = info.has_d6_raw || info.has_mid70_points;
   info.duration_s = have_t && t_last > t_first ? double(t_last - t_first) / 1e9 : 0.0;
 
   const auto& w = reader.warnings();

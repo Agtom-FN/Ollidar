@@ -97,6 +97,15 @@ paths that already exist:
   `push_points()`/`push_imu()` only enqueue, so the receive thread never runs scan-to-map;
   with `false` the odometry runs inline there, which is what makes the unit tests
   deterministic.
+* **A Mid-70 session (A17/A18) is the same shape with the IMU on a different thread.**
+  `PageStore` updates on `StreamId::kLidarMid70` arrive on the SDK v1 receive thread
+  (or the raw-UDP source thread); the serial IMU's `ImuSerialConfig::sink` → the Engine's
+  *second* `ImuIngest` (`Impl::imu_serial`, `StreamId::kImuSerial`, passthrough
+  estimator) runs on whichever thread the app pushes serial bytes from, inside
+  `push_serial_bytes()`. `LioOdometry::push_points()`/`push_imu()` are therefore called
+  from two threads for this rig, which is inside their contract (they enqueue under their
+  own lock with `internal_thread = true`). The two `ImuIngest`s never share an estimator:
+  the lidar's stream has a device clock, the module has none.
 * **Re-entrancy is bounded and terminates.** The LIO appends its registered map back into
   the same `PageStore` that is notifying it, so `Engine::Impl::on_page_update` re-enters
   once, with `StreamId::kSlamMap`, and stops (only `kLidarMid360` is forwarded).

@@ -10,3 +10,14 @@
 #
 # Bootstrap:  engine/third_party/fetch_sdk2.sh
 Livox-SDK2/
+
+# Vendored, PATCHED Livox-SDK **v1** (task A17, the Mid-70's SDK).
+#
+# Same policy as SDK2 above, same two committed artefacts: fetch_sdk1.sh
+# (pinned tarball URL) and patches/sdk1-*.patch (the three diffs the S8 spike
+# proved are required — CMake floor, -Werror, and the ${PROJECT_NAME}_static
+# target name). Note the directory is "Livox-SDK", not "Livox-SDK1": that is
+# what upstream's repo is called.
+#
+# Bootstrap:  engine/third_party/fetch_sdk1.sh
+Livox-SDK/

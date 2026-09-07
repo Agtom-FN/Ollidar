@@ -1,0 +1,6 @@
+# The fetched Livox-SDK v1 tree and the spike's build directories are NOT
+# committed — third_party/fetch_sdk1.sh + patches/ is the reproducible
+# recipe, exactly as s2-mid360-sim did for SDK2.
+Livox-SDK/
+build-*/
+*.tar.gz

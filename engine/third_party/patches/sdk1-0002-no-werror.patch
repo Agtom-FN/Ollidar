@@ -1,0 +1,38 @@
+Subject: [PATCH sdk1-0002] Drop -Werror in sdk_core
+
+sdk_core/CMakeLists.txt compiles with -Werror under GNU, Clang and AppleClang.
+Its own vendored spdlog/fmt (sdk_core/include/third_party/spdlog) trips two
+diagnostics on a current toolchain, so the SDK cannot build:
+
+  * -Wdeprecated-literal-operator — fmt's `operator"" _a` style UDLs need a
+    space before the identifier in C++23 and later
+  * -Wdeprecated-declarations — fmt instantiates std::char_traits<T> for
+    non-character T, which libc++ marks deprecated
+
+Measured: 6 errors, all inside spdlog/fmt/bundled/format.h, AppleClang 21 on
+macOS 26 (spikes/s8-mid70-sdk1/build-policy/build.log). With -Werror removed
+the same tree links libProject_static.a for arm64 and for arm64;x86_64
+(build-fix/, build-uni/).
+
+Dropping -Werror rather than adding -Wno-error=<name> for each diagnostic,
+because the flag names are clang-specific: GCC on the Linux CI leg does not
+know -Wdeprecated-literal-operator and would reject the flag outright, and a
+future compiler will simply find a different old-code warning in the same
+headers. Warnings stay enabled (-Wall), they just are not fatal. This is the
+same call, and the same wording, as the SDK2 patch 0002-no-werror-on-clang.
+---
+--- a/sdk_core/CMakeLists.txt
++++ b/sdk_core/CMakeLists.txt
+@@ -27,9 +27,9 @@
+ endif (WIN32)
+ 
+ target_compile_options(${SDK_LIBRARY}
+-        PRIVATE $<$<CXX_COMPILER_ID:GNU>:-Wall -Werror -Wno-c++11-long-long>
+-        PRIVATE $<$<CXX_COMPILER_ID:AppleClang>:-Wno-unknown-pragmas -Wall -Werror -Wno-c++11-long-long>
+-        PRIVATE $<$<CXX_COMPILER_ID:Clang>:-Wno-unknown-pragmas -Wall -Werror -Wno-c++11-long-long>)
++        PRIVATE $<$<CXX_COMPILER_ID:GNU>:-Wall -Wno-c++11-long-long>
++        PRIVATE $<$<CXX_COMPILER_ID:AppleClang>:-Wno-unknown-pragmas -Wall -Wno-c++11-long-long>
++        PRIVATE $<$<CXX_COMPILER_ID:Clang>:-Wno-unknown-pragmas -Wall -Wno-c++11-long-long>)
+ 
+ target_sources(${SDK_LIBRARY}
+         PRIVATE

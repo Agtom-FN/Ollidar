@@ -247,6 +247,218 @@ void Stl27lSniffer::Reset() {
 }
 
 // ===========================================================================
+// JuxiTech IMU module  (A18)
+// ===========================================================================
+//
+// PROTOCOL FROM THE VENDOR'S OWN DRIVER, not from a capture: the reference is
+// imu_uart_driver.cpp / .hpp shipped with the module (IMU_UART_Process()'s
+// five-state machine and IMU_UART_SendCommand()'s checksum). No JuxiTech
+// hardware has been on this Mac yet, so the state machine below is a port of
+// that logic and the numbers it accepts are the vendor's, not observations.
+// A REAL capture — tests/integration/data/juxi_imu_60s.bin, the plan's Phase
+// 0 fixture — is still owed and will be the thing that closes this.
+//
+// THE FRAME
+//   7E 23 <len> <func> <payload …> <sum8>
+//   len   the WHOLE frame length, head bytes and checksum included. So the
+//         payload is len-5 bytes, and the vendor's "data_length = len-4"
+//         counts the checksum as part of the data section.
+//   sum8  the low byte of the arithmetic sum of every preceding byte,
+//         0x7E + 0x23 + len + func + payload.
+//   func  0x04 raw IMU (18-byte payload: accel/gyro/mag, 9 × int16 LE)
+//         0x16 quaternion (16), 0x26 Euler (12), 0x32 barometer (16)
+//         0x01 version (3: high, mid, low) — only ever sent on request, and
+//              this probe never requests anything. Parsed if it appears.
+//   The module emits the first four UNPROMPTED at 25 Hz by default (up to
+//   100 Hz once configured), which is what makes a passive probe possible.
+
+namespace {
+
+constexpr std::uint8_t kJuxiHead1 = 0x7E;
+constexpr std::uint8_t kJuxiHead2 = 0x23;
+
+constexpr std::uint8_t kJuxiFuncVersion = 0x01;
+constexpr std::uint8_t kJuxiFuncRaw = 0x04;
+constexpr std::uint8_t kJuxiFuncQuat = 0x16;
+constexpr std::uint8_t kJuxiFuncEuler = 0x26;
+constexpr std::uint8_t kJuxiFuncBaro = 0x32;
+
+// The vendor's own frame_buffer is 64 bytes; the largest frame it can
+// describe is len = 68. Anything claiming more is noise that happened to
+// land on a 7E 23 pair.
+constexpr std::uint8_t kJuxiMinFrameLen = 5;   // head1+head2+len+func+sum8
+constexpr std::uint8_t kJuxiMaxFrameLen = 68;
+
+}  // namespace
+
+struct JuxiImuSniffer::Impl {
+  enum class State { kHead1, kHead2, kLength, kFunc, kData };
+
+  State state = State::kHead1;
+  std::uint8_t frame_len = 0;
+  std::uint8_t func = 0;
+  std::uint8_t data[kJuxiMaxFrameLen] = {0};
+  std::uint16_t index = 0;
+
+  std::uint32_t ok = 0;
+  std::uint32_t bad = 0;
+  std::uint32_t raw = 0;
+  std::uint32_t quat = 0;
+  std::uint32_t euler = 0;
+  std::uint32_t baro = 0;
+
+  std::uint8_t version[3] = {0, 0, 0};
+  bool have_version = false;
+
+  std::uint32_t text_run = 0;
+  bool text = false;
+  char tail[4] = {0, 0, 0, 0};
+
+  void accept(std::uint8_t f, const std::uint8_t* payload, std::size_t n) {
+    ++ok;
+    switch (f) {
+      case kJuxiFuncRaw:
+        // The payload length is checked because a checksum-valid frame with
+        // the right func and the WRONG length is not this device — and
+        // raw_frames is what the caller uses to decide the module is
+        // actually streaming IMU rather than only barometer.
+        if (n == 18) ++raw;
+        break;
+      case kJuxiFuncQuat: if (n == 16) ++quat; break;
+      case kJuxiFuncEuler: if (n == 12) ++euler; break;
+      case kJuxiFuncBaro: if (n == 16) ++baro; break;
+      case kJuxiFuncVersion:
+        if (n >= 3) {
+          version[0] = payload[0];
+          version[1] = payload[1];
+          version[2] = payload[2];
+          have_version = true;
+        }
+        break;
+      default:
+        break;  // a func we do not model still counts as a valid frame
+    }
+  }
+};
+
+JuxiImuSniffer::JuxiImuSniffer() : impl_(new Impl) {}
+JuxiImuSniffer::~JuxiImuSniffer() = default;
+
+void JuxiImuSniffer::Feed(const std::uint8_t* data, std::size_t n) {
+  if (data == nullptr || n == 0) return;
+
+  // The text latch, identical in shape to D6Sniffer's. Here it carries more
+  // weight than in either lidar probe: this probe runs BEFORE the UM982's,
+  // at 115200, which is the UM982's DOCUMENTED default rate. Without this,
+  // a receiver that happens to be at 115200 would be read as noise for a
+  // full dwell and — far worse — a future relaxation of the frame bar could
+  // let it be claimed outright.
+  for (std::size_t i = 0; i < n && !impl_->text; ++i) {
+    impl_->text_run = is_textish(data[i]) ? impl_->text_run + 1 : 0;
+    if (impl_->text_run >= 32) impl_->text = true;
+    impl_->tail[0] = impl_->tail[1];
+    impl_->tail[1] = impl_->tail[2];
+    impl_->tail[2] = impl_->tail[3];
+    impl_->tail[3] = static_cast<char>(data[i]);
+    if (impl_->tail[2] == '$' && (impl_->tail[3] == 'G' || impl_->tail[3] == 'P')) {
+      impl_->text = true;
+    }
+    if (std::memcmp(impl_->tail, "#UNI", 4) == 0) impl_->text = true;
+  }
+
+  // The vendor's five-state machine, byte at a time, so a frame split across
+  // any number of read() boundaries reassembles — which is the whole reason
+  // this is a state machine and not a memchr over the buffer.
+  using State = Impl::State;
+  for (std::size_t i = 0; i < n; ++i) {
+    const std::uint8_t c = data[i];
+    switch (impl_->state) {
+      case State::kHead1:
+        if (c == kJuxiHead1) impl_->state = State::kHead2;
+        break;
+
+      case State::kHead2:
+        // Not head2: resync. A 7E 7E pair must re-enter kHead2 rather than
+        // drop both bytes — the vendor's own loop returns to kHead1 here and
+        // would lose the second 7E's frame. One byte of resync accuracy for
+        // free.
+        if (c == kJuxiHead2) impl_->state = State::kLength;
+        else if (c == kJuxiHead1) impl_->state = State::kHead2;
+        else impl_->state = State::kHead1;
+        break;
+
+      case State::kLength:
+        if (c < kJuxiMinFrameLen || c > kJuxiMaxFrameLen) {
+          impl_->state = State::kHead1;  // not a frame length; resync
+          break;
+        }
+        impl_->frame_len = c;
+        impl_->state = State::kFunc;
+        break;
+
+      case State::kFunc:
+        impl_->func = c;
+        impl_->index = 0;
+        impl_->state = State::kData;
+        break;
+
+      case State::kData: {
+        // data_length counts the checksum, exactly as the vendor's driver
+        // does. kLength already guaranteed frame_len >= 5, so this is >= 1.
+        const std::uint16_t data_length = static_cast<std::uint16_t>(impl_->frame_len - 4);
+        impl_->data[impl_->index++] = c;
+        if (impl_->index < data_length) break;
+
+        std::uint32_t sum = static_cast<std::uint32_t>(kJuxiHead1) + kJuxiHead2 +
+                            impl_->frame_len + impl_->func;
+        for (std::uint16_t k = 0; k + 1 < data_length; ++k) sum += impl_->data[k];
+        const std::uint8_t want = impl_->data[data_length - 1];
+        if (static_cast<std::uint8_t>(sum & 0xFFu) == want) {
+          impl_->accept(impl_->func, impl_->data,
+                        static_cast<std::size_t>(data_length - 1));
+        } else {
+          ++impl_->bad;
+        }
+        impl_->state = State::kHead1;
+        break;
+      }
+    }
+  }
+}
+
+bool JuxiImuSniffer::Identified() const {
+  if (impl_->text) return false;  // somebody else's port
+  return impl_->ok >= kFramesToIdentify;
+}
+std::uint32_t JuxiImuSniffer::frames_ok() const { return impl_->ok; }
+std::uint32_t JuxiImuSniffer::frames_bad_checksum() const { return impl_->bad; }
+std::uint32_t JuxiImuSniffer::raw_frames() const { return impl_->raw; }
+std::uint32_t JuxiImuSniffer::quat_frames() const { return impl_->quat; }
+std::uint32_t JuxiImuSniffer::euler_frames() const { return impl_->euler; }
+std::uint32_t JuxiImuSniffer::baro_frames() const { return impl_->baro; }
+bool JuxiImuSniffer::version_known() const { return impl_->have_version; }
+const std::uint8_t* JuxiImuSniffer::version() const { return impl_->version; }
+bool JuxiImuSniffer::LooksLikeText() const { return impl_->text; }
+
+void JuxiImuSniffer::Reset() {
+  impl_->state = Impl::State::kHead1;
+  impl_->frame_len = 0;
+  impl_->func = 0;
+  impl_->index = 0;
+  impl_->ok = 0;
+  impl_->bad = 0;
+  impl_->raw = 0;
+  impl_->quat = 0;
+  impl_->euler = 0;
+  impl_->baro = 0;
+  impl_->version[0] = impl_->version[1] = impl_->version[2] = 0;
+  impl_->have_version = false;
+  impl_->text_run = 0;
+  impl_->text = false;
+  std::memset(impl_->tail, 0, sizeof(impl_->tail));
+}
+
+// ===========================================================================
 // UM982
 // ===========================================================================
 
@@ -465,6 +677,89 @@ std::optional<Stl27lProbe> ProbeSerialStl27l(const std::vector<std::string>& por
     if (sniffer.LooksLikeD6()) {
       SCAN_LOG_DEBUG(kMod, "stl27l probe: %s is speaking COIN-D6 — not ours", path.c_str());
     }
+  }
+  return std::nullopt;
+}
+
+std::optional<JuxiImuProbe> ProbeSerialJuxiImu(const std::vector<std::string>& port_paths,
+                                               int per_port_ms) {
+  // One stage, all of it passive, at ONE rate — the module has no other.
+  //
+  // The dwell has a FLOOR for the same reason the UM982's does, though a
+  // gentler one. The module free-runs at 25 Hz in its default mode, so three
+  // frames of any type arrive within ~40 ms and identification is quick; what
+  // needs the floor is frame_rate_hz, which is meaningless measured over two
+  // frame intervals. 400 ms buys ~10 raw frames at 25 Hz and ~40 at 100 Hz —
+  // enough to tell those two modes apart, which is the whole point of
+  // reporting the rate at all.
+  const int budget = per_port_ms > 0 ? per_port_ms : 1000;
+  const int dwell_ms = std::max(400, budget);
+
+  for (const std::string& path : port_paths) {
+    discovery_serial::SerialPort port;
+    const discovery_serial::OpenResult r = port.Open(path, 115200);
+    if (r != discovery_serial::OpenResult::kOk) {
+      if (r == discovery_serial::OpenResult::kBusy) {
+        SCAN_LOG_DEBUG(kMod, "juxi-imu probe: %s is busy — skipping", path.c_str());
+      } else {
+        SCAN_LOG_DEBUG(kMod, "juxi-imu probe: %s not usable (%s)", path.c_str(),
+                       discovery_serial::to_string(r));
+      }
+      continue;
+    }
+    // Measure the LIVE stream, not the driver's backlog: a stale buffer
+    // would inflate frame_rate_hz by however long the port sat open.
+    port.FlushInput();
+
+    JuxiImuSniffer sniffer;
+    std::vector<std::uint8_t> buf(kReadChunk);
+    // The rate window opens at the FIRST byte, not at open(): everything
+    // before that is open() latency and the module's own silence, and
+    // counting it would report a rate that is too low by whatever the OS
+    // took to hand us the port.
+    std::int64_t t_first = 0;
+    std::int64_t t_last = 0;
+    const std::int64_t end = now_ms() + dwell_ms;
+    while (now_ms() < end) {
+      if (sniffer.LooksLikeText()) break;  // an NMEA talker — leave it for the UM982 probe
+      const int n = port.Read(buf.data(), buf.size(), 50);
+      if (n < 0) break;
+      if (n > 0) {
+        const std::int64_t t = now_ms();
+        if (t_first == 0) t_first = t;
+        t_last = t;
+        sniffer.Feed(buf.data(), static_cast<std::size_t>(n));
+      }
+    }
+
+    if (sniffer.LooksLikeText()) {
+      SCAN_LOG_DEBUG(kMod, "juxi-imu probe: %s is a text protocol — not ours", path.c_str());
+      continue;
+    }
+    if (!sniffer.Identified()) continue;
+
+    JuxiImuProbe p;
+    p.port_path = path;
+    p.baud = 115200;
+    p.frames_seen = sniffer.frames_ok();
+    p.raw_frames = sniffer.raw_frames();
+    // Guard the divide: a stream that delivered everything in one read has
+    // t_last == t_first, and "infinity Hz" is a worse answer than "unknown".
+    const std::int64_t span_ms = t_last - t_first;
+    if (span_ms >= 100 && p.raw_frames > 0) {
+      p.frame_rate_hz = static_cast<double>(p.raw_frames) * 1000.0 /
+                        static_cast<double>(span_ms);
+    }
+    if (sniffer.version_known()) {
+      p.version[0] = sniffer.version()[0];
+      p.version[1] = sniffer.version()[1];
+      p.version[2] = sniffer.version()[2];
+      p.version_known = true;
+    }
+    SCAN_LOG_INFO(kMod,
+                  "juxitech imu found on %s @ 115200 (%u frames, %u raw, %.1f Hz, passive)",
+                  path.c_str(), p.frames_seen, p.raw_frames, p.frame_rate_hz);
+    return p;
   }
   return std::nullopt;
 }

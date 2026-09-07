@@ -1,0 +1,99 @@
+Subject: [PATCH sdk1-0001] Raise cmake_minimum_required from 3.0 to 3.10
+
+Livox-SDK v1 (master, SDK 2.3.0) declares cmake_minimum_required(VERSION 3.0)
+in all ten of its CMakeLists.txt. CMake >= 4.0 removed compatibility with a
+floor below 3.5 and refuses to configure at all — measured on this Mac with
+CMake 4.x / AppleClang 21 (spikes/s8-mid70-sdk1/build-policy/cmake.log).
+
+3.10 rather than the bare minimum 3.5: CMake 4.x already deprecation-warns on
+a floor below 3.10, and the engine's SDK2 patch (0001-cmake-minimum-required-
+3.10.patch) made the same call for the same reason. The SDK relies on no
+policy behaviour that changes between 3.0 and 3.10 — the only build the
+engine performs from this tree is sdk_core, which is a plain add_library +
+target_include_directories + target_sources.
+
+The seven sample/sample_cc lists are bumped too. The engine never builds them
+(engine/CMakeLists.txt adds sdk_core alone), but leaving them at 3.0 would
+make a plain `cmake .` on the SDK root fail for anyone bisecting the vendored
+tree by hand.
+---
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-cmake_minimum_required(VERSION 3.0)
++cmake_minimum_required(VERSION 3.10)
+ 
+ project(livox_sdk)
+ 
+--- a/sdk_core/CMakeLists.txt
++++ b/sdk_core/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-cmake_minimum_required(VERSION 3.0)
++cmake_minimum_required(VERSION 3.10)
+ 
+ set(SDK_LIBRARY ${PROJECT_NAME}_static)
+ add_library(${SDK_LIBRARY} STATIC "")
+--- a/sample/hub/CMakeLists.txt
++++ b/sample/hub/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-cmake_minimum_required(VERSION 3.0)
++cmake_minimum_required(VERSION 3.10)
+ 
+ set(DEMO_NAME hub_sample)
+ add_executable(${DEMO_NAME} main.c)
+--- a/sample/lidar/CMakeLists.txt
++++ b/sample/lidar/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-cmake_minimum_required(VERSION 3.0)
++cmake_minimum_required(VERSION 3.10)
+ 
+ set(DEMO_NAME lidar_sample)
+ add_executable(${DEMO_NAME} main.c)
+--- a/sample/hub_lvx_file/CMakeLists.txt
++++ b/sample/hub_lvx_file/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-cmake_minimum_required(VERSION 3.0)
++cmake_minimum_required(VERSION 3.10)
+ 
+ set(DEMO_NAME hub_lvx_sample)
+ add_executable(${DEMO_NAME} main.cpp lvx_file.cpp)
+--- a/sample/lidar_lvx_file/CMakeLists.txt
++++ b/sample/lidar_lvx_file/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-cmake_minimum_required(VERSION 3.0)
++cmake_minimum_required(VERSION 3.10)
+ 
+ set(DEMO_NAME lidar_lvx_sample)
+ add_executable(${DEMO_NAME} main.cpp lvx_file.cpp)
+--- a/sample_cc/hub/CMakeLists.txt
++++ b/sample_cc/hub/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-cmake_minimum_required(VERSION 3.0)
++cmake_minimum_required(VERSION 3.10)
+ 
+ set(DEMO_NAME hub_sample_cc)
+ add_executable(${DEMO_NAME} lds_hub.cpp main.cpp)
+--- a/sample_cc/lidar/CMakeLists.txt
++++ b/sample_cc/lidar/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-cmake_minimum_required(VERSION 3.0)
++cmake_minimum_required(VERSION 3.10)
+ 
+ set(DEMO_NAME lidar_sample_cc)
+ add_executable(${DEMO_NAME} main.cpp lds_lidar.cpp)
+--- a/sample_cc/trouble_shooting/CMakeLists.txt
++++ b/sample_cc/trouble_shooting/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-cmake_minimum_required(VERSION 3.0)
++cmake_minimum_required(VERSION 3.10)
+ 
+ set(DEMO_NAME trouble_shooting)
+ add_executable(${DEMO_NAME} main.cpp)
+--- a/sample_cc/lidar_utc_sync/CMakeLists.txt
++++ b/sample_cc/lidar_utc_sync/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-cmake_minimum_required(VERSION 3.0)
++cmake_minimum_required(VERSION 3.10)
+ 
+ if (UNIX)
+ 	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread")

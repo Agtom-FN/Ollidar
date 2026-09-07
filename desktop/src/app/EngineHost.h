@@ -25,16 +25,21 @@
 // Owner: C1.
 #pragma once
 
+#include <QByteArray>
 #include <QObject>
 #include <QString>
 #include <QTimer>
 #include <QVector>
 
+#include <map>
 #include <memory>
+#include <string>
 
 #include "scanengine/core/engine.h"
 
 namespace lidarscan {
+
+class SerialReader;
 
 struct DeviceRow {
   scanengine::DeviceId id = scanengine::kInvalidDeviceId;
@@ -77,8 +82,16 @@ class EngineHost : public QObject {
   // — a walked scan has to be registered as it goes, and the live trail is drawn
   // from those poses. Default false keeps every other caller (replay, C4/C5/C6
   // fixtures) on the Record-only path they were verified with.
+  //
+  // `lio_min_range_m` overrides SessionConfig::lio.min_range_m when > 0. It
+  // exists for the Mid-70 (A17) and nothing else: LioConfig defaults to a 0.5 m
+  // near gate sized for the Mid-360, and the Mid-70's blind zone is 0.05 m —
+  // in a tight room a 0.5 m gate throws away most of what the sensor returned,
+  // which the ROS work measured before this port. 0 (the default) leaves the
+  // engine's own value alone, so every existing caller is byte-for-byte
+  // unchanged.
   bool startSession(const QString& lscan_dir, const QString& profile, bool record, QString* err,
-                    bool live_slam = false);
+                    bool live_slam = false, float lio_min_range_m = 0.0f);
   bool stopSession(QString* err);
   bool sessionActive() const;
   QString sessionDir() const { return session_dir_; }
@@ -86,7 +99,43 @@ class EngineHost : public QObject {
   // Adds a device and returns its id (kInvalidDeviceId on failure).
   scanengine::DeviceId addD6(const scanengine::D6Config& cfg, QString* err);
   scanengine::DeviceId addMid360(const scanengine::Mid360Config& cfg, QString* err);
+  // A17. Same shape as addMid360 — the Mid-70 is a UDP lidar with its own
+  // config block on DeviceConfig, and nothing about the seam differs.
+  scanengine::DeviceId addMid70(const scanengine::Mid70Config& cfg, QString* err);
+  // A18. NOT the same shape, and the difference is the whole reason this
+  // overload exists: an ImuSerialConfig carries a UsbSerialConfig, which
+  // carries `write_fn` (a C function pointer + void*) and `port_name` (a bare
+  // const char*). The driver copies the config by value and keeps both for its
+  // whole life, so:
+  //
+  //   * the WRITE BRIDGE — a static trampoline whose user_data is a struct
+  //     holding `reader` — must be installed BEFORE add_device(), because
+  //     Engine starts a device added mid-session immediately and
+  //     ImuSerialDriver::start() is what sends the 100 Hz report-rate frame; a
+  //     write_fn installed afterwards would arrive one command too late; and
+  //   * the port-name STRING must outlive the driver, so this owns a copy and
+  //     repoints cfg.serial.port_name at it. A caller's QByteArray::constData()
+  //     would dangle the moment the caller's stack frame ended.
+  //
+  // Both live in a bridge record owned by this object and released by
+  // removeDevice() AFTER the engine has torn the driver down. `reader` must
+  // outlive the device; CaptureWindow owns it and closes it on disarm.
+  scanengine::DeviceId addImuSerial(const scanengine::ImuSerialConfig& cfg, SerialReader* reader,
+                                    QString* err);
   bool removeDevice(scanengine::DeviceId id, QString* err);
+
+  // App -> engine bytes, for every push-mode serial driver (D6, STL-27L, and
+  // the A18 IMU). `t_mono_ns` is an engineNowNs() stamp taken by the reader at
+  // arrival — NOT zero, which would make the engine stamp it later, after the
+  // GUI thread has done whatever else it was doing. Returns false and fills
+  // `err` on rejection; the caller decides how loudly to say so.
+  bool pushBytes(scanengine::DeviceId id, const QByteArray& bytes, qint64 t_mono_ns,
+                 QString* err = nullptr);
+
+  // The engine's own monotonic clock (timesync/clock.h SteadyClock), so an
+  // arrival stamped by the app lands on the same timeline as one stamped
+  // inside the engine. Static: SerialReader needs it without holding a host.
+  static qint64 engineNowNs();
 
   QVector<DeviceRow> devices() const;
 
@@ -102,6 +151,23 @@ class EngineHost : public QObject {
  private:
   void pump();
 
+  // What addImuSerial() installs as UsbSerialConfig::write_user_data. One per
+  // serial device, kept alive by this object for exactly as long as the engine
+  // holds the driver that points at it. See addImuSerial()'s comment.
+  struct SerialWriteBridge {
+    SerialReader* reader = nullptr;
+    std::string port_name;  // backs UsbSerialConfig::port_name, a const char*
+  };
+  static scanengine::ScanError serialWriteTrampoline(const std::uint8_t* data, std::size_t len,
+                                                     void* user_data);
+
+  // DECLARED BEFORE engine_ ON PURPOSE. Members are destroyed in reverse
+  // declaration order, so this outlives the Engine — and therefore outlives
+  // every Driver the Engine owns, each of which may hold a write_fn whose
+  // user_data points in here. The other order would leave a driver's teardown
+  // dereferencing a freed bridge, and "the current driver happens not to write
+  // on stop" is a property of one driver today, not a guarantee.
+  std::map<scanengine::DeviceId, std::unique_ptr<SerialWriteBridge>> serial_bridges_;
   std::unique_ptr<scanengine::Engine> engine_;
   QString create_error_;
   scanengine::SubscriptionId sub_ = 0;

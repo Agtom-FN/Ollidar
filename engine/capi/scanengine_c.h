@@ -246,7 +246,22 @@ extern "C" {
  * tests; only its C mirror is deferred. An app that wants auto-detect over the
  * ABI today has scan_enumerate_serial() + scan_probe_d6() and must open the
  * remaining ports itself. */
-#define SCAN_ABI_VERSION 12u
+/* --- ABI 13: Livox Mid-70 + serial IMU (A17/A18) --------------------------
+ *
+ *   * SCAN_DEVICE_MID70 = 5, SCAN_DEVICE_IMU_SERIAL = 6 — new VALUES of
+ *     scan_device_config::kind.
+ *   * SCAN_STREAM_LIDAR_MID70 = 12, SCAN_STREAM_IMU_SERIAL = 13 — new VALUES
+ *     of the SCAN_STREAM_* mirror.
+ *   * SCAN_MID70_BACKEND_* — a new enum.
+ *   * scan_device_config GAINED fields at its tail (mid70_*,
+ *     imu_serial_report_rate_hz). That is a layout change — sizeof() moved —
+ *     which is exactly what ITEM 119 avoided and why THIS revision bumps the
+ *     number where that one did not. Existing fields did not move.
+ *   * No function was added, removed or re-signatured. The C mirrors of the
+ *     new discovery entry points (DiscoverMid70 / ProbeSerialJuxiImu) are
+ *     deferred for the ITEM 119 reason: the desktop app that needs them links
+ *     the C++ engine directly. */
+#define SCAN_ABI_VERSION 13u
 
 /* --- errors: mirror of scanengine::ScanError --------------------------- */
 typedef int32_t scan_error_t;
@@ -294,7 +309,13 @@ enum {
    * scan_engine_push_serial_bytes(). A NEW VALUE of an existing enum field: no
    * struct layout, no signature and no default behaviour changed, so this is
    * ABI 12 and an ABI-12 consumer that never passes 4 is unaffected. */
-  SCAN_DEVICE_STL27L = 4
+  SCAN_DEVICE_STL27L = 4,
+  /* ABI 13 (A17/A18). Livox Mid-70 over Ethernet (SDK v1) and the JuxiTech
+   * serial IMU module that partners it — a Mid-70 has no IMU of its own, so a
+   * Mid-70 session adds BOTH devices. The Mid-70 reads lidar_ip / host_ip
+   * plus the mid70_* block; the IMU reuses the D6 serial fields verbatim. */
+  SCAN_DEVICE_MID70 = 5,
+  SCAN_DEVICE_IMU_SERIAL = 6
 };
 
 enum {
@@ -330,12 +351,16 @@ enum {
   SCAN_STREAM_IMU_PHONE = 10, /* ROUND 9: the PHONE's gyro/accel. Distinct from
                                * SCAN_STREAM_IMU, which is the Mid-360's — the
                                * offline pipelines route on that distinction. */
-  SCAN_STREAM_LIDAR_STL27L = 11 /* ITEM 119: raw STL-27L UART bytes and the
+  SCAN_STREAM_LIDAR_STL27L = 11, /* ITEM 119: raw STL-27L UART bytes and the
                                  * points decoded from them. Distinct from
                                  * SCAN_STREAM_LIDAR_D6 for exactly the reason
                                  * above: the two wire protocols share nothing,
                                  * and the offline D6 pipeline identifies a
                                  * container by its lidar stream id. */
+  SCAN_STREAM_LIDAR_MID70 = 12, /* ABI 13: Mid-70 datagrams / points. */
+  SCAN_STREAM_IMU_SERIAL = 13   /* ABI 13: the serial IMU module. Distinct
+                                 * from SCAN_STREAM_IMU for the same reason
+                                 * SCAN_STREAM_IMU_PHONE is. */
 };
 
 /* --- poses: mirror of poses/pose_source.h + pose_interpolator.h ---------- */
@@ -956,6 +981,16 @@ enum {
   SCAN_MID360_BACKEND_INJECT = 2
 };
 
+/* ABI 13: scan_device_config::mid70_backend. Same three shapes as the Mid-360:
+ * SDK1 is the vendored Livox-SDK v1 (the only backend that brings a device
+ * up: broadcast discovery, handshake, start sampling); RAW_UDP binds one host
+ * port and decodes what arrives; INJECT owns no transport. */
+enum {
+  SCAN_MID70_BACKEND_SDK1 = 0,
+  SCAN_MID70_BACKEND_RAW_UDP = 1,
+  SCAN_MID70_BACKEND_INJECT = 2
+};
+
 typedef struct scan_device_config {
   int32_t kind; /* SCAN_DEVICE_* */
 
@@ -1056,6 +1091,33 @@ typedef struct scan_device_config {
    * Android caller should point this at a path inside its own cacheDir. NULL
    * or "" keeps the ABI-4 behaviour. */
   const char* mid360_sdk_config_path;
+
+  /* --- ABI 13: Livox Mid-70 (kind = SCAN_DEVICE_MID70) ---------------------
+   * lidar_ip / host_ip above are reused. Same conventions as the mid360_*
+   * block: 0 / NULL keeps the C++ default; a _set flag where 0 is a choice a
+   * caller may mean. A caller that memset(0)s the struct gets the SDK v1
+   * backend, the first Mid-70 heard, and the driver's defaults. */
+  int32_t mid70_backend;              /* SCAN_MID70_BACKEND_*; 0 = SDK v1 */
+  const char* mid70_broadcast_code;   /* 15-char code on the label; NULL/"" = first Mid-70 heard */
+  uint16_t mid70_host_point_port;     /* RAW_UDP bind port; 0 = 56301 */
+  int32_t mid70_recv_buffer_bytes;    /* 0 = the driver default */
+  uint8_t mid70_live_points_per_sec_set;
+  uint32_t mid70_live_points_per_sec; /* default 40000 of the sensor's 100k */
+  uint8_t mid70_dual_return;          /* SDK1 only: ask for dual return (200k pts/s) */
+  uint8_t mid70_filter_set;           /* 0 = keep every default below */
+  uint8_t mid70_drop_no_return;       /* default 1 */
+  uint8_t mid70_tag_reject_mask;      /* default: spatial-noise | distortion */
+  uint8_t mid70_min_reflectivity;     /* default 0 */
+  float mid70_min_range_m;            /* default 0.10 */
+  float mid70_max_range_m;            /* 0 = unbounded */
+
+  /* --- ABI 13: serial IMU module (kind = SCAN_DEVICE_IMU_SERIAL) -----------
+   * Reuses the D6 serial fields: serial_port_name, serial_baud (0 => 115200),
+   * serial_write (the report-rate command goes out through it) and
+   * send_start_stop_commands (0 => do NOT send the rate command; the module
+   * persists the last rate it was given). Bytes come in through
+   * scan_engine_push_serial_bytes(). */
+  uint8_t imu_serial_report_rate_hz;  /* 0 => 100 */
 } scan_device_config;
 
 /* --- engine ------------------------------------------------------------- */

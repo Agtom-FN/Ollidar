@@ -74,6 +74,7 @@ TimeSync::~TimeSync() = default;
 bool TimeSync::stream_has_device_clock(StreamId stream) noexcept {
   switch (stream) {
     case StreamId::kLidarMid360:  // 200 kHz sensor clock, free-running
+    case StreamId::kLidarMid70:   // A17: ns since power-on, or UTC under PPS+GPS — the device's own clock either way
     case StreamId::kImu:          // same clock as the Mid-360 points
     case StreamId::kGnss:         // NMEA UTC time, arrival-correlated (§3.2)
       return true;
@@ -89,6 +90,7 @@ bool TimeSync::stream_has_device_clock(StreamId stream) noexcept {
     case StreamId::kPoseLio:      // engine-produced, already in engine time
     case StreamId::kPoseFused:    // produced in engine time
     case StreamId::kImuPhone:     // Android SensorEvent stamps ARE CLOCK_BOOTTIME
+    case StreamId::kImuSerial:    // A18: no clock on the module; the driver's de-bursted arrival estimate
     case StreamId::kUnknown:
       return false;
   }

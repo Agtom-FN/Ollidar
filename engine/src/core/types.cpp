@@ -9,6 +9,8 @@ const char* to_string(DeviceKind k) noexcept {
     case DeviceKind::kStl27l: return "stl-27l";
     case DeviceKind::kMid360: return "livox-mid360";
     case DeviceKind::kRtkRover: return "rtk-rover";
+    case DeviceKind::kMid70: return "livox-mid70";
+    case DeviceKind::kImuSerial: return "imu-serial";
   }
   return "?";
 }
@@ -27,6 +29,8 @@ const char* to_string(StreamId s) noexcept {
     case StreamId::kPoseLio: return "pose-lio";
     case StreamId::kImuPhone: return "imu-phone";
     case StreamId::kLidarStl27l: return "lidar-stl27l";
+    case StreamId::kLidarMid70: return "lidar-mid70";
+    case StreamId::kImuSerial: return "imu-serial";
   }
   return "?";
 }

@@ -297,6 +297,12 @@ struct Engine::Impl {
   // stamps its points and its IMU from one clock and the driver feeds the same
   // estimator (docs/A6-lio.md §7.2, docs/A4-timesync.md).
   std::unique_ptr<ImuIngest> imu;
+  // A17/A18: a SECOND estimator, for the serial IMU module. It is its own
+  // ImuIngest rather than the Mid-360's because ImuIngest maps through ONE
+  // stream's offset estimator and the two devices' clocks have nothing to do
+  // with each other. StreamId::kImuSerial has no device clock, so this one is
+  // passthrough: the stamps in are the driver's de-bursted arrival estimates.
+  std::unique_ptr<ImuIngest> imu_serial;
 
   // Live SLAM, per session. Held by shared_ptr because the Mid-360 receive
   // thread reaches it through the page/IMU sinks while the control thread may
@@ -431,7 +437,9 @@ struct Engine::Impl {
     // LioConfig::internal_thread = true — what a live capture uses —
     // push_points() only enqueues, so the receive thread never runs the
     // odometry at all.
-    if (u.stream != StreamId::kLidarMid360) return;
+    // A17: the Mid-70 is the second 3-D lidar that feeds the odometry. A rig
+    // carries one or the other, never both, so no per-session selection here.
+    if (u.stream != StreamId::kLidarMid360 && u.stream != StreamId::kLidarMid70) return;
     std::shared_ptr<LioOdometry> lio = self->live_lio();
     if (!lio) return;
     const PageView v = self->points->page_view(u.page);
@@ -462,11 +470,25 @@ struct Engine::Impl {
     Mid360RawSink user = nullptr;
     void* user_data = nullptr;
   };
+  // A17/A18: the same two seams for the Mid-70 (raw datagrams → kMid70Points)
+  // and the serial IMU module (samples → the kImuSerial ImuIngest → LIO).
+  struct Mid70RawShim {
+    Impl* self = nullptr;
+    Mid70RawSink user = nullptr;
+    void* user_data = nullptr;
+  };
+  struct ImuSerialShim {
+    Impl* self = nullptr;
+    ImuSerialSink user = nullptr;
+    void* user_data = nullptr;
+  };
   // Owned for the Engine's lifetime: a driver keeps the raw pointer, and a
   // device may be removed while its receive thread is still unwinding.
   std::vector<std::unique_ptr<D6ProfileShim>> d6_shims;
   std::vector<std::unique_ptr<Mid360ImuShim>> imu_shims;
   std::vector<std::unique_ptr<Mid360RawShim>> raw_shims;
+  std::vector<std::unique_ptr<Mid70RawShim>> mid70_raw_shims;
+  std::vector<std::unique_ptr<ImuSerialShim>> imu_serial_shims;
 
   static void on_d6_profile(float angle_deg, float range_m, std::uint8_t intensity,
                             std::uint8_t high_reflectivity, std::int64_t t_engine_ns, void* user) {
@@ -518,6 +540,42 @@ struct Engine::Impl {
       // and nowhere else.
       const ImuSample m = self->imu->add_g(static_cast<std::int64_t>(s.t_device_ns),
                                            TimePoint{s.t_mono_ns}, s.gyro, s.acc);
+      if (lio) (void)lio->push_imu(m.t_engine_ns, m.gyro_rad_s, m.accel_m_s2);
+    }
+    if (shim->user != nullptr) shim->user(samples, count, shim->user_data);
+  }
+
+  // A17: the Mid-70's record-always seam. Points only — a Mid-70 never sends
+  // an IMU datagram — landing as kMid70Points chunks, replayable through
+  // Mid70Backend::kInject one datagram per call.
+  static void on_mid70_raw(const std::uint8_t* data, std::size_t len, std::int64_t t_arrival_ns,
+                           void* user) {
+    auto* shim = static_cast<Mid70RawShim*>(user);
+    Impl* self = shim->self;
+    {
+      std::lock_guard<std::mutex> lock(self->record_m);
+      if (self->recorder->is_open()) {
+        (void)self->recorder->write_chunk(lscan::ChunkType::kMid70Points, t_arrival_ns,
+                                          ByteSpan(data, len));
+      }
+    }
+    if (shim->user != nullptr) shim->user(data, len, t_arrival_ns, shim->user_data);
+  }
+
+  // A18: serial IMU → the kImuSerial estimator → LIO. The on_mid360_imu shape
+  // with one difference that matters: the module has no device clock, so the
+  // "device stamp" handed to add_g() IS the driver's de-bursted arrival
+  // estimate (ImuSerialSample::t_stamped_ns), and the passthrough estimator
+  // behind kImuSerial returns it unchanged. The raw arrival stays on the
+  // sample for a later re-stamp; it is not what the odometry sees.
+  static void on_imu_serial(const ImuSerialSample* samples, std::size_t count, void* user) {
+    auto* shim = static_cast<ImuSerialShim*>(user);
+    Impl* self = shim->self;
+    std::shared_ptr<LioOdometry> lio = self->live_lio();
+    for (std::size_t i = 0; i < count; ++i) {
+      const ImuSerialSample& s = samples[i];
+      const ImuSample m = self->imu_serial->add_g(s.t_stamped_ns, TimePoint{s.t_stamped_ns},
+                                                  s.gyro_rad_s, s.accel_g);
       if (lio) (void)lio->push_imu(m.t_engine_ns, m.gyro_rad_s, m.accel_m_s2);
     }
     if (shim->user != nullptr) shim->user(samples, count, shim->user_data);
@@ -597,6 +655,8 @@ Result<std::unique_ptr<Engine>> Engine::create(const EngineConfig& cfg) {
 
   // A4/A6: the Mid-360's one estimator (see Impl::imu).
   e->impl_->imu = std::make_unique<ImuIngest>(e->impl_->timesync, StreamId::kLidarMid360);
+  // A18: the serial IMU module's estimator (see Impl::imu_serial).
+  e->impl_->imu_serial = std::make_unique<ImuIngest>(e->impl_->timesync, StreamId::kImuSerial);
 
   // --- A10: GnssSource + TcpNtripClient + GeorefFusion, wired together -----
   //
@@ -1092,6 +1152,36 @@ Result<DeviceId> Engine::add_device(const DeviceConfig& cfg) {
       driver = std::make_unique<Mid360Driver>(id, mcfg, ctx);
       break;
     }
+    case DeviceKind::kMid70: {
+      // A17. Points only — a Mid-70 has no IMU, so there is no ImuShim here;
+      // the session's IMU is a separate kImuSerial device. Record-always
+      // through the same kind of raw shim the Mid-360 has.
+      Mid70Config mcfg = cfg.mid70;
+      auto raw = std::make_unique<Impl::Mid70RawShim>();
+      raw->self = impl_.get();
+      raw->user = mcfg.raw_sink;
+      raw->user_data = mcfg.raw_sink_user_data;
+      mcfg.raw_sink = &Impl::on_mid70_raw;
+      mcfg.raw_sink_user_data = raw.get();
+      impl_->mid70_raw_shims.push_back(std::move(raw));
+      driver = std::make_unique<Mid70Driver>(id, mcfg, ctx);
+      break;
+    }
+    case DeviceKind::kImuSerial: {
+      // A18. Every sample goes through the Engine's kImuSerial ImuIngest
+      // before it reaches the odometry. The raw UART bytes are recorded by
+      // push_bytes() as kImuSerialRaw — the kD6Raw contract.
+      ImuSerialConfig icfg = cfg.imu_serial;
+      auto shim = std::make_unique<Impl::ImuSerialShim>();
+      shim->self = impl_.get();
+      shim->user = icfg.sink;
+      shim->user_data = icfg.sink_user_data;
+      icfg.sink = &Impl::on_imu_serial;
+      icfg.sink_user_data = shim.get();
+      impl_->imu_serial_shims.push_back(std::move(shim));
+      driver = std::make_unique<ImuSerialDriver>(id, icfg, ctx);
+      break;
+    }
     case DeviceKind::kRtkRover:
       // A10 §9.3 item 1: route it to the Engine's one GnssSource. There is no
       // per-device GNSS config here on purpose — the source is Engine-lifetime
@@ -1177,6 +1267,30 @@ Result<Mid360Stats> Engine::mid360_stats(DeviceId id) const {
   return m->stats();
 }
 
+Result<Mid70Stats> Engine::mid70_stats(DeviceId id) const {
+  std::lock_guard<std::mutex> lock(impl_->m);
+  Driver* d = impl_->find(id);
+  if (d == nullptr) return set_last_error(ScanError::kNotFound, "no device %u", id);
+  auto* m = dynamic_cast<Mid70Driver*>(d);
+  if (m == nullptr) {
+    return set_last_error(ScanError::kInvalidArgument, "device %u is %s, not a Mid-70", id,
+                          to_string(d->kind()));
+  }
+  return m->stats();
+}
+
+Result<ImuSerialStats> Engine::imu_serial_stats(DeviceId id) const {
+  std::lock_guard<std::mutex> lock(impl_->m);
+  Driver* d = impl_->find(id);
+  if (d == nullptr) return set_last_error(ScanError::kNotFound, "no device %u", id);
+  auto* m = dynamic_cast<ImuSerialDriver*>(d);
+  if (m == nullptr) {
+    return set_last_error(ScanError::kInvalidArgument, "device %u is %s, not a serial IMU", id,
+                          to_string(d->kind()));
+  }
+  return m->stats();
+}
+
 Status Engine::push_serial_bytes(DeviceId id, ByteSpan bytes, TimePoint t_arrival) {
   Driver* d = nullptr;
   {
@@ -1208,10 +1322,12 @@ Status Engine::push_serial_bytes(DeviceId id, ByteSpan bytes, TimePoint t_arriva
   // container that has no D6 in it.
   const DeviceKind kind = d->kind();
   if (kind == DeviceKind::kD6 || kind == DeviceKind::kRtkRover ||
-      kind == DeviceKind::kStl27l) {
+      kind == DeviceKind::kStl27l || kind == DeviceKind::kImuSerial) {
     lscan::ChunkType ct = lscan::ChunkType::kGnssNmea;
     if (kind == DeviceKind::kD6) ct = lscan::ChunkType::kD6Raw;
     else if (kind == DeviceKind::kStl27l) ct = lscan::ChunkType::kStl27lRaw;
+    // A18: the serial IMU module, same contract, its own file (lscan.h).
+    else if (kind == DeviceKind::kImuSerial) ct = lscan::ChunkType::kImuSerialRaw;
     std::lock_guard<std::mutex> rlock(impl_->record_m);
     if (impl_->recorder->is_open()) {
       const std::int64_t t = t_arrival.nanos != 0 ? t_arrival.nanos : SteadyClock::now().nanos;

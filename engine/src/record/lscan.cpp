@@ -216,6 +216,10 @@ StreamId stream_of(ChunkType t) {
     // already does: ReplaySource filters on the CHUNK TYPE, so a container
     // holding both never replays one sensor's bytes into the other's parser.
     case ChunkType::kStl27lRaw: return StreamId::kLidarStl27l;
+    // A17/A18: same rule — their own stream ids, and the IMU module is NOT
+    // StreamId::kImu (that means "Mid-360 project" offline).
+    case ChunkType::kMid70Points: return StreamId::kLidarMid70;
+    case ChunkType::kImuSerialRaw: return StreamId::kImuSerial;
     case ChunkType::kMid360Points: return StreamId::kLidarMid360;
     case ChunkType::kMid360Imu: return StreamId::kImu;
     case ChunkType::kPoseAr: return StreamId::kPoseAr;
@@ -246,8 +250,10 @@ const char* stream_file_of(StreamId s) {
   switch (s) {
     case StreamId::kLidarD6:
     case StreamId::kLidarStl27l:
-    case StreamId::kLidarMid360: return kLidarStreamFile;
+    case StreamId::kLidarMid360:
+    case StreamId::kLidarMid70: return kLidarStreamFile;   // A17: filtered by chunk type on replay
     case StreamId::kImu: return kImuStreamFile;
+    case StreamId::kImuSerial: return kImuSerialStreamFile;  // A18: see lscan.h
     case StreamId::kPoseAr:
     case StreamId::kPoseFused: return kPoseArStreamFile;
     case StreamId::kGnss: return kGnssStreamFile;
@@ -945,7 +951,10 @@ Status FileRecordReader::open(const std::string& lscan_dir) {
                                             // StreamId::kImuPhone. A stream that is
                                             // written but not listed here is written
                                             // and never read back.
-                                            kPhoneImuStreamFile};
+                                            kPhoneImuStreamFile,
+                                            // A18: the serial IMU module, StreamId::kImuSerial
+                                            // (Fable review: was written and never read back).
+                                            kImuSerialStreamFile};
   bool hard_fail = false;
   for (const char* rel : kCandidates) {
     if (!impl_->load_stream_file(lscan_dir + "/" + rel, &hard_fail)) {

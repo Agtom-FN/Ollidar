@@ -38,7 +38,9 @@
 #include "scanengine/core/log.h"
 #include "scanengine/core/types.h"
 #include "scanengine/drivers/d6/d6_driver.h"
+#include "scanengine/drivers/imu_serial/imu_serial_driver.h"
 #include "scanengine/drivers/mid360/mid360_driver.h"
+#include "scanengine/drivers/mid70/mid70_driver.h"
 #include "scanengine/drivers/stl27l/stl27l_driver.h"
 #include "scanengine/gnss/georef.h"
 #include "scanengine/gnss/gnss_source.h"
@@ -123,7 +125,11 @@ class JobQueue;
 // transform and applying it rotates the room. See poses/reanchor.h for the
 // measurement on the owner's scan-040. An ABI-11 consumer relinks unmodified
 // and gets the fix; the new symbols only let it SAY why.
-inline constexpr std::uint32_t kEngineAbiVersion = 12;
+// ABI 13 (A17/A18): Livox Mid-70 + serial IMU module. Unlike ITEM 119 this
+// one DID move the number: scan_device_config gained fields (the mid70_* /
+// imu_serial_* block at its tail), which changes the struct's size for a C
+// consumer that allocates it. See the ABI block in capi/scanengine_c.h.
+inline constexpr std::uint32_t kEngineAbiVersion = 13;
 const char* engine_version_string();  // "scanengine 0.1.0 (<clock backend>)"
 
 struct EngineConfig {
@@ -222,6 +228,11 @@ struct DeviceConfig {
   // ITEM 119. Additive: a per-kind config block beside the other two, read
   // only when `kind == DeviceKind::kStl27l`. Nothing existing moves.
   Stl27lConfig stl27l{};
+  // A17/A18 (ABI 13). Additive, same rule: each block is read only when
+  // `kind` selects it. A Mid-70 session is TWO devices — the lidar and a
+  // kImuSerial module — because the Mid-70 has no IMU of its own.
+  Mid70Config mid70{};
+  ImuSerialConfig imu_serial{};
 };
 
 class Engine {
@@ -258,6 +269,13 @@ class Engine {
   // Mid-360. Note the two loss figures mean different things: `loss_pct_window`
   // is this health window's, `loss_pct_total` the session's.
   Result<Mid360Stats> mid360_stats(DeviceId id) const;
+  // A17/A18: the same accessor for the other two drivers with a vocabulary of
+  // their own. Mid70Stats carries what the device says about ITSELF in every
+  // datagram (err.pps_status / time_sync_status, timestamp_type) plus the
+  // timestamp-gap loss figures; ImuSerialStats carries the module's blackout
+  // count / worst blackout / rate. Same error contract as mid360_stats().
+  Result<Mid70Stats> mid70_stats(DeviceId id) const;
+  Result<ImuSerialStats> imu_serial_stats(DeviceId id) const;
 
   // App → engine bytes for push-mode transports (D6 over USB serial).
   // t_arrival {0} means "stamp now".

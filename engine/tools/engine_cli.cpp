@@ -79,6 +79,7 @@ int usage() {
       "  engine_cli --selftest [--quiet] [--sensor d6|stl27l]\n"
       "  engine_cli --synth <out.bin> [seconds] [--noise] [--sensor d6|stl27l]\n"
       "  engine_cli --replay <capture.bin> [--chunk N] [--sensor d6|stl27l]\n"
+      "  engine_cli --replay <capture.livoxdump|.imudump> --sensor mid70|imu-serial\n"
       "  engine_cli --post <lscan-dir> [--out <dir>] [--no-loops] [--no-outlier]\n"
       "                                [--dedup <metres>] [--quiet]\n"
       "                                [--colorize --sync-quality good|gated|poor\n"
@@ -91,6 +92,15 @@ int usage() {
       "--sensor selects which SERIAL lidar --selftest/--synth/--replay speak:\n"
       "  d6      COIN-D6, 230400 8N1, AA-55 framing            (the default)\n"
       "  stl27l  LDROBOT STL-27L, 921600 8N1, 0x54 0x2C framing (ITEM 119)\n"
+      "--replay also takes two NON-serial sensors (A17/A18), which replay the\n"
+      "timestamped containers tools/remote-capture/capture_mid70.py and\n"
+      "capture_serial_imu.py write — every record is pushed with its recorded\n"
+      "arrival stamp, so the driver sees the real burst/gap pattern:\n"
+      "  mid70       Livox Mid-70, one SDK v1 datagram per record (LX70_CAP),\n"
+      "              through Mid70Backend::kInject; port-55000 broadcast records\n"
+      "              are skipped (they are discovery frames, not data)\n"
+      "  imu-serial  JuxiTech ICM-42670-P module, raw UART bytes (IMUSRCAP);\n"
+      "              a plain byte file is accepted too, pushed in --chunk slices\n"
       "It is the CLI face of scan_device_config::kind — SCAN_DEVICE_D6 (1) and\n"
       "SCAN_DEVICE_STL27L (4) — so a synthetic capture made with one is decoded by\n"
       "the same driver the app would run. NO STL-27L HARDWARE HAS BEEN SEEN: the\n"
@@ -235,7 +245,7 @@ std::vector<std::uint8_t> synth_capture(double seconds, bool noise) {
 // "D6" now takes one of these; `d6` is the default everywhere, so every
 // existing invocation (and every existing ctest entry) behaves exactly as it
 // did.
-enum class Sensor { kD6, kStl27l };
+enum class Sensor { kD6, kStl27l, kMid70, kImuSerial };
 
 bool parse_sensor(const char* s, Sensor* out) {
   if (std::strcmp(s, "d6") == 0 || std::strcmp(s, "D6") == 0) { *out = Sensor::kD6; return true; }
@@ -244,10 +254,83 @@ bool parse_sensor(const char* s, Sensor* out) {
     *out = Sensor::kStl27l;
     return true;
   }
+  // A17/A18: --replay only (there is no synthetic Mid-70 or IMU stream here;
+  // the drivers' fixtures are real captures).
+  if (std::strcmp(s, "mid70") == 0 || std::strcmp(s, "MID70") == 0 ||
+      std::strcmp(s, "mid-70") == 0) {
+    *out = Sensor::kMid70;
+    return true;
+  }
+  if (std::strcmp(s, "imu-serial") == 0 || std::strcmp(s, "imu_serial") == 0 ||
+      std::strcmp(s, "imuserial") == 0) {
+    *out = Sensor::kImuSerial;
+    return true;
+  }
   return false;
 }
 
-const char* sensor_name(Sensor s) { return s == Sensor::kD6 ? "COIN-D6" : "LDROBOT STL-27L"; }
+const char* sensor_name(Sensor s) {
+  switch (s) {
+    case Sensor::kD6: return "COIN-D6";
+    case Sensor::kStl27l: return "LDROBOT STL-27L";
+    case Sensor::kMid70: return "Livox Mid-70";
+    case Sensor::kImuSerial: return "serial IMU (JuxiTech ICM-42670-P)";
+  }
+  return "?";
+}
+
+bool sensor_is_serial(Sensor s) { return s == Sensor::kD6 || s == Sensor::kStl27l; }
+
+// --- A17/A18: the timestamped capture container -----------------------------
+//
+// tools/remote-capture/capture_mid360.py, capture_mid70.py and
+// capture_serial_imu.py all write the same framing: an 8-byte magic, u16
+// version, u16 port count, N x u32 port table, then records of
+// {u64 t_ns, u16 port_idx, u32 len, bytes}. The stamps are the host's
+// time.time_ns() at receipt — what the driver would have been handed live.
+struct CaptureRecord {
+  std::int64_t t_ns = 0;
+  std::uint16_t port_idx = 0;
+  std::size_t offset = 0;  // into the file buffer
+  std::uint32_t len = 0;
+};
+
+struct CaptureContainer {
+  std::string magic;
+  std::uint16_t version = 0;
+  std::vector<std::uint32_t> ports;
+  std::vector<CaptureRecord> records;
+  bool truncated = false;  // stopped at an incomplete last record
+};
+
+bool read_capture_container(const std::vector<std::uint8_t>& f, CaptureContainer* out) {
+  if (f.size() < 12) return false;
+  out->magic.assign(reinterpret_cast<const char*>(f.data()), 8);
+  auto u16 = [&](std::size_t o) { return static_cast<std::uint16_t>(f[o] | (f[o + 1] << 8)); };
+  auto u32 = [&](std::size_t o) {
+    return static_cast<std::uint32_t>(f[o]) | (static_cast<std::uint32_t>(f[o + 1]) << 8) |
+           (static_cast<std::uint32_t>(f[o + 2]) << 16) | (static_cast<std::uint32_t>(f[o + 3]) << 24);
+  };
+  out->version = u16(8);
+  const std::uint16_t nports = u16(10);
+  std::size_t o = 12;
+  if (f.size() < o + 4u * nports) return false;
+  for (std::uint16_t i = 0; i < nports; ++i, o += 4) out->ports.push_back(u32(o));
+  while (o + 14 <= f.size()) {
+    CaptureRecord r;
+    std::uint64_t t = 0;
+    for (int i = 7; i >= 0; --i) t = (t << 8) | f[o + static_cast<std::size_t>(i)];
+    r.t_ns = static_cast<std::int64_t>(t);
+    r.port_idx = u16(o + 8);
+    r.len = u32(o + 10);
+    r.offset = o + 14;
+    if (r.offset + r.len > f.size()) { out->truncated = true; break; }
+    out->records.push_back(r);
+    o = r.offset + r.len;
+  }
+  if (o != f.size() && !out->truncated) out->truncated = true;
+  return true;
+}
 
 // The SAME synthetic room as synth_capture(), in LD-series frames: 4 x 3 m
 // with a reflective post, ray-cast at the STL-27L's own rate (2160 returns per
@@ -308,7 +391,8 @@ struct RunResult {
 
 // Feed a byte stream through a real Engine exactly as an app would.
 bool run_capture(const std::vector<std::uint8_t>& bytes, std::size_t chunk, RunResult* out,
-                 bool quiet, Sensor sensor = Sensor::kD6) {
+                 bool quiet, Sensor sensor = Sensor::kD6,
+                 const std::vector<CaptureRecord>* records = nullptr) {
   EngineConfig cfg;
   cfg.app_name = "engine_cli";
   cfg.log_level = quiet ? LogLevel::kWarn : LogLevel::kInfo;
@@ -322,12 +406,32 @@ bool run_capture(const std::vector<std::uint8_t>& bytes, std::size_t chunk, RunR
   Engine& e = *engine.value();
 
   DeviceConfig dc;
-  if (sensor == Sensor::kStl27l) {
-    dc.kind = DeviceKind::kStl27l;
-    dc.stl27l.serial.port_name = "replay";
-  } else {
-    dc.kind = DeviceKind::kD6;
-    dc.d6.serial.port_name = "replay";
+  switch (sensor) {
+    case Sensor::kStl27l:
+      dc.kind = DeviceKind::kStl27l;
+      dc.stl27l.serial.port_name = "replay";
+      break;
+    case Sensor::kMid70:
+      // A17: inject backend, one datagram per push; no live decimation, so
+      // "points decoded" is the sensor's real output, not the 40k budget.
+      dc.kind = DeviceKind::kMid70;
+      dc.mid70.backend = Mid70Backend::kInject;
+      dc.mid70.live_points_per_sec = 0;
+      dc.mid70.internal_supervisor_thread = false;
+      break;
+    case Sensor::kImuSerial:
+      // A18: push-mode serial like the D6. No port to write the rate command
+      // to, and no supervisor thread: the replay runs far faster than real
+      // time, so a wall-clock blackout watchdog would see nothing true.
+      dc.kind = DeviceKind::kImuSerial;
+      dc.imu_serial.serial.port_name = "replay";
+      dc.imu_serial.send_rate_command = false;
+      dc.imu_serial.internal_supervisor_thread = false;
+      break;
+    case Sensor::kD6:
+      dc.kind = DeviceKind::kD6;
+      dc.d6.serial.port_name = "replay";
+      break;
   }
   auto id = e.add_device(dc);
   if (!id.ok()) {
@@ -342,13 +446,28 @@ bool run_capture(const std::vector<std::uint8_t>& bytes, std::size_t chunk, RunR
     return false;
   }
 
-  for (std::size_t off = 0; off < bytes.size();) {
-    const std::size_t n = std::min(chunk, bytes.size() - off);
-    if (!e.push_serial_bytes(id.value(), ByteSpan(bytes.data() + off, n)).ok()) {
-      std::fprintf(stderr, "push failed: %s\n", last_error_message());
-      return false;
+  if (records != nullptr) {
+    // A17/A18: one record per push, with its recorded arrival stamp. For the
+    // Mid-70 that is the inject contract (one call = one datagram); for the
+    // IMU it is what makes the driver's de-burst stamper see the real
+    // arrival pattern.
+    for (const CaptureRecord& r : *records) {
+      if (!e.push_serial_bytes(id.value(), ByteSpan(bytes.data() + r.offset, r.len),
+                               TimePoint{r.t_ns})
+               .ok()) {
+        std::fprintf(stderr, "push failed: %s\n", last_error_message());
+        return false;
+      }
     }
-    off += n;
+  } else {
+    for (std::size_t off = 0; off < bytes.size();) {
+      const std::size_t n = std::min(chunk, bytes.size() - off);
+      if (!e.push_serial_bytes(id.value(), ByteSpan(bytes.data() + off, n)).ok()) {
+        std::fprintf(stderr, "push failed: %s\n", last_error_message());
+        return false;
+      }
+      off += n;
+    }
   }
 
   Event ev;
@@ -464,12 +583,99 @@ int cmd_replay(const char* path, std::size_t chunk, Sensor sensor = Sensor::kD6)
   while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) bytes.insert(bytes.end(), buf, buf + n);
   std::fclose(f);
 
-  std::printf("replay: %s (%zu bytes, %zu-byte chunks, %s)\n", path, bytes.size(), chunk,
+  if (sensor_is_serial(sensor)) {
+    std::printf("replay: %s (%zu bytes, %zu-byte chunks, %s)\n", path, bytes.size(), chunk,
+                sensor_name(sensor));
+    RunResult r;
+    if (!run_capture(bytes, chunk, &r, /*quiet=*/true, sensor)) return 1;
+    print_result(r, bytes.size());
+    return r.health.packets_ok > 0 ? 0 : 1;
+  }
+
+  // --- A17/A18: timestamped container replay ---------------------------------
+  const char* want = sensor == Sensor::kMid70 ? "LX70_CAP" : "IMUSRCAP";
+  CaptureContainer c;
+  const bool is_container = bytes.size() >= 8 && std::memcmp(bytes.data(), want, 8) == 0;
+  if (!is_container) {
+    if (sensor == Sensor::kMid70) {
+      std::fprintf(stderr,
+                   "replay: '%s' is not a %s container (capture_mid70.py). A Mid-70 replay needs "
+                   "the datagram boundaries the container keeps; a raw byte file has none.\n",
+                   path, want);
+      return 1;
+    }
+    std::printf("replay: %s (%zu raw bytes, %zu-byte chunks, %s; no arrival stamps)\n", path,
+                bytes.size(), chunk, sensor_name(sensor));
+    RunResult r;
+    if (!run_capture(bytes, chunk, &r, /*quiet=*/true, sensor)) return 1;
+    print_result(r, bytes.size());
+    return r.health.packets_ok > 0 ? 0 : 1;
+  }
+  if (!read_capture_container(bytes, &c)) {
+    std::fprintf(stderr, "replay: '%s' has a %s magic but no readable header\n", path, want);
+    return 1;
+  }
+
+  // Records to push: for the Mid-70, skip the broadcast port (discovery
+  // frames are not data; the driver would count them as bad packets and the
+  // number would mean nothing).
+  std::vector<CaptureRecord> feed;
+  std::size_t skipped_broadcast = 0;
+  for (const CaptureRecord& r : c.records) {
+    if (sensor == Sensor::kMid70 && r.port_idx < c.ports.size() && c.ports[r.port_idx] == 55000) {
+      ++skipped_broadcast;
+      continue;
+    }
+    feed.push_back(r);
+  }
+  std::size_t payload_bytes = 0;
+  for (const CaptureRecord& r : feed) payload_bytes += r.len;
+  const double duration_s =
+      feed.size() >= 2 ? static_cast<double>(feed.back().t_ns - feed.front().t_ns) * 1e-9 : 0.0;
+
+  std::printf("replay: %s (%s container v%u, %zu records, %zu payload bytes, %.2f s, %s)\n", path,
+              c.magic.c_str(), c.version, c.records.size(), payload_bytes, duration_s,
               sensor_name(sensor));
+  if (skipped_broadcast != 0) {
+    std::printf("  skipped %zu broadcast records on UDP 55000 (discovery, not data)\n",
+                skipped_broadcast);
+  }
+  if (c.truncated) std::printf("  note: container ends in a partial record (capture was interrupted)\n");
+  if (feed.empty()) {
+    std::fprintf(stderr, "replay: nothing to push\n");
+    return 1;
+  }
+
+  // Arrival-gap census from the container itself, independent of the driver:
+  // for the IMU this is where the module's ~2.9 s / ~35 s firmware stall
+  // shows, and the number is expected to be non-zero on a 60 s capture.
+  const double gap_threshold_s = sensor == Sensor::kImuSerial ? 0.5 : 0.1;
+  std::size_t gaps = 0;
+  double worst_gap_s = 0.0;
+  for (std::size_t i = 1; i < feed.size(); ++i) {
+    const double g = static_cast<double>(feed[i].t_ns - feed[i - 1].t_ns) * 1e-9;
+    if (g > gap_threshold_s) ++gaps;
+    if (g > worst_gap_s) worst_gap_s = g;
+  }
+
   RunResult r;
-  if (!run_capture(bytes, chunk, &r, /*quiet=*/true, sensor)) return 1;
-  print_result(r, bytes.size());
-  return r.health.packets_ok > 0 ? 0 : 1;
+  if (!run_capture(bytes, chunk, &r, /*quiet=*/true, sensor, &feed)) return 1;
+  print_result(r, payload_bytes);
+  if (duration_s > 0.0) {
+    if (sensor == Sensor::kMid70) {
+      std::printf("  datagrams / s       : %.0f\n", static_cast<double>(feed.size()) / duration_s);
+      std::printf("  points decoded / s  : %.0f  (Mid-70 single return = 100k)\n",
+                  static_cast<double>(r.points) / duration_s);
+    } else {
+      std::printf("  frames ok / s       : %.1f  (asked for 100 Hz)\n",
+                  static_cast<double>(r.health.packets_ok) / duration_s);
+    }
+  }
+  std::printf("  arrival gaps > %.1f s : %zu (worst %.3f s)%s\n", gap_threshold_s, gaps, worst_gap_s,
+              sensor == Sensor::kImuSerial && gaps == 0 && duration_s < 40.0
+                  ? "  [capture shorter than the module's ~35 s stall period]"
+                  : "");
+  return (r.points > 0 || r.health.packets_ok > 0) ? 0 : 1;
 }
 
 // --- a tiny synthetic Mid-360 .lscan ---------------------------------------
@@ -2439,7 +2645,7 @@ int main(int argc, char** argv) {
     if (std::strcmp(argv[i], "--noise") == 0) noise = true;
     if (std::strcmp(argv[i], "--sensor") == 0 && i + 1 < argc) {
       if (!parse_sensor(argv[i + 1], &sensor)) {
-        std::fprintf(stderr, "--sensor '%s' is not d6|stl27l\n", argv[i + 1]);
+        std::fprintf(stderr, "--sensor '%s' is not d6|stl27l|mid70|imu-serial\n", argv[i + 1]);
         return kExitUsage;
       }
     }
@@ -2448,6 +2654,12 @@ int main(int argc, char** argv) {
   if (cmd == "--version" || cmd == "-v") {
     std::printf("%s (ABI %u)\n", engine_version_string(), kEngineAbiVersion);
     return 0;
+  }
+  if ((cmd == "--selftest" || cmd == "--synth") && !sensor_is_serial(sensor)) {
+    std::fprintf(stderr, "%s: --sensor %s is --replay only (there is no synthetic %s stream; "
+                 "its fixtures are real captures)\n", cmd.c_str(), sensor_name(sensor),
+                 sensor_name(sensor));
+    return kExitUsage;
   }
   if (cmd == "--selftest") return cmd_selftest(quiet, sensor);
   if (cmd == "--synth") {
