@@ -31,6 +31,10 @@ on:
 
 env:
   IMAGE_NAME: lidarscan-worker
+  # build-push-action otherwise uploads a .dockerbuild record as an artifact on
+  # every run; the records are only useful for debugging a failed build and they
+  # accumulate against the organisation's Actions storage quota.
+  DOCKER_BUILD_SUMMARY: "false"
 
 permissions:
   contents: read
