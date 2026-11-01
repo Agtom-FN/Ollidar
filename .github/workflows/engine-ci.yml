@@ -20,6 +20,13 @@ name: engine-ci
 
 on:
   push:
+    # main + ci/**: the same gate desktop-ci.yml and android-emulator.yml
+    # already use. Any other branch is still covered by the pull_request
+    # trigger below, so a work-in-progress push no longer starts eight jobs
+    # (two windows at 2x billing, two macOS at 10x).
+    branches:
+      - main
+      - "ci/**"
     paths:
       - "engine/**"
       - "android/**"
@@ -32,6 +39,12 @@ on:
       - "desktop/**"
       - ".github/workflows/engine-ci.yml"
   workflow_dispatch: {}
+
+# One run per ref at a time: a superseded push has nothing left to prove and
+# these jobs bill at up to 10x (macOS).
+concurrency:
+  group: engine-ci-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   # Pinned to the same microsoft/vcpkg 2026.07.29 release commit as

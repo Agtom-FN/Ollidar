@@ -38,6 +38,12 @@ on:
       - ".github/workflows/desktop-ci.yml"
   workflow_dispatch: {}
 
+# One run per ref at a time: a superseded push has nothing left to prove and
+# windows-latest bills at 2x.
+concurrency:
+  group: desktop-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   # Both pins are load-bearing.
   #
@@ -160,6 +166,9 @@ jobs:
             desktop/build/lidarscan.exe
             desktop/build/points.filamat
           if-no-files-found: error
+          # an unpackaged build is only interesting while the push that made
+          # it is; the default 90 days is what filled the storage quota
+          retention-days: 7
 
   # =====================================================================
   # Linux: COMPILE-ONLY, and the reason is a measured ABI fact, not caution.
