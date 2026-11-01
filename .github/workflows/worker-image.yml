@@ -16,7 +16,12 @@ name: worker-image
 
 on:
   push:
-    branches: ["**"]
+    # main + ci/** only (plus every v* tag, which is what publishes). Other
+    # branches go through the pull_request trigger; building this image on
+    # every branch push was spending a 30-minute ubuntu job per push.
+    branches:
+      - main
+      - "ci/**"
     tags: ["v*"]
     paths:
       - "cloud/worker/**"
@@ -28,6 +33,12 @@ on:
       - "engine/**"
       - ".github/workflows/worker-image.yml"
   workflow_dispatch: {}
+
+# One run per ref at a time. A tag run publishes, so it is never cancelled;
+# a superseded branch push only rebuilds an image nothing consumes yet.
+concurrency:
+  group: worker-image-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 env:
   IMAGE_NAME: lidarscan-worker
@@ -70,7 +81,10 @@ jobs:
           load: true
           tags: ${{ steps.local_tag.outputs.ref }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # mode=min, not max: mode=max writes every intermediate layer of
+          # every stage into the 10 GB-per-repo Actions cache, which evicts
+          # the engine and Gradle caches the other workflows depend on.
+          cache-to: type=gha,mode=min
 
       - name: Report image size
         run: docker images "${{ steps.local_tag.outputs.ref }}"
@@ -157,3 +171,15 @@ jobs:
           echo "Published:"
           echo "  ${base}:${tag}"
           echo "  ${base}:latest"
+
+      # GHCR versions never expire, and a private package counts against the
+      # same shared storage quota as Actions artifacts. Each version of this
+      # image is GB-scale, so keep only the last three (`:latest` plus the two
+      # previous tags) and let the rest go.
+      - name: Trim old GHCR versions (keep the 3 most recent)
+        uses: actions/delete-package-versions@v5
+        continue-on-error: true
+        with:
+          package-name: ${{ env.IMAGE_NAME }}
+          package-type: container
+          min-versions-to-keep: 3

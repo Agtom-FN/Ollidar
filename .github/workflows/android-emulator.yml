@@ -76,6 +76,12 @@ on:
       - ".github/workflows/android-emulator.yml"
   workflow_dispatch: {}
 
+# One run per ref at a time: a superseded push has nothing left to prove and
+# an emulator run is a 30-minute ubuntu job.
+concurrency:
+  group: android-emulator-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   AVD_API_LEVEL: 30
   AVD_TARGET: google_apis
@@ -212,4 +218,4 @@ jobs:
             android/app/build/reports/androidTests/connected/**
             android/app/build/outputs/androidTest-results/connected/**
           if-no-files-found: ignore
-          retention-days: 14
+          retention-days: 7
